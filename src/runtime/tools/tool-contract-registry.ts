@@ -26,7 +26,7 @@ const MARKET_SYMBOL_ERRORS = {
 function marketSymbolContract(
   name: string,
   kind: ToolContract["kind"],
-  arity: ToolContract["arity"] = "either"
+  arity: ToolContract["arity"] = "either",
 ): ToolContract {
   return {
     name,
@@ -34,7 +34,8 @@ function marketSymbolContract(
     category: "market",
     arity,
     requiredAfterNormalize: ["symbols"],
-    normalize: (raw) => normalizeMarketSymbolParams(raw, { arity, toolName: name }),
+    normalize: (raw) =>
+      normalizeMarketSymbolParams(raw, { arity, toolName: name }),
     errorCodes: { ...MARKET_SYMBOL_ERRORS },
     timeoutClass: name === "market.resolve_symbol" ? "light" : "market",
     sideEffects: "none",
@@ -72,7 +73,10 @@ const MARKET_CONTRACTS: ToolContract[] = [
     arity: "one",
     requiredAfterNormalize: ["symbols"],
     normalize: (raw) => ({
-      ...normalizeMarketSymbolParams(raw, { arity: "one", toolName: "fetch_fundamentals" }),
+      ...normalizeMarketSymbolParams(raw, {
+        arity: "one",
+        toolName: "fetch_fundamentals",
+      }),
       reportType: raw.reportType === "annual" ? "annual" : "quarterly",
       periods: Math.max(1, Math.min(Number(raw.periods ?? 4), 12)),
     }),
@@ -92,13 +96,19 @@ const MARKET_CONTRACTS: ToolContract[] = [
     arity: "either",
     requiredAfterNormalize: ["factor_id", "symbols"],
     normalize: (raw) => ({
-      ...normalizeMarketSymbolParams(raw, { arity: "either", toolName: "factor.compute" }),
+      ...normalizeMarketSymbolParams(raw, {
+        arity: "either",
+        toolName: "factor.compute",
+      }),
       factor_id:
         raw.factor_id ??
         raw.factorId ??
         (Array.isArray(raw.factor_ids) ? raw.factor_ids[0] : undefined),
     }),
-    errorCodes: { factor_not_found: "permanent", no_factor_values_written: "permanent" },
+    errorCodes: {
+      factor_not_found: "permanent",
+      no_factor_values_written: "permanent",
+    },
     timeoutClass: "market",
     sideEffects: "write",
     lifecycle: "active",
@@ -111,11 +121,17 @@ const MARKET_CONTRACTS: ToolContract[] = [
     requiredAfterNormalize: ["factor_ids", "start_date", "end_date"],
     normalize: (raw) => ({
       ...raw,
-      factor_ids: raw.factor_ids ?? raw.factorIds ?? (raw.factor_id ? [raw.factor_id] : undefined),
+      factor_ids:
+        raw.factor_ids ??
+        raw.factorIds ??
+        (raw.factor_id ? [raw.factor_id] : undefined),
       start_date: raw.start_date ?? raw.startDate ?? raw.from,
       end_date: raw.end_date ?? raw.endDate ?? raw.to ?? raw.asOf,
     }),
-    errorCodes: { factor_not_found: "permanent", missing_factor_ids: "permanent" },
+    errorCodes: {
+      factor_not_found: "permanent",
+      missing_factor_ids: "permanent",
+    },
     timeoutClass: "market",
     sideEffects: "write",
     lifecycle: "active",
@@ -127,10 +143,16 @@ const MARKET_CONTRACTS: ToolContract[] = [
     arity: "either",
     requiredAfterNormalize: ["strategy_version_id", "symbols"],
     normalize: (raw) => ({
-      ...normalizeMarketSymbolParams(raw, { arity: "either", toolName: "backtest.run" }),
+      ...normalizeMarketSymbolParams(raw, {
+        arity: "either",
+        toolName: "backtest.run",
+      }),
       strategy_version_id: raw.strategy_version_id ?? raw.strategyVersionId,
     }),
-    errorCodes: { factor_not_found: "permanent", missing_strategy_version_id: "permanent" },
+    errorCodes: {
+      factor_not_found: "permanent",
+      missing_strategy_version_id: "permanent",
+    },
     timeoutClass: "market",
     sideEffects: "write",
     lifecycle: "active",
@@ -156,8 +178,33 @@ const MARKET_CONTRACTS: ToolContract[] = [
     category: "research",
     arity: "either",
     requiredAfterNormalize: ["code"],
-    normalize: (raw) => ({ ...raw, code: raw.code ?? raw.strategyCode ?? raw.source }),
+    normalize: (raw) => ({
+      ...raw,
+      code: raw.code ?? raw.strategyCode ?? raw.source,
+    }),
     errorCodes: { missing_code: "permanent" },
+    timeoutClass: "light",
+    sideEffects: "write",
+    lifecycle: "active",
+  },
+  {
+    name: "strategy.sim_deploy",
+    kind: "builtin",
+    category: "trading",
+    arity: "either",
+    normalize: (raw) => ({
+      ...raw,
+      script_id: raw.script_id ?? raw.scriptId,
+      code: raw.code ?? raw.strategyCode ?? raw.source,
+      broker_account_id: raw.broker_account_id ?? raw.brokerAccountId,
+      paper_capital: raw.paper_capital ?? raw.paperCapital,
+      order_qty: raw.order_qty ?? raw.orderQty,
+    }),
+    errorCodes: {
+      missing_symbol: "permanent",
+      sim_execution_requires_broker_account: "permanent",
+      sim_execution_requires_sandbox_or_mock_broker_account: "permanent",
+    },
     timeoutClass: "light",
     sideEffects: "write",
     lifecycle: "active",
@@ -167,22 +214,33 @@ const MARKET_CONTRACTS: ToolContract[] = [
     kind: "builtin",
     category: "research",
     arity: "many",
-    requiredAfterNormalize: ["expressions", "symbols", "start_date", "end_date"],
+    requiredAfterNormalize: [
+      "expressions",
+      "symbols",
+      "start_date",
+      "end_date",
+    ],
     normalize: (raw) => ({
-      ...normalizeMarketSymbolParams(raw, { arity: "many", toolName: "factor.mine.llm" }),
-      expressions: raw.expressions ?? raw.factorExpressions ?? raw.factor_expressions,
+      ...normalizeMarketSymbolParams(raw, {
+        arity: "many",
+        toolName: "factor.mine.llm",
+      }),
+      expressions:
+        raw.expressions ?? raw.factorExpressions ?? raw.factor_expressions,
       start_date: raw.start_date ?? raw.startDate ?? raw.from,
       end_date: raw.end_date ?? raw.endDate ?? raw.to,
       min_count: Math.max(1, Number(raw.min_count ?? raw.minCount ?? 5)),
     }),
     validate: (canonical) => {
       const expressions = Array.isArray(canonical.expressions)
-        ? canonical.expressions.filter((item) => typeof item === "string" && item.trim())
+        ? canonical.expressions.filter(
+            (item) => typeof item === "string" && item.trim(),
+          )
         : [];
       const minCount = Number(canonical.min_count ?? 5);
       if (expressions.length < minCount) {
         throw new Error(
-          `factor_expression_batch_too_small: factor.mine.llm requires at least ${minCount} expressions`
+          `factor_expression_batch_too_small: factor.mine.llm requires at least ${minCount} expressions`,
         );
       }
     },
@@ -204,7 +262,10 @@ const MARKET_CONTRACTS: ToolContract[] = [
     arity: "one",
     requiredAfterNormalize: ["symbols", "side", "qty"],
     normalize: (raw) => ({
-      ...normalizeMarketSymbolParams(raw, { arity: "one", toolName: "order.create_intent" }),
+      ...normalizeMarketSymbolParams(raw, {
+        arity: "one",
+        toolName: "order.create_intent",
+      }),
       strategy_version_id: raw.strategy_version_id ?? raw.strategyVersionId,
       side: raw.side ?? raw.direction ?? raw.action,
       qty: raw.qty ?? raw.quantity ?? raw.shares,
@@ -214,7 +275,9 @@ const MARKET_CONTRACTS: ToolContract[] = [
     validate: (canonical) => {
       const qty = Number(canonical.qty);
       if (!Number.isFinite(qty) || qty <= 0) {
-        throw new Error("invalid_qty: order.create_intent qty must be a positive number");
+        throw new Error(
+          "invalid_qty: order.create_intent qty must be a positive number",
+        );
       }
     },
     errorCodes: {
@@ -246,7 +309,8 @@ const MARKET_CONTRACTS: ToolContract[] = [
     category: "market",
     arity: "either",
     normalize: (raw) => {
-      const snapshotId = typeof raw.snapshotId === "string" ? raw.snapshotId.trim() : "";
+      const snapshotId =
+        typeof raw.snapshotId === "string" ? raw.snapshotId.trim() : "";
       if (snapshotId) return { ...raw, snapshotId };
       return normalizeMarketSymbolParams(raw, {
         arity: "either",
@@ -271,7 +335,8 @@ const MARKET_CONTRACTS: ToolContract[] = [
     arity: "either",
     normalize: (raw) => {
       const snapshotId =
-        String(raw.snapshotId ?? raw.snapshot_id ?? "").trim() || extractSnapshotId(raw);
+        String(raw.snapshotId ?? raw.snapshot_id ?? "").trim() ||
+        extractSnapshotId(raw);
       const scope = resolveInstrumentScope(raw);
       const direction = resolveThesisDirection(raw);
       const confidence = coerceConfidence01(raw.confidence, 0.5);

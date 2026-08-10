@@ -44,6 +44,12 @@ export function timeframeToPeriod(timeframe: string): FetchBarsParams["period"] 
 
 const H_MS = 3_600_000;
 const D_MS = 86_400_000;
+/**
+ * Daily requests are expressed in *bars*, while calendar windows include weekends,
+ * exchange holidays and occasional closures.  A 1.55x buffer reliably covers a
+ * 252-trading-day year without asking callers to know the exchange calendar.
+ */
+const DAILY_BAR_CALENDAR_BUFFER = 1.55;
 
 /** Bar duration in ms for expanding `limit` into a calendar window (approximate for 1w). */
 export function timeframeWindowMs(timeframe: string, period: FetchBarsParams["period"]): number {
@@ -79,7 +85,10 @@ export function computeDateRangeForLimit(
   const period = timeframeToPeriod(timeframe);
   const tf = normalizeTimeframe(timeframe);
   const n = Math.max(1, Math.min(limit, 2000));
-  const win = timeframeWindowMs(tf, period) * (n - 1);
+  const win =
+    period === "1d" && tf !== "1w"
+      ? Math.ceil((n - 1) * DAILY_BAR_CALENDAR_BUFFER) * D_MS
+      : timeframeWindowMs(tf, period) * (n - 1);
 
   if (period === "1d") {
     const endDaily = new Date(asOfMs);

@@ -757,6 +757,18 @@ def backtest_strategy(payload: dict[str, Any]) -> dict[str, Any]:
         "equityCurve": equity_curve,
         "trades": broker.trades,
         "intents": broker.intents_log,
+        # The final bar's instructions have no following open in a historical
+        # replay, so they are deliberately not included in `trades`. Expose
+        # them separately for the persistent paper/sandbox runtime.
+        "pendingIntents": [
+            {
+                "symbol": intent.symbol,
+                "kind": intent.kind,
+                "value": intent.value,
+                "reason": intent.reason,
+            }
+            for intent in pending
+        ],
         "metrics": metrics,
         "primarySymbol": symbol_key,
     }

@@ -3,7 +3,10 @@
  */
 import { resolve } from "node:path";
 import type { BarData } from "../../../connectors/data/data.connector";
-import { PythonOneShotError, runPythonOneShot } from "../../../util/python-oneshot";
+import {
+  PythonOneShotError,
+  runPythonOneShot,
+} from "../../../util/python-oneshot";
 import { getPythonBin } from "../../sandbox/python-runtime";
 
 export type StrategyManifestV2 = {
@@ -37,8 +40,7 @@ export type StrategyManifestV2 = {
 };
 
 export type ContractCompileResult =
-  | { ok: true; manifest: StrategyManifestV2 }
-  | { ok: false; error: string };
+  { ok: true; manifest: StrategyManifestV2 } | { ok: false; error: string };
 
 export type ContractBacktestResult =
   | {
@@ -47,6 +49,12 @@ export type ContractBacktestResult =
       equityCurve: Array<{ time: string; equity: number }>;
       trades: Array<Record<string, unknown>>;
       intents: Array<Record<string, unknown>>;
+      /**
+       * Orders emitted on the latest completed bar. They intentionally remain
+       * unfilled in the backtest (the contract engine fills at next open), but
+       * are exactly the instructions a persistent simulator must act on.
+       */
+      pendingIntents?: Array<Record<string, unknown>>;
       metrics: {
         totalReturnPct: number;
         maxDrawdownPct: number;
@@ -60,7 +68,7 @@ export type ContractBacktestResult =
   | { ok: false; error: string };
 
 async function runContract<T extends { ok: boolean }>(
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
 ): Promise<T> {
   const bin = await getPythonBin();
   const scriptPath = resolve(import.meta.dir, "strategy_contract_runner.py");
@@ -81,12 +89,12 @@ async function runContract<T extends { ok: boolean }>(
       }
     }
     const message = err instanceof Error ? err.message : String(err);
-    return { ok: false, error: message } as T;
+    return { ok: false, error: message } as unknown as T;
   }
 }
 
 export async function compileStrategyContract(
-  strategyCode: string
+  strategyCode: string,
 ): Promise<ContractCompileResult> {
   return runContract<ContractCompileResult>({
     action: "compile",

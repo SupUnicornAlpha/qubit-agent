@@ -63,12 +63,15 @@ describe("strategy contract v2", () => {
     const bars = Array.from({ length: 40 }, (_, i) => {
       const close = 100 + i * 0.5 + (i % 5 === 0 ? -2 : 0);
       return {
+        symbol: "TEST",
+        exchange: "US",
         timestamp: `2024-01-${String((i % 28) + 1).padStart(2, "0")}`,
         open: close - 0.2,
         high: close + 0.5,
         low: close - 0.5,
         close,
         volume: 1000,
+        turnover: 0,
       };
     });
     const r = await backtestStrategyContract({
@@ -83,6 +86,42 @@ describe("strategy contract v2", () => {
     expect(r.equityCurve.length).toBeGreaterThan(10);
     expect(Number.isFinite(r.metrics.totalReturnPct)).toBe(true);
     expect(r.manifest.codeHash.length).toBe(64);
+    // The final-bar target is intentionally pending under next-open backtest
+    // semantics; persistent sandbox runtimes consume this exact instruction.
+    expect(Array.isArray(r.pendingIntents)).toBe(true);
+  });
+
+  test("backtest exposes latest pending contract target for a persistent runtime", async () => {
+    const code = `
+def initialize(context):
+    context.set_universe(["US:TEST"])
+    context.subscribe(frequency="1d")
+
+def handle_data(context, data):
+    order_target_percent("US:TEST", 0.25, reason="keep_target")
+`;
+    const bars = Array.from({ length: 8 }, (_, i) => ({
+      symbol: "TEST",
+      exchange: "US",
+      timestamp: `2024-02-${String(i + 1).padStart(2, "0")}`,
+      open: 100,
+      high: 101,
+      low: 99,
+      close: 100,
+      volume: 1000,
+      turnover: 0,
+    }));
+    const r = await backtestStrategyContract({
+      strategyCode: code,
+      bars,
+      symbol: "US:TEST",
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.pendingIntents?.[0]).toMatchObject({
+      kind: "target_percent",
+      value: 0.25,
+    });
   });
 
   test("compile normalizes set_universe string US-NVDA", async () => {

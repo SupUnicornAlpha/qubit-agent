@@ -103,8 +103,28 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
 describe("strategy runtime", () => {
   test("evaluateSignalCode detects buy on rising close", async () => {
     const bars = [
-      { time: "2024-01-01", open: 10, high: 11, low: 9, close: 10, volume: 100 },
-      { time: "2024-01-02", open: 10, high: 12, low: 10, close: 11, volume: 100 },
+      {
+        symbol: "TEST",
+        exchange: "US",
+        timestamp: "2024-01-01",
+        open: 10,
+        high: 11,
+        low: 9,
+        close: 10,
+        volume: 100,
+        turnover: 0,
+      },
+      {
+        symbol: "TEST",
+        exchange: "US",
+        timestamp: "2024-01-02",
+        open: 10,
+        high: 12,
+        low: 10,
+        close: 11,
+        volume: 100,
+        turnover: 0,
+      },
     ];
     const code = `
 buy = [False] * len(closes)
@@ -123,7 +143,7 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
     const db = drizzle(sqlite, { schema });
     const migrationsFolder = join(
       dirname(fileURLToPath(import.meta.url)),
-      "../../db/sqlite/migrations"
+      "../../db/sqlite/migrations",
     );
     await migrate(db, { migrationsFolder });
 
@@ -139,7 +159,7 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
         autoStart: false,
         params: { orderQty: 5 },
       },
-      db
+      db,
     );
 
     expect(runtime.status).toBe("stopped");
@@ -168,7 +188,7 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
       .set({ executionMode: "live" })
       .where(eq(schema.strategyRuntime.id, runtime.id));
     await expect(startStrategyRuntime(runtime.id, db)).rejects.toThrow(
-      /live_promotion_gate_blocked/
+      /live_promotion_gate_blocked/,
     );
     for (const evalKind of ["backtest", "walk_forward"] as const) {
       await db.insert(schema.strategyEvalRun).values({
@@ -181,7 +201,11 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
         pass: true,
       });
     }
-    const approved = await strategyPromotionService.approveRuntime(runtime.id, "tester", db);
+    const approved = await strategyPromotionService.approveRuntime(
+      runtime.id,
+      "tester",
+      db,
+    );
     expect(approved.liveEligible).toBe(true);
     await startStrategyRuntime(runtime.id, db);
     const runningLive = await db
@@ -221,5 +245,69 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
       .where(eq(schema.strategyRuntime.id, runtime.id))
       .limit(1);
     expect(stopped[0]?.status).toBe("stopped");
+  });
+
+  test("sim runtime only accepts an enabled sandbox or mock broker account", async () => {
+    const sqlite = new Database(":memory:");
+    sqlite.exec("PRAGMA foreign_keys=ON;");
+    const db = drizzle(sqlite, { schema });
+    const migrationsFolder = join(
+      dirname(fileURLToPath(import.meta.url)),
+      "../../db/sqlite/migrations",
+    );
+    await migrate(db, { migrationsFolder });
+    const { scriptId } = await seedBase(db);
+
+    await expect(
+      createStrategyRuntime(
+        {
+          strategyScriptId: scriptId,
+          market: "US",
+          symbol: "TEST",
+          executionMode: "sim",
+        },
+        db,
+      ),
+    ).rejects.toThrow(/sim_execution_requires_broker_account/);
+
+    const brokerAccountId = randomUUID();
+    await db.insert(schema.brokerAccount).values({
+      id: brokerAccountId,
+      provider: "futu",
+      accountRef: "sandbox-test",
+      mode: "sandbox",
+      enabled: true,
+      isDefault: true,
+      providerConfigJson: { market: "US" },
+    });
+    const runtime = await createStrategyRuntime(
+      {
+        strategyScriptId: scriptId,
+        market: "US",
+        symbol: "TEST",
+        executionMode: "sim",
+        brokerAccountId,
+        autoStart: false,
+      },
+      db,
+    );
+    expect(runtime.executionMode).toBe("sim");
+    expect(runtime.brokerAccountId).toBe(brokerAccountId);
+
+    await db
+      .update(schema.brokerAccount)
+      .set({ mode: "mock" })
+      .where(eq(schema.brokerAccount.id, brokerAccountId));
+    const autoResolved = await createStrategyRuntime(
+      {
+        strategyScriptId: scriptId,
+        market: "US",
+        symbol: "TEST",
+        executionMode: "sim",
+        autoStart: false,
+      },
+      db,
+    );
+    expect(autoResolved.brokerAccountId).toBe(brokerAccountId);
   });
 });

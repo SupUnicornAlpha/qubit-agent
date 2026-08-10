@@ -17,7 +17,6 @@ import type {
   KlinesResponseMeta,
   MarketDataReadiness,
   MarketDataSourceRecord,
-  MarketQuote,
   MarketStreamEvent,
 } from "../../api/types";
 import { backendWebSocketUrl } from "../../api/client";
@@ -45,7 +44,11 @@ import {
   toChartTime,
 } from "../../lib/klineSeries";
 
-function markerToChartTime(m: TraderMarkerRecord, lastBars: KlineBar[], timeframe: string): Time | null {
+function markerToChartTime(
+  m: TraderMarkerRecord,
+  lastBars: KlineBar[],
+  timeframe: string,
+): Time | null {
   if (m.barTime) {
     const tf = timeframe.toLowerCase();
     if (tf === "1d" || tf === "1w") {
@@ -55,9 +58,14 @@ function markerToChartTime(m: TraderMarkerRecord, lastBars: KlineBar[], timefram
     const ms = Date.parse(m.barTime);
     if (Number.isFinite(ms)) return Math.floor(ms / 1000) as UTCTimestamp;
   }
-  const match = lastBars.find((b) => b.timestamp === m.barTime || b.timestamp.startsWith(m.barTime?.slice(0, 10) ?? ""));
+  const match = lastBars.find(
+    (b) =>
+      b.timestamp === m.barTime ||
+      b.timestamp.startsWith(m.barTime?.slice(0, 10) ?? ""),
+  );
   if (match) return toChartTime(match, timeframe);
-  if (lastBars.length > 0) return toChartTime(lastBars[lastBars.length - 1]!, timeframe);
+  if (lastBars.length > 0)
+    return toChartTime(lastBars[lastBars.length - 1]!, timeframe);
   return null;
 }
 
@@ -73,7 +81,11 @@ function chartThemeOptions(light: boolean) {
         horzLines: { color: "#e2e8f0" },
       },
       rightPriceScale: { borderColor: "#cbd5e1" },
-      timeScale: { borderColor: "#cbd5e1", timeVisible: true, secondsVisible: false },
+      timeScale: {
+        borderColor: "#cbd5e1",
+        timeVisible: true,
+        secondsVisible: false,
+      },
     };
   }
   return {
@@ -86,14 +98,20 @@ function chartThemeOptions(light: boolean) {
       horzLines: { color: "#27272a" },
     },
     rightPriceScale: { borderColor: "#3f3f46" },
-    timeScale: { borderColor: "#3f3f46", timeVisible: true, secondsVisible: false },
+    timeScale: {
+      borderColor: "#3f3f46",
+      timeVisible: true,
+      secondsVisible: false,
+    },
   };
 }
 
-export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }> = ({
-  embedded,
-  linkTraderMarkers,
-}) => {
+export const KlinePanel: FC<{
+  embedded?: boolean;
+  linkTraderMarkers?: boolean;
+  /** Additional markers supplied by a strategy workspace (for example runtime signal logs). */
+  strategyMarkers?: TraderMarkerRecord[];
+}> = ({ embedded, linkTraderMarkers, strategyMarkers = [] }) => {
   const chartSpec = useAppStore((s) => s.chartSpec);
   const setChartSpec = useAppStore((s) => s.setChartSpec);
   const chartReloadNonce = useAppStore((s) => s.chartReloadNonce);
@@ -125,7 +143,9 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [klinesError, setKlinesError] = useState<KlinesErrorPayload | null>(null);
+  const [klinesError, setKlinesError] = useState<KlinesErrorPayload | null>(
+    null,
+  );
   const [meta, setMeta] = useState<KlinesResponseMeta | null>(null);
   const [lastBars, setLastBars] = useState<KlineBar[]>([]);
   const [sourceRows, setSourceRows] = useState<MarketDataSourceRecord[]>([]);
@@ -136,7 +156,9 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
     const chart = chartRef.current;
     if (!el || !chart) return;
     const w = el.clientWidth;
-    const h = embedded ? Math.max(120, el.clientHeight) : Math.max(160, el.clientHeight);
+    const h = embedded
+      ? Math.max(120, el.clientHeight)
+      : Math.max(160, el.clientHeight);
     chart.applyOptions({ width: w, height: h });
     chart.timeScale().fitContent();
   }, [embedded]);
@@ -149,7 +171,9 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
       ...chartThemeOptions(isLightChart),
       crosshair: { mode: CrosshairMode.Normal },
       width: el.clientWidth,
-      height: embedded ? Math.max(120, el.clientHeight) : Math.max(200, el.clientHeight),
+      height: embedded
+        ? Math.max(120, el.clientHeight)
+        : Math.max(200, el.clientHeight),
     });
 
     const candle = chart.addCandlestickSeries({
@@ -164,7 +188,9 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
       priceFormat: { type: "volume" },
       priceScaleId: "",
     });
-    chart.priceScale("").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+    chart
+      .priceScale("")
+      .applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
 
     const smaLine = chart.addLineSeries({
       color: "rgba(59, 130, 246, 0.92)",
@@ -311,7 +337,11 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
         macdHistogramRef.current?.setData([]);
         return;
       }
-      const normalized = normalizeKlineBars(res.data, spec.timeframe, spec.limit);
+      const normalized = normalizeKlineBars(
+        res.data,
+        spec.timeframe,
+        spec.limit,
+      );
       if (normalized.length === 0) {
         setError("行情数据包含无效或重复时间戳，无法绘制 K 线");
       }
@@ -321,7 +351,9 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
       try {
         const jsonStart = msg.indexOf("{");
         if (jsonStart >= 0) {
-          const parsed = JSON.parse(msg.slice(jsonStart)) as { error?: unknown };
+          const parsed = JSON.parse(msg.slice(jsonStart)) as {
+            error?: unknown;
+          };
           const wrapped = parseKlinesApiError(parsed);
           if (wrapped) {
             setKlinesError(wrapped);
@@ -343,7 +375,13 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
       void load();
     }, 320);
     return () => clearTimeout(t);
-  }, [chartSpec.symbol, chartSpec.exchange, chartSpec.timeframe, chartSpec.limit, load]);
+  }, [
+    chartSpec.symbol,
+    chartSpec.exchange,
+    chartSpec.timeframe,
+    chartSpec.limit,
+    load,
+  ]);
 
   useEffect(() => {
     if (chartReloadNonce === 0) return;
@@ -363,35 +401,36 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
 
     const applyBackfill = (bars: KlineBar[]) => {
       if (bars.length === 0) return;
-      setLastBars(normalizeKlineBars(bars, spec.timeframe, spec.limit));
-    };
-
-    const applyBar = (bar: KlineBar) => {
+      // Backfill is a short live-recovery window (normally 120 bars), not a full
+      // replacement for the long history loaded by /market/klines.
       setLastBars((current) =>
-        normalizeKlineBars([...current, bar], spec.timeframe, spec.limit)
+        normalizeKlineBars([...current, ...bars], spec.timeframe, spec.limit),
       );
     };
 
-    const applyQuote = (quote: MarketQuote) => {
-      setLastBars((current) => {
-        if (current.length === 0 || !Number.isFinite(quote.lastPrice)) return current;
-        const next = [...current];
-        const previous = next[next.length - 1]!;
-        const updated: KlineBar = {
-          ...previous,
-          close: quote.lastPrice,
-          high: Math.max(previous.high, quote.lastPrice),
-          low: Math.min(previous.low, quote.lastPrice),
-        };
-        next[next.length - 1] = updated;
-        return next;
-      });
+    const applyBar = (bar: KlineBar) => {
+      const eventSymbol = bar.symbol?.trim().toUpperCase();
+      const eventExchange = bar.exchange?.trim().toUpperCase();
+      if (
+        (eventSymbol && eventSymbol !== spec.symbol.trim().toUpperCase()) ||
+        (eventExchange &&
+          spec.exchange.trim() &&
+          eventExchange !== spec.exchange.trim().toUpperCase())
+      ) {
+        return;
+      }
+      setLastBars((current) =>
+        normalizeKlineBars([...current, bar], spec.timeframe, spec.limit),
+      );
     };
 
     const scheduleReconnect = () => {
       if (disposed || reconnectTimer) return;
       reconnectAttempt += 1;
-      const delayMs = Math.min(15_000, 500 * 2 ** Math.min(reconnectAttempt, 5));
+      const delayMs = Math.min(
+        15_000,
+        500 * 2 ** Math.min(reconnectAttempt, 5),
+      );
       reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
         connect();
@@ -413,7 +452,7 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
               timeframe: spec.timeframe,
               channels: ["quote", "bar"],
             },
-          })
+          }),
         );
       });
       socket.addEventListener("message", (message) => {
@@ -425,16 +464,30 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
           };
           const event = envelope.payload;
           if (envelope.topic !== "market" || !event?.kind) return;
-          if (event.sequence > 0 && lastSequence > 0 && event.sequence > lastSequence + 1) {
+          if (
+            event.sequence > 0 &&
+            lastSequence > 0 &&
+            event.sequence > lastSequence + 1
+          ) {
             requestChartReload();
           }
           if (event.sequence > 0) lastSequence = event.sequence;
           if (event.kind === "backfill" && Array.isArray(event.data)) {
             applyBackfill(event.data as KlineBar[]);
-          } else if (event.kind === "bar" && event.data && typeof event.data === "object") {
+          } else if (
+            event.kind === "bar" &&
+            event.data &&
+            typeof event.data === "object"
+          ) {
             applyBar(event.data as KlineBar);
-          } else if (event.kind === "quote" && event.data && typeof event.data === "object") {
-            applyQuote(event.data as MarketQuote);
+          } else if (
+            event.kind === "quote" &&
+            event.data &&
+            typeof event.data === "object"
+          ) {
+            // `bar` events are built by the gateway from this quote stream.  Do
+            // not mutate a historical candle from a raw quote as that can blend
+            // stale or cross-contract prices into its OHLC range.
           }
         } catch {
           /* ignore malformed market stream events */
@@ -489,25 +542,33 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
       const { sma20, ema20, rsi14, macd: showMacd, bb20 } = chartOverlays;
       const closes = lastBars.map((bar) => bar.close);
       smaLineRef.current?.setData(
-        sma20 && lastBars.length >= 20 ? lineFromSma(lastBars, tf, 20) : []
+        sma20 && lastBars.length >= 20 ? lineFromSma(lastBars, tf, 20) : [],
       );
       emaLineRef.current?.setData(
-        ema20 && lastBars.length >= 20 ? lineFromEma(lastBars, tf, 20) : []
+        ema20 && lastBars.length >= 20 ? lineFromEma(lastBars, tf, 20) : [],
       );
       const bb = bollinger(closes, 20, 2);
-      bbUpperRef.current?.setData(bb20 ? lineFromValues(lastBars, tf, bb.upper) : []);
-      bbMiddleRef.current?.setData(bb20 ? lineFromValues(lastBars, tf, bb.middle) : []);
-      bbLowerRef.current?.setData(bb20 ? lineFromValues(lastBars, tf, bb.lower) : []);
-      rsiRef.current?.setData(rsi14 ? lineFromValues(lastBars, tf, rsi(closes, 14)) : []);
+      bbUpperRef.current?.setData(
+        bb20 ? lineFromValues(lastBars, tf, bb.upper) : [],
+      );
+      bbMiddleRef.current?.setData(
+        bb20 ? lineFromValues(lastBars, tf, bb.middle) : [],
+      );
+      bbLowerRef.current?.setData(
+        bb20 ? lineFromValues(lastBars, tf, bb.lower) : [],
+      );
+      rsiRef.current?.setData(
+        rsi14 ? lineFromValues(lastBars, tf, rsi(closes, 14)) : [],
+      );
       const macdSeries = macd(closes);
       macdRef.current?.setData(
-        showMacd ? lineFromValues(lastBars, tf, macdSeries.macd) : []
+        showMacd ? lineFromValues(lastBars, tf, macdSeries.macd) : [],
       );
       macdSignalRef.current?.setData(
-        showMacd ? lineFromValues(lastBars, tf, macdSeries.signal) : []
+        showMacd ? lineFromValues(lastBars, tf, macdSeries.signal) : [],
       );
       macdHistogramRef.current?.setData(
-        showMacd ? histogramFromValues(lastBars, tf, macdSeries.histogram) : []
+        showMacd ? histogramFromValues(lastBars, tf, macdSeries.histogram) : [],
       );
     } catch (chartError) {
       const message =
@@ -547,7 +608,14 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
   useEffect(() => {
     const c = candleRef.current;
     if (!c) return;
-    if (!linkTraderMarkers) {
+    const mergedMarkers = [
+      ...(linkTraderMarkers ? traderMarkers : []),
+      ...strategyMarkers,
+    ].filter(
+      (marker, index, all) =>
+        all.findIndex((item) => item.id === marker.id) === index,
+    );
+    if (mergedMarkers.length === 0) {
       c.setMarkers([]);
       return;
     }
@@ -555,21 +623,35 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
       c.setMarkers([]);
       return;
     }
-    const markers: SeriesMarker<Time>[] = traderMarkers.flatMap((m) => {
+    const markers: SeriesMarker<Time>[] = mergedMarkers.flatMap((m) => {
       const time = markerToChartTime(m, lastBars, chartSpec.timeframe);
       if (time == null) return [];
-      return [{
-      id: m.id,
-      time,
-      position: m.side === "buy" ? "belowBar" : "aboveBar",
-      shape: m.side === "buy" ? "arrowUp" : "arrowDown",
-      color:
-        m.source === "agent" ? "#a78bfa" : m.source === "strategy" ? "#38bdf8" : m.side === "buy" ? "#22c55e" : "#f87171",
-      text: m.text.length > 24 ? `${m.text.slice(0, 24)}…` : m.text,
-    }];
+      return [
+        {
+          id: m.id,
+          time,
+          position: m.side === "buy" ? "belowBar" : "aboveBar",
+          shape: m.side === "buy" ? "arrowUp" : "arrowDown",
+          color:
+            m.source === "agent"
+              ? "#a78bfa"
+              : m.source === "strategy"
+                ? "#38bdf8"
+                : m.side === "buy"
+                  ? "#22c55e"
+                  : "#f87171",
+          text: m.text.length > 24 ? `${m.text.slice(0, 24)}…` : m.text,
+        },
+      ];
     });
     c.setMarkers(markers);
-  }, [linkTraderMarkers, traderMarkers, lastBars, chartSpec.timeframe]);
+  }, [
+    linkTraderMarkers,
+    traderMarkers,
+    strategyMarkers,
+    lastBars,
+    chartSpec.timeframe,
+  ]);
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -596,7 +678,7 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
         })
     : null;
   const activeSource = meta
-    ? sourceRows.find((source) => source.id === meta.dataSource) ?? null
+    ? (sourceRows.find((source) => source.id === meta.dataSource) ?? null)
     : null;
   const openDataSourceSettings = () => {
     setConfigSubPage("providers");
@@ -668,11 +750,15 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
                 min={1}
                 max={2000}
                 value={chartSpec.limit}
-                onChange={(e) => setChartSpec({ limit: Number(e.target.value) || 120 })}
+                onChange={(e) =>
+                  setChartSpec({ limit: Number(e.target.value) || 120 })
+                }
               />
             </label>
             <button type="submit" className="qb-btn-primary" disabled={loading}>
-              {loading ? t("common.status.loading") : t("common.action.refresh")}
+              {loading
+                ? t("common.status.loading")
+                : t("common.action.refresh")}
             </button>
             <button
               type="button"
@@ -691,27 +777,51 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
             <div
               style={{
                 ...styles.sourceBanner,
-                ...(readiness.status === "down" ? styles.sourceDown : styles.sourceDegraded),
+                ...(readiness.status === "down"
+                  ? styles.sourceDown
+                  : styles.sourceDegraded),
               }}
               role="status"
             >
               <div>
-                <strong>{readiness.status === "down" ? "行情源不可用" : "行情源部分可用"}</strong>
+                <strong>
+                  {readiness.status === "down"
+                    ? "行情源不可用"
+                    : "行情源部分可用"}
+                </strong>
                 <span style={styles.sourceMessage}>{readiness.message}</span>
               </div>
-              <button type="button" className="qb-btn-secondary" onClick={openDataSourceSettings}>
+              <button
+                type="button"
+                className="qb-btn-secondary"
+                onClick={openDataSourceSettings}
+              >
                 查看数据源
               </button>
             </div>
           ) : null}
           {error ? <div style={styles.err}>{error}</div> : null}
-          {metaStatusLine ? <div style={styles.meta}>{metaStatusLine}</div> : null}
+          {metaStatusLine ? (
+            <div style={styles.meta}>{metaStatusLine}</div>
+          ) : null}
           {activeSource ? (
             <div style={styles.sourceDetail}>
-              <span>实际源：<strong>{activeSource.name}</strong></span>
+              <span>
+                实际源：<strong>{activeSource.name}</strong>
+              </span>
               <span>健康 {activeSource.healthStatus}</span>
-              <span>成功率 {activeSource.successRate == null ? "—" : `${Math.round(activeSource.successRate * 100)}%`}</span>
-              <span>P95 {activeSource.p95LatencyMs == null ? "—" : `${activeSource.p95LatencyMs}ms`}</span>
+              <span>
+                成功率{" "}
+                {activeSource.successRate == null
+                  ? "—"
+                  : `${Math.round(activeSource.successRate * 100)}%`}
+              </span>
+              <span>
+                P95{" "}
+                {activeSource.p95LatencyMs == null
+                  ? "—"
+                  : `${activeSource.p95LatencyMs}ms`}
+              </span>
               <span>熔断 {activeSource.circuitState}</span>
               {activeSource.isFallback ? <span>已降级命中</span> : null}
             </div>
@@ -777,7 +887,13 @@ const styles: Record<string, React.CSSProperties> = {
   },
   title: { margin: "0 0 10px", fontSize: 18, fontWeight: 600 },
   form: { display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-end" },
-  lab: { display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "var(--qb-main-meta, #a1a1aa)" },
+  lab: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 4,
+    fontSize: 12,
+    color: "var(--qb-main-meta, #a1a1aa)",
+  },
   inp: {
     padding: "6px 10px",
     borderRadius: 6,
@@ -797,7 +913,11 @@ const styles: Record<string, React.CSSProperties> = {
   },
   err: { padding: "8px 16px", color: "#fca5a5", fontSize: 13 },
   errCompact: { fontSize: 11, color: "#fca5a5", flex: 1, minWidth: 0 },
-  meta: { padding: "4px 16px 8px", fontSize: 12, color: "var(--qb-main-meta, #71717a)" },
+  meta: {
+    padding: "4px 16px 8px",
+    fontSize: 12,
+    color: "var(--qb-main-meta, #71717a)",
+  },
   sourceBanner: {
     margin: "8px 16px 4px",
     padding: "8px 10px",
@@ -811,11 +931,14 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
   },
   sourceDegraded: {
-    borderColor: "color-mix(in srgb, var(--qb-warning, #f59e0b) 45%, transparent)",
-    background: "color-mix(in srgb, var(--qb-warning, #f59e0b) 9%, transparent)",
+    borderColor:
+      "color-mix(in srgb, var(--qb-warning, #f59e0b) 45%, transparent)",
+    background:
+      "color-mix(in srgb, var(--qb-warning, #f59e0b) 9%, transparent)",
   },
   sourceDown: {
-    borderColor: "color-mix(in srgb, var(--qb-danger, #ef4444) 45%, transparent)",
+    borderColor:
+      "color-mix(in srgb, var(--qb-danger, #ef4444) 45%, transparent)",
     background: "color-mix(in srgb, var(--qb-danger, #ef4444) 9%, transparent)",
   },
   sourceMessage: { marginLeft: 8, color: "var(--qb-text-muted)" },
@@ -827,7 +950,12 @@ const styles: Record<string, React.CSSProperties> = {
     color: "var(--qb-text-muted)",
     fontSize: 10,
   },
-  metaCompact: { fontSize: 11, color: "var(--qb-main-meta, #71717a)", flex: 1, minWidth: 0 },
+  metaCompact: {
+    fontSize: 11,
+    color: "var(--qb-main-meta, #71717a)",
+    flex: 1,
+    minWidth: 0,
+  },
   embeddedBar: {
     flexShrink: 0,
     display: "flex",

@@ -66,7 +66,10 @@ export const ANALYST_DEBATE_SCENARIO: ResearchScenarioSpec = {
       group: "advanced",
     },
   },
-  outputContract: { primary: "analyst_signal_fusion", secondary: ["debate_transcript"] },
+  outputContract: {
+    primary: "analyst_signal_fusion",
+    secondary: ["debate_transcript"],
+  },
   requiredCapabilities: [],
   toolPreset: {
     builtinTools: [
@@ -82,7 +85,12 @@ export const ANALYST_DEBATE_SCENARIO: ResearchScenarioSpec = {
     mcpServers: [],
     defaultParams: {},
   },
-  loopDefaults: { maxIterations: 4, reactLoop: true, requireDebate: true, requireRiskVeto: false },
+  loopDefaults: {
+    maxIterations: 4,
+    reactLoop: true,
+    requireDebate: true,
+    requireRiskVeto: false,
+  },
   status: "enabled",
   sortOrder: 10,
   isBuiltin: true,
@@ -116,7 +124,10 @@ export const STRATEGY_AUTHORING_SCENARIO: ResearchScenarioSpec = {
       group: "basic",
     },
   },
-  outputContract: { primary: "strategy_script", secondary: ["backtest_metrics"] },
+  outputContract: {
+    primary: "strategy_script",
+    secondary: ["backtest_metrics"],
+  },
   requiredCapabilities: [{ kind: "backtest", level: "required" }],
   toolPreset: {
     // SC3：因子配方链 + Strategy API 写码验证链并存
@@ -127,6 +138,7 @@ export const STRATEGY_AUTHORING_SCENARIO: ResearchScenarioSpec = {
       "strategy.compile",
       "strategy.contract_backtest",
       "strategy.paper_deploy",
+      "strategy.sim_deploy",
     ],
     connectors: ["qubit-data", "qubit-backtest", "qubit-risk"],
     mcpServers: [],
@@ -142,7 +154,8 @@ export const STRATEGY_AUTHORING_SCENARIO: ResearchScenarioSpec = {
 export const FACTOR_RESEARCH_SCENARIO: ResearchScenarioSpec = {
   key: "factor_research",
   displayName: "因子研究",
-  description: "围绕目标因子类别生成候选因子、计算因子值、评估 IC/IR、入库为可复用因子。",
+  description:
+    "围绕目标因子类别生成候选因子、计算因子值、评估 IC/IR、入库为可复用因子。",
   inputSchema: {
     universe: {
       type: "enum",
@@ -305,7 +318,10 @@ export const STOCK_SCREENING_SCENARIO: ResearchScenarioSpec = {
       group: "advanced",
     },
   },
-  outputContract: { primary: "candidate_pool", secondary: ["selection_reasoning"] },
+  outputContract: {
+    primary: "candidate_pool",
+    secondary: ["selection_reasoning"],
+  },
   requiredCapabilities: [
     { kind: "factor_compute", level: "required" },
     { kind: "rule_engine", level: "optional" },
@@ -355,7 +371,10 @@ export const RISK_REVIEW_SCENARIO: ResearchScenarioSpec = {
       group: "basic",
     },
   },
-  outputContract: { primary: "rule_definition_batch", secondary: ["risk_audit_report"] },
+  outputContract: {
+    primary: "rule_definition_batch",
+    secondary: ["risk_audit_report"],
+  },
   requiredCapabilities: [{ kind: "rule_engine", level: "required" }],
   toolPreset: {
     // NOTE: 暂无专门的「读取审计日志」builtin；用 load_rules 读当前规则配置代替
@@ -477,7 +496,11 @@ export const DISCOVERY_SCENARIO: ResearchScenarioSpec = {
   },
   outputContract: {
     primary: "discovery_job_summary",
-    secondary: ["factor_definition_batch", "rule_definition_batch", "strategy_composition_batch"],
+    secondary: [
+      "factor_definition_batch",
+      "rule_definition_batch",
+      "strategy_composition_batch",
+    ],
   },
   requiredCapabilities: [
     { kind: "factor_compute", level: "required" },
@@ -557,7 +580,10 @@ export const LIVE_TRADING_SCENARIO: ResearchScenarioSpec = {
       group: "basic",
     },
   },
-  outputContract: { primary: "live_session_summary", secondary: ["risk_event_log"] },
+  outputContract: {
+    primary: "live_session_summary",
+    secondary: ["risk_event_log"],
+  },
   requiredCapabilities: [{ kind: "rule_engine", level: "required" }],
   toolPreset: {
     // 精品纸面路径：建版本 → order_intent（内嵌 pre-trade risk）。
@@ -659,7 +685,10 @@ export const NEWS_EVENT_RADAR_SCENARIO: ResearchScenarioSpec = {
       group: "advanced",
     },
   },
-  outputContract: { primary: "event_radar_report", secondary: ["impact_alerts"] },
+  outputContract: {
+    primary: "event_radar_report",
+    secondary: ["impact_alerts"],
+  },
   requiredCapabilities: [],
   toolPreset: {
     builtinTools: ["fetch_news", "fetch_klines"],

@@ -1,5 +1,5 @@
 import type { CSSProperties, FC } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   approveStrategyRuntimeForLive,
   createPortfolioAllocationPlan,
@@ -31,10 +31,12 @@ import type {
 } from "../../api/types";
 import { useTraderAgentEngine } from "../../hooks/useTraderAgentEngine";
 import { CHART_TIMEFRAMES, chartControlStyle } from "../../lib/chartSpec";
+import type { TraderAgentLogRecord } from "../../store";
 import { useAppStore } from "../../store";
 import { ChartMarketSelect } from "../chart/ChartMarketSelect";
 import { KlinePanel } from "../chart/KlinePanel";
 import { IdeQuickTradePanel } from "../ide/IdeQuickTradePanel";
+import { QuantStrategyWorkbench } from "./QuantStrategyWorkbench";
 
 const styles: Record<string, CSSProperties> = {
   root: {
@@ -101,7 +103,12 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 13,
     ...chartControlStyle,
   },
-  hint: { margin: 0, fontSize: 11, color: "var(--qb-main-meta, #71717a)", lineHeight: 1.45 },
+  hint: {
+    margin: 0,
+    fontSize: 11,
+    color: "var(--qb-main-meta, #71717a)",
+    lineHeight: 1.45,
+  },
   scriptList: {
     display: "flex",
     flexDirection: "column",
@@ -113,7 +120,12 @@ const styles: Record<string, CSSProperties> = {
     padding: 8,
     background: "var(--qb-stream-box-bg, #0c0c0e)",
   },
-  scriptRow: { display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12 },
+  scriptRow: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 8,
+    fontSize: 12,
+  },
   mainRow: {
     flex: 1,
     display: "grid",
@@ -220,8 +232,17 @@ const styles: Record<string, CSSProperties> = {
     padding: "8px 10px",
     background: "var(--qb-main-card-bg, #18181b)",
   },
-  logMeta: { fontSize: 10, color: "var(--qb-main-meta, #71717a)", marginBottom: 4 },
-  logTitle: { fontSize: 12, fontWeight: 600, color: "var(--qb-body-fg, #e4e4e7)", marginBottom: 4 },
+  logMeta: {
+    fontSize: 10,
+    color: "var(--qb-main-meta, #71717a)",
+    marginBottom: 4,
+  },
+  logTitle: {
+    fontSize: 12,
+    fontWeight: 600,
+    color: "var(--qb-body-fg, #e4e4e7)",
+    marginBottom: 4,
+  },
   logBody: {
     fontSize: 12,
     color: "var(--qb-card-desc, #a1a1aa)",
@@ -270,6 +291,96 @@ function chartExchangeToMarket(exchange: string): string {
   return "CN";
 }
 
+type DecisionBatch = {
+  id: string;
+  rows: TraderAgentLogRecord[];
+  operation: string;
+  outcome: string;
+  status: "success" | "warning" | "error" | "neutral";
+};
+
+function isStrategyDecisionRow(row: TraderAgentLogRecord): boolean {
+  return (
+    row.kind === "strategy" ||
+    /(策略运行时|策略信号|contract_signal|strategy[_\s-]?runtime|runtime=)/i.test(
+      `${row.title}\n${row.body}`,
+    )
+  );
+}
+
+function eventSummary(
+  row: TraderAgentLogRecord,
+): Omit<DecisionBatch, "id" | "rows"> {
+  const text = `${row.title}\n${row.body}`.toLowerCase();
+  const failed =
+    /(error|失败|拒绝|block|reject|contract_signal_eval_error)/.test(text);
+  const executed = /(executed|已提交|成交|filled|成功)/.test(text);
+  const hasIntent = /orderintent=|order intent/.test(text);
+
+  if (isStrategyDecisionRow(row)) {
+    if (failed) {
+      return {
+        operation: "用最新已收盘 K 线评估策略表达式",
+        outcome: "表达式评估失败，未创建订单或变更仓位",
+        status: "error",
+      };
+    }
+    if (executed || hasIntent) {
+      return {
+        operation: "将策略目标仓位转换为委托",
+        outcome: "已创建执行意图，等待风控与成交回报",
+        status: "success",
+      };
+    }
+    return {
+      operation: "扫描策略信号与目标仓位",
+      outcome: "本轮未形成需要执行的仓位变更",
+      status: "neutral",
+    };
+  }
+
+  if (row.kind === "ingest") {
+    return {
+      operation: "接收市场、资讯或工作流输入",
+      outcome: "已写入决策上下文，等待后续 Agent 或策略消费",
+      status: "neutral",
+    };
+  }
+  if (failed) {
+    return {
+      operation: row.title,
+      outcome: "操作被阻断或失败，未造成持仓变更",
+      status: "error",
+    };
+  }
+  return {
+    operation: row.title,
+    outcome:
+      executed || hasIntent ? "已提交，等待下游回报" : "已记录到交易工作流",
+    status: executed ? "success" : "warning",
+  };
+}
+
+function decisionBatchesFrom(rows: TraderAgentLogRecord[]): DecisionBatch[] {
+  const batches = new Map<string, DecisionBatch>();
+  for (const row of [...rows].reverse()) {
+    const summary = eventSummary(row);
+    // A runtime can evaluate many instruments or retry in a short interval.  Keep
+    // the actual events, but expose that burst as one operational batch first.
+    const minute = Math.floor(row.ts / 60_000);
+    const key = isStrategyDecisionRow(row)
+      ? `strategy:${minute}:${summary.status}:${summary.operation}`
+      : `event:${row.id}`;
+    const existing = batches.get(key);
+    if (existing) {
+      existing.rows.push(row);
+      continue;
+    }
+    batches.set(key, { id: key, rows: [row], ...summary });
+  }
+  return [...batches.values()];
+}
+
 export const TraderLivePanel: FC = () => {
   const requestChartReload = useAppStore((s) => s.requestChartReload);
   const chartSpec = useAppStore((s) => s.chartSpec);
@@ -280,11 +391,15 @@ export const TraderLivePanel: FC = () => {
   const traderDrivers = useAppStore((s) => s.traderDrivers);
   const clearTraderDrivers = useAppStore((s) => s.clearTraderDrivers);
   const traderAgentMessages = useAppStore((s) => s.traderAgentMessages);
-  const clearTraderAgentMessages = useAppStore((s) => s.clearTraderAgentMessages);
+  const clearTraderAgentMessages = useAppStore(
+    (s) => s.clearTraderAgentMessages,
+  );
   const clearTraderMarkers = useAppStore((s) => s.clearTraderMarkers);
   const traderAgentConfig = useAppStore((s) => s.traderAgentConfig);
   const setTraderAgentConfig = useAppStore((s) => s.setTraderAgentConfig);
-  const toggleTraderStrategyScriptId = useAppStore((s) => s.toggleTraderStrategyScriptId);
+  const toggleTraderStrategyScriptId = useAppStore(
+    (s) => s.toggleTraderStrategyScriptId,
+  );
 
   const [scripts, setScripts] = useState<IndicatorStrategyScriptRecord[]>([]);
   const [runtimes, setRuntimes] = useState<StrategyRuntimeRecord[]>([]);
@@ -294,36 +409,70 @@ export const TraderLivePanel: FC = () => {
   const [projectId, setProjectId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [userCmd, setUserCmd] = useState("");
-  const [lastOrderIntentId, setLastOrderIntentId] = useState<string | null>(null);
-  const [reconcileProvider, setReconcileProvider] = useState<BrokerProvider>("futu");
-  const [reconcileReport, setReconcileReport] = useState<PositionReconciliationReport | null>(null);
-  const [remediationPlan, setRemediationPlan] = useState<PositionRemediationPlan | null>(null);
+  const [lastOrderIntentId, setLastOrderIntentId] = useState<string | null>(
+    null,
+  );
+  const [reconcileProvider, setReconcileProvider] =
+    useState<BrokerProvider>("futu");
+  const [reconcileReport, setReconcileReport] =
+    useState<PositionReconciliationReport | null>(null);
+  const [remediationPlan, setRemediationPlan] =
+    useState<PositionRemediationPlan | null>(null);
   const [remediationRuntimeId, setRemediationRuntimeId] = useState("");
   const [remediationBusy, setRemediationBusy] = useState(false);
   const [reconcileError, setReconcileError] = useState<string | null>(null);
   const [portfolioCapital, setPortfolioCapital] = useState(100_000);
-  const [portfolioPlan, setPortfolioPlan] = useState<PortfolioAllocationPlan | null>(null);
+  const [portfolioPlan, setPortfolioPlan] =
+    useState<PortfolioAllocationPlan | null>(null);
   const [portfolioError, setPortfolioError] = useState<string | null>(null);
-  const [flowTab, setFlowTab] = useState<"decision" | "drivers" | "messages">("decision");
-  const [executionMode, setExecutionMode] = useState<"paper" | "sim">("paper");
-  const [strategyMode, setStrategyMode] = useState<"paper" | "sim" | "live">("paper");
-  const [brokerAccounts, setBrokerAccounts] = useState<BrokerAccountRecord[]>([]);
-  const [strategyBrokerAccountId, setStrategyBrokerAccountId] = useState("");
-  const [surface, setSurface] = useState<"overview" | "quant" | "agent" | "manual" | "risk">(
-    "overview"
+  const [flowTab, setFlowTab] = useState<"decision" | "drivers" | "messages">(
+    "decision",
   );
-  const [executionIntents, setExecutionIntents] = useState<ExecutionIntentSummary[]>([]);
+  const [expandedDecisionBatches, setExpandedDecisionBatches] = useState<
+    Set<string>
+  >(() => new Set());
+  const [executionMode, setExecutionMode] = useState<"paper" | "sim">("paper");
+  const [strategyMode, setStrategyMode] = useState<"paper" | "sim" | "live">(
+    "paper",
+  );
+  const [brokerAccounts, setBrokerAccounts] = useState<BrokerAccountRecord[]>(
+    [],
+  );
+  const [strategyBrokerAccountId, setStrategyBrokerAccountId] = useState("");
+  const [surface, setSurface] = useState<
+    "overview" | "quant" | "agent" | "manual" | "risk"
+  >("overview");
+  const [executionIntents, setExecutionIntents] = useState<
+    ExecutionIntentSummary[]
+  >([]);
   const [intentsError, setIntentsError] = useState<string | null>(null);
   const booted = useRef(false);
 
   const engine = useTraderAgentEngine(projectId, sessionId);
+  const decisionBatches = useMemo(
+    () => decisionBatchesFrom(traderAgentLog),
+    [traderAgentLog],
+  );
+  const decisionSummary = useMemo(
+    () => ({
+      total: traderAgentLog.length,
+      strategyRuns: traderAgentLog.filter(isStrategyDecisionRow).length,
+      failed: traderAgentLog.filter(
+        (row) => eventSummary(row).status === "error",
+      ).length,
+    }),
+    [traderAgentLog],
+  );
 
   const refreshExecutionIntents = useCallback(async () => {
     if (!engine.session?.workflowRunId) return;
     try {
       setIntentsError(null);
       setExecutionIntents(
-        await listExecutionIntents({ workflowRunId: engine.session.workflowRunId, limit: 20 })
+        await listExecutionIntents({
+          workflowRunId: engine.session.workflowRunId,
+          limit: 20,
+        }),
       );
     } catch (error) {
       setIntentsError(error instanceof Error ? error.message : String(error));
@@ -356,11 +505,13 @@ export const TraderLivePanel: FC = () => {
     const actionSummary = remediationPlan.actions
       .map(
         (action) =>
-          `${action.action === "buy" ? "买入" : "卖出"} ${action.symbol} ${action.quantity}`
+          `${action.action === "buy" ? "买入" : "卖出"} ${action.symbol} ${action.quantity}`,
       )
       .join("\n");
     if (
-      !window.confirm(`将重新对账并通过风控/HITL 下发以下修复单：\n${actionSummary}\n\n确认继续？`)
+      !window.confirm(
+        `将重新对账并通过风控/HITL 下发以下修复单：\n${actionSummary}\n\n确认继续？`,
+      )
     )
       return;
     setRemediationBusy(true);
@@ -373,7 +524,9 @@ export const TraderLivePanel: FC = () => {
         strategyRuntimeId: remediationRuntimeId,
       });
       await runPositionReconciliation();
-      setReconcileError(`已提交 ${result.orders.length} 个修复订单；订单仍需通过风控与人工审批。`);
+      setReconcileError(
+        `已提交 ${result.orders.length} 个修复订单；订单仍需通过风控与人工审批。`,
+      );
     } catch (error) {
       setReconcileError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -394,7 +547,7 @@ export const TraderLivePanel: FC = () => {
           perPositionMax: 0.25,
           totalRiskBudget: 0.02,
           maxSectorGross: 0.4,
-        })
+        }),
       );
     } catch (error) {
       setPortfolioPlan(null);
@@ -456,14 +609,18 @@ export const TraderLivePanel: FC = () => {
     });
   };
 
-  const startSelectedStrategyRuntime = async () => {
-    const scriptId = traderAgentConfig.strategyScriptIds[0];
+  const startSelectedStrategyRuntime = async (
+    selectedScriptId?: string,
+    selectedPaperCapital?: number,
+    selectedOrderQty?: number,
+  ) => {
+    const scriptId = selectedScriptId ?? traderAgentConfig.strategyScriptIds[0];
     if (!scriptId) {
       setRuntimeMsg("请先勾选一条策略脚本");
       return;
     }
     const selectedBrokerAccount = brokerAccounts.find(
-      (account) => account.id === strategyBrokerAccountId
+      (account) => account.id === strategyBrokerAccountId,
     );
     if (
       strategyMode === "live" &&
@@ -477,7 +634,7 @@ export const TraderLivePanel: FC = () => {
     if (
       strategyMode === "live" &&
       !window.confirm(
-        "将创建并启动实盘策略运行时。系统会在启动前再次校验回测、Paper 与人工审批闸门。确认继续？"
+        "将创建并启动实盘策略运行时。系统会在启动前再次校验回测、Paper 与人工审批闸门。确认继续？",
       )
     )
       return;
@@ -491,13 +648,19 @@ export const TraderLivePanel: FC = () => {
         symbol: spec.symbol.trim(),
         timeframe: spec.timeframe,
         executionMode: strategyMode,
-        ...(strategyBrokerAccountId ? { brokerAccountId: strategyBrokerAccountId } : {}),
+        ...(strategyBrokerAccountId
+          ? { brokerAccountId: strategyBrokerAccountId }
+          : {}),
         autoStart: true,
-        params: { orderQty: 100, barLimit: 120 },
+        params: {
+          orderQty: selectedOrderQty ?? 100,
+          paperCapital: selectedPaperCapital ?? 100_000,
+          barLimit: 120,
+        },
       });
       setRuntimes((prev) => [row, ...prev.filter((r) => r.id !== row.id)]);
       setRuntimeMsg(
-        `已启动${strategyMode === "paper" ? "纸面" : strategyMode === "sim" ? "券商模拟" : "实盘"}运行时 ${row.id.slice(0, 8)}…`
+        `已启动${strategyMode === "paper" ? "纸面" : strategyMode === "sim" ? "券商模拟" : "实盘"}运行时 ${row.id.slice(0, 8)}…`,
       );
       pushTraderAgentLog({
         kind: "decision",
@@ -529,7 +692,7 @@ export const TraderLivePanel: FC = () => {
     try {
       const result = await evaluatePaperRuntime(id);
       setRuntimeMsg(
-        `Paper Gate ${result.pass ? "通过" : "未通过"}：${result.tradingDays} 日，收益 ${(result.netReturn * 100).toFixed(2)}%，Sharpe ${result.sharpe.toFixed(2)}`
+        `Paper Gate ${result.pass ? "通过" : "未通过"}：${result.tradingDays} 日，收益 ${(result.netReturn * 100).toFixed(2)}%，Sharpe ${result.sharpe.toFixed(2)}`,
       );
     } catch (error) {
       setRuntimeMsg(error instanceof Error ? error.message : String(error));
@@ -542,7 +705,9 @@ export const TraderLivePanel: FC = () => {
     setRuntimeBusy(true);
     try {
       const result = await approveStrategyRuntimeForLive(id);
-      setRuntimeMsg(result.liveEligible ? "已批准进入 live" : "尚未满足 live 条件");
+      setRuntimeMsg(
+        result.liveEligible ? "已批准进入 live" : "尚未满足 live 条件",
+      );
     } catch (error) {
       setRuntimeMsg(error instanceof Error ? error.message : String(error));
     } finally {
@@ -584,21 +749,31 @@ export const TraderLivePanel: FC = () => {
           <div>
             <span>策略运行</span>
             <strong
-              className={runtimes.some((r) => r.status === "running") ? "qb-trade-status--ok" : ""}
+              className={
+                runtimes.some((r) => r.status === "running")
+                  ? "qb-trade-status--ok"
+                  : ""
+              }
             >
               {runtimes.filter((r) => r.status === "running").length} 个运行中
             </strong>
           </div>
           <div>
             <span>Agent 会话</span>
-            <strong className={engine.session ? "qb-trade-status--ok" : "qb-trade-status--warn"}>
+            <strong
+              className={
+                engine.session ? "qb-trade-status--ok" : "qb-trade-status--warn"
+              }
+            >
               {engine.session ? "已连接" : "连接中"}
             </strong>
           </div>
           <div>
             <span>最后同步</span>
             <strong>
-              {engine.lastPollAt ? new Date(engine.lastPollAt).toLocaleTimeString() : "等待数据"}
+              {engine.lastPollAt
+                ? new Date(engine.lastPollAt).toLocaleTimeString()
+                : "等待数据"}
             </strong>
           </div>
         </div>
@@ -607,7 +782,9 @@ export const TraderLivePanel: FC = () => {
           <select
             style={styles.select}
             value={executionMode}
-            onChange={(e) => setExecutionMode(e.target.value as "paper" | "sim")}
+            onChange={(e) =>
+              setExecutionMode(e.target.value as "paper" | "sim")
+            }
           >
             <option value="paper">纸面</option>
             <option value="sim">券商模拟</option>
@@ -634,18 +811,51 @@ export const TraderLivePanel: FC = () => {
           </button>
         ))}
       </nav>
-      {surface === "quant" || surface === "risk" ? (
-        <details open className="qb-a3d-tilt" style={styles.details} data-qb-trader-bar>
+      {surface === "quant" ? (
+        <QuantStrategyWorkbench
+          scripts={scripts}
+          runtimes={runtimes}
+          runtimeBusy={runtimeBusy}
+          runtimeMsg={runtimeMsg}
+          strategyMode={strategyMode}
+          setStrategyMode={setStrategyMode}
+          brokerAccounts={brokerAccounts}
+          brokerAccountId={strategyBrokerAccountId}
+          setBrokerAccountId={setStrategyBrokerAccountId}
+          onStart={(scriptId, paperCapital, orderQty) =>
+            void startSelectedStrategyRuntime(scriptId, paperCapital, orderQty)
+          }
+          onStop={(runtimeId) => void stopRuntimeById(runtimeId)}
+          onEvaluatePaper={(runtimeId) => void evaluatePaperById(runtimeId)}
+          onApproveLive={(runtimeId) => void approveLiveById(runtimeId)}
+        />
+      ) : null}
+      {surface === "risk" ? (
+        <details
+          open
+          className="qb-a3d-tilt"
+          style={styles.details}
+          data-qb-trader-bar
+        >
           <summary style={styles.summary}>交易 Agent 配置</summary>
           <div style={styles.configBody}>
             <p style={styles.hint}>
-              触发方式持久化于 sessionStorage。策略信号由后台 worker 评估并下单；定时/资讯由 Agent
-              轮询 feed 写入左侧流；用户可在下方输入「买入 100」「撤单 &lt;intentId&gt;」等指令。
+              触发方式持久化于 sessionStorage。策略信号由后台 worker
+              评估并下单；定时/资讯由 Agent 轮询 feed
+              写入左侧流；用户可在下方输入「买入 100」「撤单
+              &lt;intentId&gt;」等指令。
             </p>
             {surface === "risk" ? (
               <section style={styles.scriptList} aria-label="近期委托与风控">
-                <div style={{ ...styles.scriptRow, justifyContent: "space-between" }}>
-                  <strong style={{ color: "var(--qb-body-fg, #e4e4e7)" }}>近期委托与风控</strong>
+                <div
+                  style={{
+                    ...styles.scriptRow,
+                    justifyContent: "space-between",
+                  }}
+                >
+                  <strong style={{ color: "var(--qb-body-fg, #e4e4e7)" }}>
+                    近期委托与风控
+                  </strong>
                   <button
                     type="button"
                     className="qb-btn-ghost qb-btn--compact"
@@ -655,19 +865,27 @@ export const TraderLivePanel: FC = () => {
                   </button>
                 </div>
                 {intentsError ? (
-                  <span style={{ ...styles.hint, color: "#ef4444" }}>{intentsError}</span>
+                  <span style={{ ...styles.hint, color: "#ef4444" }}>
+                    {intentsError}
+                  </span>
                 ) : null}
                 {executionIntents.length === 0 && !intentsError ? (
-                  <span style={styles.hint}>暂无委托；这里展示执行引擎中的权威订单生命周期。</span>
+                  <span style={styles.hint}>
+                    暂无委托；这里展示执行引擎中的权威订单生命周期。
+                  </span>
                 ) : null}
                 {executionIntents.map((intent) => (
                   <div
                     key={intent.id}
-                    style={{ ...styles.scriptRow, justifyContent: "space-between" }}
+                    style={{
+                      ...styles.scriptRow,
+                      justifyContent: "space-between",
+                    }}
                   >
                     <span>
                       <strong>
-                        {intent.side === "buy" ? "买入" : "卖出"} {intent.symbol ?? "—"}
+                        {intent.side === "buy" ? "买入" : "卖出"}{" "}
+                        {intent.symbol ?? "—"}
                       </strong>{" "}
                       · {intent.qty} · {intent.orderType}
                     </span>
@@ -698,13 +916,18 @@ export const TraderLivePanel: FC = () => {
                   value={traderAgentConfig.triggerMode}
                   onChange={(e) =>
                     setTraderAgentConfig({
-                      triggerMode: e.target.value as "manual" | "interval" | "strategy_signal",
+                      triggerMode: e.target.value as
+                        "manual" | "interval" | "strategy_signal",
                     })
                   }
                 >
                   <option value="manual">手动（快捷交易 + 用户指令）</option>
-                  <option value="interval">定时轮询（资讯 + 策略日志 + K 线刷新）</option>
-                  <option value="strategy_signal">策略信号（后台运行时自动下单）</option>
+                  <option value="interval">
+                    定时轮询（资讯 + 策略日志 + K 线刷新）
+                  </option>
+                  <option value="strategy_signal">
+                    策略信号（后台运行时自动下单）
+                  </option>
                 </select>
               </label>
               {traderAgentConfig.triggerMode === "interval" ? (
@@ -717,15 +940,25 @@ export const TraderLivePanel: FC = () => {
                     max={3600}
                     value={traderAgentConfig.intervalSec}
                     onChange={(e) =>
-                      setTraderAgentConfig({ intervalSec: Number(e.target.value) || 60 })
+                      setTraderAgentConfig({
+                        intervalSec: Number(e.target.value) || 60,
+                      })
                     }
                   />
                 </label>
               ) : null}
-              <button type="button" className="qb-btn-ghost" onClick={() => requestChartReload()}>
+              <button
+                type="button"
+                className="qb-btn-ghost"
+                onClick={() => requestChartReload()}
+              >
                 刷新 K 线数据
               </button>
-              <button type="button" className="qb-btn-ghost" onClick={ingestChartToAgent}>
+              <button
+                type="button"
+                className="qb-btn-ghost"
+                onClick={ingestChartToAgent}
+              >
                 将当前品种写入对话流
               </button>
             </div>
@@ -735,7 +968,9 @@ export const TraderLivePanel: FC = () => {
                 <select
                   style={styles.select}
                   value={reconcileProvider}
-                  onChange={(event) => setReconcileProvider(event.target.value as BrokerProvider)}
+                  onChange={(event) =>
+                    setReconcileProvider(event.target.value as BrokerProvider)
+                  }
                 >
                   <option value="futu">Futu</option>
                   <option value="ib">IB</option>
@@ -757,11 +992,15 @@ export const TraderLivePanel: FC = () => {
                 <span
                   style={{
                     ...styles.hint,
-                    color: reconcileReport.summary.mismatched > 0 ? "#f59e0b" : "#22c55e",
+                    color:
+                      reconcileReport.summary.mismatched > 0
+                        ? "#f59e0b"
+                        : "#22c55e",
                   }}
                 >
-                  匹配 {reconcileReport.summary.matched}/{reconcileReport.summary.symbols} ·
-                  偏差标的{reconcileReport.summary.mismatched} · 名义偏差{" "}
+                  匹配 {reconcileReport.summary.matched}/
+                  {reconcileReport.summary.symbols} · 偏差标的
+                  {reconcileReport.summary.mismatched} · 名义偏差{" "}
                   {reconcileReport.summary.absoluteNotionalDelta.toFixed(2)}
                 </span>
               ) : null}
@@ -769,7 +1008,9 @@ export const TraderLivePanel: FC = () => {
                 <span
                   style={{
                     ...styles.hint,
-                    color: reconcileError.startsWith("已提交") ? "#22c55e" : "#ef4444",
+                    color: reconcileError.startsWith("已提交")
+                      ? "#22c55e"
+                      : "#ef4444",
                   }}
                 >
                   {reconcileError}
@@ -779,18 +1020,24 @@ export const TraderLivePanel: FC = () => {
             {remediationPlan?.actions.length ? (
               <div style={styles.scriptList}>
                 <strong style={{ fontSize: 12, color: "#f59e0b" }}>
-                  修复提案 · 仅显式确认后提交 · {remediationPlan.actions.length} 笔
+                  修复提案 · 仅显式确认后提交 · {remediationPlan.actions.length}{" "}
+                  笔
                 </strong>
                 {remediationPlan.actions.map((action) => (
                   <div
                     key={action.symbol}
-                    style={{ ...styles.scriptRow, justifyContent: "space-between" }}
+                    style={{
+                      ...styles.scriptRow,
+                      justifyContent: "space-between",
+                    }}
                   >
                     <span>
-                      {action.action === "buy" ? "买入" : "卖出"} {action.symbol} ·{" "}
-                      {action.quantity}
+                      {action.action === "buy" ? "买入" : "卖出"}{" "}
+                      {action.symbol} · {action.quantity}
                     </span>
-                    <span style={styles.hint}>估算名义 {action.estimatedNotional.toFixed(2)}</span>
+                    <span style={styles.hint}>
+                      估算名义 {action.estimatedNotional.toFixed(2)}
+                    </span>
                   </div>
                 ))}
                 <div style={styles.row}>
@@ -799,16 +1046,21 @@ export const TraderLivePanel: FC = () => {
                     <select
                       style={styles.select}
                       value={remediationRuntimeId}
-                      onChange={(event) => setRemediationRuntimeId(event.target.value)}
+                      onChange={(event) =>
+                        setRemediationRuntimeId(event.target.value)
+                      }
                     >
                       <option value="">请选择已审批的 Live Runtime</option>
                       {runtimes
                         .filter(
-                          (runtime) => runtime.executionMode === "live" && runtime.brokerAccountId
+                          (runtime) =>
+                            runtime.executionMode === "live" &&
+                            runtime.brokerAccountId,
                         )
                         .map((runtime) => (
                           <option key={runtime.id} value={runtime.id}>
-                            {runtime.symbol} · {runtime.status} · {runtime.id.slice(0, 8)}
+                            {runtime.symbol} · {runtime.status} ·{" "}
+                            {runtime.id.slice(0, 8)}
                           </option>
                         ))}
                     </select>
@@ -823,10 +1075,12 @@ export const TraderLivePanel: FC = () => {
                   </button>
                 </div>
                 {!runtimes.some(
-                  (runtime) => runtime.executionMode === "live" && runtime.brokerAccountId
+                  (runtime) =>
+                    runtime.executionMode === "live" && runtime.brokerAccountId,
                 ) ? (
                   <span style={{ ...styles.hint, color: "#f59e0b" }}>
-                    暂无绑定券商账户的 Live Runtime；请先完成策略晋级和 Live 配置。
+                    暂无绑定券商账户的 Live Runtime；请先完成策略晋级和 Live
+                    配置。
                   </span>
                 ) : null}
               </div>
@@ -840,7 +1094,9 @@ export const TraderLivePanel: FC = () => {
                   min={1}
                   value={portfolioCapital}
                   onChange={(event) =>
-                    setPortfolioCapital(Math.max(1, Number(event.target.value) || 1))
+                    setPortfolioCapital(
+                      Math.max(1, Number(event.target.value) || 1),
+                    )
                   }
                 />
               </label>
@@ -855,16 +1111,23 @@ export const TraderLivePanel: FC = () => {
               {portfolioPlan ? (
                 <span style={{ ...styles.hint, color: "#22c55e" }}>
                   {portfolioPlan.rows.length} 个目标仓位 · 总暴露{" "}
-                  {(portfolioPlan.exposures.grossExposure * 100).toFixed(1)}% · 净暴露{" "}
-                  {(portfolioPlan.exposures.netExposure * 100).toFixed(1)}% · 止损风险预算
-                  {(portfolioPlan.exposures.estimatedLossAtStopsPct * 100).toFixed(2)}%
+                  {(portfolioPlan.exposures.grossExposure * 100).toFixed(1)}% ·
+                  净暴露{" "}
+                  {(portfolioPlan.exposures.netExposure * 100).toFixed(1)}% ·
+                  止损风险预算
+                  {(
+                    portfolioPlan.exposures.estimatedLossAtStopsPct * 100
+                  ).toFixed(2)}
+                  %
                   {portfolioPlan.risk?.metrics
                     ? ` · VaR95 ${(portfolioPlan.risk.metrics.historicalVar95Pct * 100).toFixed(2)}% · ES95 ${(portfolioPlan.risk.metrics.expectedShortfall95Pct * 100).toFixed(2)}%`
                     : " · 历史风险数据不足"}
                 </span>
               ) : null}
               {portfolioError ? (
-                <span style={{ ...styles.hint, color: "#ef4444" }}>{portfolioError}</span>
+                <span style={{ ...styles.hint, color: "#ef4444" }}>
+                  {portfolioError}
+                </span>
               ) : null}
             </div>
             {portfolioPlan ? (
@@ -872,14 +1135,17 @@ export const TraderLivePanel: FC = () => {
                 {portfolioPlan.rows.map((row) => (
                   <div
                     key={row.symbol}
-                    style={{ ...styles.scriptRow, justifyContent: "space-between" }}
+                    style={{
+                      ...styles.scriptRow,
+                      justifyContent: "space-between",
+                    }}
                   >
                     <strong>
                       {row.symbol} · {row.side.toUpperCase()}
                     </strong>
                     <span style={styles.hint}>
-                      目标 {(row.targetWeight * 100).toFixed(2)}% / {row.targetQty.toFixed(2)} 股 ·
-                      调仓
+                      目标 {(row.targetWeight * 100).toFixed(2)}% /{" "}
+                      {row.targetQty.toFixed(2)} 股 · 调仓
                       {row.rebalanceQty >= 0 ? "+" : ""}
                       {row.rebalanceQty.toFixed(2)} · 风险
                       {(row.riskContributionPct * 100).toFixed(2)}%
@@ -887,96 +1153,51 @@ export const TraderLivePanel: FC = () => {
                   </div>
                 ))}
                 {portfolioPlan.warnings.map((warning) => (
-                  <span key={warning} style={{ ...styles.hint, color: "#f59e0b" }}>
+                  <span
+                    key={warning}
+                    style={{ ...styles.hint, color: "#f59e0b" }}
+                  >
                     ⚠ {warning}
                   </span>
                 ))}
                 {portfolioPlan.risk?.stressTests.slice(0, 2).map((stress) => (
                   <span
                     key={stress.scenario}
-                    style={{ ...styles.hint, color: stress.lossAmount > 0 ? "#f59e0b" : "#22c55e" }}
+                    style={{
+                      ...styles.hint,
+                      color: stress.lossAmount > 0 ? "#f59e0b" : "#22c55e",
+                    }}
                   >
-                    压力 {stress.scenario}：{(stress.portfolioReturnPct * 100).toFixed(2)}% / 损失{" "}
+                    压力 {stress.scenario}：
+                    {(stress.portfolioReturnPct * 100).toFixed(2)}% / 损失{" "}
                     {stress.lossAmount.toFixed(2)}
                   </span>
                 ))}
                 {portfolioPlan.risk?.warnings.map((warning) => (
-                  <span key={`risk-${warning}`} style={{ ...styles.hint, color: "#f59e0b" }}>
+                  <span
+                    key={`risk-${warning}`}
+                    style={{ ...styles.hint, color: "#f59e0b" }}
+                  >
                     ⚠ {warning}
                   </span>
                 ))}
               </div>
             ) : null}
-            {surface === "quant" ? (
-              <section style={styles.scriptList} aria-label="策略发布环境">
-                <strong style={{ fontSize: 12, color: "var(--qb-body-fg, #e4e4e7)" }}>
-                  策略发布环境
-                </strong>
-                <p style={styles.hint}>
-                  手动交易保持纸面/券商模拟；实盘只可通过策略运行时发布，并在启动时重验晋级闸门。
-                </p>
-                <div style={styles.row}>
-                  <label style={styles.lab}>
-                    策略执行环境
-                    <select
-                      style={styles.select}
-                      value={strategyMode}
-                      onChange={(event) => {
-                        const next = event.target.value as "paper" | "sim" | "live";
-                        setStrategyMode(next);
-                        if (
-                          next === "live" &&
-                          !brokerAccounts.some(
-                            (account) =>
-                              account.id === strategyBrokerAccountId &&
-                              account.enabled &&
-                              account.mode === "live"
-                          )
-                        ) {
-                          setStrategyBrokerAccountId("");
-                        }
-                      }}
-                    >
-                      <option value="paper">纸面</option>
-                      <option value="sim">券商模拟</option>
-                      <option value="live">实盘（需晋级审批）</option>
-                    </select>
-                  </label>
-                  <label style={styles.lab}>
-                    券商账户
-                    <select
-                      style={styles.select}
-                      value={strategyBrokerAccountId}
-                      onChange={(event) => setStrategyBrokerAccountId(event.target.value)}
-                    >
-                      <option value="">不绑定账户</option>
-                      {brokerAccounts
-                        .filter(
-                          (account) =>
-                            account.enabled && (strategyMode !== "live" || account.mode === "live")
-                        )
-                        .map((account) => (
-                          <option key={account.id} value={account.id}>
-                            {account.provider} · {account.accountRef} · {account.mode} ·{" "}
-                            {account.healthStatus}
-                          </option>
-                        ))}
-                    </select>
-                  </label>
-                </div>
-                {strategyMode === "live" ? (
-                  <span style={{ ...styles.hint, color: "#f59e0b" }}>
-                    实盘发布将触发回测、Paper 和人工审批校验；不满足任一闸门会被引擎拒绝。
-                  </span>
-                ) : null}
-              </section>
-            ) : null}
             <div>
-              <div style={{ ...styles.lab, marginBottom: 6 }}>运行策略（Python 策略库 · 多选）</div>
-              {scriptsErr ? <p style={{ ...styles.hint, color: "#ef4444" }}>{scriptsErr}</p> : null}
+              <div style={{ ...styles.lab, marginBottom: 6 }}>
+                运行策略（Python 策略库 · 多选）
+              </div>
+              {scriptsErr ? (
+                <p style={{ ...styles.hint, color: "#ef4444" }}>{scriptsErr}</p>
+              ) : null}
               <div style={styles.scriptList}>
                 {scripts.length === 0 ? (
-                  <span style={{ fontSize: 12, color: "var(--qb-main-meta, #71717a)" }}>
+                  <span
+                    style={{
+                      fontSize: 12,
+                      color: "var(--qb-main-meta, #71717a)",
+                    }}
+                  >
                     暂无脚本；请先在 IDE 保存策略或写入会话策略库。
                   </span>
                 ) : (
@@ -984,11 +1205,15 @@ export const TraderLivePanel: FC = () => {
                     <label key={s.id} style={styles.scriptRow}>
                       <input
                         type="checkbox"
-                        checked={traderAgentConfig.strategyScriptIds.includes(s.id)}
+                        checked={traderAgentConfig.strategyScriptIds.includes(
+                          s.id,
+                        )}
                         onChange={() => toggleTraderStrategyScriptId(s.id)}
                       />
                       <span>
-                        <strong style={{ color: "var(--qb-body-fg, #e4e4e7)" }}>{s.name}</strong>
+                        <strong style={{ color: "var(--qb-body-fg, #e4e4e7)" }}>
+                          {s.name}
+                        </strong>
                         <span style={{ color: "var(--qb-main-meta, #52525b)" }}>
                           {" "}
                           · {s.purpose}
@@ -1007,15 +1232,27 @@ export const TraderLivePanel: FC = () => {
                 onClick={() => void startSelectedStrategyRuntime()}
               >
                 启动
-                {strategyMode === "paper" ? "纸面" : strategyMode === "sim" ? "券商模拟" : "实盘"}
+                {strategyMode === "paper"
+                  ? "纸面"
+                  : strategyMode === "sim"
+                    ? "券商模拟"
+                    : "实盘"}
                 策略
               </button>
-              {runtimeMsg ? <span style={styles.hint}>{runtimeMsg}</span> : null}
+              {runtimeMsg ? (
+                <span style={styles.hint}>{runtimeMsg}</span>
+              ) : null}
             </div>
             {runtimes.length > 0 ? (
               <div style={styles.scriptList}>
                 {runtimes.slice(0, 5).map((r) => (
-                  <div key={r.id} style={{ ...styles.scriptRow, justifyContent: "space-between" }}>
+                  <div
+                    key={r.id}
+                    style={{
+                      ...styles.scriptRow,
+                      justifyContent: "space-between",
+                    }}
+                  >
                     <span>
                       {r.symbol} · {r.status} · {r.executionMode}
                     </span>
@@ -1063,7 +1300,10 @@ export const TraderLivePanel: FC = () => {
       {surface === "quant" || surface === "risk" ? null : (
         <div className="qb-trade-surface" data-surface={surface}>
           <div className="qb-trade-main-grid" style={styles.mainRow}>
-            <div className="qb-trader-module qb-a3d-tilt qb-trade-flow" style={styles.flowCol}>
+            <div
+              className="qb-trader-module qb-a3d-tilt qb-trade-flow"
+              style={styles.flowCol}
+            >
               <div style={styles.flowHead} data-qb-trader-bar>
                 交易 Agent 工作台
               </div>
@@ -1111,40 +1351,134 @@ export const TraderLivePanel: FC = () => {
                 >
                   清空当前页
                 </button>
-                <button type="button" className="qb-btn-ghost" onClick={clearTraderMarkers}>
+                <button
+                  type="button"
+                  className="qb-btn-ghost"
+                  onClick={clearTraderMarkers}
+                >
                   清空 K 线标记
                 </button>
               </div>
               <div style={styles.flowScroll} data-qb-trader-scroll>
                 {flowTab === "decision" ? (
                   traderAgentLog.length === 0 ? (
-                    <div style={{ fontSize: 12, color: "var(--qb-main-meta, #71717a)" }}>
+                    <div
+                      style={{
+                        fontSize: 12,
+                        color: "var(--qb-main-meta, #71717a)",
+                      }}
+                    >
                       暂无决策记录。成交、风控结果与用户操作将显示在此。
                     </div>
                   ) : (
-                    [...traderAgentLog].reverse().map((row) => (
-                      <div key={row.id} style={styles.logCard} data-qb-trader-card>
-                        <div style={styles.logMeta}>
-                          {new Date(row.ts).toLocaleString()} · {row.kind}
+                    <>
+                      <div
+                        className="qb-decision-rollup"
+                        aria-label="决策流摘要"
+                      >
+                        <div>
+                          <span>事件</span>
+                          <strong>{decisionSummary.total}</strong>
                         </div>
-                        <div style={styles.logTitle}>{row.title}</div>
-                        <div style={styles.logBody}>{row.body}</div>
+                        <div>
+                          <span>策略评估</span>
+                          <strong>{decisionSummary.strategyRuns}</strong>
+                        </div>
+                        <div
+                          data-status={
+                            decisionSummary.failed > 0 ? "error" : "success"
+                          }
+                        >
+                          <span>需处理</span>
+                          <strong>{decisionSummary.failed}</strong>
+                        </div>
                       </div>
-                    ))
+                      {decisionBatches.map((batch) => {
+                        const newest = batch.rows[0]!;
+                        const isExpanded = expandedDecisionBatches.has(
+                          batch.id,
+                        );
+                        const count = batch.rows.length;
+                        return (
+                          <article
+                            key={batch.id}
+                            className="qb-decision-batch"
+                            data-status={batch.status}
+                          >
+                            <button
+                              type="button"
+                              className="qb-decision-batch__summary"
+                              aria-expanded={isExpanded}
+                              onClick={() => {
+                                setExpandedDecisionBatches((current) => {
+                                  const next = new Set(current);
+                                  if (next.has(batch.id)) next.delete(batch.id);
+                                  else next.add(batch.id);
+                                  return next;
+                                });
+                              }}
+                            >
+                              <i aria-hidden="true" />
+                              <span className="qb-decision-batch__main">
+                                <small>
+                                  {new Date(newest.ts).toLocaleString()} ·{" "}
+                                  {count > 1
+                                    ? `策略批次 × ${count}`
+                                    : newest.kind}
+                                </small>
+                                <strong>{batch.operation}</strong>
+                                <em>收获：{batch.outcome}</em>
+                              </span>
+                              <span className="qb-decision-batch__toggle">
+                                {isExpanded
+                                  ? "收起"
+                                  : count > 1
+                                    ? `查看 ${count} 条`
+                                    : "详情"}
+                              </span>
+                            </button>
+                            {isExpanded ? (
+                              <div className="qb-decision-batch__events">
+                                {batch.rows.map((row) => (
+                                  <div key={row.id}>
+                                    <small>
+                                      {new Date(row.ts).toLocaleTimeString()}
+                                    </small>
+                                    <strong>{row.title}</strong>
+                                    <pre>{row.body}</pre>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
+                          </article>
+                        );
+                      })}
+                    </>
                   )
                 ) : null}
                 {flowTab === "drivers" ? (
                   traderDrivers.length === 0 ? (
-                    <div style={{ fontSize: 12, color: "var(--qb-main-meta, #71717a)" }}>
+                    <div
+                      style={{
+                        fontSize: 12,
+                        color: "var(--qb-main-meta, #71717a)",
+                      }}
+                    >
                       暂无策略驱动。来源包括：策略运行时评估、定时任务、资讯
                       RSS、外部通信、告警与用户指令。
                     </div>
                   ) : (
                     [...traderDrivers].reverse().map((row) => (
-                      <div key={row.id} style={styles.logCard} data-qb-trader-card>
+                      <div
+                        key={row.id}
+                        style={styles.logCard}
+                        data-qb-trader-card
+                      >
                         <div style={styles.logMeta}>
                           {new Date(row.ts).toLocaleString()}
-                          <span style={styles.driverKind}>{row.driverKind}</span>
+                          <span style={styles.driverKind}>
+                            {row.driverKind}
+                          </span>
                         </div>
                         <div style={styles.logTitle}>{row.title}</div>
                         <div style={styles.logBody}>{row.body}</div>
@@ -1154,13 +1488,22 @@ export const TraderLivePanel: FC = () => {
                 ) : null}
                 {flowTab === "messages" ? (
                   traderAgentMessages.length === 0 ? (
-                    <div style={{ fontSize: 12, color: "var(--qb-main-meta, #71717a)" }}>
-                      暂无 A2A 消息。工作流内 Agent 间 TASK_ASSIGN / ORDER_INTENT / RISK_BLOCK
-                      等将显示在此。
+                    <div
+                      style={{
+                        fontSize: 12,
+                        color: "var(--qb-main-meta, #71717a)",
+                      }}
+                    >
+                      暂无 A2A 消息。工作流内 Agent 间 TASK_ASSIGN /
+                      ORDER_INTENT / RISK_BLOCK 等将显示在此。
                     </div>
                   ) : (
                     [...traderAgentMessages].reverse().map((row) => (
-                      <div key={row.id} style={styles.logCard} data-qb-trader-card>
+                      <div
+                        key={row.id}
+                        style={styles.logCard}
+                        data-qb-trader-card
+                      >
                         <div style={styles.logMeta}>
                           {new Date(row.ts).toLocaleString()}
                           <span style={styles.msgType}>{row.messageType}</span>
@@ -1170,7 +1513,12 @@ export const TraderLivePanel: FC = () => {
                         </div>
                         <div style={styles.logBody}>{row.summary}</div>
                         <div
-                          style={{ ...styles.logBody, marginTop: 4, fontSize: 11, opacity: 0.85 }}
+                          style={{
+                            ...styles.logBody,
+                            marginTop: 4,
+                            fontSize: 11,
+                            opacity: 0.85,
+                          }}
                         >
                           {row.body}
                         </div>
@@ -1228,7 +1576,9 @@ export const TraderLivePanel: FC = () => {
                     <select
                       style={styles.field}
                       value={chartSpec.timeframe}
-                      onChange={(e) => setChartSpec({ timeframe: e.target.value })}
+                      onChange={(e) =>
+                        setChartSpec({ timeframe: e.target.value })
+                      }
                     >
                       {CHART_TIMEFRAMES.map((tf) => (
                         <option key={tf} value={tf}>
@@ -1245,7 +1595,14 @@ export const TraderLivePanel: FC = () => {
                     刷新
                   </button>
                 </div>
-                <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+                <div
+                  style={{
+                    flex: 1,
+                    minHeight: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                  }}
+                >
                   <KlinePanel embedded linkTraderMarkers />
                 </div>
               </div>
@@ -1264,7 +1621,8 @@ export const TraderLivePanel: FC = () => {
                       price,
                       executionMode,
                     });
-                    if (data?.orderIntentId) setLastOrderIntentId(data.orderIntentId);
+                    if (data?.orderIntentId)
+                      setLastOrderIntentId(data.orderIntentId);
                     void refreshExecutionIntents();
                   }}
                   onPlaceBracket={async (
@@ -1273,7 +1631,7 @@ export const TraderLivePanel: FC = () => {
                     orderKind,
                     takeProfitPrice,
                     stopLossPrice,
-                    entryLimitPrice
+                    entryLimitPrice,
                   ) => {
                     const data = await engine.placeBracketOrder({
                       side,
@@ -1281,7 +1639,9 @@ export const TraderLivePanel: FC = () => {
                       entryOrderType: orderKind,
                       takeProfitPrice,
                       stopLossPrice,
-                      ...(entryLimitPrice !== undefined ? { entryLimitPrice } : {}),
+                      ...(entryLimitPrice !== undefined
+                        ? { entryLimitPrice }
+                        : {}),
                       executionMode,
                     });
                     setLastOrderIntentId(data.entry.orderIntentId);

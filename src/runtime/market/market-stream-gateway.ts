@@ -104,6 +104,31 @@ function subscriptionKey(input: Required<MarketStreamSubscription>): string {
   ].join("|");
 }
 
+function normalizedSymbol(value: unknown): string {
+  const raw = typeof value === "string" ? value.trim().toUpperCase() : "";
+  if (!raw) return "";
+  // Bridges commonly use `US.NVDA` or `US:NVDA`; the subscription keeps `NVDA`.
+  return raw.split(/[.:/]/).at(-1) ?? raw;
+}
+
+/**
+ * A bridge can multiplex several contracts over one socket.  Never let a quote
+ * for another contract enter the subscription's bar aggregator: it would turn
+ * the last candle into a misleading cross-symbol range.
+ */
+export function bridgePayloadMatchesSubscription(
+  input: Required<MarketStreamSubscription>,
+  payload: unknown,
+): boolean {
+  if (!payload || typeof payload !== "object") return true;
+  const record = payload as Record<string, unknown>;
+  const receivedSymbol = normalizedSymbol(record.symbol ?? record.code ?? record.ticker);
+  if (receivedSymbol && receivedSymbol !== normalizedSymbol(input.symbol)) return false;
+  const receivedExchange =
+    typeof record.exchange === "string" ? record.exchange.trim().toUpperCase() : "";
+  return !(receivedExchange && input.exchange && receivedExchange !== input.exchange);
+}
+
 function socketText(data: unknown): string {
   if (typeof data === "string") return data;
   if (data instanceof ArrayBuffer) return new TextDecoder().decode(data);
@@ -480,6 +505,17 @@ class BridgeStreamSession extends BaseSession {
         this.lastProviderEventAt = providerEventAt;
         if (Number.isFinite(sequence)) this.lastProviderSequence = sequence;
         if (payload.kind) {
+          if (
+            (payload.kind === "quote" || payload.kind === "trade" || payload.kind === "bar") &&
+            !bridgePayloadMatchesSubscription(this.input, payload.data)
+          ) {
+            this.hooks.error(
+              new Error(
+                `${this.provider} bridge ignored a cross-symbol ${payload.kind} payload`,
+              ),
+            );
+            return;
+          }
           this.emit(payload.kind, `${this.provider}_bridge`, payload.data);
           if (this.input.channels.includes("bar") && payload.data && typeof payload.data === "object") {
             const record = payload.data as Record<string, unknown>;

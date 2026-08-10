@@ -25,6 +25,7 @@ export const PRIME_HOST_CONTRACT_TOOLS = [
   "strategy.contract_backtest",
   "strategy.paper_deploy",
   "strategy.paper_run",
+  "strategy.sim_deploy",
   "backtest.run",
   "evaluate_risk",
   "rule.register",

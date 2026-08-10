@@ -32,7 +32,10 @@ import {
 } from "../runtime/prime/bridge-run-context";
 import { projectCoreBridgeToolCall } from "../runtime/prime/project-core-activity";
 import { getCoreMonitorHandle } from "../runtime/prime/project-core-monitor";
-import { dispatchBuiltinTool, isBuiltinTool } from "../runtime/tools/builtin-tools";
+import {
+  dispatchBuiltinTool,
+  isBuiltinTool,
+} from "../runtime/tools/builtin-tools";
 import { getToolContract } from "../runtime/tools/tool-contract-registry";
 import { applyToolContract } from "../runtime/tools/tool-contract";
 import { classifyToolError } from "../runtime/react/nodes/tool-error-classifier";
@@ -63,6 +66,7 @@ const BRIDGED_TOOLS = [
   "strategy.contract_backtest",
   "strategy.paper_deploy",
   "strategy.paper_run",
+  "strategy.sim_deploy",
   "factor.register",
   "factor.list",
   "factor.compute",
@@ -96,7 +100,13 @@ function formatUnknownError(err: unknown): string {
   if (typeof err === "string") return err;
   if (err && typeof err === "object") {
     const o = err as Record<string, unknown>;
-    for (const key of ["message", "error", "summary", "errorMessage", "msg"] as const) {
+    for (const key of [
+      "message",
+      "error",
+      "summary",
+      "errorMessage",
+      "msg",
+    ] as const) {
       const v = o[key];
       if (typeof v === "string" && v.trim()) return v;
     }
@@ -110,11 +120,18 @@ function formatUnknownError(err: unknown): string {
 }
 
 function observationOkFalse(observation: unknown): string | null {
-  if (!observation || typeof observation !== "object" || Array.isArray(observation)) return null;
+  if (
+    !observation ||
+    typeof observation !== "object" ||
+    Array.isArray(observation)
+  )
+    return null;
   const record = observation as Record<string, unknown>;
   if (record.ok === false) {
-    if (typeof record.error === "string" && record.error.trim()) return record.error.trim();
-    if (typeof record.summary === "string" && record.summary.trim()) return record.summary.trim();
+    if (typeof record.error === "string" && record.error.trim())
+      return record.error.trim();
+    if (typeof record.summary === "string" && record.summary.trim())
+      return record.summary.trim();
     return "tool_returned_ok_false";
   }
   return null;
@@ -132,12 +149,18 @@ export function isBridgedLegacyToolName(name: string): boolean {
  * Models often nest real params under `arguments`; top-level wins on conflict.
  * Also normalizes common aliases so handlers that only look at one key still work.
  */
-export function unwrapBridgeToolArgs(args: Record<string, unknown>): Record<string, unknown> {
+export function unwrapBridgeToolArgs(
+  args: Record<string, unknown>,
+): Record<string, unknown> {
   const nested =
-    args.arguments && typeof args.arguments === "object" && !Array.isArray(args.arguments)
+    args.arguments &&
+    typeof args.arguments === "object" &&
+    !Array.isArray(args.arguments)
       ? (args.arguments as Record<string, unknown>)
       : null;
-  const out: Record<string, unknown> = nested ? { ...nested, ...args } : { ...args };
+  const out: Record<string, unknown> = nested
+    ? { ...nested, ...args }
+    : { ...args };
   Reflect.deleteProperty(out, "arguments");
 
   if (out.projectId == null && typeof out.project_id === "string") {
@@ -195,7 +218,7 @@ export function unwrapBridgeToolArgs(args: Record<string, unknown>): Record<stri
  */
 export function normalizeBridgeToolArgs(
   toolName: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
 ): Record<string, unknown> {
   const next: Record<string, unknown> = { ...args };
 
@@ -224,7 +247,9 @@ export function normalizeBridgeToolArgs(
     const days = Number(next.days);
     if (Number.isFinite(days) && days > 0 && next.startDate == null) {
       const end = new Date();
-      const start = new Date(end.getTime() - Math.min(Math.floor(days), 365) * 86_400_000);
+      const start = new Date(
+        end.getTime() - Math.min(Math.floor(days), 365) * 86_400_000,
+      );
       next.startDate = start.toISOString();
       if (next.endDate == null) next.endDate = end.toISOString();
     }
@@ -233,7 +258,9 @@ export function normalizeBridgeToolArgs(
   return next;
 }
 
-async function projectIdForWorkflow(workflowId: string): Promise<string | undefined> {
+async function projectIdForWorkflow(
+  workflowId: string,
+): Promise<string | undefined> {
   if (!workflowId || workflowId === "prime-bridge") return undefined;
   try {
     const db = await getDb();
@@ -251,7 +278,7 @@ async function projectIdForWorkflow(workflowId: string): Promise<string | undefi
 
 function resolveBridgeActivity(
   params: Record<string, unknown>,
-  callId: string
+  callId: string,
 ): {
   workflowId: string;
   runId: string;
@@ -260,7 +287,7 @@ function resolveBridgeActivity(
 } {
   const active = getPrimeBridgeRunContext();
   const fromWorkspace = workflowIdFromCoreWorkspace(
-    typeof params.workspace_id === "string" ? params.workspace_id : null
+    typeof params.workspace_id === "string" ? params.workspace_id : null,
   );
   const workflowId =
     fromWorkspace ||
@@ -270,10 +297,13 @@ function resolveBridgeActivity(
   return {
     workflowId,
     runId:
-      active?.runId || (typeof params.run_id === "string" ? params.run_id : `bridge-${callId}`),
+      active?.runId ||
+      (typeof params.run_id === "string" ? params.run_id : `bridge-${callId}`),
     traceId:
       active?.traceId ||
-      (typeof params.trace_id === "string" ? params.trace_id : `bridge-${callId}`),
+      (typeof params.trace_id === "string"
+        ? params.trace_id
+        : `bridge-${callId}`),
     role: active?.role || "orchestrator",
   };
 }
@@ -281,7 +311,7 @@ function resolveBridgeActivity(
 function bridgeContext(
   callId: string,
   activity: { workflowId: string; runId: string; traceId: string },
-  projectId?: string
+  projectId?: string,
 ): BuiltinToolContext {
   // Prefer the real Core monitor identity. Skills and tool health must be
   // attributed to the calling topology node, not to a synthetic bridge agent.
@@ -375,7 +405,7 @@ async function invokeMcpViaBridge(input: {
   const normalizedArgs = normalizeInvestorAgentArgs(
     target.serverName,
     target.toolName,
-    target.arguments
+    target.arguments,
   );
 
   try {
@@ -413,7 +443,9 @@ async function invokeMcpViaBridge(input: {
       transport: result.transport,
       accepted: result.accepted,
       output: result.output,
-      ...(normalizedArgs !== target.arguments ? { normalizedArguments: normalizedArgs } : {}),
+      ...(normalizedArgs !== target.arguments
+        ? { normalizedArguments: normalizedArgs }
+        : {}),
       ...(semanticFailure ? { semanticFailure } : {}),
     };
     if (activity.workflowId !== "prime-bridge") {
@@ -493,7 +525,7 @@ async function invokeMcpViaBridge(input: {
 export function normalizeInvestorAgentArgs(
   serverName: string,
   toolName: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
 ): Record<string, unknown> {
   if (serverName !== "investor-agent") return args;
   const next: Record<string, unknown> = { ...args };
@@ -510,16 +542,29 @@ export function normalizeInvestorAgentArgs(
     next.symbol = sym;
     next.ticker = sym;
   }
-  if (toolName === "technical_indicator" && typeof next.indicator === "string") {
-    const indicator = next.indicator.trim().toUpperCase().replace(/[ -]+/g, "_");
+  if (
+    toolName === "technical_indicator" &&
+    typeof next.indicator === "string"
+  ) {
+    const indicator = next.indicator
+      .trim()
+      .toUpperCase()
+      .replace(/[ -]+/g, "_");
     next.indicator =
-      indicator === "BOLLINGER" || indicator === "BOLLINGER_BANDS" ? "BBANDS" : indicator;
+      indicator === "BOLLINGER" || indicator === "BOLLINGER_BANDS"
+        ? "BBANDS"
+        : indicator;
   }
   if (
     toolName === "get_stock_info" &&
     (!Array.isArray(next.modules) || next.modules.length === 0)
   ) {
-    next.modules = ["price", "summaryDetail", "defaultKeyStatistics", "financialData"];
+    next.modules = [
+      "price",
+      "summaryDetail",
+      "defaultKeyStatistics",
+      "financialData",
+    ];
   }
   return next;
 }
@@ -533,15 +578,19 @@ primeBridgeRouter.post("/rpc", async (c) => {
         id: body?.id ?? null,
         error: { code: -32600, message: "invalid request" },
       },
-      400
+      400,
     );
   }
 
   try {
     if (body.method === "legacy.tools.list") {
       const mcpTools = await listBridgedMcpTools();
-      const topology = await loadOrchestratorTopologyForWorkflow().catch(() => null);
-      const teamTools = (topology?.toolNames ?? []).filter((n) => n.startsWith("call_team_"));
+      const topology = await loadOrchestratorTopologyForWorkflow().catch(
+        () => null,
+      );
+      const teamTools = (topology?.toolNames ?? []).filter((n) =>
+        n.startsWith("call_team_"),
+      );
       const names = [...new Set<string>([...BRIDGED_TOOLS, ...teamTools])];
       return c.json({
         jsonrpc: "2.0",
@@ -623,11 +672,12 @@ primeBridgeRouter.post("/rpc", async (c) => {
           observation = await dispatchBuiltinTool(
             name,
             bridgeContext(callId, activity, projectId),
-            args
+            args,
           );
         } else {
           const connectorName = resolveConnectorForTool(name);
-          if (!connectorName) throw new Error(`connector route not found: ${name}`);
+          if (!connectorName)
+            throw new Error(`connector route not found: ${name}`);
           await registerBuiltinConnectors();
           const conn = connectorRegistry.get(connectorName);
           if (!conn) {
@@ -682,7 +732,9 @@ primeBridgeRouter.post("/rpc", async (c) => {
                 ]
               : [],
             retryable: false,
-            error_code: failureReason ? `semantic_data_failure:${failureReason}` : null,
+            error_code: failureReason
+              ? `semantic_data_failure:${failureReason}`
+              : null,
           },
         });
       } catch (err) {
@@ -733,7 +785,9 @@ primeBridgeRouter.post("/rpc", async (c) => {
 
 primeBridgeRouter.get("/health", async (c) => {
   const mcpTools = await listBridgedMcpTools().catch(() => []);
-  const topology = await loadOrchestratorTopologyForWorkflow().catch(() => null);
+  const topology = await loadOrchestratorTopologyForWorkflow().catch(
+    () => null,
+  );
   const teamTools = topology?.toolNames ?? [];
   return c.json({
     ok: true,

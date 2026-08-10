@@ -2,15 +2,14 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import {
+  indicatorStrategyScript,
   instrument as instrumentTable,
   recommendationSnapshot,
   strategy as strategyTable,
   strategyVersion as strategyVersionTable,
 } from "../../db/sqlite/schema";
 import type { OrderSide, OrderType, TimeInForce } from "../../types/entities";
-import {
-  recommendationService,
-} from "../effect-validation/recommendation-service";
+import { recommendationService } from "../effect-validation/recommendation-service";
 import { createOrderIntentWithExecution } from "../execution/order-intent-service";
 import { factorService } from "../factor/factor-service";
 import { isLikelyProjectIdFormat } from "./context-params";
@@ -30,7 +29,9 @@ function optionalFiniteNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-async function resolveProjectIdForWorkflow(ctx: BuiltinToolContext): Promise<string> {
+async function resolveProjectIdForWorkflow(
+  ctx: BuiltinToolContext,
+): Promise<string> {
   if (ctx.projectId) return ctx.projectId;
   if (!ctx.workflowId) return "";
   const db = await getDb();
@@ -72,23 +73,27 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
   "strategy.create_version": async (ctx, paramsIn) => {
     const params = unwrapToolArgs(paramsIn);
     // Reject get/list-shaped misuse early with a clear create-only message
-    const action = String(params.action ?? "").trim().toLowerCase();
+    const action = String(params.action ?? "")
+      .trim()
+      .toLowerCase();
     if (action === "get" || action === "list" || action === "read") {
       throw new Error(
         "strategy.create_version: 这是**创建**工具，不支持 action=get/list。" +
-          "请传顶层 name（策略名）新建版本；查询请用内存/已返回的 strategyVersionId。"
+          "请传顶层 name（策略名）新建版本；查询请用内存/已返回的 strategyVersionId。",
       );
     }
     const nestedStrategy =
-      params.strategy && typeof params.strategy === "object" && !Array.isArray(params.strategy)
+      params.strategy &&
+      typeof params.strategy === "object" &&
+      !Array.isArray(params.strategy)
         ? (params.strategy as Record<string, unknown>)
         : null;
     const name = String(
-      params.name ?? params.strategyName ?? nestedStrategy?.name ?? ""
+      params.name ?? params.strategyName ?? nestedStrategy?.name ?? "",
     ).trim();
     if (!name) {
       throw new Error(
-        "strategy.create_version: name (策略名) is required（也接受 strategyName / strategy.name；勿包在 arguments 里）"
+        "strategy.create_version: name (策略名) is required（也接受 strategyName / strategy.name；勿包在 arguments 里）",
       );
     }
     /**
@@ -103,11 +108,12 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
         : "";
     if (!projectId) {
       throw new Error(
-        "strategy.create_version: 缺少 project_id。请在 chat / workflow context 中确保 ctx.projectId 已挂载，或显式传 project_id。"
+        "strategy.create_version: 缺少 project_id。请在 chat / workflow context 中确保 ctx.projectId 已挂载，或显式传 project_id。",
       );
     }
 
-    type StrategyStyle = "low_freq" | "mid_freq" | "high_freq" | "options" | "futures";
+    type StrategyStyle =
+      "low_freq" | "mid_freq" | "high_freq" | "options" | "futures";
     const styleRaw = String(params.style ?? "low_freq").trim() as StrategyStyle;
     const allowedStyles: StrategyStyle[] = [
       "low_freq",
@@ -118,7 +124,7 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
     ];
     if (!allowedStyles.includes(styleRaw)) {
       throw new Error(
-        `strategy.create_version: style 必须是 ${allowedStyles.join("/")} 之一，收到: ${styleRaw}`
+        `strategy.create_version: style 必须是 ${allowedStyles.join("/")} 之一，收到: ${styleRaw}`,
       );
     }
     const description = String(params.description ?? "").trim();
@@ -130,7 +136,12 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
     const existing = await db
       .select()
       .from(strategyTable)
-      .where(and(eq(strategyTable.projectId, projectId), eq(strategyTable.name, name)))
+      .where(
+        and(
+          eq(strategyTable.projectId, projectId),
+          eq(strategyTable.name, name),
+        ),
+      )
       .limit(1);
     let strategyId: string;
     if (existing[0]) {
@@ -142,7 +153,9 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
         projectId,
         name,
         style: styleRaw,
-        description: description || `Created by ${ctx.definition.role} via strategy.create_version`,
+        description:
+          description ||
+          `Created by ${ctx.definition.role} via strategy.create_version`,
       });
     }
 
@@ -156,7 +169,7 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
     /** 同 strategyId 下 versionTag 必须唯一（不限 schema unique，但语义上重复会迷惑下游） */
     if (existingVersions.some((v) => v.versionTag === versionTag)) {
       throw new Error(
-        `strategy.create_version: versionTag "${versionTag}" 已存在于 strategy ${strategyId}; 显式传一个新的 version_tag 或留空让系统自增。`
+        `strategy.create_version: versionTag "${versionTag}" 已存在于 strategy ${strategyId}; 显式传一个新的 version_tag 或留空让系统自增。`,
       );
     }
 
@@ -165,7 +178,9 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
     const paramSchemaJson: Record<string, unknown> = {
       createdBy: ctx.definition.role,
       ...(universe ? { universe } : {}),
-      ...(params.params && typeof params.params === "object" && !Array.isArray(params.params)
+      ...(params.params &&
+      typeof params.params === "object" &&
+      !Array.isArray(params.params)
         ? { params: params.params as Record<string, unknown> }
         : {}),
     };
@@ -226,7 +241,7 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
     }
     if (!strategyVersionId) {
       throw new Error(
-        "order.create_intent: strategy_version_id is required。先调 strategy.create_version 拿到 id。"
+        "order.create_intent: strategy_version_id is required。先调 strategy.create_version 拿到 id。",
       );
     }
     const symbol = String(params.symbol ?? "").trim();
@@ -247,12 +262,14 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
     const side = sideMap[sideRaw];
     if (!side) {
       throw new Error(
-        `order.create_intent: side 必须是 'buy'/'sell'（或 long/short），收到: ${sideRaw}`
+        `order.create_intent: side 必须是 'buy'/'sell'（或 long/short），收到: ${sideRaw}`,
       );
     }
     const qtyRaw = Number(params.qty);
     if (!Number.isFinite(qtyRaw) || qtyRaw <= 0) {
-      throw new Error(`order.create_intent: qty 必须是正数，收到: ${String(params.qty ?? "")}`);
+      throw new Error(
+        `order.create_intent: qty 必须是正数，收到: ${String(params.qty ?? "")}`,
+      );
     }
     const qty = qtyRaw;
     const orderTypeRaw = String(params.order_type ?? "market")
@@ -260,17 +277,21 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
       .toLowerCase();
     if (orderTypeRaw !== "market" && orderTypeRaw !== "limit") {
       throw new Error(
-        `order.create_intent: order_type 必须是 'market' 或 'limit'，收到: ${orderTypeRaw}`
+        `order.create_intent: order_type 必须是 'market' 或 'limit'，收到: ${orderTypeRaw}`,
       );
     }
     const orderType: OrderType = orderTypeRaw as OrderType;
     const priceRaw = params.price;
     const price =
-      priceRaw !== undefined && priceRaw !== null && Number.isFinite(Number(priceRaw))
+      priceRaw !== undefined &&
+      priceRaw !== null &&
+      Number.isFinite(Number(priceRaw))
         ? Number(priceRaw)
         : null;
     if (orderType === "limit" && price === null) {
-      throw new Error("order.create_intent: order_type=limit 时必须传 price (limit 价)");
+      throw new Error(
+        "order.create_intent: order_type=limit 时必须传 price (limit 价)",
+      );
     }
     const tifRaw = String(params.time_in_force ?? "day")
       .trim()
@@ -278,48 +299,54 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
     const tifAllowed: TimeInForce[] = ["day", "gtc", "ioc", "fok"];
     if (!tifAllowed.includes(tifRaw as TimeInForce)) {
       throw new Error(
-        `order.create_intent: time_in_force 必须是 ${tifAllowed.join("/")} 之一，收到: ${tifRaw}`
+        `order.create_intent: time_in_force 必须是 ${tifAllowed.join("/")} 之一，收到: ${tifRaw}`,
       );
     }
     const timeInForce: TimeInForce = tifRaw as TimeInForce;
     const market = String(params.market ?? "US").trim();
-    const { parseDispatchMode } = await import("../execution/live-trading-gate");
-    const { resolveDefaultSimBrokerAccountId } = await import(
-      "../execution/resolve-sim-broker-account"
-    );
+    const { parseDispatchMode } =
+      await import("../execution/live-trading-gate");
+    const { resolveDefaultSimBrokerAccountId } =
+      await import("../execution/resolve-sim-broker-account");
     let dispatchMode;
     try {
       dispatchMode = parseDispatchMode(params.dispatch_mode ?? "paper");
     } catch {
       throw new Error(
-        `order.create_intent: dispatch_mode 必须是 'paper' | 'sim' | 'live'（sim=券商模拟盘如 Futu sandbox），收到: ${String(params.dispatch_mode ?? "")}`
+        `order.create_intent: dispatch_mode 必须是 'paper' | 'sim' | 'live'（sim=券商模拟盘如 Futu sandbox），收到: ${String(params.dispatch_mode ?? "")}`,
       );
     }
     let brokerAccountId =
-      String(params.broker_account_id ?? params.brokerAccountId ?? "").trim() || null;
+      String(params.broker_account_id ?? params.brokerAccountId ?? "").trim() ||
+      null;
     if (dispatchMode === "sim" && !brokerAccountId) {
       brokerAccountId = await resolveDefaultSimBrokerAccountId("futu");
       if (!brokerAccountId) {
         throw new Error(
-          "order.create_intent: dispatch_mode=sim 需要 broker_account_id，或先配置启用的 Futu sandbox 券商账户"
+          "order.create_intent: dispatch_mode=sim 需要 broker_account_id，或先配置启用的 Futu sandbox 券商账户",
         );
       }
     }
-    if ((dispatchMode === "live" || dispatchMode === "sim") && !brokerAccountId) {
+    if (
+      (dispatchMode === "live" || dispatchMode === "sim") &&
+      !brokerAccountId
+    ) {
       throw new Error(
-        `order.create_intent: dispatch_mode=${dispatchMode} 必须传 broker_account_id`
+        `order.create_intent: dispatch_mode=${dispatchMode} 必须传 broker_account_id`,
       );
     }
-    const snapshotId = String(params.snapshot_id ?? params.snapshotId ?? "").trim() || null;
-    const thesisId = String(params.thesis_id ?? params.thesisId ?? "").trim() || null;
+    const snapshotId =
+      String(params.snapshot_id ?? params.snapshotId ?? "").trim() || null;
+    const thesisId =
+      String(params.thesis_id ?? params.thesisId ?? "").trim() || null;
     if (dispatchMode === "live" && !thesisId) {
       throw new Error(
-        "order.create_intent: dispatch_mode=live 必须传 thesisId（先 research.thesis.write；snapshot 可从 thesis 派生）"
+        "order.create_intent: dispatch_mode=live 必须传 thesisId（先 research.thesis.write；snapshot 可从 thesis 派生）",
       );
     }
     if (dispatchMode === "live" && !snapshotId && !thesisId) {
       throw new Error(
-        "order.create_intent: dispatch_mode=live 必须传 snapshotId 或 thesisId"
+        "order.create_intent: dispatch_mode=live 必须传 snapshotId 或 thesisId",
       );
     }
 
@@ -330,7 +357,7 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
     const workflowRunId = ctx.workflowId;
     if (!workflowRunId) {
       throw new Error(
-        "order.create_intent: ctx.workflowId 缺失（无法 FK 到 workflow_run.id）。请确保该工具在 workflow context 内调用。"
+        "order.create_intent: ctx.workflowId 缺失（无法 FK 到 workflow_run.id）。请确保该工具在 workflow context 内调用。",
       );
     }
 
@@ -370,12 +397,16 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
       timeInForce,
       market,
       symbol: sym,
-      timeframe: typeof params.timeframe === "string" ? (params.timeframe as string) : null,
+      timeframe:
+        typeof params.timeframe === "string"
+          ? (params.timeframe as string)
+          : null,
       dispatchMode,
       brokerAccountId,
       snapshotId,
       thesisId,
-      requireDataQualityGate: dispatchMode === "live" || snapshotId != null || thesisId != null,
+      requireDataQualityGate:
+        dispatchMode === "live" || snapshotId != null || thesisId != null,
       ...(ctx.traceId ? { traceId: ctx.traceId } : {}),
     });
 
@@ -406,7 +437,7 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
   "recommendation.record": async (ctx, params) => {
     if (!ctx.workflowId || ctx.workflowId === "prime-bridge") {
       throw new Error(
-        "recommendation.record: 需要绑定真实 workflow（当前无 workflow 上下文）。请在研究工作流内调用，勿在游离 bridge 会话落库。"
+        "recommendation.record: 需要绑定真实 workflow（当前无 workflow 上下文）。请在研究工作流内调用，勿在游离 bridge 会话落库。",
       );
     }
     // Models often nest fields under `arguments`; top-level wins on conflict.
@@ -416,7 +447,9 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
       !Array.isArray(params.arguments)
         ? (params.arguments as Record<string, unknown>)
         : null;
-    const p: Record<string, unknown> = nested ? { ...nested, ...params } : params;
+    const p: Record<string, unknown> = nested
+      ? { ...nested, ...params }
+      : params;
     delete p.arguments;
 
     const symbol = String(p.symbol ?? p.ticker ?? p.code ?? "")
@@ -424,7 +457,7 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
       .replace(/^(US|HK|CN|SH|SZ):/i, "");
     if (!symbol) {
       throw new Error(
-        "recommendation.record: symbol/ticker is required（可放在顶层或 arguments 内；US:TICKER 前缀会自动剥掉）"
+        "recommendation.record: symbol/ticker is required（可放在顶层或 arguments 内；US:TICKER 前缀会自动剥掉）",
       );
     }
     const side =
@@ -440,49 +473,69 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
     let result;
     try {
       result = await recommendationService.record({
-      workflowRunId: ctx.workflowId,
-      symbol,
-      market: typeof p.market === "string" ? p.market : "US",
-      side,
-      horizonDays: Number.isFinite(horizonDays) && horizonDays > 0 ? Math.floor(horizonDays) : 20,
-      confidence,
-      score: scoreRaw !== undefined && Number.isFinite(Number(scoreRaw)) ? Number(scoreRaw) : null,
-      entryLow: optionalFiniteNumber(p.entry_low ?? p.entryLow),
-      entryHigh: optionalFiniteNumber(p.entry_high ?? p.entryHigh),
-      stopLoss: optionalFiniteNumber(p.stop_loss ?? p.stopLoss),
-      takeProfit: optionalFiniteNumber(
-        p.take_profit ?? p.takeProfit ?? p.target_price
-      ),
-      positionSizePct: optionalFiniteNumber(p.position_size_pct ?? p.positionSizePct),
-      riskRewardRatio: optionalFiniteNumber(p.risk_reward_ratio ?? p.riskRewardRatio),
-      rationale: String(p.rationale ?? p.reasoning ?? p.strategy ?? p.action ?? ""),
-      evidence,
-      invalidation:
-        Array.isArray(p.invalidation_conditions) && p.invalidation_conditions.length > 0
-          ? p.invalidation_conditions
-          : [
-              "价格跌破止损价",
-              "关键基本面假设失效（业绩/指引大幅低于预期）",
-              "持有期结束仍未触发目标价",
-            ],
-      watchConditions: Array.isArray(p.watch_conditions) ? p.watch_conditions : [],
-      benchmarkSymbol: typeof p.benchmark_symbol === "string" ? p.benchmark_symbol : null,
-      expiresAt: typeof p.expires_at === "string" ? p.expires_at : null,
-      dataAsof: typeof p.data_asof === "string" ? p.data_asof : null,
-      sourceArtifactKind:
-        typeof p.source_artifact_kind === "string" ? p.source_artifact_kind : null,
-      sourceArtifactId:
-        typeof p.source_artifact_id === "string" ? p.source_artifact_id : null,
-      createdBy: "agent",
-      agentInstanceId: ctx.agentInstanceId || null,
-      ...(typeof p.asof === "string" ? { asof: p.asof } : {}),
-    });
+        workflowRunId: ctx.workflowId,
+        symbol,
+        market: typeof p.market === "string" ? p.market : "US",
+        side,
+        horizonDays:
+          Number.isFinite(horizonDays) && horizonDays > 0
+            ? Math.floor(horizonDays)
+            : 20,
+        confidence,
+        score:
+          scoreRaw !== undefined && Number.isFinite(Number(scoreRaw))
+            ? Number(scoreRaw)
+            : null,
+        entryLow: optionalFiniteNumber(p.entry_low ?? p.entryLow),
+        entryHigh: optionalFiniteNumber(p.entry_high ?? p.entryHigh),
+        stopLoss: optionalFiniteNumber(p.stop_loss ?? p.stopLoss),
+        takeProfit: optionalFiniteNumber(
+          p.take_profit ?? p.takeProfit ?? p.target_price,
+        ),
+        positionSizePct: optionalFiniteNumber(
+          p.position_size_pct ?? p.positionSizePct,
+        ),
+        riskRewardRatio: optionalFiniteNumber(
+          p.risk_reward_ratio ?? p.riskRewardRatio,
+        ),
+        rationale: String(
+          p.rationale ?? p.reasoning ?? p.strategy ?? p.action ?? "",
+        ),
+        evidence,
+        invalidation:
+          Array.isArray(p.invalidation_conditions) &&
+          p.invalidation_conditions.length > 0
+            ? p.invalidation_conditions
+            : [
+                "价格跌破止损价",
+                "关键基本面假设失效（业绩/指引大幅低于预期）",
+                "持有期结束仍未触发目标价",
+              ],
+        watchConditions: Array.isArray(p.watch_conditions)
+          ? p.watch_conditions
+          : [],
+        benchmarkSymbol:
+          typeof p.benchmark_symbol === "string" ? p.benchmark_symbol : null,
+        expiresAt: typeof p.expires_at === "string" ? p.expires_at : null,
+        dataAsof: typeof p.data_asof === "string" ? p.data_asof : null,
+        sourceArtifactKind:
+          typeof p.source_artifact_kind === "string"
+            ? p.source_artifact_kind
+            : null,
+        sourceArtifactId:
+          typeof p.source_artifact_id === "string"
+            ? p.source_artifact_id
+            : null,
+        createdBy: "agent",
+        agentInstanceId: ctx.agentInstanceId || null,
+        ...(typeof p.asof === "string" ? { asof: p.asof } : {}),
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (/FOREIGN KEY/i.test(msg)) {
         throw new Error(
           `recommendation.record: FK 失败（workflow=${ctx.workflowId}, project=${ctx.projectId ?? "?"}, agentInstance=${ctx.agentInstanceId || "null"}）。` +
-            `通常是 workflow 未绑定 / project 缺失 / agent_instance 无效。原始错误: ${msg}`
+            `通常是 workflow 未绑定 / project 缺失 / agent_instance 无效。原始错误: ${msg}`,
         );
       }
       throw err;
@@ -496,13 +549,13 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
         and(
           eq(recommendationSnapshot.id, result.id),
           eq(recommendationSnapshot.workflowRunId, ctx.workflowId),
-          eq(recommendationSnapshot.side, side)
-        )
+          eq(recommendationSnapshot.side, side),
+        ),
       )
       .limit(1);
     if (!verified[0]) {
       throw new Error(
-        `recommendation.record: write-after-read failed (id=${result.id}, workflow=${ctx.workflowId}, side=${side})`
+        `recommendation.record: write-after-read failed (id=${result.id}, workflow=${ctx.workflowId}, side=${side})`,
       );
     }
     return {
@@ -550,7 +603,10 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
      * 旧行为是直接抛错、agent 不一定会 retry —— Agent Readiness Evaluation R-7 实测
      * 4 次 strategy.compose 调用里 2 次因这个原因失败，引入兜底显著提升健康度。
      */
-    if ((kind === "factor_score" || kind === "hybrid") && (!factorIds || factorIds.length === 0)) {
+    if (
+      (kind === "factor_score" || kind === "hybrid") &&
+      (!factorIds || factorIds.length === 0)
+    ) {
       try {
         const db = await getDb();
         const sv = await db
@@ -585,7 +641,7 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
       } catch (e) {
         // 兜底失败不 escalate；把原错误抛出去让 agent 自己处理
         console.warn(
-          `[strategy.compose] 自动拉 top-3 factor 失败：${(e as Error).message}; 退回原始校验`
+          `[strategy.compose] 自动拉 top-3 factor 失败：${(e as Error).message}; 退回原始校验`,
         );
       }
     }
@@ -609,7 +665,9 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
         ? { weightMethod: String(params.weight_method) as WeightMethod }
         : {}),
       ...(factorWeights ? { factorWeights } : {}),
-      ...(params.rebalance_freq ? { rebalanceFreq: String(params.rebalance_freq) } : {}),
+      ...(params.rebalance_freq
+        ? { rebalanceFreq: String(params.rebalance_freq) }
+        : {}),
       ...(params.universe ? { universe: String(params.universe) } : {}),
       ...(extraParams ? { params: extraParams } : {}),
     });
@@ -623,16 +681,19 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
   "strategy.compile": async (ctx, paramsIn) => {
     const params = unwrapToolArgs(paramsIn);
     const code = String(
-      params.code ?? params.strategyCode ?? params.source ?? params.ide_code ?? ""
+      params.code ??
+        params.strategyCode ??
+        params.source ??
+        params.ide_code ??
+        "",
     ).trim();
     if (!code) {
       throw new Error(
-        "strategy.compile: 需要 code / strategyCode（Strategy API Python 源码全文）"
+        "strategy.compile: 需要 code / strategyCode（Strategy API Python 源码全文）",
       );
     }
-    const {
-      compileStrategyContract,
-    } = await import("../strategy/v2/contract-service");
+    const { compileStrategyContract } =
+      await import("../strategy/v2/contract-service");
     const result = await compileStrategyContract(code);
     if (!result.ok) {
       return {
@@ -641,24 +702,25 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
         hint:
           "修复 initialize 声明面：只能 set_universe/subscribe/set_warmup/set_benchmark；" +
           "禁止 get_history/order_*；必须定义 handle_data 或 on_rebalance。" +
-          "set_universe 请传列表，如 context.set_universe([\"US:NVDA\"])，勿传裸字符串。",
+          'set_universe 请传列表，如 context.set_universe(["US:NVDA"])，勿传裸字符串。',
       };
     }
-    const { persistCompiledStrategyScript } = await import(
-      "../strategy/v2/persist-compiled-script"
-    );
+    const { persistCompiledStrategyScript } =
+      await import("../strategy/v2/persist-compiled-script");
     const persist = await persistCompiledStrategyScript({
       code,
       manifest: result.manifest,
       workflowRunId: ctx.workflowId || null,
-      scriptId: String(params.script_id ?? params.scriptId ?? "").trim() || null,
+      scriptId:
+        String(params.script_id ?? params.scriptId ?? "").trim() || null,
       name: String(params.name ?? params.strategy_name ?? "").trim() || null,
     });
     return {
       ok: true,
       manifest: result.manifest,
       codeHash: result.manifest.codeHash,
-      primarySymbol: result.manifest.universe.instruments[0]?.instrumentId ?? null,
+      primarySymbol:
+        result.manifest.universe.instruments[0]?.instrumentId ?? null,
       scriptId: persist.persisted ? persist.scriptId : null,
       persisted: persist.persisted,
       ...(persist.persisted
@@ -678,6 +740,160 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
   },
 
   /**
+   * Deploy a compiled Strategy API V2 script to a broker sandbox runtime.
+   * This is deliberately separate from paper_deploy: paper_deploy replays
+   * historical bars locally, while this creates a durable runtime that reacts
+   * to each newly closed bar and dispatches only to a sandbox/mock account.
+   */
+  "strategy.sim_deploy": async (ctx, paramsIn) => {
+    const params = unwrapToolArgs(paramsIn);
+    let scriptId = String(params.script_id ?? params.scriptId ?? "").trim();
+    if (!scriptId) {
+      const compiled = (await STRATEGY_EXECUTION_HANDLERS["strategy.compile"]!(
+        ctx,
+        params,
+      )) as {
+        ok?: boolean;
+        error?: string;
+        scriptId?: string | null;
+        persistReason?: string;
+      };
+      if (!compiled.ok || !compiled.scriptId) {
+        return {
+          ok: false,
+          stage: "compile_or_persist",
+          error:
+            compiled.error ??
+            `策略脚本未落库（${compiled.persistReason ?? "unknown"}）；请在 workflow/session context 中部署或显式传 script_id。`,
+        };
+      }
+      scriptId = compiled.scriptId;
+    }
+
+    const db = await getDb();
+    const script = (
+      await db
+        .select()
+        .from(indicatorStrategyScript)
+        .where(eq(indicatorStrategyScript.id, scriptId))
+        .limit(1)
+    )[0];
+    if (!script)
+      throw new Error(`strategy.sim_deploy: unknown script_id=${scriptId}`);
+
+    let manifest: Record<string, unknown> | null = null;
+    try {
+      const snapshot = JSON.parse(String(script.chartSnapshotJson ?? "{}")) as {
+        strategyApiV2?: boolean;
+        manifest?: Record<string, unknown>;
+      };
+      if (snapshot.strategyApiV2 && snapshot.manifest)
+        manifest = snapshot.manifest;
+    } catch {
+      // Non-contract indicator scripts are still supported when caller supplies market/symbol.
+    }
+    const firstInstrument = Array.isArray(
+      (
+        manifest as {
+          universe?: { instruments?: unknown[] } | undefined;
+        } | null
+      )?.universe?.instruments,
+    )
+      ? ((
+          manifest as {
+            universe: { instruments: Array<Record<string, unknown>> };
+          }
+        ).universe.instruments[0] ?? {})
+      : {};
+    const instrumentId = String(
+      firstInstrument.instrumentId ?? firstInstrument.symbol ?? "",
+    ).trim();
+    const inferredMarket = String(firstInstrument.market ?? "")
+      .trim()
+      .toUpperCase();
+    const inferredSymbol = instrumentId.includes(":")
+      ? instrumentId.slice(instrumentId.indexOf(":") + 1)
+      : instrumentId;
+    const market = String(params.market ?? inferredMarket ?? "US")
+      .trim()
+      .toUpperCase();
+    const symbol = String(params.symbol ?? inferredSymbol ?? "")
+      .trim()
+      .toUpperCase();
+    if (!symbol) {
+      throw new Error(
+        "strategy.sim_deploy: symbol 缺失；请传 symbol，或使用带 universe 的 Strategy API V2 脚本",
+      );
+    }
+    const rawCapital =
+      optionalFiniteNumber(params.paper_capital ?? params.paperCapital) ??
+      100_000;
+    if (!(rawCapital > 0))
+      throw new Error("strategy.sim_deploy: paper_capital 必须为正数");
+    const userParams =
+      params.params &&
+      typeof params.params === "object" &&
+      !Array.isArray(params.params)
+        ? (params.params as Record<string, unknown>)
+        : {};
+    const requestedMode = String(
+      params.strategy_mode ?? params.strategyMode ?? "",
+    ).trim();
+    const strategyMode = requestedMode || (manifest ? "contract" : "indicator");
+    if (!["contract", "indicator", "script"].includes(strategyMode)) {
+      throw new Error(
+        "strategy.sim_deploy: strategy_mode 必须为 contract/indicator/script",
+      );
+    }
+
+    const autoStartRaw = params.auto_start ?? params.autoStart;
+    const autoStart =
+      autoStartRaw === undefined ||
+      (autoStartRaw !== false &&
+        String(autoStartRaw).trim().toLowerCase() !== "false");
+    const { createStrategyRuntime } =
+      await import("../strategy/strategy-runtime-service");
+    const runtime = await createStrategyRuntime({
+      strategyScriptId: script.id,
+      market,
+      symbol,
+      timeframe: String(
+        params.timeframe ??
+          (manifest as { primaryFrequency?: string } | null)
+            ?.primaryFrequency ??
+          "1d",
+      ).trim(),
+      executionMode: "sim",
+      brokerAccountId:
+        String(
+          params.broker_account_id ?? params.brokerAccountId ?? "",
+        ).trim() || null,
+      params: {
+        ...userParams,
+        strategyMode,
+        paperCapital: rawCapital,
+        ...((params.order_qty ?? params.orderQty)
+          ? { orderQty: Number(params.order_qty ?? params.orderQty) }
+          : {}),
+      },
+      autoStart,
+    });
+    return {
+      ok: true,
+      runtimeId: runtime.id,
+      scriptId: script.id,
+      executionMode: "sim",
+      brokerAccountId: runtime.brokerAccountId,
+      status: runtime.status,
+      market: runtime.market,
+      symbol: runtime.symbol,
+      paperCapital: rawCapital,
+      message:
+        "模拟盘 runtime 已部署。仅在新完成 K 线产生策略信号时走 sandbox/mock 券商；不会触碰实盘账户。",
+    };
+  },
+
+  /**
    * Prime 06：同码回测（compile + SimBroker）。
    * 入参：code；可选 symbol/limit/timeframe/params/initial_capital/commission。
    * 若未传 bars，则按 Manifest universe 主标的拉取 K 线。
@@ -685,7 +901,11 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
   "strategy.contract_backtest": async (_ctx, paramsIn) => {
     const params = unwrapToolArgs(paramsIn);
     const code = String(
-      params.code ?? params.strategyCode ?? params.source ?? params.ide_code ?? ""
+      params.code ??
+        params.strategyCode ??
+        params.source ??
+        params.ide_code ??
+        "",
     ).trim();
     if (!code) {
       throw new Error("strategy.contract_backtest: 需要 code / strategyCode");
@@ -706,20 +926,26 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
       primaryInstrumentId(manifest);
     const klinesSymbol = instrumentIdToKlinesSymbol(instrumentId);
     const timeframe = String(
-      params.timeframe ?? manifest.primaryFrequency ?? "1d"
+      params.timeframe ?? manifest.primaryFrequency ?? "1d",
     ).trim();
     const limit = Math.max(
       30,
-      Math.min(Number(params.limit ?? Math.max(manifest.warmupBars + 80, 180)) || 180, 2000)
+      Math.min(
+        Number(params.limit ?? Math.max(manifest.warmupBars + 80, 180)) || 180,
+        2000,
+      ),
     );
     const userParams =
-      params.params && typeof params.params === "object" && !Array.isArray(params.params)
+      params.params &&
+      typeof params.params === "object" &&
+      !Array.isArray(params.params)
         ? (params.params as Record<string, unknown>)
         : undefined;
 
     let bars: import("../../connectors/data/data.connector").BarData[] = [];
     if (Array.isArray(params.bars) && params.bars.length > 0) {
-      bars = params.bars as import("../../connectors/data/data.connector").BarData[];
+      bars =
+        params.bars as import("../../connectors/data/data.connector").BarData[];
     } else {
       const { queryKlines } = await import("../market/klines-query");
       const q = await queryKlines({
@@ -744,7 +970,9 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
       strategyCode: code,
       bars,
       symbol: instrumentId,
-      initialCapital: optionalFiniteNumber(params.initial_capital ?? params.initialCapital) ?? 100_000,
+      initialCapital:
+        optionalFiniteNumber(params.initial_capital ?? params.initialCapital) ??
+        100_000,
       commission: optionalFiniteNumber(params.commission) ?? 0.001,
       ...(userParams ? { params: userParams } : {}),
     });
@@ -773,7 +1001,11 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
   "strategy.paper_deploy": async (ctx, paramsIn) => {
     const params = unwrapToolArgs(paramsIn);
     const code = String(
-      params.code ?? params.strategyCode ?? params.source ?? params.ide_code ?? ""
+      params.code ??
+        params.strategyCode ??
+        params.source ??
+        params.ide_code ??
+        "",
     ).trim();
     if (!code) {
       throw new Error("strategy.paper_deploy: 需要 code / strategyCode");
@@ -783,7 +1015,8 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
       primaryInstrumentId,
       instrumentIdToKlinesSymbol,
     } = await import("../strategy/v2/contract-service");
-    const { createPaperSession } = await import("../strategy/v2/paper-session-service");
+    const { createPaperSession } =
+      await import("../strategy/v2/paper-session-service");
     const compiled = await compileStrategyContract(code);
     if (!compiled.ok) {
       return { ok: false, stage: "compile", error: compiled.error };
@@ -794,29 +1027,32 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
       String(params.market ?? "").trim() ||
       (instrumentId.includes(":") ? instrumentId.split(":")[0]! : "US");
     const paperCapital =
-      optionalFiniteNumber(params.paper_capital ?? params.paperCapital) ?? 100_000;
+      optionalFiniteNumber(params.paper_capital ?? params.paperCapital) ??
+      100_000;
     let strategyVersionId = String(
-      params.strategy_version_id ?? params.strategyVersionId ?? ""
+      params.strategy_version_id ?? params.strategyVersionId ?? "",
     ).trim();
 
-    if (!strategyVersionId && (ctx.projectId || params.project_id || params.name)) {
-      const created = (await STRATEGY_EXECUTION_HANDLERS["strategy.create_version"]!(
-        ctx,
-        {
-          name:
-            String(params.name ?? params.strategyName ?? "").trim() ||
-            `contract_${manifest.codeHash.slice(0, 8)}`,
-          style: "low_freq",
-          description: `Strategy API V2 paper · codeHash=${manifest.codeHash.slice(0, 12)}`,
-          universe: instrumentId,
-          params: {
-            strategyManifest: manifest,
-            codeHash: manifest.codeHash,
-            paperCapital,
-            source: "strategy.paper_deploy",
-          },
-        }
-      )) as { strategyVersionId?: string };
+    if (
+      !strategyVersionId &&
+      (ctx.projectId || params.project_id || params.name)
+    ) {
+      const created = (await STRATEGY_EXECUTION_HANDLERS[
+        "strategy.create_version"
+      ]!(ctx, {
+        name:
+          String(params.name ?? params.strategyName ?? "").trim() ||
+          `contract_${manifest.codeHash.slice(0, 8)}`,
+        style: "low_freq",
+        description: `Strategy API V2 paper · codeHash=${manifest.codeHash.slice(0, 12)}`,
+        universe: instrumentId,
+        params: {
+          strategyManifest: manifest,
+          codeHash: manifest.codeHash,
+          paperCapital,
+          source: "strategy.paper_deploy",
+        },
+      })) as { strategyVersionId?: string };
       strategyVersionId = String(created.strategyVersionId ?? "").trim();
     }
 
@@ -830,10 +1066,12 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
       primarySymbol: instrumentId,
       market,
       timeframe: String(
-        params.timeframe ?? manifest.primaryFrequency ?? "1d"
+        params.timeframe ?? manifest.primaryFrequency ?? "1d",
       ).trim(),
       params:
-        params.params && typeof params.params === "object" && !Array.isArray(params.params)
+        params.params &&
+        typeof params.params === "object" &&
+        !Array.isArray(params.params)
           ? (params.params as Record<string, unknown>)
           : {},
     });
@@ -858,22 +1096,16 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
    */
   "strategy.paper_run": async (ctx, paramsIn) => {
     const params = unwrapToolArgs(paramsIn);
-    const {
-      getPaperSession,
-      updatePaperSession,
-      tradesToPaperOrderDrafts,
-    } = await import("../strategy/v2/paper-session-service");
-    const {
-      backtestStrategyContract,
-      instrumentIdToKlinesSymbol,
-    } = await import("../strategy/v2/contract-service");
+    const { getPaperSession, updatePaperSession, tradesToPaperOrderDrafts } =
+      await import("../strategy/v2/paper-session-service");
+    const { backtestStrategyContract, instrumentIdToKlinesSymbol } =
+      await import("../strategy/v2/contract-service");
 
     let sessionId = String(params.session_id ?? params.sessionId ?? "").trim();
     if (!sessionId) {
-      const deployed = (await STRATEGY_EXECUTION_HANDLERS["strategy.paper_deploy"]!(
-        ctx,
-        params
-      )) as { ok?: boolean; sessionId?: string; error?: string };
+      const deployed = (await STRATEGY_EXECUTION_HANDLERS[
+        "strategy.paper_deploy"
+      ]!(ctx, params)) as { ok?: boolean; sessionId?: string; error?: string };
       if (!deployed.ok || !deployed.sessionId) {
         return deployed;
       }
@@ -888,13 +1120,16 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
     const limit = Math.max(
       30,
       Math.min(
-        Number(params.limit ?? Math.max(session.manifest.warmupBars + 80, 180)) || 180,
-        2000
-      )
+        Number(
+          params.limit ?? Math.max(session.manifest.warmupBars + 80, 180),
+        ) || 180,
+        2000,
+      ),
     );
     let bars: import("../../connectors/data/data.connector").BarData[] = [];
     if (Array.isArray(params.bars) && params.bars.length > 0) {
-      bars = params.bars as import("../../connectors/data/data.connector").BarData[];
+      bars =
+        params.bars as import("../../connectors/data/data.connector").BarData[];
     } else {
       const { queryKlines } = await import("../market/klines-query");
       const q = await queryKlines({
@@ -929,19 +1164,27 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
       params: session.params,
     });
     if (!result.ok) {
-      updatePaperSession(sessionId, { status: "error", lastError: result.error });
+      updatePaperSession(sessionId, {
+        status: "error",
+        lastError: result.error,
+      });
       return { ok: false, stage: "backtest", sessionId, error: result.error };
     }
 
     const dryRun = Boolean(params.dry_run ?? params.dryRun);
     const drafts = tradesToPaperOrderDrafts(result.trades, {
-      maxOrders: Math.max(1, Math.min(Number(params.max_orders ?? 40) || 40, 100)),
+      maxOrders: Math.max(
+        1,
+        Math.min(Number(params.max_orders ?? 40) || 40, 100),
+      ),
     });
     const submitted: Array<Record<string, unknown>> = [];
     const skipped: Array<Record<string, unknown>> = [];
 
     const strategyVersionId =
-      String(params.strategy_version_id ?? "").trim() || session.strategyVersionId || "";
+      String(params.strategy_version_id ?? "").trim() ||
+      session.strategyVersionId ||
+      "";
     const workflowRunId = ctx.workflowId || session.workflowRunId || "";
 
     if (!dryRun && strategyVersionId && workflowRunId) {
