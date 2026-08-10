@@ -9,7 +9,7 @@
 QUBIT 当前不是“缺少工具”，而是已经拥有较完整的研究和交易骨架，但存在三类结构性缺口：
 
 1. **执行闭环的生产成熟度低于研究闭环。** 研究侧已有 snapshot → thesis → factor/strategy → backtest；交易侧已有 intent → risk → broker sidecar。当前已统一订单查询/改单、余额/保证金、对账和 Sidecar 事件入口，真正的 venue websocket、完整订单状态机和自动降级仍是上线前门禁。
-2. **Catalog、Agent 默认授权和当前 SQLite 状态不完全一致。** Catalog 有 78 个工具，但不少工具没有进入任何内置 Agent 的默认工具面；SQLite 中也残留旧 MCP transport 和已经隔离的 enabled 配置。
+2. **Catalog、Agent 默认授权和当前 SQLite 状态不完全一致。** Catalog 有较多工具，但不少工具没有进入任何内置 Agent 的默认工具面；SQLite 中也残留旧 MCP transport 和已经隔离的 enabled 配置。
 3. **插件形态已经具备雏形，但还不是完整的 Codex Plugin Runtime。** 当前能导入 Codex/Claude Plugin 的 Skills 和 `.mcp.json`，能安装 MCP、Skill、官方 Connector Pack；OpenAI App Connector 会被明确跳过，第三方原生 Connector 还缺少稳定 ABI、签名、权限声明和生命周期管理。
 
 建议的能力优先级：
@@ -89,7 +89,7 @@ Agent 声明工具
 
 所有专业 Agent 在非严格场景下都会附加 `web.search` 和 `web.fetch`。持有行情工具的 Agent 还会自动附加 `market.resolve_symbol`、`market.data_sources`、`market.readiness`、`market.snapshot.get`。
 
-## 4. 当前 78 个全局工具
+## 4. 当前全局工具目录
 
 ### 4.1 行情数据（12）
 
@@ -156,7 +156,18 @@ Agent 声明工具
 | `cancel_order` | 撤销 broker order | 未默认分配；应只给 execution agent/人工控制面 |
 | `get_fills` | 查询 broker fills | 未默认分配；应给 monitor/对账 agent |
 
-当前没有独立的 `execution_trader` seed Agent。实盘编组由 O + RES + RISK 组成，但 RES 默认工具中没有 `order.create_intent`，实际订单主责仍落在 O。建议重建最小权限 Execution Agent，而不是继续扩大 O 的实盘权限。
+当前没有默认可直接下单的 `execution_trader` seed Agent。实盘编组由 O + RES + RISK 组成，订单仍经过 intent → risk → HITL；系统新增了独立只读 Execution Monitor，避免为了“看账户”而扩大 O 或研究 Agent 的交易权限。
+
+### 4.3.1 执行可观测性（新增，默认只读）
+
+| 工具 | 作用 | 默认 Agent |
+| --- | --- | --- |
+| `execution.account.snapshot` | 读取 Connector capability、持仓、以及可用时的余额/保证金 | Execution Monitor |
+| `execution.order.get` | 读取订单状态及成交；超时后查询，不盲目重下 | Execution Monitor |
+| `execution.reconcile.positions` | 生成只读账本/券商持仓对账和修复 proposal | Execution Monitor |
+| `execution.kill_switch.status` | 检查五级熔断状态 | Execution Monitor |
+
+新增 `def-execution-monitor`（role=`execution`）是 reactor，订阅 `ALERT`、`RISK_BLOCK`、`ORDER_INTENT`。它没有 submit/cancel/modify 工具，也不在默认实盘编组中自动下单；这是刻意的最小权限设计。
 
 ### 4.4 风控（5）
 
@@ -187,8 +198,8 @@ Agent 声明工具
 | `write_memory` | 写入项目/Agent 记忆 | 未默认分配；建议限制为系统 hook 或专用 memory agent |
 | `workspace.context.snapshot` | 读取 workspace 上下文快照 | 未默认分配；系统级 |
 | `workspace.memory.search` | 搜索 workspace memory | 未默认分配；`memory.recall` 已是主入口 |
-| `skill.search` | 按 goal/关键词检索 Skill | 所有 12 个内置 definition |
-| `skill.use_record` | 记录 Skill success/fail/partial 和分数 | 所有 12 个内置 definition |
+| `skill.search` | 按 goal/关键词检索 Skill | 所有 active 内置 definition |
+| `skill.use_record` | 记录 Skill success/fail/partial 和分数 | 所有 active 内置 definition |
 | `skill.create` | 将非平凡流程沉淀为新 Skill | O |
 | `skill.patch` | 修补 Skill 并 bump version | O |
 | `skill.archive` | 软归档 Skill | O |
@@ -197,6 +208,7 @@ Agent 声明工具
 | `skill.import_market` | 将 Skill 市场安装镜像到 agent_skill | 未默认分配；安装服务调用 |
 | `edit_agent_pack` | 修改 Agent soul/user/memory/prompt 文件 | 未默认分配；高权限管理能力 |
 | `update_plan` | 更新可见执行计划 | O |
+| `tool.catalog.search` | 按需搜索全局 Tool Catalog；标记当前 Agent 是否已经配置 | O、Execution Monitor |
 
 ### 4.7 审计与执行沙箱（5）
 
@@ -610,3 +622,25 @@ interface ExchangeAdapter {
 6. 本文的能力矩阵。
 
 任何“已安装”只能表示配置已写入；只有 health probe 和最小 recipe 成功，才能标记为“可用”。任何“Agent 声明了 Skill”也不表示实际使用；必须以 `skill_recall_log`、`agent_skill_run` 和最终产物为准。
+
+## 13. 用户配置与外部 Agent 产品对标
+
+### 13.1 默认授权不是硬编码上限
+
+每个 Agent 的 `toolsJson`、`mcpServersJson`、`skillsJson`、subscriptions、模型和 sandbox policy 都可在配置页/API 覆盖。更新会写入 `user_overrides_json` sentinel，因此后续 seed 同步不会抹掉用户自己的 Tool/MCP/Skill 绑定；用户可选择“恢复内置默认”清掉 sentinel。
+
+`tool.catalog.search` 是按需发现入口：它只说明某个能力存在、是否已经绑定在当前 Agent，**不会**让模型绕过 capability gate 调用未授权工具。高副作用的交易 Tool 仍应由用户配置 + sandbox + risk/HITL 三重授权。
+
+### 13.2 Codex、Claude Code、Hermes 带来的可借鉴能力
+
+| 能力 | 外部基线 | QUBIT 当前状态 | 建议 |
+| --- | --- | --- | --- |
+| 按需 Tool Discovery / deferred loading | Claude 的 Tool Search 可按需加载工具；Codex 以 Plugin 组合 Skills、MCP 和 UI | 已新增 `tool.catalog.search`，但还没有 token 级 deferred schema loading | P1：将 tool schema/hash 也做按需加载，并把搜索结果接入配置页一键授权提案 |
+| 只读执行监控 | 通用 coding agent 往往只提供 shell/MCP，缺交易边界 | 已新增 Execution Monitor 与四个只读执行工具 | P0：加入 provider open-orders、事件序号/断点、账户级 dashboard |
+| Skills 的渐进披露和可共享目录 | Hermes 将 `~/.hermes/skills` 作为 source of truth，按需加载，支持 tap/Hub | 已切换到 `~/.qubit-agent/skills`，Core 实际注入会写拓扑 | P1：为全局 Skills 加签名、allowlist、版本 pin、团队 registry 和 install review |
+| Computer use / browser automation | Codex 有 computer-use QA 路径；Hermes 提供后台桌面控制 | QUBIT 无产品级 browser/computer Tool | P1：独立 Browser/Computer Sidecar，默认无权限，录屏/截图审计、域名 allowlist、禁止交易网站下单 |
+| Hook / lifecycle policy | Claude Code 可用 hooks/权限规则；Claude API 支持严格 schema、caller 限制、defer loading | QUBIT 有 tool health、risk/HITL、workflow hooks，但缺通用可安装 lifecycle policy | P1：Plugin manifest 增加 before/after/failure hook、签名、超时、重试、compensation 和审批策略 |
+| 长任务/多 Agent 事件回调 | Codex durable goal；Claude Managed Agents 提供 thread/session webhook；Hermes 有 cron/delegate | QUBIT 有 workflow、scheduler、A2A 与 event log | P1：统一公开 webhook/outbox，带 event id 去重、签名和重试，接 Slack/企业微信/告警系统 |
+| 自我改进 Skill loop | Hermes 可从经验创建/修订 Skill | QUBIT 保留 DB 兼容的 create/patch/evolve，但 global FS Skill 还不应让 Agent 自改 | P1：Agent 只产生 patch proposal；用户/CI 审批后写入 `~/.qubit-agent/skills`，并必须通过 smoke/benchmark |
+
+外部事实依据：Codex Plugin 可打包 Skills、MCP 和可选 UI，[OpenAI 开发者文档](https://developers.openai.com/)；Claude 支持 MCP、权限 allow/disallow 和结构化 CLI 输出，[Claude Code CLI reference](https://docs.anthropic.com/en/docs/claude-code/cli-usage)，其 API Tool Reference 支持 strict schema、deferred loading 与 caller 限制，[Anthropic Tool Reference](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-reference)；Hermes 的 Skills 使用全局目录、渐进披露和可安装来源，[Hermes Skills System](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/skills.md)。

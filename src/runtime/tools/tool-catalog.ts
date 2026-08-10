@@ -73,6 +73,12 @@ export function isRetiredGlobalToolName(name: string): boolean {
 
 const TOOL_META: Record<string, ToolMetaEntry> = {
   // 编排
+  "tool.catalog.search": {
+    description:
+      "按名称、描述或类别搜索全局 Tool Catalog，并标明当前 Agent 是否已配置该工具。" +
+      "它只做发现，不改变授权；用户可在 Agent 配置中绑定搜索结果。params: query?, category?, limit?。",
+    category: "orchestration",
+  },
   update_plan: {
     description:
       "更新对用户可见的分步计划/TODO（params: steps=[{id?,title,status?,note?}], successCriteria?:string[], constraints?:string[]；status∈pending|in_progress|done|skipped）。Goal 开工前先写可验证的完成标准和 3-5 步计划，每完成一步就更新状态；skipped 必须写原因。",
@@ -205,6 +211,30 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
       "向 forecast book 幂等追加链接：recommendationId、riskDecisionIds、orderIntentIds、fillIds、holdingPeriodResult。" +
       "不改动下单/风控状态机，仅做评测归因旁路。",
     category: "research",
+  },
+  "execution.account.snapshot": {
+    description:
+      "只读读取指定 provider/account 的能力矩阵、持仓，以及可用时的余额/保证金；不会触发订单操作。" +
+      "params: provider, accountRef?。适合执行监控和风险盘点。",
+    category: "trading",
+  },
+  "execution.order.get": {
+    description:
+      "只读读取单个 broker order 的当前状态及成交明细。params: provider, brokerOrderId, accountRef?；" +
+      "超时后先查订单，禁止基于未知状态盲目重下。",
+    category: "trading",
+  },
+  "execution.reconcile.positions": {
+    description:
+      "只读执行内部账本与券商持仓对账并生成 remediation proposal；不执行修复单。" +
+      "params: projectId?, provider, accountRef?。",
+    category: "risk",
+  },
+  "execution.kill_switch.status": {
+    description:
+      "只读检查 global/provider/account/project/strategy 多级交易熔断开关。" +
+      "params 可选 provider/accountRef/projectId/strategyId；返回 clear 与 engaged scopes。",
+    category: "risk",
   },
   "portfolio.construct": {
     description:

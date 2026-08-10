@@ -194,6 +194,22 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
     }
   });
 
+  test("执行监控 Agent 只拥有只读账户、订单、对账和熔断工具", () => {
+    const monitor = BY_ID.get("def-execution-monitor");
+    expect(monitor).toBeDefined();
+    expect(monitor?.role).toBe("execution");
+    expect(monitor?.executionKind).toBe("reactor");
+    expect(monitor?.tools).toEqual([
+      "execution.account.snapshot",
+      "execution.order.get",
+      "execution.reconcile.positions",
+      "execution.kill_switch.status",
+      "tool.catalog.search",
+      "skill.search",
+      "skill.use_record",
+    ]);
+  });
+
   test("基本面挂 investor-agent，news 不挂行情 MCP", () => {
     expect(BY_ID.get("def-analyst-fundamental")?.mcpServers).toContain("investor-agent");
     expect(BY_ID.get("def-news-event")?.mcpServers).not.toContain("investor-agent");

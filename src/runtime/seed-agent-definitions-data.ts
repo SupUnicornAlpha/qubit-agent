@@ -119,6 +119,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "memory.recall",
       "memory.consolidate_longterm",
       "memory.refresh_workspace",
+      "tool.catalog.search",
       "skill.search",
       "skill.use_record",
       "skill.create",
@@ -130,6 +131,29 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     ],
     subscriptions: ["TASK_ASSIGN", "TASK_RESULT", "ALERT", "RISK_BLOCK"],
     maxIterations: 12,
+  }),
+  def({
+    id: "def-execution-monitor",
+    role: "execution",
+    name: "执行监控",
+    /** 1.0.0：严格只读的 broker 账户、订单、对账与 kill-switch 观察面。 */
+    version: "1.0.0",
+    executionKind: "reactor",
+    systemPrompt:
+      "你是执行监控 Agent。只读取券商账户、订单、成交、持仓、对账和熔断状态；" +
+      "绝不创建、取消、修改订单，也不绕过风险签名或人工确认。发现对账差异、账户停机或能力缺口时，" +
+      "输出可审计的结构化告警、影响范围和人工处理建议。",
+    tools: [
+      "execution.account.snapshot",
+      "execution.order.get",
+      "execution.reconcile.positions",
+      "execution.kill_switch.status",
+      "tool.catalog.search",
+      "skill.search",
+      "skill.use_record",
+    ],
+    subscriptions: ["ALERT", "RISK_BLOCK", "ORDER_INTENT", "TASK_ASSIGN"],
+    maxIterations: 4,
   }),
   def({
     id: "def-market-data",

@@ -22,6 +22,39 @@ import type { BuiltinToolHandler } from "./types";
 
 /** Handlers that coordinate workflow state or a team of agents. */
 export const ORCHESTRATION_HANDLERS: Record<string, BuiltinToolHandler> = {
+  "tool.catalog.search": async (ctx, params) => {
+    const query = String(params.query ?? params.q ?? "").trim().toLowerCase();
+    const category = String(params.category ?? "").trim().toLowerCase();
+    const requestedLimit = Number(params.limit ?? 8);
+    const limit = Math.max(1, Math.min(Number.isFinite(requestedLimit) ? requestedLimit : 8, 20));
+    // Dynamic import avoids a builtin-tools <-> catalog initialization cycle.
+    const { buildToolCatalog } = await import("./tool-catalog");
+    const configured = new Set(ctx.definition.tools);
+    const matches = buildToolCatalog()
+      .filter((tool) => {
+        if (category && tool.category !== category) return false;
+        if (!query) return true;
+        return `${tool.name} ${tool.description} ${tool.category ?? ""}`.toLowerCase().includes(query);
+      })
+      .slice(0, limit)
+      .map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        kind: tool.kind,
+        category: tool.category,
+        lifecycle: tool.lifecycle ?? "stable",
+        configuredForThisAgent: configured.has(tool.name),
+      }));
+    return {
+      query,
+      count: matches.length,
+      // Discovery is deliberately not an authorization bypass. Users can add a
+      // result through Agent configuration, which persists as a user override.
+      hint: "未授权工具请由用户在 Agent 配置中绑定；不得仅因 catalog.search 返回就调用。",
+      tools: matches,
+    };
+  },
+
   update_plan: async (ctx, params) => {
     if (ctx.definition.role !== "orchestrator") {
       throw new Error("update_plan: only the workflow orchestrator may update the shared plan");

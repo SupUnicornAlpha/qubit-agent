@@ -14,6 +14,7 @@ import {
 import { ORCHESTRATION_HANDLERS } from "./orchestration-handlers";
 export { resolveDelegatedParentTaskId } from "../orchestration/team-dispatch-adapter";
 import { EXECUTION_HANDLERS } from "./execution-handlers";
+import { EXECUTION_OBSERVABILITY_HANDLERS } from "./execution-observability-handlers";
 import { FACTOR_RESEARCH_HANDLERS } from "./factor-research-handlers";
 import { MARKET_ANALYSIS_HANDLERS } from "./market-analysis-handlers";
 import { MEMORY_HANDLERS } from "./memory-handlers";
@@ -36,6 +37,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
   ...PRIME_MEMORY_HANDLERS,
   ...SKILL_HANDLERS,
   ...EXECUTION_HANDLERS,
+  ...EXECUTION_OBSERVABILITY_HANDLERS,
   ...REPORTING_HANDLERS,
   ...FACTOR_RESEARCH_HANDLERS,
   ...STRATEGY_EXECUTION_HANDLERS,
