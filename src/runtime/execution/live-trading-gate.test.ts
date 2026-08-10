@@ -49,4 +49,24 @@ describe("assertBrokerDispatchAllowed", () => {
       else process.env.QUBIT_SIM_TRADING_ENABLED = prev;
     }
   });
+
+  test("provider and account kill switches block sandbox and live dispatch", () => {
+    const prevProvider = process.env.QUBIT_KILL_SWITCH_PROVIDERS;
+    const prevAccount = process.env.QUBIT_KILL_SWITCH_ACCOUNTS;
+    process.env.QUBIT_KILL_SWITCH_PROVIDERS = "ccxt";
+    process.env.QUBIT_KILL_SWITCH_ACCOUNTS = "ib:DU123";
+    try {
+      expect(() =>
+        assertBrokerDispatchAllowed("sim", "sandbox", { provider: "ccxt", accountRef: "anything" })
+      ).toThrow(/kill_switch_engaged:provider:ccxt/);
+      expect(() =>
+        assertBrokerDispatchAllowed("live", "live", { provider: "ib", accountRef: "DU123" })
+      ).toThrow(/kill_switch_engaged:account:ib:DU123/);
+    } finally {
+      if (prevProvider === undefined) delete process.env.QUBIT_KILL_SWITCH_PROVIDERS;
+      else process.env.QUBIT_KILL_SWITCH_PROVIDERS = prevProvider;
+      if (prevAccount === undefined) delete process.env.QUBIT_KILL_SWITCH_ACCOUNTS;
+      else process.env.QUBIT_KILL_SWITCH_ACCOUNTS = prevAccount;
+    }
+  });
 });

@@ -142,3 +142,68 @@ def get_positions(paper: bool, cfg: dict[str, Any]) -> dict[str, Any]:
         if float(qty or 0) > 0:
             positions.append({"symbol": sym, "qty": float(qty), "avgPrice": 0.0, "market": "CRYPTO"})
     return {"positions": positions}
+
+
+def modify_order(
+    broker_order_id: str,
+    limit_price: float | None,
+    quantity: float | None,
+    paper: bool,
+    cfg: dict[str, Any],
+) -> dict[str, Any]:
+    if paper:
+        return {
+            "brokerOrderId": broker_order_id,
+            "status": "submitted",
+            "actualPrice": float(limit_price or 0),
+            "actualQuantity": float(quantity or 0),
+            "executionTimeMs": 0,
+        }
+    ex = _exchange(cfg)
+    if not ex.has.get("editOrder"):
+        raise RuntimeError(f"broker_capability_unavailable:ccxt:{ex.id}:editOrder")
+    # CCXT needs symbol/type/side on some venues; derive them from the canonical order first.
+    current = ex.fetch_order(broker_order_id)
+    order = ex.edit_order(
+        broker_order_id,
+        current.get("symbol"),
+        current.get("type"),
+        current.get("side"),
+        quantity if quantity is not None else current.get("amount"),
+        limit_price if limit_price is not None else current.get("price"),
+    )
+    return {
+        "brokerOrderId": str(order.get("id") or broker_order_id),
+        "status": "filled" if str(order.get("status")) in ("closed", "filled") else "submitted",
+        "actualPrice": float(order.get("average") or order.get("price") or limit_price or 0),
+        "actualQuantity": float(order.get("filled") or order.get("amount") or quantity or 0),
+        "executionTimeMs": 0,
+        "raw": order,
+    }
+
+
+def get_balances(paper: bool, cfg: dict[str, Any]) -> dict[str, Any]:
+    if paper:
+        return {"balances": []}
+    balance = _exchange(cfg).fetch_balance()
+    free = balance.get("free") or {}
+    total = balance.get("total") or {}
+    return {
+        "balances": [
+            {"currency": str(asset), "cash": float(total.get(asset) or 0), "available": float(amount or 0)}
+            for asset, amount in free.items()
+            if float(total.get(asset) or 0) != 0 or float(amount or 0) != 0
+        ]
+    }
+
+
+def get_margin(paper: bool, cfg: dict[str, Any]) -> dict[str, Any]:
+    if paper:
+        return {}
+    balance = _exchange(cfg).fetch_balance()
+    info = balance.get("info") if isinstance(balance.get("info"), dict) else {}
+    return {
+        "buyingPower": float(info.get("availableBalance") or info.get("available_margin") or 0),
+        "initialMargin": float(info.get("initialMargin") or 0),
+        "maintenanceMargin": float(info.get("maintenanceMargin") or 0),
+    }

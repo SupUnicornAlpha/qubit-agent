@@ -12,6 +12,7 @@ import {
   strategyPositionSnapshot,
   strategyVersion,
 } from "../../db/sqlite/schema";
+import { engagedKillSwitches } from "./kill-switch";
 
 export type PreTradeOutcome = "allow" | "block" | "review";
 
@@ -168,7 +169,8 @@ export async function evaluatePreTradeForIntent(
   let needsReview = false;
   const aggregateNotes: string[] = [];
 
-  const killEnv = process.env.QUBIT_KILL_SWITCH === "1";
+  const killSwitches = engagedKillSwitches({ projectId, strategyId: strat.id });
+  const killEnv = killSwitches.length > 0;
 
   for (const rule of rules) {
     const parsed = parseRuleExpr(rule.ruleExpr);
@@ -198,7 +200,7 @@ export async function evaluatePreTradeForIntent(
 
     if (parsed.kind === "kill_switch") {
       violated = killEnv;
-      message = violated ? "kill_switch_engaged" : "kill_switch_ok";
+      message = violated ? `kill_switch_engaged:${killSwitches.join(",")}` : "kill_switch_ok";
     } else if (parsed.kind === "max_notional") {
       thresholdValue =
         typeof parsed.max === "number" && Number.isFinite(parsed.max) ? parsed.max : undefined;

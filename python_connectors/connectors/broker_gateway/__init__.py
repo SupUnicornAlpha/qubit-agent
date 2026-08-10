@@ -93,6 +93,14 @@ class BrokerGatewayConnector(BaseConnector):
             return self._get_fills(payload)
         if operation == "get_positions":
             return self._get_positions(payload)
+        if operation == "modify_order":
+            return self._modify_order(payload)
+        if operation == "get_balances":
+            return self._get_balances(payload)
+        if operation == "get_margin":
+            return self._get_margin(payload)
+        if operation == "capabilities":
+            return self._capabilities()
         raise ValueError(f"unknown operation: {operation}")
 
     def _resolve_paper(self, payload: dict[str, Any]) -> bool:
@@ -198,6 +206,51 @@ class BrokerGatewayConnector(BaseConnector):
         if self._provider == "eastmoney_emt":
             return eastmoney_emt_adapter.get_positions(paper, cfg)
         raise ValueError(f"unsupported provider {self._provider}")
+
+    def _modify_order(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """No cancel-replace fallback: it is unsafe without an explicit new intent."""
+        broker_order_id = str(payload.get("brokerOrderId") or payload.get("broker_order_id") or "")
+        if not broker_order_id:
+            raise ValueError("brokerOrderId is required")
+        fn = getattr(self._adapter(), "modify_order", None)
+        if not callable(fn):
+            raise RuntimeError(f"broker_capability_unavailable:{self._provider}:modify_order")
+        return fn(broker_order_id, payload.get("limitPrice"), payload.get("quantity"), self._resolve_paper(payload), self._cfg(payload))
+
+    def _get_balances(self, payload: dict[str, Any]) -> dict[str, Any]:
+        fn = getattr(self._adapter(), "get_balances", None)
+        if not callable(fn):
+            raise RuntimeError(f"broker_capability_unavailable:{self._provider}:balances")
+        return fn(self._resolve_paper(payload), self._cfg(payload))
+
+    def _get_margin(self, payload: dict[str, Any]) -> dict[str, Any]:
+        fn = getattr(self._adapter(), "get_margin", None)
+        if not callable(fn):
+            raise RuntimeError(f"broker_capability_unavailable:{self._provider}:margin")
+        return fn(self._resolve_paper(payload), self._cfg(payload))
+
+    def _adapter(self) -> Any:
+        return {
+            "futu": futu_adapter,
+            "ib": ib_adapter,
+            "ccxt": ccxt_adapter,
+            "alpaca": alpaca_adapter,
+            "supermind": supermind_adapter,
+            "eastmoney_emt": eastmoney_emt_adapter,
+        }.get(self._provider)
+
+    def _capabilities(self) -> dict[str, Any]:
+        adapter = self._adapter()
+        return {
+            "getOrder": True,
+            "modifyOrder": callable(getattr(adapter, "modify_order", None)),
+            "balances": callable(getattr(adapter, "get_balances", None)),
+            "margin": callable(getattr(adapter, "get_margin", None)),
+            # Async callbacks are delivered to QUBIT's broker event ingress by
+            # a provider-specific Sidecar, not through this synchronous bridge.
+            "eventStream": False,
+            "reconciliation": True,
+        }
 
 
 def get_connector() -> BaseConnector:

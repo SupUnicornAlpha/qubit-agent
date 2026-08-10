@@ -27,9 +27,11 @@ export function isSimTradingEnabled(): boolean {
 
 export function assertBrokerDispatchAllowed(
   dispatchMode: DispatchMode,
-  accountMode: BrokerAccountMode
+  accountMode: BrokerAccountMode,
+  scope?: { provider?: BrokerProvider; accountRef?: string; projectId?: string; strategyId?: string }
 ): void {
   if (dispatchMode === "paper") return;
+  assertKillSwitchClear(scope);
   if (dispatchMode === "sim") {
     if (!isSimTradingEnabled()) throw new Error("sim_trading_disabled");
     if (accountMode === "live") {
@@ -62,3 +64,5 @@ export function parseDispatchMode(raw: unknown, fallback: DispatchMode = "paper"
   }
   throw new Error(`invalid_dispatch_mode:${String(raw)}`);
 }
+import type { BrokerProvider } from "../../types/broker";
+import { assertKillSwitchClear } from "./kill-switch";

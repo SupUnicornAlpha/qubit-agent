@@ -57,6 +57,37 @@ export interface BrokerOrderResult {
   raw?: Record<string, unknown>;
 }
 
+/** A patch is deliberately limited to fields that venues can edit in-place. */
+export interface BrokerModifyOrderInput {
+  brokerOrderId: string;
+  limitPrice?: number;
+  quantity?: number;
+}
+
+export interface BrokerBalance {
+  currency: string;
+  cash: number;
+  available?: number;
+  equity?: number;
+}
+
+export interface BrokerMarginSummary {
+  currency?: string;
+  buyingPower?: number;
+  initialMargin?: number;
+  maintenanceMargin?: number;
+  availableMargin?: number;
+}
+
+export interface BrokerCapabilities {
+  getOrder: boolean;
+  modifyOrder: boolean;
+  balances: boolean;
+  margin: boolean;
+  eventStream: boolean;
+  reconciliation: boolean;
+}
+
 export interface BrokerFill {
   brokerOrderId: string;
   fillQty: number;
@@ -96,8 +127,13 @@ export interface BrokerConnector {
   submitOrder(input: BrokerSubmitOrderInput): Promise<BrokerOrderResult>;
   cancelOrder(brokerOrderId: string): Promise<void>;
   getOrder(brokerOrderId: string): Promise<BrokerOrderResult>;
+  /** Optional only while legacy mock connectors are being migrated. */
+  modifyOrder?(input: BrokerModifyOrderInput): Promise<BrokerOrderResult>;
   getFills(brokerOrderId: string): Promise<BrokerFill[]>;
   getPositions(): Promise<BrokerPosition[]>;
+  getBalances?(): Promise<BrokerBalance[]>;
+  getMargin?(): Promise<BrokerMarginSummary>;
+  getCapabilities?(): Promise<BrokerCapabilities>;
   healthCheck(): Promise<BrokerHealthResult>;
 }
 
@@ -533,6 +569,25 @@ class HttpBrokerConnector implements BrokerConnector {
     };
   }
 
+  async modifyOrder(input: BrokerModifyOrderInput): Promise<BrokerOrderResult> {
+    if (input.limitPrice === undefined && input.quantity === undefined) {
+      throw new Error("broker_modify_requires_limitPrice_or_quantity");
+    }
+    const payload = await this.requestJson("POST", "/orders/modify", {
+      ...input,
+      ...httpBodyBase(this.runtime),
+    });
+    return {
+      provider: this.provider,
+      brokerOrderId: String(payload.brokerOrderId ?? input.brokerOrderId),
+      status: (payload.status as BrokerOrderStatus | undefined) ?? "submitted",
+      actualPrice: Number(payload.actualPrice ?? input.limitPrice ?? 0),
+      actualQuantity: Number(payload.actualQuantity ?? input.quantity ?? 0),
+      executionTimeMs: Number(payload.executionTimeMs ?? 0),
+      raw: payload,
+    };
+  }
+
   async getFills(brokerOrderId: string): Promise<BrokerFill[]> {
     const qs = new URLSearchParams({
       provider: this.provider,
@@ -569,9 +624,63 @@ class HttpBrokerConnector implements BrokerConnector {
         symbol: String(row.symbol ?? ""),
         qty: Number(row.qty ?? 0),
         avgPrice: Number(row.avgPrice ?? 0),
-        market: row.market != null ? String(row.market) : undefined,
+        ...(row.market != null ? { market: String(row.market) } : {}),
       };
     });
+  }
+
+  async getBalances(): Promise<BrokerBalance[]> {
+    const qs = new URLSearchParams({
+      provider: this.provider,
+      accountRef: this.accountRef,
+      paper: String(paperFromMode(this.runtime.mode, this.runtime.paper)),
+    });
+    const payload = await this.requestJson("GET", `/account/balances?${qs.toString()}`);
+    if (!Array.isArray(payload.balances)) return [];
+    return payload.balances.map((row) => {
+      const balance = row as Record<string, unknown>;
+      return {
+        currency: String(balance.currency ?? "USD"),
+        cash: Number(balance.cash ?? 0),
+        ...(balance.available == null ? {} : { available: Number(balance.available) }),
+        ...(balance.equity == null ? {} : { equity: Number(balance.equity) }),
+      };
+    });
+  }
+
+  async getMargin(): Promise<BrokerMarginSummary> {
+    const qs = new URLSearchParams({
+      provider: this.provider,
+      accountRef: this.accountRef,
+      paper: String(paperFromMode(this.runtime.mode, this.runtime.paper)),
+    });
+    const payload = await this.requestJson("GET", `/account/margin?${qs.toString()}`);
+    return {
+      ...(payload.currency == null ? {} : { currency: String(payload.currency) }),
+      ...(payload.buyingPower == null ? {} : { buyingPower: Number(payload.buyingPower) }),
+      ...(payload.initialMargin == null ? {} : { initialMargin: Number(payload.initialMargin) }),
+      ...(payload.maintenanceMargin == null
+        ? {}
+        : { maintenanceMargin: Number(payload.maintenanceMargin) }),
+      ...(payload.availableMargin == null ? {} : { availableMargin: Number(payload.availableMargin) }),
+    };
+  }
+
+  async getCapabilities(): Promise<BrokerCapabilities> {
+    const qs = new URLSearchParams({
+      provider: this.provider,
+      accountRef: this.accountRef,
+      paper: String(paperFromMode(this.runtime.mode, this.runtime.paper)),
+    });
+    const payload = await this.requestJson("GET", `/capabilities?${qs.toString()}`);
+    return {
+      getOrder: payload.getOrder === true,
+      modifyOrder: payload.modifyOrder === true,
+      balances: payload.balances === true,
+      margin: payload.margin === true,
+      eventStream: payload.eventStream === true,
+      reconciliation: payload.reconciliation === true,
+    };
   }
 
   async healthCheck(): Promise<BrokerHealthResult> {

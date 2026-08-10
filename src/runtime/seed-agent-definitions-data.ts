@@ -135,13 +135,17 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     id: "def-market-data",
     role: "market_data",
     name: "行情数据",
-    /** 2.6.0：取证五件套 + 不可变 snapshot.get（Prime D2）。 */
-    version: "2.6.0",
+    /** 2.7.0：行情取证 + 微观结构（ticks/order book/trades/chip）唯一归行情 Agent。 */
+    version: "2.7.0",
     systemPrompt: PROMPT_MARKET_DATA,
     tools: [
       ...MARKET_GOVERNANCE_TOOLS,
       "fetch_klines",
       "fetch_quote",
+      "fetch_ticks",
+      "fetch_order_book",
+      "fetch_trades",
+      "fetch_chip_distribution",
       "skill.search",
       "skill.use_record",
     ],

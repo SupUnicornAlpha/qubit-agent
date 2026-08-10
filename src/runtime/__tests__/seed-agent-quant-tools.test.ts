@@ -41,10 +41,11 @@ function expectTools(defId: string, requiredTools: string[]) {
 }
 
 describe("Seed Agent 定义 — 精品工具面契约", () => {
-  test("每个专家 Agent 默认授权工具 ≤10", () => {
+  test("每个专家 Agent 默认授权工具 ≤10；行情 Agent 可有 12 个取证工具", () => {
     for (const id of SPECIALIST_IDS) {
       const def = BY_ID.get(id)!;
-      expect(def.tools.length, `${id} has ${def.tools.length} tools`).toBeLessThanOrEqual(10);
+      const limit = id === "def-market-data" ? 12 : 10;
+      expect(def.tools.length, `${id} has ${def.tools.length} tools`).toBeLessThanOrEqual(limit);
     }
   });
 
@@ -177,6 +178,22 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
     expect(BY_ID.get("def-market-data")!.version.startsWith("2.")).toBe(true);
   });
 
+  test("微观结构数据仅授权给行情 Agent", () => {
+    expectTools("def-market-data", [
+      "fetch_ticks",
+      "fetch_order_book",
+      "fetch_trades",
+      "fetch_chip_distribution",
+    ]);
+    for (const id of SPECIALIST_IDS.filter((id) => id !== "def-market-data")) {
+      const tools = BY_ID.get(id)!.tools;
+      expect(tools).not.toContain("fetch_ticks");
+      expect(tools).not.toContain("fetch_order_book");
+      expect(tools).not.toContain("fetch_trades");
+      expect(tools).not.toContain("fetch_chip_distribution");
+    }
+  });
+
   test("基本面挂 investor-agent，news 不挂行情 MCP", () => {
     expect(BY_ID.get("def-analyst-fundamental")?.mcpServers).toContain("investor-agent");
     expect(BY_ID.get("def-news-event")?.mcpServers).not.toContain("investor-agent");
@@ -295,14 +312,10 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
     }
   });
 
-  test("低可用 / stub / 跨域工具不在默认授权面", () => {
+  test("跨域工具不在默认授权面；微观结构由行情 Agent 独占", () => {
     const forbiddenByRole: Record<string, string[]> = {
       "def-market-data": [
-        "fetch_order_book",
-        "fetch_trades",
-        "fetch_chip_distribution",
         "fetch_bars",
-        "fetch_ticks",
         "write_snapshot",
         "call_mcp",
       ],

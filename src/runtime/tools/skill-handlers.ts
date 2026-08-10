@@ -1,4 +1,5 @@
 import type { AgentSkillOutcome } from "../../types/entities";
+import { searchFilesystemSkills } from "../skills/filesystem-skill-store";
 import { skillService } from "../skills/skill-service";
 import type { BuiltinToolHandler } from "./types";
 
@@ -70,20 +71,56 @@ export const SKILL_HANDLERS: Record<string, BuiltinToolHandler> = {
 
   "skill.search": async (ctx, params) => {
     const projectId = String(params.projectId ?? params.project_id ?? ctx.projectId ?? "");
-    if (!projectId) throw new Error("skill.search: projectId is required");
     const query = typeof params.query === "string" ? params.query : "";
-    const hits = await skillService.searchWithMeta({
-      projectId,
-      query,
-      definitionId: ctx.definition.id,
-      topK: Number(params.topK ?? 5),
-    });
-    if (ctx.workflowId && ctx.workflowId !== "prime-bridge" && hits.length > 0) {
+    const topK = Number(params.topK ?? 5);
+    // Global files are the normal Skill source. DB Skills remain a project-local
+    // compatibility path for already-created/evolved records, not a prerequisite.
+    const [filesystemHits, databaseHits] = await Promise.all([
+      searchFilesystemSkills({
+        query,
+        topK,
+        declaredSkillRefs: ctx.definition.skills,
+      }),
+      projectId
+        ? skillService.searchWithMeta({ projectId, query, definitionId: ctx.definition.id, topK })
+        : Promise.resolve([]),
+    ]);
+    const seenNames = new Set(filesystemHits.map((hit) => hit.skill.name.trim().toLowerCase()));
+    const databaseOnly = databaseHits.filter(
+      (hit) => !seenNames.has(hit.skill.name.trim().toLowerCase())
+    );
+    const hits = [
+      ...filesystemHits.map((hit) => ({
+        id: hit.skill.id,
+        name: hit.skill.name,
+        description: hit.skill.description,
+        bodyMd: hit.skill.bodyMd,
+        category: hit.skill.category,
+        version: hit.skill.version,
+        score: hit.score,
+        source: hit.skill.source,
+        sourcePath: hit.skill.sourcePath,
+      })),
+      ...databaseOnly.map((hit) => ({
+        id: hit.skill.id,
+        name: hit.skill.name,
+        description: hit.skill.description,
+        bodyMd: hit.skill.bodyMd,
+        category: hit.skill.category,
+        version: hit.skill.version,
+        score: hit.score,
+        source: "database" as const,
+      })),
+    ]
+      .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
+      .slice(0, Math.max(1, Math.min(topK || 5, 20)))
+      .map((hit, index) => ({ ...hit, rank: index + 1 }));
+    if (ctx.workflowId && ctx.workflowId !== "prime-bridge" && databaseOnly.length > 0) {
       const recallLogger = await import("../monitor/skill-recall-logger");
       await recallLogger.recordSkillRecall({
         workflowRunId: ctx.workflowId,
         definitionId: ctx.definition.id,
-        hits: hits.map((hit) => ({
+        hits: databaseOnly.map((hit) => ({
           skillId: hit.skill.id,
           rank: hit.rank,
           score: hit.score,
@@ -102,7 +139,7 @@ export const SKILL_HANDLERS: Record<string, BuiltinToolHandler> = {
           .then(({ isBenchmarkWorkflow }) => (workflowId ? isBenchmarkWorkflow(workflowId) : false))
           .catch(() => false));
       await Promise.all(
-        hits.map((hit) =>
+        databaseOnly.map((hit) =>
           skillService.recordUsage({
             skillId: hit.skill.id,
             projectId,
@@ -121,16 +158,8 @@ export const SKILL_HANDLERS: Record<string, BuiltinToolHandler> = {
       query,
       count: hits.length,
       recordUsage,
-      skills: hits.map((hit) => ({
-        id: hit.skill.id,
-        name: hit.skill.name,
-        description: hit.skill.description,
-        bodyMd: hit.skill.bodyMd,
-        category: hit.skill.category,
-        version: hit.skill.version,
-        score: hit.score,
-        rank: hit.rank,
-      })),
+      sources: { filesystem: filesystemHits.length, database: databaseOnly.length },
+      skills: hits,
     };
   },
 

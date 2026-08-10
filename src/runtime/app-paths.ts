@@ -111,6 +111,18 @@ export function defaultDataDir(): string {
   return process.env["QUBIT_DATA_DIR"]?.trim() || join(homedir(), ".quant-agent");
 }
 
+/**
+ * User-managed, cross-project Agent Skills.
+ *
+ * Keep reusable instructions beside the application rather than requiring an
+ * `agent_skill` database row.  This follows the familiar Agent Skills layout:
+ * `~/.qubit-agent/skills/<skill-name>/SKILL.md`.  A deployment can redirect
+ * the root with QUBIT_SKILLS_DIR (useful for a shared read-only volume).
+ */
+export function getGlobalSkillsDir(): string {
+  return process.env["QUBIT_SKILLS_DIR"]?.trim() || join(homedir(), ".qubit-agent", "skills");
+}
+
 export function isPackagedRuntime(): boolean {
   return Boolean(process.env["QUBIT_APP_ROOT"]?.trim());
 }

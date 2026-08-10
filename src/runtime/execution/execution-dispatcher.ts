@@ -152,7 +152,14 @@ async function dispatchLiveBroker(
 
   assertBrokerDispatchAllowed(
     input.dispatchMode,
-    accountRow.mode as "mock" | "sandbox" | "live"
+    accountRow.mode as "mock" | "sandbox" | "live",
+    {
+      provider: accountRow.provider as BrokerProvider,
+      accountRef: accountRow.accountRef,
+      // A dispatch knows the concrete strategy version; project-level stops are
+      // enforced during pre-trade evaluation where the parent strategy is loaded.
+      strategyId: intent.strategyVersionId,
+    }
   );
 
   const provider = accountRow.provider as BrokerProvider;

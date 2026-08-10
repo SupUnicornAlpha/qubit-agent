@@ -2023,7 +2023,7 @@ export const brokerOrderEvent = sqliteTable("broker_order_event", {
     enum: ["futu", "ib", "ccxt", "alpaca", "supermind", "eastmoney_emt"],
   }).notNull(),
   eventType: text("event_type", {
-    enum: ["submit", "ack", "partial_fill", "fill", "cancel", "reject", "health_check"],
+    enum: ["submit", "ack", "partial_fill", "fill", "cancel", "modify", "reject", "health_check"],
   }).notNull(),
   brokerOrderId: text("broker_order_id"),
   status: text("status").notNull().default("ok"),

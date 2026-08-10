@@ -122,4 +122,34 @@ export async function listBrokerEvents(provider?: BrokerProvider, limit = 100) {
   return rows.filter((row) => row.provider === provider);
 }
 
+/**
+ * Ingest a normalized callback from a Connector/Sidecar.  The callback is
+ * append-only; it never changes an order or synthesizes a fill. This keeps
+ * IB's async `openOrder/orderStatus` and other venue streams auditable.
+ */
+export async function recordBrokerSidecarEvent(input: {
+  provider: BrokerProvider;
+  eventType: "submit" | "ack" | "partial_fill" | "fill" | "cancel" | "modify" | "reject";
+  brokerOrderId?: string;
+  intentOrderId?: string;
+  status?: string;
+  eventAt?: string;
+  detail?: Record<string, unknown>;
+}) {
+  const db = await getDb();
+  const id = randomUUID();
+  await db.insert(brokerOrderEvent).values({
+    id,
+    provider: input.provider,
+    eventType: input.eventType,
+    brokerOrderId: input.brokerOrderId ?? null,
+    intentOrderId: input.intentOrderId ?? null,
+    executionReportId: null,
+    status: input.status ?? "ok",
+    detailJson: input.detail ?? {},
+    eventAt: input.eventAt ?? new Date().toISOString(),
+  });
+  return { id };
+}
+
 export { brokerHealthCheck, resolveBrokerAccount };

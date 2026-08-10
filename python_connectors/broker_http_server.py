@@ -9,6 +9,10 @@ Endpoints:
   POST /orders/cancel
   GET  /fills?brokerOrderId=...
   GET  /positions
+  GET  /account/balances
+  GET  /account/margin
+  GET  /capabilities
+  POST /orders/modify
 """
 
 from __future__ import annotations
@@ -167,6 +171,40 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, out)
             return
 
+        if parsed.path in ("/account/balances", "/account/margin"):
+            provider = (qs.get("provider") or [os.environ.get("QUBIT_BROKER_PROVIDER", "futu")])[0]
+            pc_raw = header_provider_config or (qs.get("providerConfig") or ["{}"])[0]
+            paper_raw = header_paper or (qs.get("paper") or ["true"])[0]
+            paper = paper_raw in ("1", "true", "yes")
+            conn = _init_conn(
+                {
+                    "provider": provider,
+                    "paper": paper,
+                    "providerConfig": _parse_provider_config(str(pc_raw)),
+                }
+            )
+            operation = "get_balances" if parsed.path.endswith("balances") else "get_margin"
+            out = conn.execute(
+                operation,
+                {"paper": paper, "providerConfig": _parse_provider_config(str(pc_raw))},
+            )
+            self._json(200, out)
+            return
+
+        if parsed.path == "/capabilities":
+            provider = (qs.get("provider") or [os.environ.get("QUBIT_BROKER_PROVIDER", "futu")])[0]
+            pc_raw = header_provider_config or (qs.get("providerConfig") or ["{}"])[0]
+            paper_raw = header_paper or (qs.get("paper") or ["true"])[0]
+            conn = _init_conn(
+                {
+                    "provider": provider,
+                    "paper": paper_raw in ("1", "true", "yes"),
+                    "providerConfig": _parse_provider_config(str(pc_raw)),
+                }
+            )
+            self._json(200, conn.execute("capabilities", {}))
+            return
+
         self.send_error(404)
 
     def do_POST(self) -> None:  # noqa: N802
@@ -218,6 +256,21 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, out)
             return
 
+        if parsed.path == "/orders/modify":
+            conn = _init_conn(payload)
+            out = conn.execute(
+                "modify_order",
+                {
+                    "brokerOrderId": payload.get("brokerOrderId"),
+                    "limitPrice": payload.get("limitPrice"),
+                    "quantity": payload.get("quantity"),
+                    "paper": payload.get("paper"),
+                    "providerConfig": payload.get("providerConfig") or {},
+                },
+            )
+            self._json(200, out)
+            return
+
         self.send_error(404)
 
     def _json(self, code: int, obj: dict[str, Any]) -> None:
@@ -244,7 +297,7 @@ def main() -> None:
     port = int(os.environ.get("QUBIT_BROKER_PORT", "18765"))
     server = ThreadingHTTPServer((host, port), Handler)
     logger.info(
-        "listening on http://%s:%s (GET /health /orders /fills /positions, POST /orders /orders/cancel)",
+        "listening on http://%s:%s (GET /health /orders /fills /positions /account/* /capabilities, POST /orders /orders/cancel /orders/modify)",
         host,
         port,
     )

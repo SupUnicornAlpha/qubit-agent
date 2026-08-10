@@ -20,6 +20,7 @@ import {
   checkBrokerAccountHealth,
   listBrokerAccounts,
   listBrokerEvents,
+  recordBrokerSidecarEvent,
   upsertBrokerAccount,
 } from "../runtime/execution/broker/broker-admin";
 import {
@@ -174,6 +175,36 @@ reiaRouter.get("/broker/events", async (c) => {
   const limit = Number(c.req.query("limit") ?? 100);
   const data = await listBrokerEvents(provider, Number.isFinite(limit) ? Math.max(1, Math.min(500, limit)) : 100);
   return c.json({ ok: true, data });
+});
+
+/** Connector/Sidecar callback ingress for async broker order events (not an Agent tool). */
+reiaRouter.post("/broker/events", async (c) => {
+  const configuredToken = process.env.QUBIT_BROKER_EVENT_TOKEN?.trim();
+  if (configuredToken && c.req.header("authorization") !== `Bearer ${configuredToken}`) {
+    return c.json({ ok: false, error: "unauthorized" }, 401);
+  }
+  const body = await c.req.json<{
+    provider?: BrokerProvider;
+    eventType?: "submit" | "ack" | "partial_fill" | "fill" | "cancel" | "modify" | "reject";
+    brokerOrderId?: string;
+    intentOrderId?: string;
+    status?: string;
+    eventAt?: string;
+    detail?: Record<string, unknown>;
+  }>();
+  if (!body.provider || !isBrokerProvider(body.provider) || !body.eventType) {
+    return c.json({ ok: false, error: "valid provider and eventType are required" }, 400);
+  }
+  const data = await recordBrokerSidecarEvent({
+    provider: body.provider,
+    eventType: body.eventType,
+    ...(body.brokerOrderId ? { brokerOrderId: body.brokerOrderId } : {}),
+    ...(body.intentOrderId ? { intentOrderId: body.intentOrderId } : {}),
+    ...(body.status ? { status: body.status } : {}),
+    ...(body.eventAt ? { eventAt: body.eventAt } : {}),
+    ...(body.detail ? { detail: body.detail } : {}),
+  });
+  return c.json({ ok: true, data }, 202);
 });
 
 reiaRouter.get("/intents/:workflowRunId", async (c) => {

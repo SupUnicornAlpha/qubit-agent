@@ -12,9 +12,15 @@ import {
 import { checkBrokerAccountHealth } from "../execution/broker/broker-admin";
 import {
   brokerCancelOrder,
+  brokerGetBalances,
+  brokerGetCapabilities,
   brokerGetFills,
+  brokerGetMargin,
+  brokerGetOrder,
   brokerGetPositions,
+  brokerModifyOrder,
 } from "../execution/broker/broker-service";
+import { scanPositionReconciliation } from "../execution/position-reconciliation-service";
 import { executeIntentLive, executeIntentPaper } from "../reia/intent-engine";
 import { negotiateServerProtocolVersion } from "./mcp-protocol";
 
@@ -56,6 +62,35 @@ function providerFromArgs(args: Record<string, unknown>): BrokerProvider {
 
 const TOOLS = [
   {
+    name: "broker_get_order",
+    description: "Read the latest order state from the configured broker sidecar.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        provider: { type: "string", enum: [...BROKER_PROVIDERS] },
+        accountRef: { type: "string" },
+        brokerOrderId: { type: "string" },
+      },
+      required: ["brokerOrderId"],
+    },
+  },
+  {
+    name: "broker_modify_order",
+    description:
+      "Modify an open broker order when the connector advertises support; never falls back to cancel-replace.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        provider: { type: "string", enum: [...BROKER_PROVIDERS] },
+        accountRef: { type: "string" },
+        brokerOrderId: { type: "string" },
+        limitPrice: { type: "number" },
+        quantity: { type: "number", minimum: 0 },
+      },
+      required: ["brokerOrderId"],
+    },
+  },
+  {
     name: "broker_health_check",
     description: "Check configured broker account health.",
     inputSchema: {
@@ -65,6 +100,52 @@ const TOOLS = [
         accountRef: { type: "string" },
       },
       required: ["provider", "accountRef"],
+    },
+  },
+  {
+    name: "broker_get_balances",
+    description: "Read cash/equity balances from the configured broker account.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        provider: { type: "string", enum: [...BROKER_PROVIDERS] },
+        accountRef: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "broker_get_margin",
+    description: "Read buying power and margin summary from the configured broker account.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        provider: { type: "string", enum: [...BROKER_PROVIDERS] },
+        accountRef: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "broker_capabilities",
+    description: "Read the normalized connector capability matrix before attempting a privileged operation.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        provider: { type: "string", enum: [...BROKER_PROVIDERS] },
+        accountRef: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "broker_reconcile_positions",
+    description: "Run read-only internal-vs-broker position reconciliation. Remediation remains approval-gated.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string" },
+        provider: { type: "string", enum: [...BROKER_PROVIDERS] },
+        accountRef: { type: "string" },
+      },
+      required: ["projectId", "provider"],
     },
   },
   {
@@ -155,6 +236,28 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
       });
       return { ok: true };
     }
+    case "broker_get_order": {
+      const provider = providerFromArgs(args);
+      const brokerOrderId = String(args.brokerOrderId ?? "");
+      if (!brokerOrderId) throw new Error("brokerOrderId is required");
+      const accountRef = typeof args.accountRef === "string" ? args.accountRef : undefined;
+      return brokerGetOrder({ provider, ...(accountRef !== undefined ? { accountRef } : {}), brokerOrderId });
+    }
+    case "broker_modify_order": {
+      const provider = providerFromArgs(args);
+      const brokerOrderId = String(args.brokerOrderId ?? "");
+      if (!brokerOrderId) throw new Error("brokerOrderId is required");
+      const limitPrice = typeof args.limitPrice === "number" ? args.limitPrice : undefined;
+      const quantity = typeof args.quantity === "number" ? args.quantity : undefined;
+      const accountRef = typeof args.accountRef === "string" ? args.accountRef : undefined;
+      return brokerModifyOrder({
+        provider,
+        ...(accountRef !== undefined ? { accountRef } : {}),
+        brokerOrderId,
+        ...(limitPrice !== undefined ? { limitPrice } : {}),
+        ...(quantity !== undefined ? { quantity } : {}),
+      });
+    }
     case "broker_get_fills": {
       const provider = providerFromArgs(args);
       const brokerOrderId = String(args.brokerOrderId ?? "");
@@ -169,6 +272,32 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
       const provider = providerFromArgs(args);
       const accountRef = typeof args.accountRef === "string" ? args.accountRef : undefined;
       return brokerGetPositions({
+        provider,
+        ...(accountRef !== undefined ? { accountRef } : {}),
+      });
+    }
+    case "broker_get_balances": {
+      const provider = providerFromArgs(args);
+      const accountRef = typeof args.accountRef === "string" ? args.accountRef : undefined;
+      return brokerGetBalances({ provider, ...(accountRef !== undefined ? { accountRef } : {}) });
+    }
+    case "broker_get_margin": {
+      const provider = providerFromArgs(args);
+      const accountRef = typeof args.accountRef === "string" ? args.accountRef : undefined;
+      return brokerGetMargin({ provider, ...(accountRef !== undefined ? { accountRef } : {}) });
+    }
+    case "broker_capabilities": {
+      const provider = providerFromArgs(args);
+      const accountRef = typeof args.accountRef === "string" ? args.accountRef : undefined;
+      return brokerGetCapabilities({ provider, ...(accountRef !== undefined ? { accountRef } : {}) });
+    }
+    case "broker_reconcile_positions": {
+      const provider = providerFromArgs(args);
+      const projectId = String(args.projectId ?? "");
+      if (!projectId) throw new Error("projectId is required");
+      const accountRef = typeof args.accountRef === "string" ? args.accountRef : undefined;
+      return scanPositionReconciliation({
+        projectId,
         provider,
         ...(accountRef !== undefined ? { accountRef } : {}),
       });

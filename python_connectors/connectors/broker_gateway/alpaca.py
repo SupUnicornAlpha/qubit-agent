@@ -258,6 +258,60 @@ def get_positions(paper: bool, cfg: dict[str, Any]) -> dict[str, Any]:
     return {"positions": positions}
 
 
+def modify_order(
+    broker_order_id: str,
+    limit_price: float | None,
+    quantity: float | None,
+    paper: bool,
+    cfg: dict[str, Any],
+) -> dict[str, Any]:
+    """Alpaca supports PATCH /v2/orders/{id} for open limit orders."""
+    patch: dict[str, Any] = {}
+    if limit_price is not None:
+        patch["limit_price"] = str(limit_price)
+    if quantity is not None:
+        patch["qty"] = str(int(quantity)) if float(quantity).is_integer() else str(quantity)
+    if not patch:
+        raise ValueError("broker_modify_requires_limitPrice_or_quantity")
+    status, body = _request("PATCH", _resolve_base_url(paper, cfg), f"/v2/orders/{broker_order_id}", cfg, json=patch)
+    if not (200 <= status < 300) or not isinstance(body, dict):
+        raise RuntimeError(f"alpaca_modify_order_failed:{status}:{body}")
+    return {
+        "brokerOrderId": str(body.get("id") or broker_order_id),
+        "status": _map_status(str(body.get("status") or "new")),
+        "actualPrice": float(body.get("filled_avg_price") or body.get("limit_price") or limit_price or 0),
+        "actualQuantity": float(body.get("filled_qty") or body.get("qty") or quantity or 0),
+        "executionTimeMs": 0,
+        "raw": body,
+    }
+
+
+def get_balances(paper: bool, cfg: dict[str, Any]) -> dict[str, Any]:
+    status, body = _request("GET", _resolve_base_url(paper, cfg), "/v2/account", cfg)
+    if not (200 <= status < 300) or not isinstance(body, dict):
+        raise RuntimeError(f"alpaca_balances_failed:{status}:{body}")
+    return {
+        "balances": [{
+            "currency": "USD",
+            "cash": float(body.get("cash") or 0),
+            "available": float(body.get("buying_power") or 0),
+            "equity": float(body.get("equity") or 0),
+        }]
+    }
+
+
+def get_margin(paper: bool, cfg: dict[str, Any]) -> dict[str, Any]:
+    status, body = _request("GET", _resolve_base_url(paper, cfg), "/v2/account", cfg)
+    if not (200 <= status < 300) or not isinstance(body, dict):
+        raise RuntimeError(f"alpaca_margin_failed:{status}:{body}")
+    return {
+        "currency": "USD",
+        "buyingPower": float(body.get("buying_power") or 0),
+        "initialMargin": float(body.get("initial_margin") or 0),
+        "maintenanceMargin": float(body.get("maintenance_margin") or 0),
+    }
+
+
 def _map_status(alpaca_status: str) -> str:
     """Alpaca order status → broker_order_event.status 收敛域。"""
     s = alpaca_status.lower()
