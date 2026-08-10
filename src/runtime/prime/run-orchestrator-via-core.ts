@@ -17,7 +17,10 @@ import { clearPrimeBridgeRunContext, setPrimeBridgeRunContext } from "./bridge-r
 import { buildCoreHitlClientMeta } from "./core-hitl-bridge";
 import { asRustCoreClient, ensureCoreSession } from "./ensure-core-session";
 import { resolveCoreBackend } from "./core-runtime";
-import { syncCorePlanToWorkflow } from "./project-core-activity";
+import {
+  finalizeCorePlanForCompletedWorkflow,
+  syncCorePlanToWorkflow,
+} from "./project-core-activity";
 import { beginCoreMonitorTurn, finalizeCoreMonitorTurn } from "./project-core-monitor";
 import {
   projectCoreInvocationsFromSnapshot,
@@ -28,6 +31,9 @@ import { persistDeliveryVerdictForCoreTurn } from "./persist-core-delivery";
 import type { InteractionMode, SessionSnapshot } from "./types";
 import { ORCHESTRATOR_TURN_CONTEXT } from "./types";
 import { completeWorkflowConversationAssistant } from "../conversation/conversation-projection";
+
+/** Long-running multi-agent research routinely exceeds five minutes. */
+const DEFAULT_PRIME_TURN_TIMEOUT_MS = 15 * 60_000;
 
 export {
   shouldPauseCoreTurnForChatHitl,
@@ -334,11 +340,12 @@ export async function runOrchestratorTaskViaCore(
           conversationTurnId ?? `${msg.workflowId}:${payload.taskId}:${randomUUID()}`,
         context: turnContext,
       });
-      const timeoutMs = Math.max(
-        30_000,
-        Number(loopOptions.timeoutMs ?? process.env.QUBIT_PRIME_TURN_TIMEOUT_MS ?? 300_000) ||
-          300_000
+      const configuredTimeoutMs = Number(
+        loopOptions.timeoutMs ??
+          process.env.QUBIT_PRIME_TURN_TIMEOUT_MS ??
+          DEFAULT_PRIME_TURN_TIMEOUT_MS
       );
+      const timeoutMs = Math.max(30_000, configuredTimeoutMs || DEFAULT_PRIME_TURN_TIMEOUT_MS);
       try {
         snap = await client.awaitTurnTerminal(
           sessionId,
@@ -386,6 +393,19 @@ export async function runOrchestratorTaskViaCore(
           snap = await client.sessionSnapshot(sessionId);
         } catch {
           /* ignore */
+        }
+        // A plan update may have reached Core immediately before the wait timed
+        // out. Persist that snapshot before failing the turn, otherwise resume
+        // starts from the old card state even though work already finished.
+        if (snap?.plan != null) {
+          try {
+            await syncCorePlanToWorkflow(activityCtx, snap.plan, { announceToolCall: false });
+          } catch (syncErr) {
+            console.warn(
+              "[prime-core] timeout plan snapshot sync failed:",
+              syncErr instanceof Error ? syncErr.message : syncErr
+            );
+          }
         }
         try {
           if (typeof client.failTurn === "function") {
@@ -436,26 +456,9 @@ export async function runOrchestratorTaskViaCore(
           ok: false,
           turn: snap?.active_turn ?? null,
         });
-        const display = sanitizeCoreAnswerText(fallbackText);
-        publishStreamFrames({
-          runId,
-          workflowId: msg.workflowId,
-          traceId: msg.traceId,
-          text: display || fallbackText.slice(0, 4000),
-          ok: false,
-        });
-        await projectCoreTurnResult({
-          workflowRunId: msg.workflowId,
-          snap: snap ?? ({ invocations: [] } as SessionSnapshot),
-          fallbackText,
-          sourceTaskType: payload.taskType,
-        });
-        await completeWorkflowConversationAssistant({
-          workflowRunId: msg.workflowId,
-          content: display || fallbackText.slice(0, 4000),
-          status: "failed",
-          errorMessage: isTimeout ? "prime_core_timeout" : timeoutMsg.slice(0, 500),
-        });
+        // Keep partial text in the delivery/checkpoint stores for resume, but
+        // never project it as a user-facing final answer. Resume would then
+        // project the complete answer again, visibly duplicating the report.
         throw err;
       }
     } finally {
@@ -546,9 +549,26 @@ export async function runOrchestratorTaskViaCore(
     const partial = deliveryStatus === "partial" || deliveryStatus === "delivered_with_gaps";
     const terminalStatus: "completed" | "partial" | "failed" = failed
       ? "failed"
-      : partial
-        ? "partial"
-        : "completed";
+        : partial
+          ? "partial"
+          : "completed";
+
+    // Do not leave a completed resumed workflow visually stuck on the last
+    // pending/in-progress plan item when the model omitted its final
+    // `update_plan` call. A plan-mode turn only drafts work, so it must remain
+    // pending; non-completed turns also intentionally keep their plan.
+    if (terminalStatus === "completed" && interactionMode !== "plan") {
+      try {
+        await finalizeCorePlanForCompletedWorkflow(activityCtx);
+      } catch (err) {
+        // Plan is a UI projection; an artifact/SQLite hiccup must not turn a
+        // successfully delivered Core answer into a failed workflow.
+        console.warn(
+          "[prime-core] terminal plan finalization failed:",
+          err instanceof Error ? err.message : err
+        );
+      }
+    }
 
     const displayText =
       answer ||
@@ -592,6 +612,7 @@ export async function runOrchestratorTaskViaCore(
       content: displayText,
       status: failed ? "failed" : "completed",
       ...(failed ? { errorMessage: displayText.slice(0, 500) } : {}),
+      ...(conversationTurnId ? { conversationTurnId } : {}),
     });
 
     const finalResponse: Record<string, unknown> = {
@@ -690,6 +711,7 @@ export async function runOrchestratorTaskViaCore(
         : message,
       status: "failed",
       errorMessage: isTimeout ? "prime_core_timeout" : message.slice(0, 500),
+      ...(conversationTurnId ? { conversationTurnId } : {}),
     });
     return undefined;
   }

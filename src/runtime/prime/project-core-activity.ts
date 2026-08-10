@@ -59,6 +59,43 @@ export function corePlanToBunSnapshot(raw: unknown): AgentPlanSnapshot | null {
   return parseAgentPlanSnapshot(raw);
 }
 
+/**
+ * A successful turn is the authoritative completion signal for its plan.
+ *
+ * Models normally advance this themselves through `update_plan`, but a timeout
+ * followed by resume can leave an otherwise-complete plan with its last step
+ * still pending/in_progress. Do this only for a terminal successful turn; a
+ * partial, failed, paused, or blocked turn must retain its resumable progress.
+ */
+export function finalizeCompletedCorePlan(
+  plan: AgentPlanSnapshot,
+  updatedAt = new Date().toISOString()
+): AgentPlanSnapshot {
+  const steps = plan.steps.map((step) =>
+    step.status === "pending" || step.status === "in_progress"
+      ? { ...step, status: "done" as const }
+      : step
+  );
+  const totalSteps = steps.length;
+  const completedSteps = steps.filter((step) => step.status === "done").length;
+
+  return {
+    ...plan,
+    steps,
+    updatedAt,
+    ...(plan.goal
+      ? {
+          goal: {
+            ...plan.goal,
+            status: "completed" as const,
+            completedSteps,
+            totalSteps,
+          },
+        }
+      : {}),
+  };
+}
+
 export async function syncCorePlanToWorkflow(
   ctx: CoreActivityContext,
   planRaw: unknown,
@@ -135,6 +172,24 @@ export async function syncCorePlanToWorkflow(
   });
 
   return plan;
+}
+
+/** Persist and broadcast the final plan state after a successfully completed Core turn. */
+export async function finalizeCorePlanForCompletedWorkflow(
+  ctx: CoreActivityContext
+): Promise<AgentPlanSnapshot | null> {
+  const db = await getDb();
+  const rows = await db
+    .select({ planJson: workflowRun.planJson })
+    .from(workflowRun)
+    .where(eq(workflowRun.id, ctx.workflowId))
+    .limit(1);
+  const current = corePlanToBunSnapshot(rows[0]?.planJson);
+  if (!current || current.steps.length === 0) return current;
+
+  return syncCorePlanToWorkflow(ctx, finalizeCompletedCorePlan(current), {
+    announceToolCall: false,
+  });
 }
 
 export function publishCoreToolCallStart(

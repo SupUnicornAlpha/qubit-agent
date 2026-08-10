@@ -56,8 +56,9 @@ export QUBIT_LEGACY_BRIDGE_URL="${QUBIT_LEGACY_BRIDGE_URL:-http://${HOST}:${PORT
 export QUBIT_CORE_STRICT="${QUBIT_CORE_STRICT:-1}"
 # Unproductive-turn early stop off (prevents call_team_* false data failures).
 export QUBIT_UNPRODUCTIVE_BUDGET="${QUBIT_UNPRODUCTIVE_BUDGET:-0}"
-# Core turn poll timeout (orchestrator await). Long research may need 5+ minutes.
-export QUBIT_PRIME_TURN_TIMEOUT_MS="${QUBIT_PRIME_TURN_TIMEOUT_MS:-300000}"
+# Core turn poll timeout (orchestrator await). Multi-agent research can exceed 5 minutes.
+# Keep this aligned with DEFAULT_PRIME_TURN_TIMEOUT_MS in run-orchestrator-via-core.ts.
+export QUBIT_PRIME_TURN_TIMEOUT_MS="${QUBIT_PRIME_TURN_TIMEOUT_MS:-900000}"
 echo "[dev-backend]   QUBIT_CORE_BACKEND=$QUBIT_CORE_BACKEND"
 echo "[dev-backend]   QUBIT_RUST_CORE_URL=$QUBIT_RUST_CORE_URL"
 echo "[dev-backend]   QUBIT_CORE_STRICT=$QUBIT_CORE_STRICT"

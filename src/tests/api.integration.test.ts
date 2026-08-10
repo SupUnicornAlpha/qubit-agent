@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { closeDb, getDb } from "../db/sqlite/client";
 import { runMigrations } from "../db/sqlite/migrate";
 import {
+  chatMessage,
   chatSession,
   project,
   researchTeamInteraction,
@@ -11,6 +12,7 @@ import {
   workspace,
 } from "../db/sqlite/schema";
 import {
+  createWorkflowConversationTurnMessages,
   completeWorkflowConversationAssistant,
   projectWorkflowUserMessage,
 } from "../runtime/conversation/conversation-projection";
@@ -210,6 +212,70 @@ describe("api minimal integration", () => {
       "按 SOP 分析这个标的",
       "已按相同要求完成第二轮验证。",
     ]);
+  });
+
+  test("resume replaces the timed-out assistant placeholder instead of appending a final answer", async () => {
+    const db = await getDb();
+    const testWorkspaceId = workspaceId || crypto.randomUUID();
+    const testProjectId = projectId || crypto.randomUUID();
+    const testSessionId = sessionId || crypto.randomUUID();
+    if (!workspaceId) {
+      await db.insert(workspace).values({
+        id: testWorkspaceId,
+        name: "resume-projection-test",
+        owner: "test",
+      });
+      await db.insert(project).values({
+        id: testProjectId,
+        workspaceId: testWorkspaceId,
+        name: "resume-projection-test",
+        marketScope: "US",
+      });
+      await db.insert(chatSession).values({
+        id: testSessionId,
+        workspaceId: testWorkspaceId,
+        projectId: testProjectId,
+        title: "resume-projection-test",
+      });
+    }
+    const workflowId = crypto.randomUUID();
+    await db.insert(workflowRun).values({
+      id: workflowId,
+      projectId: testProjectId,
+      sessionId: testSessionId,
+      goal: "resume without duplicate answer",
+      mode: "research",
+      source: "chat",
+      status: "partial",
+    });
+    const turn = await createWorkflowConversationTurnMessages({
+      workflowRunId: workflowId,
+      content: "请完成研究",
+    });
+    await completeWorkflowConversationAssistant({
+      workflowRunId: workflowId,
+      conversationTurnId: turn.assistantMessage.id,
+      content: "运行超时，可从检查点继续。",
+      status: "failed",
+      errorMessage: "prime_core_timeout",
+    });
+    await projectWorkflowFinalAnswer({
+      workflowRunId: workflowId,
+      conversationTurnId: turn.assistantMessage.id,
+      contentText: "恢复后的完整研究结论",
+      sourceTaskType: "workflow_resume",
+    });
+
+    const messages = await db
+      .select()
+      .from(chatMessage)
+      .where(eq(chatMessage.sessionId, testSessionId));
+    const assistant = messages.filter(
+      (message) => message.role === "assistant" && message.content === "恢复后的完整研究结论"
+    );
+    expect(assistant).toHaveLength(1);
+    expect(assistant[0]?.id).toBe(turn.assistantMessage.id);
+    expect(assistant[0]?.status).toBe("completed");
   });
 
   test("orchestrator final answers are idempotent per conversation turn", async () => {

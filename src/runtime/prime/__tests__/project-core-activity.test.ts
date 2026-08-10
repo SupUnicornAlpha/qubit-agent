@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { projectCoreInvocationsFromSnapshot } from "../project-core-to-graph";
-import { corePlanToBunSnapshot } from "../project-core-activity";
+import { corePlanToBunSnapshot, finalizeCompletedCorePlan } from "../project-core-activity";
 import { workflowIdFromCoreWorkspace } from "../bridge-run-context";
 
 describe("corePlanToBunSnapshot", () => {
@@ -27,6 +27,27 @@ describe("corePlanToBunSnapshot", () => {
     expect(plan?.goal?.totalSteps).toBe(2);
     expect(plan?.steps).toHaveLength(2);
     expect(plan?.steps[1]?.status).toBe("in_progress");
+  });
+});
+
+describe("finalizeCompletedCorePlan", () => {
+  test("closes only unfinished steps when the turn reached completed", () => {
+    const plan = finalizeCompletedCorePlan(
+      {
+        goal: { text: "ship", status: "executing", completedSteps: 1, totalSteps: 3 },
+        steps: [
+          { id: "s1", title: "done", status: "done" },
+          { id: "s2", title: "running", status: "in_progress" },
+          { id: "s3", title: "queued", status: "pending" },
+          { id: "s4", title: "not needed", status: "skipped" },
+        ],
+      },
+      "2026-08-10T00:00:00.000Z"
+    );
+
+    expect(plan.steps.map((step) => step.status)).toEqual(["done", "done", "done", "skipped"]);
+    expect(plan.goal).toMatchObject({ status: "completed", completedSteps: 3, totalSteps: 4 });
+    expect(plan.updatedAt).toBe("2026-08-10T00:00:00.000Z");
   });
 });
 

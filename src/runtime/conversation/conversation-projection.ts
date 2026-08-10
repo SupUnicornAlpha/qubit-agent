@@ -198,11 +198,31 @@ export async function completeWorkflowConversationAssistant(input: {
   content: string;
   status?: Extract<ConversationMessageStatus, "completed" | "failed">;
   errorMessage?: string | null;
+  /**
+   * The assistant placeholder created for this specific user turn. On resume,
+   * replace its timeout failure instead of appending a second final answer.
+   */
+  conversationTurnId?: string;
+  replaceFailed?: boolean;
 }): Promise<typeof chatMessage.$inferSelect | null> {
   const content = input.content.trim();
   if (!content) return null;
   const db = await getDb();
   const { sessionId } = await ensureWorkflowConversation(input.workflowRunId);
+  const targeted = input.conversationTurnId
+    ? await db
+        .select({ message: chatMessage })
+        .from(chatMessageWorkflowLink)
+        .innerJoin(chatMessage, eq(chatMessage.id, chatMessageWorkflowLink.chatMessageId))
+        .where(
+          and(
+            eq(chatMessageWorkflowLink.workflowRunId, input.workflowRunId),
+            eq(chatMessage.id, input.conversationTurnId),
+            eq(chatMessage.role, "assistant")
+          )
+        )
+        .limit(1)
+    : [];
   const latest = await db
     .select({ message: chatMessage })
     .from(chatMessageWorkflowLink)
@@ -215,8 +235,13 @@ export async function completeWorkflowConversationAssistant(input: {
     )
     .orderBy(desc(chatMessage.createdAt))
     .limit(1);
-  const row = latest[0]?.message;
-  if (row && (row.status === "running" || row.status === "queued")) {
+  const row = targeted[0]?.message ?? latest[0]?.message;
+  const canReplace =
+    row &&
+    (row.status === "running" ||
+      row.status === "queued" ||
+      (input.replaceFailed === true && row.status === "failed"));
+  if (canReplace) {
     await db
       .update(chatMessage)
       .set({

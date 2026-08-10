@@ -89,6 +89,9 @@ export async function projectWorkflowFinalAnswer(input: {
       await completeWorkflowConversationAssistant({
         workflowRunId: input.workflowRunId,
         content: contentText,
+        ...(conversationTurnId
+          ? { conversationTurnId, replaceFailed: true }
+          : {}),
       });
       return false;
     }
@@ -109,6 +112,9 @@ export async function projectWorkflowFinalAnswer(input: {
     await completeWorkflowConversationAssistant({
       workflowRunId: input.workflowRunId,
       content: contentText,
+      ...(conversationTurnId
+        ? { conversationTurnId, replaceFailed: true }
+        : {}),
     });
     return true;
   } catch (err) {

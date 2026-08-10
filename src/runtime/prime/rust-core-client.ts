@@ -177,7 +177,32 @@ export class RustCoreClient implements CoreRuntime {
       }
     })();
 
-    return Promise.race([transport, hardTimeout, zombieWatch]);
+    try {
+      return await Promise.race([transport, hardTimeout, zombieWatch]);
+    } catch (err) {
+      // The wall-clock deadline can win a race with the Core terminal event by
+      // a few milliseconds. Confirm the durable snapshot once before the
+      // caller failTurn/cancelTurn turns a successfully completed turn into a
+      // resumable timeout.
+      try {
+        const snap = await this.sessionSnapshot(sessionId);
+        const turn = snap.active_turn;
+        if (
+          turn &&
+          turn.turn_id === turnId &&
+          (turn.state === "completed" ||
+            turn.state === "cancelled" ||
+            turn.state === "failed" ||
+            turn.state === "awaiting_hitl")
+        ) {
+          return snap;
+        }
+      } catch {
+        // Keep the original timeout/transport failure. The caller will make
+        // the turn resumable and retain its last snapshot where possible.
+      }
+      throw err;
+    }
   }
 
   /** Mid-flight turn with no live Core task → heal + surface as timeout (resumable). */
