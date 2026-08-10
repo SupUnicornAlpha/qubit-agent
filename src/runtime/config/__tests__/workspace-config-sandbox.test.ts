@@ -88,7 +88,10 @@ describe("mergeBuiltinAgentDefinitionsIntoUserFile", () => {
       version: baseline.version,
       tools: [...baseline.tools, "stale_legacy_tool"],
     };
-    const { definitions, mutated } = mergeBuiltinAgentDefinitionsIntoUserFile([drifted], [baseline]);
+    const { definitions, mutated } = mergeBuiltinAgentDefinitionsIntoUserFile(
+      [drifted],
+      [baseline]
+    );
     expect(mutated).toBe(true);
     expect(definitions[0]?.tools).toEqual([...baseline.tools].sort());
     expect(definitions[0]?.tools).not.toContain("stale_legacy_tool");
@@ -124,6 +127,16 @@ describe("mergeBuiltinSandboxPoliciesIntoUserFile", () => {
     allowedConnectors: [],
     allowedHosts: [],
     allowedFsPaths: [],
+    pythonSandbox: {
+      mode: "restricted",
+      image: "python:3.12-slim",
+      packages: [],
+      wheelhouse: "",
+      memoryMiB: 512,
+      cpuCount: 1,
+      pidsLimit: 64,
+      tmpfsMiB: 256,
+    },
     maxToolCallMs: 30_000,
     maxIterationsPerRun: 20,
     maxOutputTokens: 4096,
@@ -251,6 +264,16 @@ describe("ensureWorkspaceRuntimeConfigFiles · sandbox.json union 行为", () =>
     allowedConnectors: [],
     allowedHosts: [],
     allowedFsPaths: [],
+    pythonSandbox: {
+      mode: "restricted",
+      image: "python:3.12-slim",
+      packages: [],
+      wheelhouse: "",
+      memoryMiB: 512,
+      cpuCount: 1,
+      pidsLimit: 64,
+      tmpfsMiB: 256,
+    },
     maxToolCallMs: 30_000,
     maxIterationsPerRun: 20,
     maxOutputTokens: 4096,

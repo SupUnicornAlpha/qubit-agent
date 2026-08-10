@@ -381,6 +381,8 @@ export const sandboxPolicy = sqliteTable("sandbox_policy", {
   allowedConnectorsJson: text("allowed_connectors_json", { mode: "json" }).notNull().default("[]"),
   allowedHostsJson: text("allowed_hosts_json", { mode: "json" }).notNull().default("[]"),
   allowedFsPathsJson: text("allowed_fs_paths_json", { mode: "json" }).notNull().default("[]"),
+  /** Per-policy Python execution environment.  Empty = restricted in-process runner only. */
+  pythonSandboxJson: text("python_sandbox_json", { mode: "json" }).notNull().default("{}"),
   canWriteMemory: integer("can_write_memory", { mode: "boolean" }).notNull().default(true),
   canReadLiveMarket: integer("can_read_live_market", { mode: "boolean" }).notNull().default(false),
   canSubmitOrder: integer("can_submit_order", { mode: "boolean" }).notNull().default(false),

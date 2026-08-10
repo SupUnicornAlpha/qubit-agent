@@ -28,7 +28,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, like, sql } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import {
   agentSkill as agentSkillTable,
@@ -39,11 +39,7 @@ import { getExperienceBus } from "../experience/experience-bus";
 import type { ExperienceStore } from "../experience/experience-store";
 import { getExperienceStore } from "../experience/experience-store";
 import { DEFAULT_SCORING_CONFIG, type PromoterScoringConfig, scoreCandidate } from "./scoring";
-import type {
-  PromoterActionRecord,
-  PromoterCandidate,
-  PromoterRunSummary,
-} from "./types";
+import type { PromoterActionRecord, PromoterCandidate, PromoterRunSummary } from "./types";
 
 const ACTIONS_CAP = 200;
 const SIGNATURE_MARKER_PREFIX = "<!-- signature: ";
@@ -322,6 +318,17 @@ export class SkillPromoter {
       failCount: 0,
       lastUsedAt: null,
       metadataJson: { signature: cand.signature, sourceExperienceId: cand.experienceId },
+      // The auto-execution hook uses this explicit tool surface to distinguish
+      // actual adoption from a mere semantic recall.  Omitting it made every
+      // promoter-created skill look perpetually "not executed".
+      recommendedToolsJson: JSON.stringify([
+        ...new Set(
+          cand.signature
+            .split(">")
+            .map((tool) => tool.trim())
+            .filter(Boolean)
+        ),
+      ]),
       createdBy: "skill_promoter",
       pnlAttributionJson: "{}" as unknown as never,
       lastPromotedAt: now,
@@ -370,7 +377,10 @@ export function parseSignatureFromBody(body: string | null | undefined): string 
 export function deriveTitle(summary: string | undefined, signature: string): string {
   const base = (summary ?? "").trim();
   if (base.length > 0) {
-    const cleaned = base.split("\n")[0]!.replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
+    const cleaned = base
+      .split("\n")[0]!
+      .replace(/[\u200B-\u200D\uFEFF]/g, "")
+      .trim();
     return cleaned.slice(0, 80);
   }
   // fallback：用 signature 前几节当名字

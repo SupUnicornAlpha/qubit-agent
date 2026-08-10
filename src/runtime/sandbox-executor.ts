@@ -1,10 +1,10 @@
+import { eq } from "drizzle-orm";
 import { getDb } from "../db/sqlite/client";
 import { sandboxPolicy, sandboxViolationLog } from "../db/sqlite/schema";
-import type { RuntimeAgentDefinition } from "./types";
-import { eq } from "drizzle-orm";
 import { isAgentControlPlaneTool } from "./agent-control-mode";
 import { isInternetBuiltinTool } from "./tools/internet-tools";
 import { resolveConnectorForTool } from "./tools/tool-routes";
+import type { RuntimeAgentDefinition } from "./types";
 
 type SandboxViolationType =
   | "tool_not_allowed"
@@ -21,9 +21,32 @@ export interface LoadedSandboxPolicy {
   allowedConnectors: Set<string>;
   allowedHosts: Set<string>;
   allowedFsPaths: string[];
+  pythonSandbox: PythonSandboxPolicy;
   maxToolCallMs: number;
   maxIterationsPerRun: number;
 }
+
+export interface PythonSandboxPolicy {
+  mode: "restricted" | "container";
+  image: string;
+  packages: string[];
+  wheelhouse: string;
+  memoryMiB: number;
+  cpuCount: number;
+  pidsLimit: number;
+  tmpfsMiB: number;
+}
+
+const DEFAULT_PYTHON_SANDBOX_POLICY: PythonSandboxPolicy = {
+  mode: "restricted",
+  image: "python:3.12-slim",
+  packages: [],
+  wheelhouse: "",
+  memoryMiB: 512,
+  cpuCount: 1,
+  pidsLimit: 64,
+  tmpfsMiB: 256,
+};
 
 /**
  * 授权判定单一事实源（治理 #3）。
@@ -103,6 +126,7 @@ export class SandboxExecutor {
         allowedConnectors: new Set<string>(),
         allowedHosts: new Set<string>(),
         allowedFsPaths: [],
+        pythonSandbox: DEFAULT_PYTHON_SANDBOX_POLICY,
         maxToolCallMs: 30_000,
         maxIterationsPerRun: Math.max(1, definition.maxIterations),
       };
@@ -123,6 +147,7 @@ export class SandboxExecutor {
       allowedConnectors: new Set(this.parseStringArray(row.allowedConnectorsJson)),
       allowedHosts: new Set(this.parseStringArray(row.allowedHostsJson)),
       allowedFsPaths: this.parseStringArray(row.allowedFsPathsJson),
+      pythonSandbox: this.parsePythonSandbox(row.pythonSandboxJson),
       maxToolCallMs: row.maxToolCallMs ?? 30_000,
       maxIterationsPerRun: row.maxIterationsPerRun ?? definition.maxIterations,
     };
@@ -287,7 +312,7 @@ export class SandboxExecutor {
     const allowed =
       policy.allowedFsPaths.length === 0 ||
       policy.allowedFsPaths.some(
-      (prefix) => input.fsPath === prefix || input.fsPath.startsWith(`${prefix}/`)
+        (prefix) => input.fsPath === prefix || input.fsPath.startsWith(`${prefix}/`)
       );
     if (allowed) return { allowed: true, policySnapshot: { sandboxPolicyId: policy.id } };
 
@@ -429,6 +454,32 @@ export class SandboxExecutor {
       }
     }
     return [];
+  }
+
+  private parsePythonSandbox(value: unknown): PythonSandboxPolicy {
+    const raw =
+      value && typeof value === "object" && !Array.isArray(value)
+        ? (value as Record<string, unknown>)
+        : {};
+    const num = (key: string, fallback: number, lo: number, hi: number): number => {
+      const n = Number(raw[key]);
+      return Number.isFinite(n) && n >= lo && n <= hi ? n : fallback;
+    };
+    const mode = raw.mode === "container" ? "container" : "restricted";
+    const image =
+      typeof raw.image === "string" && raw.image.trim()
+        ? raw.image.trim()
+        : DEFAULT_PYTHON_SANDBOX_POLICY.image;
+    return {
+      mode,
+      image,
+      packages: this.parseStringArray(raw.packages).slice(0, 64),
+      wheelhouse: typeof raw.wheelhouse === "string" ? raw.wheelhouse.trim() : "",
+      memoryMiB: num("memoryMiB", 512, 128, 16_384),
+      cpuCount: num("cpuCount", 1, 0.1, 16),
+      pidsLimit: Math.floor(num("pidsLimit", 64, 16, 1024)),
+      tmpfsMiB: Math.floor(num("tmpfsMiB", 256, 32, 4096)),
+    };
   }
 }
 

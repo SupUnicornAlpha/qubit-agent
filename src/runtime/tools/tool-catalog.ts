@@ -661,7 +661,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   // M7：沙箱代码执行（Agent 在 chat 里跑 pandas / 算 IC 矩阵 / 算相关性等）
   "code.run_python": {
     description:
-      "受限沙箱内执行 Python：白名单 builtins + 仅放行 numpy/pandas/scipy/math 等；可注入 vars (含 factor 值/价格序列等)，可指定 return_var 取回结构化结果（DataFrame→records）；30s 超时，禁 import os/sys/socket，禁 open / 网络 / 子进程。",
+      "默认在受限 Python 中执行（numpy/pandas/scipy 等）；可注入 vars、指定 return_var。仅当 Agent 的 sandbox policy 显式配置 pythonSandbox.mode='container' 时，可传 dangerous=true 在网络关闭、只读根文件系统、无 Linux capabilities 且受 CPU/内存/PID 限制的容器中执行任意 Python/依赖。容器依赖从 policy 声明的 wheelhouse 离线安装，绝不在宿主机安装。",
     category: "research",
   },
 

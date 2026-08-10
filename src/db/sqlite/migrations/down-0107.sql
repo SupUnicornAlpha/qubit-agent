@@ -1,0 +1,2 @@
+-- SQLite cannot drop a column without rebuilding the table.  This additive
+-- configuration column is intentionally retained on down migrations.

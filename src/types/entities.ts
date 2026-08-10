@@ -210,6 +210,7 @@ export interface SandboxPolicy {
   allowedConnectorsJson: unknown;
   allowedHostsJson: unknown;
   allowedFsPathsJson: unknown;
+  pythonSandboxJson: unknown;
   canWriteMemory: boolean;
   canReadLiveMarket: boolean;
   canSubmitOrder: boolean;

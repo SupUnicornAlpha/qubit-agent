@@ -1,11 +1,8 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { agentDefinition, sandboxPolicy } from "../../db/sqlite/schema";
+import { type UserBindableField, parseUserOverrides } from "../agent/agent-binding-service";
 import type { RuntimeAgentDefinition } from "../types";
-import {
-  parseUserOverrides,
-  type UserBindableField,
-} from "../agent/agent-binding-service";
 import type { WorkspaceSandboxPolicy } from "./workspace-config";
 
 export async function syncWorkspaceConfigToDb(input: {
@@ -25,6 +22,7 @@ export async function syncWorkspaceConfigToDb(input: {
         allowedConnectorsJson: policy.allowedConnectors,
         allowedHostsJson: policy.allowedHosts,
         allowedFsPathsJson: policy.allowedFsPaths,
+        pythonSandboxJson: policy.pythonSandbox,
         canWriteMemory: policy.canWriteMemory,
         canReadLiveMarket: policy.canReadLiveMarket,
         canSubmitOrder: policy.canSubmitOrder,
@@ -43,6 +41,7 @@ export async function syncWorkspaceConfigToDb(input: {
           allowedConnectorsJson: policy.allowedConnectors,
           allowedHostsJson: policy.allowedHosts,
           allowedFsPathsJson: policy.allowedFsPaths,
+          pythonSandboxJson: policy.pythonSandbox,
           canWriteMemory: policy.canWriteMemory,
           canReadLiveMarket: policy.canReadLiveMarket,
           canSubmitOrder: policy.canSubmitOrder,
@@ -122,4 +121,3 @@ export async function syncWorkspaceConfigToDb(input: {
       .onConflictDoUpdate({ target: agentDefinition.id, set: updateSet });
   }
 }
-

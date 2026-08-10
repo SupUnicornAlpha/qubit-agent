@@ -21,6 +21,7 @@
 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { PythonSandboxPolicy } from "../sandbox-executor";
 import { checkPythonHealth, getPythonBin } from "./python-runtime";
 
 const RUNNER_PATH = join(
@@ -68,8 +69,13 @@ interface RawPyResponse {
 const WALL_CLOCK_BUFFER_MS = 5_000;
 
 export async function runPythonSandbox(
-  req: PythonSandboxRequest
+  req: PythonSandboxRequest,
+  containerPolicy?: PythonSandboxPolicy
 ): Promise<PythonSandboxResponse> {
+  if (containerPolicy?.mode === "container") {
+    const { runContainerPythonSandbox } = await import("./container-python-sandbox");
+    return runContainerPythonSandbox(req, containerPolicy);
+  }
   const payload = {
     code: req.code,
     vars: req.vars ?? {},

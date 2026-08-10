@@ -149,6 +149,7 @@ describe("SkillPromoter.runOnce", () => {
     expect(s.promotionScore).toBeGreaterThan(0);
     expect(s.lastPromotedAt).toBeTruthy();
     expect(parseSignatureFromBody(s.bodyMd)).toBe(fixture.goodSig);
+    expect(JSON.parse(s.recommendedToolsJson)).toEqual(["screener", "fundamental", "news"]);
   });
 
   test("duplicate：第二次 live 跑 → skipped_duplicate（同 signature 已 active）", async () => {

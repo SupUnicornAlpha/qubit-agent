@@ -5,8 +5,8 @@ import { z } from "zod";
 import { ALL_AGENT_ROLES } from "../../types/entities";
 import { AGENT_CONTROL_PLANE_TOOLS } from "../agent-control-mode";
 import { topologyTeamToolName } from "../orchestration/topology-dispatch";
-import { INTERNET_BUILTIN_TOOLS } from "../tools/internet-tools";
 import { resolveExecutionKind } from "../prime/execution-kind";
+import { INTERNET_BUILTIN_TOOLS } from "../tools/internet-tools";
 import type { RuntimeAgentDefinition } from "../types";
 
 const AgentRoleSchema = z.enum(ALL_AGENT_ROLES as unknown as [string, ...string[]]);
@@ -51,6 +51,33 @@ const SandboxPolicySchema = z.object({
   allowedConnectors: z.array(z.string()).default([]),
   allowedHosts: z.array(z.string()).default([]),
   allowedFsPaths: z.array(z.string()).default([]),
+  /**
+   * `container` is the only mode allowed to execute untrusted / dangerous Python.
+   * Dependencies are supplied as wheels from the workspace data directory; the
+   * execution container itself remains network-disabled.
+   */
+  pythonSandbox: z
+    .object({
+      mode: z.enum(["restricted", "container"]).default("restricted"),
+      image: z.string().min(1).default("python:3.12-slim"),
+      packages: z.array(z.string().min(1).max(200)).max(64).default([]),
+      /** Relative to <dataDir>/sandbox-wheels; never an arbitrary host path. */
+      wheelhouse: z.string().max(160).default(""),
+      memoryMiB: z.number().int().min(128).max(16_384).default(512),
+      cpuCount: z.number().min(0.1).max(16).default(1),
+      pidsLimit: z.number().int().min(16).max(1024).default(64),
+      tmpfsMiB: z.number().int().min(32).max(4096).default(256),
+    })
+    .default({
+      mode: "restricted",
+      image: "python:3.12-slim",
+      packages: [],
+      wheelhouse: "",
+      memoryMiB: 512,
+      cpuCount: 1,
+      pidsLimit: 64,
+      tmpfsMiB: 256,
+    }),
   maxToolCallMs: z.number().int().positive().default(30_000),
   maxIterationsPerRun: z.number().int().positive().default(64),
   maxOutputTokens: z.number().int().positive().default(4096),
@@ -107,6 +134,16 @@ export function buildDefaultSandboxPoliciesFromDefinitions(
       allowedConnectors: [],
       allowedHosts: [],
       allowedFsPaths: [],
+      pythonSandbox: {
+        mode: "restricted",
+        image: "python:3.12-slim",
+        packages: [],
+        wheelhouse: "",
+        memoryMiB: 512,
+        cpuCount: 1,
+        pidsLimit: 64,
+        tmpfsMiB: 256,
+      },
       maxToolCallMs: 30_000,
       maxIterationsPerRun: 64,
       maxOutputTokens: 4096,

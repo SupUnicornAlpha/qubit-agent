@@ -1,7 +1,8 @@
+import { sandboxExecutor } from "../sandbox-executor";
 import { runPythonSandbox } from "../sandbox/python-sandbox";
 import type { BuiltinToolHandler } from "./types";
 
-export const PYTHON_HANDLER: BuiltinToolHandler = async (_ctx, params) => {
+export const PYTHON_HANDLER: BuiltinToolHandler = async (ctx, params) => {
   const code = typeof params.code === "string" ? params.code : "";
   if (!code.trim()) throw new Error("code.run_python: code is required");
   const vars =
@@ -18,11 +19,21 @@ export const PYTHON_HANDLER: BuiltinToolHandler = async (_ctx, params) => {
     typeof params.return_var === "string" && params.return_var.length > 0
       ? params.return_var
       : undefined;
-  return runPythonSandbox({
-    code,
-    vars,
-    timeoutSec,
-    maxStdoutBytes,
-    ...(returnVar ? { returnVar } : {}),
-  });
+  const dangerous = params.dangerous === true;
+  const policy = dangerous ? await sandboxExecutor.loadPolicy(ctx.definition) : null;
+  if (dangerous && policy?.pythonSandbox.mode !== "container") {
+    throw new Error(
+      "code.run_python: dangerous=true requires this agent's sandbox policy to configure pythonSandbox.mode='container'"
+    );
+  }
+  return runPythonSandbox(
+    {
+      code,
+      vars,
+      timeoutSec,
+      maxStdoutBytes,
+      ...(returnVar ? { returnVar } : {}),
+    },
+    dangerous && policy ? policy.pythonSandbox : undefined
+  );
 };

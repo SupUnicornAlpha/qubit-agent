@@ -264,6 +264,9 @@ export async function proposeSkillCandidate(input: ProposeSkillInput): Promise<b
         autoExtracted: true,
         proposeReason: "workflow_meets_skill_heuristic",
       },
+      // Keep the deterministic tool-chain evidence machine-readable so the
+      // auto-execution hook can observe whether a recalled skill was adopted.
+      recommendedTools: toolChain,
     });
     return true;
   } catch (err) {
