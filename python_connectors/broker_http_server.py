@@ -6,6 +6,7 @@ Endpoints:
   GET  /health?provider=futu|ib|ccxt|alpaca|supermind|eastmoney_emt&providerConfig={json}
   POST /orders
   GET  /orders?brokerOrderId=...
+  GET  /orders/open
   POST /orders/cancel
   GET  /fills?brokerOrderId=...
   GET  /positions
@@ -128,6 +129,25 @@ class Handler(BaseHTTPRequestHandler):
             out = conn.execute(
                 "get_order",
                 {"brokerOrderId": broker_order_id, "paper": paper, "providerConfig": _parse_provider_config(str(pc_raw))},
+            )
+            self._json(200, out)
+            return
+
+        if parsed.path == "/orders/open":
+            provider = (qs.get("provider") or [os.environ.get("QUBIT_BROKER_PROVIDER", "futu")])[0]
+            pc_raw = header_provider_config or (qs.get("providerConfig") or ["{}"])[0]
+            paper_raw = header_paper or (qs.get("paper") or ["true"])[0]
+            paper = paper_raw in ("1", "true", "yes")
+            conn = _init_conn(
+                {
+                    "provider": provider,
+                    "paper": paper,
+                    "providerConfig": _parse_provider_config(str(pc_raw)),
+                }
+            )
+            out = conn.execute(
+                "get_open_orders",
+                {"paper": paper, "providerConfig": _parse_provider_config(str(pc_raw))},
             )
             self._json(200, out)
             return
@@ -297,7 +317,7 @@ def main() -> None:
     port = int(os.environ.get("QUBIT_BROKER_PORT", "18765"))
     server = ThreadingHTTPServer((host, port), Handler)
     logger.info(
-        "listening on http://%s:%s (GET /health /orders /fills /positions /account/* /capabilities, POST /orders /orders/cancel /orders/modify)",
+        "listening on http://%s:%s (GET /health /orders /orders/open /fills /positions /account/* /capabilities, POST /orders /orders/cancel /orders/modify)",
         host,
         port,
     )

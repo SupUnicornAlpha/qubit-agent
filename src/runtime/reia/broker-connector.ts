@@ -81,6 +81,7 @@ export interface BrokerMarginSummary {
 
 export interface BrokerCapabilities {
   getOrder: boolean;
+  openOrders: boolean;
   modifyOrder: boolean;
   balances: boolean;
   margin: boolean;
@@ -127,6 +128,7 @@ export interface BrokerConnector {
   submitOrder(input: BrokerSubmitOrderInput): Promise<BrokerOrderResult>;
   cancelOrder(brokerOrderId: string): Promise<void>;
   getOrder(brokerOrderId: string): Promise<BrokerOrderResult>;
+  getOpenOrders?(): Promise<BrokerOrderResult[]>;
   /** Optional only while legacy mock connectors are being migrated. */
   modifyOrder?(input: BrokerModifyOrderInput): Promise<BrokerOrderResult>;
   getFills(brokerOrderId: string): Promise<BrokerFill[]>;
@@ -194,6 +196,10 @@ class MockFutuConnector implements BrokerConnector {
     };
   }
 
+  async getOpenOrders(): Promise<BrokerOrderResult[]> {
+    return [];
+  }
+
   async getFills(brokerOrderId: string): Promise<BrokerFill[]> {
     return [
       {
@@ -257,6 +263,10 @@ class MockCcxtConnector implements BrokerConnector {
       actualQuantity: 1,
       executionTimeMs: 0,
     };
+  }
+
+  async getOpenOrders(): Promise<BrokerOrderResult[]> {
+    return [];
   }
 
   async getFills(brokerOrderId: string): Promise<BrokerFill[]> {
@@ -325,6 +335,10 @@ class MockAlpacaConnector implements BrokerConnector {
       executionTimeMs: 1,
       raw: { venue: "MOCK_ALPACA" },
     };
+  }
+
+  async getOpenOrders(): Promise<BrokerOrderResult[]> {
+    return [];
   }
 
   async getFills(brokerOrderId: string): Promise<BrokerFill[]> {
@@ -397,6 +411,10 @@ class MockIbConnector implements BrokerConnector {
     };
   }
 
+  async getOpenOrders(): Promise<BrokerOrderResult[]> {
+    return [];
+  }
+
   async getFills(brokerOrderId: string): Promise<BrokerFill[]> {
     return [
       {
@@ -457,6 +475,10 @@ class MockCnBrokerConnector implements BrokerConnector {
       actualQuantity: 0,
       executionTimeMs: 1,
     };
+  }
+
+  async getOpenOrders(): Promise<BrokerOrderResult[]> {
+    return [];
   }
 
   async getFills(brokerOrderId: string): Promise<BrokerFill[]> {
@@ -569,6 +591,28 @@ class HttpBrokerConnector implements BrokerConnector {
     };
   }
 
+  async getOpenOrders(): Promise<BrokerOrderResult[]> {
+    const qs = new URLSearchParams({
+      provider: this.provider,
+      accountRef: this.accountRef,
+      paper: String(paperFromMode(this.runtime.mode, this.runtime.paper)),
+    });
+    const payload = await this.requestJson("GET", `/orders/open?${qs.toString()}`);
+    if (!Array.isArray(payload.orders)) return [];
+    return payload.orders.map((raw) => {
+      const order = raw as Record<string, unknown>;
+      return {
+        provider: this.provider,
+        brokerOrderId: String(order.brokerOrderId ?? ""),
+        status: (order.status as BrokerOrderStatus | undefined) ?? "submitted",
+        actualPrice: Number(order.actualPrice ?? 0),
+        actualQuantity: Number(order.actualQuantity ?? 0),
+        executionTimeMs: Number(order.executionTimeMs ?? 0),
+        raw: order,
+      };
+    });
+  }
+
   async modifyOrder(input: BrokerModifyOrderInput): Promise<BrokerOrderResult> {
     if (input.limitPrice === undefined && input.quantity === undefined) {
       throw new Error("broker_modify_requires_limitPrice_or_quantity");
@@ -675,6 +719,7 @@ class HttpBrokerConnector implements BrokerConnector {
     const payload = await this.requestJson("GET", `/capabilities?${qs.toString()}`);
     return {
       getOrder: payload.getOrder === true,
+      openOrders: payload.openOrders === true,
       modifyOrder: payload.modifyOrder === true,
       balances: payload.balances === true,
       margin: payload.margin === true,

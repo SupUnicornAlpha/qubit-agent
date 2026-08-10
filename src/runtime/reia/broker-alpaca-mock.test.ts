@@ -13,7 +13,7 @@ import {
  *   - 'alpaca' provider 在 BrokerProvider 类型里
  *   - getBrokerConnector('alpaca') / createBrokerConnector(mode='mock', provider='alpaca')
  *     都返回可调用 connector
- *   - submit / health / cancel / get / fills / positions 全部返回结构正确的对象
+ *   - submit / health / cancel / get / open-orders / fills / positions 全部返回结构正确的对象
  *   - 滑点在 ±0.5% 内（区别 futu 的 ±0.6% / ib 的 ±0.8%）
  */
 describe("MockAlpacaConnector", () => {
@@ -73,11 +73,12 @@ describe("MockAlpacaConnector", () => {
     expect(h.message).toContain("mock");
   });
 
-  test("cancelOrder / getOrder / getFills / getPositions don't throw", async () => {
+  test("cancelOrder / getOrder / getOpenOrders / getFills / getPositions don't throw", async () => {
     const c = getBrokerConnector("alpaca");
     await c.cancelOrder("alpaca-fake-id");
     const o = await c.getOrder("alpaca-fake-id");
     expect(o.brokerOrderId).toBe("alpaca-fake-id");
+    expect(await c.getOpenOrders?.()).toEqual([]);
     const fills = await c.getFills("alpaca-fake-id");
     expect(Array.isArray(fills)).toBe(true);
     const pos = await c.getPositions();

@@ -136,6 +136,19 @@ export async function brokerGetOrder(input: {
   return connectorForAccount(account).getOrder(input.brokerOrderId);
 }
 
+export async function brokerGetOpenOrders(input: {
+  provider: BrokerProvider;
+  accountRef?: string;
+}): Promise<BrokerOrderResult[]> {
+  const account = await resolveBrokerAccount(input.provider, input.accountRef);
+  if (!account) throw new Error("broker account not found");
+  const connector = connectorForAccount(account);
+  if (!connector.getOpenOrders) {
+    throw new Error(`broker_capability_unavailable:${input.provider}:open_orders`);
+  }
+  return connector.getOpenOrders();
+}
+
 export async function brokerModifyOrder(input: {
   provider: BrokerProvider;
   accountRef?: string;
@@ -194,6 +207,7 @@ export async function brokerGetCapabilities(input: {
   return (
     (await connector.getCapabilities?.()) ?? {
       getOrder: true,
+      openOrders: Boolean(connector.getOpenOrders),
       modifyOrder: Boolean(connector.modifyOrder),
       balances: Boolean(connector.getBalances),
       margin: Boolean(connector.getMargin),

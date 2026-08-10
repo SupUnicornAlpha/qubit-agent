@@ -146,6 +146,8 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     tools: [
       "execution.account.snapshot",
       "execution.order.get",
+      "order.list_open",
+      "provider.capabilities",
       "execution.reconcile.positions",
       "execution.kill_switch.status",
       "tool.catalog.search",

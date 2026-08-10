@@ -10,6 +10,8 @@ describe("execution observability tool surface", () => {
       "execution.order.get",
       "execution.reconcile.positions",
       "execution.kill_switch.status",
+      "order.list_open",
+      "provider.capabilities",
       "tool.catalog.search",
     ]) {
       expect(isBuiltinTool(name)).toBe(true);

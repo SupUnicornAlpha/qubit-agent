@@ -141,6 +141,34 @@ def get_order(broker_order_id: str, _paper: bool, provider_config: dict[str, Any
         }
 
 
+def get_open_orders(_paper: bool, provider_config: dict[str, Any]) -> dict[str, Any]:
+    """IBKR openTrades is a point-in-time resync source; async callbacks go to Sidecar ingress separately."""
+    try:
+        from ib_insync import IB  # type: ignore
+
+        host, port, client_id = _ib_connect_params(provider_config)
+        ib = IB()
+        ib.connect(host, port, clientId=client_id, timeout=10)
+        try:
+            orders = []
+            for trade in ib.openTrades():
+                orders.append(
+                    {
+                        "brokerOrderId": str(trade.order.orderId),
+                        "status": str(trade.orderStatus.status or "Submitted").lower(),
+                        "actualPrice": float(trade.order.lmtPrice or 0),
+                        "actualQuantity": float(trade.order.totalQuantity or 0),
+                        "executionTimeMs": 0,
+                        "raw": {"symbol": trade.contract.symbol, "status": trade.orderStatus.status},
+                    }
+                )
+            return {"orders": orders}
+        finally:
+            ib.disconnect()
+    except ImportError:
+        return {"orders": [], "simulated": True}
+
+
 def get_fills(broker_order_id: str, _paper: bool, provider_config: dict[str, Any]) -> dict[str, Any]:
     try:
         from ib_insync import IB  # type: ignore

@@ -215,6 +215,26 @@ def get_order(broker_order_id: str, paper: bool, cfg: dict[str, Any]) -> dict[st
     }
 
 
+def get_open_orders(paper: bool, cfg: dict[str, Any]) -> dict[str, Any]:
+    status, body = _request("GET", _resolve_base_url(paper, cfg), "/v2/orders?status=open", cfg)
+    if not (200 <= status < 300) or not isinstance(body, list):
+        raise RuntimeError(f"alpaca_open_orders_failed:{status}:{body}")
+    return {
+        "orders": [
+            {
+                "brokerOrderId": str(row.get("id") or ""),
+                "status": _map_status(str(row.get("status") or "new")),
+                "actualPrice": float(row.get("filled_avg_price") or row.get("limit_price") or 0),
+                "actualQuantity": float(row.get("filled_qty") or row.get("qty") or 0),
+                "executionTimeMs": 0,
+                "raw": row,
+            }
+            for row in body
+            if isinstance(row, dict)
+        ]
+    }
+
+
 def get_fills(broker_order_id: str, paper: bool, cfg: dict[str, Any]) -> dict[str, Any]:
     """Alpaca v2 没有专门的 /v2/orders/{id}/fills；我们直接读 order.filled_qty。"""
     order = get_order(broker_order_id, paper, cfg)

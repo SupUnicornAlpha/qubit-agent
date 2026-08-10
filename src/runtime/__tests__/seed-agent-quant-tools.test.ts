@@ -202,6 +202,8 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
     expect(monitor?.tools).toEqual([
       "execution.account.snapshot",
       "execution.order.get",
+      "order.list_open",
+      "provider.capabilities",
       "execution.reconcile.positions",
       "execution.kill_switch.status",
       "tool.catalog.search",

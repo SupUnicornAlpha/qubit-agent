@@ -117,6 +117,28 @@ def get_order(broker_order_id: str, paper: bool, cfg: dict[str, Any]) -> dict[st
     }
 
 
+def get_open_orders(paper: bool, cfg: dict[str, Any]) -> dict[str, Any]:
+    if paper:
+        return {"orders": []}
+    ex = _exchange(cfg)
+    if not ex.has.get("fetchOpenOrders"):
+        raise RuntimeError(f"broker_capability_unavailable:ccxt:{ex.id}:fetchOpenOrders")
+    orders = ex.fetch_open_orders()
+    return {
+        "orders": [
+            {
+                "brokerOrderId": str(order.get("id") or ""),
+                "status": "submitted",
+                "actualPrice": float(order.get("average") or order.get("price") or 0),
+                "actualQuantity": float(order.get("filled") or order.get("amount") or 0),
+                "executionTimeMs": 0,
+                "raw": order,
+            }
+            for order in orders
+        ]
+    }
+
+
 def get_fills(broker_order_id: str, paper: bool, cfg: dict[str, Any]) -> dict[str, Any]:
     order = get_order(broker_order_id, paper, cfg)
     return {

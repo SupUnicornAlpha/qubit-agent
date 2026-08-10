@@ -142,7 +142,7 @@ Agent 声明工具
 
 > `def-research` 仍声明旧名 `factor.evaluate`，生命周期解析会转到 `factor.autoEvaluate`。建议直接更新 seed，避免定义层继续保留旧口径。
 
-### 4.3 交易执行（9）
+### 4.3 交易执行（11）
 
 | 工具 | 作用 | 默认 Agent |
 | --- | --- | --- |
@@ -164,6 +164,8 @@ Agent 声明工具
 | --- | --- | --- |
 | `execution.account.snapshot` | 读取 Connector capability、持仓、以及可用时的余额/保证金 | Execution Monitor |
 | `execution.order.get` | 读取订单状态及成交；超时后查询，不盲目重下 | Execution Monitor |
+| `order.list_open` | 列出当前未完成订单；不支持的 Provider 明确返回 capability unavailable | Execution Monitor |
+| `provider.capabilities` | 读取当前 Provider/Sidecar 的实时能力矩阵 | Execution Monitor |
 | `execution.reconcile.positions` | 生成只读账本/券商持仓对账和修复 proposal | Execution Monitor |
 | `execution.kill_switch.status` | 检查五级熔断状态 | Execution Monitor |
 
@@ -411,7 +413,7 @@ FSI 内容包有 17 项：
 | `account.get_balances` | 现金、购买力、保证金和币种余额 | Execution Monitor、RISK | Execution Connector，只读 |
 | `account.get_positions` | 统一实盘持仓、可用数量、成本和未实现 PnL | Execution Monitor、RISK | Execution Connector，只读 |
 | `order.get` | 查询单个订单最终/当前状态 | Execution Monitor | Execution Connector，只读 |
-| `order.list_open` | 查询未完成订单 | Execution Monitor | Execution Connector，只读 |
+| `order.list_open` | 查询未完成订单 | Execution Monitor | 已实现：Futu、IBKR、CCXT、Alpaca Sidecar；其余 Provider fail-closed |
 | `order.replace` | cancel-replace / modify order | Execution Trader | Execution Connector，高风险 |
 | `execution.reconcile` | broker fills/positions 与本地账本对账 | Execution Monitor、RISK | Builtin service + Connector |
 | `execution.kill_switch` | 按 provider/account/strategy/symbol 停止交易 | RISK、人工控制面 | Builtin，高风险、双确认 |
@@ -419,7 +421,7 @@ FSI 内容包有 17 项：
 | `risk.borrow_check` | short locate、可借量和借券费 | RISK | Connector/MCP 数据源 |
 | `derivatives.funding.get` | 永续资金费与历史 | MD、RISK | CCXT Connector |
 | `derivatives.options_chain.get` | 标准化期权链、IV 和 Greeks | MD、TECH、RISK | IB/Alpaca/MCP Connector |
-| `provider.capabilities` | 运行时返回具体 venue 支持的方法和限制 | O、MD、Execution Monitor | Connector introspection |
+| `provider.capabilities` | 运行时返回具体 venue 支持的方法和限制 | Execution Monitor | 已实现：Builtin + Broker MCP 的 Connector introspection |
 
 ### 8.6 什么时候用 Tool、MCP、Skill 或 Plugin
 
@@ -636,7 +638,7 @@ interface ExchangeAdapter {
 | 能力 | 外部基线 | QUBIT 当前状态 | 建议 |
 | --- | --- | --- | --- |
 | 按需 Tool Discovery / deferred loading | Claude 的 Tool Search 可按需加载工具；Codex 以 Plugin 组合 Skills、MCP 和 UI | 已新增 `tool.catalog.search`，但还没有 token 级 deferred schema loading | P1：将 tool schema/hash 也做按需加载，并把搜索结果接入配置页一键授权提案 |
-| 只读执行监控 | 通用 coding agent 往往只提供 shell/MCP，缺交易边界 | 已新增 Execution Monitor 与四个只读执行工具 | P0：加入 provider open-orders、事件序号/断点、账户级 dashboard |
+| 只读执行监控 | 通用 coding agent 往往只提供 shell/MCP，缺交易边界 | 已新增 Execution Monitor 与六个只读执行工具，含 open-orders 与能力矩阵 | P0：加入事件序号/断点、账户级 dashboard |
 | Skills 的渐进披露和可共享目录 | Hermes 将 `~/.hermes/skills` 作为 source of truth，按需加载，支持 tap/Hub | 已切换到 `~/.qubit-agent/skills`，Core 实际注入会写拓扑 | P1：为全局 Skills 加签名、allowlist、版本 pin、团队 registry 和 install review |
 | Computer use / browser automation | Codex 有 computer-use QA 路径；Hermes 提供后台桌面控制 | QUBIT 无产品级 browser/computer Tool | P1：独立 Browser/Computer Sidecar，默认无权限，录屏/截图审计、域名 allowlist、禁止交易网站下单 |
 | Hook / lifecycle policy | Claude Code 可用 hooks/权限规则；Claude API 支持严格 schema、caller 限制、defer loading | QUBIT 有 tool health、risk/HITL、workflow hooks，但缺通用可安装 lifecycle policy | P1：Plugin manifest 增加 before/after/failure hook、签名、超时、重试、compensation 和审批策略 |

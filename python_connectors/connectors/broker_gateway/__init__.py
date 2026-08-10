@@ -89,6 +89,8 @@ class BrokerGatewayConnector(BaseConnector):
             return self._cancel_order(payload)
         if operation == "get_order":
             return self._get_order(payload)
+        if operation == "get_open_orders":
+            return self._get_open_orders(payload)
         if operation == "get_fills":
             return self._get_fills(payload)
         if operation == "get_positions":
@@ -190,6 +192,12 @@ class BrokerGatewayConnector(BaseConnector):
             return eastmoney_emt_adapter.get_fills(broker_order_id, paper, cfg)
         raise ValueError(f"unsupported provider {self._provider}")
 
+    def _get_open_orders(self, payload: dict[str, Any]) -> dict[str, Any]:
+        fn = getattr(self._adapter(), "get_open_orders", None)
+        if not callable(fn):
+            raise RuntimeError(f"broker_capability_unavailable:{self._provider}:open_orders")
+        return fn(self._resolve_paper(payload), self._cfg(payload))
+
     def _get_positions(self, payload: dict[str, Any]) -> dict[str, Any]:
         paper = self._resolve_paper(payload)
         cfg = self._cfg(payload)
@@ -243,6 +251,7 @@ class BrokerGatewayConnector(BaseConnector):
         adapter = self._adapter()
         return {
             "getOrder": True,
+            "openOrders": callable(getattr(adapter, "get_open_orders", None)),
             "modifyOrder": callable(getattr(adapter, "modify_order", None)),
             "balances": callable(getattr(adapter, "get_balances", None)),
             "margin": callable(getattr(adapter, "get_margin", None)),

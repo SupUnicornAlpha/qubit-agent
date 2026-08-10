@@ -220,6 +220,40 @@ def get_order(broker_order_id: str, paper: bool, provider_config: dict[str, Any]
         }
 
 
+def get_open_orders(paper: bool, provider_config: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from futu import OpenSecTradeContext, TrdEnv  # type: ignore
+
+        host = str(provider_config.get("opendHost") or provider_config.get("opend_host") or "127.0.0.1")
+        port = int(provider_config.get("opendPort") or provider_config.get("opend_port") or 11111)
+        ctx = OpenSecTradeContext(host=host, port=port)
+        try:
+            ret, data = ctx.order_list_query(trd_env=TrdEnv.SIMULATE if paper else TrdEnv.REAL)
+            if ret != 0 or data is None:
+                raise RuntimeError(f"futu_open_orders_failed:{ret}")
+            terminal = ("filled", "cancel", "reject", "failed", "deleted")
+            orders = []
+            for _, row in data.iterrows():
+                status = str(row.get("order_status", "submitted"))
+                if any(token in status.lower() for token in terminal):
+                    continue
+                orders.append(
+                    {
+                        "brokerOrderId": str(row.get("order_id", "")),
+                        "status": "partially_filled" if "partial" in status.lower() else "submitted",
+                        "actualPrice": float(row.get("price", 0) or 0),
+                        "actualQuantity": float(row.get("qty", 0) or 0),
+                        "executionTimeMs": 0,
+                        "raw": {"symbol": str(row.get("code", "")), "futuStatus": status},
+                    }
+                )
+            return {"orders": orders}
+        finally:
+            ctx.close()
+    except ImportError:
+        return {"orders": [], "simulated": True}
+
+
 def get_fills(broker_order_id: str, paper: bool, provider_config: dict[str, Any]) -> dict[str, Any]:
     try:
         from futu import OpenSecTradeContext, TrdEnv  # type: ignore

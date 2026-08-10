@@ -16,6 +16,7 @@ import {
   brokerGetCapabilities,
   brokerGetFills,
   brokerGetMargin,
+  brokerGetOpenOrders,
   brokerGetOrder,
   brokerGetPositions,
   brokerModifyOrder,
@@ -72,6 +73,18 @@ const TOOLS = [
         brokerOrderId: { type: "string" },
       },
       required: ["brokerOrderId"],
+    },
+  },
+  {
+    name: "broker_list_open_orders",
+    description:
+      "Read all current open broker orders. Check broker_capabilities.openOrders before relying on this endpoint.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        provider: { type: "string", enum: [...BROKER_PROVIDERS] },
+        accountRef: { type: "string" },
+      },
     },
   },
   {
@@ -242,6 +255,11 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
       if (!brokerOrderId) throw new Error("brokerOrderId is required");
       const accountRef = typeof args.accountRef === "string" ? args.accountRef : undefined;
       return brokerGetOrder({ provider, ...(accountRef !== undefined ? { accountRef } : {}), brokerOrderId });
+    }
+    case "broker_list_open_orders": {
+      const provider = providerFromArgs(args);
+      const accountRef = typeof args.accountRef === "string" ? args.accountRef : undefined;
+      return brokerGetOpenOrders({ provider, ...(accountRef !== undefined ? { accountRef } : {}) });
     }
     case "broker_modify_order": {
       const provider = providerFromArgs(args);

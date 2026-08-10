@@ -3,6 +3,7 @@ import {
   brokerGetBalances,
   brokerGetCapabilities,
   brokerGetFills,
+  brokerGetOpenOrders,
   brokerGetMargin,
   brokerGetOrder,
   brokerGetPositions,
@@ -71,6 +72,26 @@ export const EXECUTION_OBSERVABILITY_HANDLERS: Record<string, BuiltinToolHandler
     const input = { provider, ...(accountRef ? { accountRef } : {}), brokerOrderId };
     const [order, fills] = await Promise.all([brokerGetOrder(input), brokerGetFills(input)]);
     return { provider, accountRef: accountRef ?? null, order, fills };
+  },
+
+  "order.list_open": async (_ctx, params) => {
+    const provider = providerFrom(params);
+    const accountRef = accountRefFrom(params);
+    return {
+      provider,
+      accountRef: accountRef ?? null,
+      orders: await brokerGetOpenOrders({ provider, ...(accountRef ? { accountRef } : {}) }),
+    };
+  },
+
+  "provider.capabilities": async (_ctx, params) => {
+    const provider = providerFrom(params);
+    const accountRef = accountRefFrom(params);
+    return {
+      provider,
+      accountRef: accountRef ?? null,
+      capabilities: await brokerGetCapabilities({ provider, ...(accountRef ? { accountRef } : {}) }),
+    };
   },
 
   "execution.reconcile.positions": async (ctx, params) => {

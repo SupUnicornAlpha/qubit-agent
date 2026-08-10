@@ -41,7 +41,11 @@ describe("China broker providers", () => {
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       requestedUrl = String(input);
       requestedHeaders = new Headers(init?.headers);
-      return new Response(JSON.stringify({ positions: [] }), {
+      const path = new URL(requestedUrl).pathname;
+      const payload = path === "/orders/open"
+        ? { orders: [{ brokerOrderId: "open-1", status: "submitted", actualPrice: 3.2, actualQuantity: 100 }] }
+        : { positions: [] };
+      return new Response(JSON.stringify(payload), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -63,6 +67,15 @@ describe("China broker providers", () => {
         market: "CN",
       });
       expect(requestedHeaders.get("x-qubit-paper")).toBe("true");
+
+      const openOrders = await connector.getOpenOrders?.();
+      expect(openOrders).toHaveLength(1);
+      expect(openOrders?.[0]?.brokerOrderId).toBe("open-1");
+      expect(new URL(requestedUrl).pathname).toBe("/orders/open");
+      expect(JSON.parse(requestedHeaders.get("x-qubit-provider-config") ?? "{}")).toEqual({
+        accountId: "account-1",
+        market: "CN",
+      });
     } finally {
       globalThis.fetch = originalFetch;
     }

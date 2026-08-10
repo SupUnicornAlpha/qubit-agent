@@ -224,6 +224,17 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
       "超时后先查订单，禁止基于未知状态盲目重下。",
     category: "trading",
   },
+  "order.list_open": {
+    description:
+      "只读列出券商当前未完成订单。params: provider, accountRef?；仅当 provider.capabilities.openOrders=true 时可用。",
+    category: "trading",
+  },
+  "provider.capabilities": {
+    description:
+      "读取指定 Broker/Exchange Sidecar 的规范化能力矩阵（订单、open orders、改单、余额、保证金、事件流、对账）。" +
+      "params: provider, accountRef?；调用高副作用工具前先检查。",
+    category: "trading",
+  },
   "execution.reconcile.positions": {
     description:
       "只读执行内部账本与券商持仓对账并生成 remediation proposal；不执行修复单。" +
