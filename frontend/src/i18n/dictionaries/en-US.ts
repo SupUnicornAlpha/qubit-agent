@@ -159,7 +159,7 @@ const pack: LocalePack = {
       nav: {
         ide: "Research IDE",
         team: "Research Team",
-        trader: "Live Trading Agent",
+        trader: "Trading",
         quant: "Quant Workbench",
         chart: "News",
         chat: "Chat",

@@ -793,11 +793,7 @@ export async function getFsWorkspaceFile(
   return res.data;
 }
 
-export async function putFsWorkspaceFile(
-  id: string,
-  path: string,
-  content: string
-): Promise<void> {
+export async function putFsWorkspaceFile(id: string, path: string, content: string): Promise<void> {
   await httpPut(`/api/v1/fs-workspaces/${encodeURIComponent(id)}/file`, {
     path,
     content,
@@ -882,10 +878,7 @@ export async function upsertFsWorkspaceMemory(
   return res.data;
 }
 
-export async function deleteFsWorkspaceMemory(
-  workspaceId: string,
-  entryId: string
-): Promise<void> {
+export async function deleteFsWorkspaceMemory(workspaceId: string, entryId: string): Promise<void> {
   await httpDelete(
     `/api/v1/fs-workspaces/${encodeURIComponent(workspaceId)}/memory/${encodeURIComponent(entryId)}`
   );
@@ -1178,9 +1171,7 @@ export async function runOrchestratorChat(
  * - Bun 协作 interrupt（团队 wave 边界）
  * - 若有 Prime Core 在飞 turn，同步 cancelTurn
  */
-export async function interruptWorkflow(
-  workflowId: string
-): Promise<{
+export async function interruptWorkflow(workflowId: string): Promise<{
   workflowRunId: string;
   requested: boolean;
   coreCancelled?: boolean;
@@ -1212,9 +1203,7 @@ export type WorkflowResumeStatus = {
   interruptionHint: string | null;
 };
 
-export async function getWorkflowResumeStatus(
-  workflowId: string
-): Promise<WorkflowResumeStatus> {
+export async function getWorkflowResumeStatus(workflowId: string): Promise<WorkflowResumeStatus> {
   const res = await httpGet<{ data: WorkflowResumeStatus }>(
     `/api/v1/workflows/${encodeURIComponent(workflowId)}/resume-status`
   );
@@ -4643,6 +4632,7 @@ export async function placeTraderBracketOrder(input: {
   side: "buy" | "sell";
   qty: number;
   entryOrderType?: "market" | "limit";
+  entryLimitPrice?: number;
   takeProfitPrice: number;
   stopLossPrice: number;
   timeframe?: string;
@@ -4902,6 +4892,40 @@ export type TraderContextMessageDto = {
   body: string;
   payload: Record<string, unknown>;
 };
+
+/** Execution engine's authoritative order-intent lifecycle, for the Trading screen. */
+export type ExecutionIntentSummary = {
+  id: string;
+  workflowRunId: string;
+  side: "buy" | "sell";
+  qty: number;
+  orderType: "market" | "limit" | "stop" | "stop_limit" | "trailing_stop";
+  price: number | null;
+  stopPrice: number | null;
+  timeInForce: "day" | "gtc" | "ioc" | "fok";
+  market: string | null;
+  symbol: string | null;
+  strategyRuntimeId: string | null;
+  activationStatus: "active" | "held" | "waiting_trigger" | "triggered";
+  lifecycleStatus: string;
+  intentTime: string;
+  lifecycleUpdatedAt: string;
+};
+
+export async function listExecutionIntents(input: {
+  workflowRunId?: string;
+  status?: string;
+  limit?: number;
+}): Promise<ExecutionIntentSummary[]> {
+  const q = new URLSearchParams();
+  if (input.workflowRunId) q.set("workflowRunId", input.workflowRunId);
+  if (input.status) q.set("status", input.status);
+  if (input.limit) q.set("limit", String(input.limit));
+  const res = await httpGet<{ ok: boolean; data: ExecutionIntentSummary[] }>(
+    `/api/v1/execution/intents${q.size ? `?${q.toString()}` : ""}`
+  );
+  return res.data;
+}
 
 export async function pollTraderFeed(input: {
   sessionId: string;

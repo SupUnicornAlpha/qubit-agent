@@ -1,0 +1,183 @@
+[data-qb-trader-root] {
+  --qb-trade-accent: var(--qb-blue, #8b5cf6);
+  --qb-trade-green: #22c55e;
+  --qb-trade-amber: #f59e0b;
+  --qb-trade-red: #ef4444;
+}
+
+.qb-trade-header {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  justify-content: space-between;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--qb-kline-header-border, #27272a);
+  background: color-mix(in srgb, var(--qb-main-panel-bg, #111114) 92%, var(--qb-trade-accent));
+}
+
+.qb-trade-title {
+  min-width: 132px;
+}
+.qb-trade-title p {
+  margin: 0 0 3px;
+  color: var(--qb-main-meta, #a1a1aa);
+  font-size: 11px;
+  letter-spacing: .08em;
+}
+.qb-trade-title h1 {
+  margin: 0;
+  color: var(--qb-body-fg, #e4e4e7);
+  font-size: 20px;
+  letter-spacing: -.02em;
+}
+
+.qb-trade-health {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(92px, 1fr));
+  flex: 1;
+  max-width: 760px;
+  gap: 1px;
+  background: var(--qb-kline-header-border, #27272a);
+}
+.qb-trade-health > div {
+  padding: 7px 10px;
+  background: var(--qb-main-panel-bg, #111114);
+  min-width: 0;
+}
+.qb-trade-health span {
+  display: block;
+  font-size: 10px;
+  color: var(--qb-main-meta, #a1a1aa);
+}
+.qb-trade-health strong {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--qb-body-fg, #e4e4e7);
+  font-size: 12px;
+}
+.qb-trade-status--ok {
+  color: var(--qb-trade-green) !important;
+}
+.qb-trade-status--warn {
+  color: var(--qb-trade-amber) !important;
+}
+
+.qb-trade-mode {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--qb-main-meta, #a1a1aa);
+  font-size: 11px;
+}
+.qb-trade-mode select {
+  min-width: 105px;
+}
+
+.qb-trade-nav {
+  display: flex;
+  gap: 2px;
+  padding: 0 16px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--qb-kline-header-border, #27272a);
+  background: var(--qb-kline-embedded-bar-bg, #111114);
+}
+.qb-trade-nav button {
+  flex: 0 0 auto;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 9px 11px 8px;
+  color: var(--qb-main-meta, #a1a1aa);
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+}
+.qb-trade-nav button[data-active="true"] {
+  border-bottom-color: var(--qb-trade-accent);
+  color: var(--qb-body-fg, #e4e4e7);
+  font-weight: 700;
+}
+
+.qb-trade-surface {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.qb-trade-main-grid {
+  grid-template-columns: minmax(300px, 0.9fr) minmax(420px, 1.4fr) !important;
+}
+.qb-trade-single {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.qb-trade-empty {
+  padding: 30px 18px;
+  color: var(--qb-main-meta, #a1a1aa);
+  font-size: 13px;
+}
+.qb-trade-surface[data-surface="agent"] .qb-trade-main-grid {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+.qb-trade-surface[data-surface="agent"] .qb-trade-execution {
+  display: none !important;
+}
+.qb-trade-surface[data-surface="manual"] .qb-trade-main-grid {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+.qb-trade-surface[data-surface="manual"] .qb-trade-flow {
+  display: none !important;
+}
+
+@media (max-width: 1100px) {
+  .qb-trade-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .qb-trade-health {
+    order: 3;
+    width: 100%;
+    max-width: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .qb-trade-header {
+    padding: 10px 12px;
+  }
+  .qb-trade-title h1 {
+    font-size: 18px;
+  }
+  .qb-trade-health {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .qb-trade-nav {
+    padding: 0 8px;
+  }
+  .qb-trade-main-grid {
+    display: flex !important;
+    flex-direction: column;
+    overflow: auto !important;
+  }
+  .qb-trade-main-grid > .qb-trader-module {
+    min-height: 460px;
+    flex: none !important;
+    border-right: 0 !important;
+    border-bottom: 1px solid var(--qb-kline-header-border, #27272a);
+  }
+  .qb-trade-main-grid > .qb-trader-module:last-child {
+    min-height: 720px;
+  }
+  .qb-trade-main-grid [data-qb-trader-scroll] {
+    min-height: 220px;
+  }
+  .qb-trade-main-grid .qb-trader-module > div[style*="max-height"] {
+    max-height: none !important;
+  }
+}

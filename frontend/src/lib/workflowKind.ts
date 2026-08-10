@@ -21,7 +21,7 @@ export const WORKFLOW_KIND_ORDER: WorkflowKind[] = [
 export const WORKFLOW_KIND_LABEL: Record<WorkflowKind, string> = {
   chat_session: "对话会话",
   research_team: "研究任务",
-  live_trading: "实时交易",
+  live_trading: "交易",
   a2a_pool: "A2A 常驻池",
   backtest: "回测",
   other: "其他",

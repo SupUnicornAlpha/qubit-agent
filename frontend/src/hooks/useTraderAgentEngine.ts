@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  type TraderAgentMessageEvent,
+  type TraderDriverEvent,
+  type TraderFeedEvent,
+  type TraderSessionContext,
   cancelTraderOrder,
   ensureTraderSession,
   placeTraderBracketOrder as placeTraderBracketOrderApi,
   placeTraderOrder,
   pollTraderFeed,
   runTraderCommand,
-  type TraderAgentMessageEvent,
-  type TraderDriverEvent,
-  type TraderFeedEvent,
-  type TraderSessionContext,
 } from "../api/backend";
 import { useAppStore } from "../store";
 
@@ -47,7 +47,9 @@ function ingestFeedEvent(
     const price = typeof p.price === "number" ? p.price : undefined;
     handlers.pushTraderMarker({
       side: isBuy ? "buy" : "sell",
-      text: isBuy ? `策略买入${price != null ? ` @${price}` : ""}` : `策略卖出${price != null ? ` @${price}` : ""}`,
+      text: isBuy
+        ? `策略买入${price != null ? ` @${price}` : ""}`
+        : `策略卖出${price != null ? ` @${price}` : ""}`,
       source: "strategy",
       barTime,
       orderIntentId,
@@ -232,6 +234,7 @@ export function useTraderAgentEngine(projectId: string | null, sessionId: string
       orderType?: "market" | "limit";
       price?: number | null;
       rationale?: string;
+      executionMode?: "paper" | "sim";
     }) => {
       if (!session?.workflowRunId) throw new Error("交易会话未就绪");
       setBusy(true);
@@ -252,7 +255,7 @@ export function useTraderAgentEngine(projectId: string | null, sessionId: string
           orderType: input.orderType ?? "market",
           timeframe: spec.timeframe,
           rationale: input.rationale ?? `trader_ui:${input.side}`,
-          executionMode: "paper",
+          executionMode: input.executionMode ?? "paper",
         });
         if (data.riskOutcome === "block") {
           pushTraderAgentLog({
@@ -307,7 +310,7 @@ export function useTraderAgentEngine(projectId: string | null, sessionId: string
         setBusy(false);
       }
     },
-    [pushTraderAgentLog, pushTraderDriver, pollOnce]
+    [session?.workflowRunId, pushTraderAgentLog, pushTraderDriver, pollOnce]
   );
 
   const placeBracketOrder = useCallback(
@@ -317,6 +320,8 @@ export function useTraderAgentEngine(projectId: string | null, sessionId: string
       entryOrderType: "market" | "limit";
       takeProfitPrice: number;
       stopLossPrice: number;
+      entryLimitPrice?: number;
+      executionMode?: "paper" | "sim";
     }) => {
       if (!session?.workflowRunId) throw new Error("交易会话未就绪");
       setBusy(true);
@@ -329,10 +334,13 @@ export function useTraderAgentEngine(projectId: string | null, sessionId: string
           side: input.side,
           qty: input.qty,
           entryOrderType: input.entryOrderType,
+          ...(input.entryLimitPrice !== undefined
+            ? { entryLimitPrice: input.entryLimitPrice }
+            : {}),
           takeProfitPrice: input.takeProfitPrice,
           stopLossPrice: input.stopLossPrice,
           timeframe: spec.timeframe,
-          executionMode: "paper",
+          executionMode: input.executionMode ?? "paper",
         });
         pushTraderAgentLog({
           kind: "user",
@@ -346,11 +354,11 @@ export function useTraderAgentEngine(projectId: string | null, sessionId: string
         setBusy(false);
       }
     },
-    [session, pushTraderAgentLog, requestChartReload, pollOnce],
+    [session, pushTraderAgentLog, requestChartReload, pollOnce]
   );
 
   const runCommand = useCallback(
-    async (text: string) => {
+    async (text: string, executionMode: "paper" | "sim" = "paper") => {
       if (!session?.workflowRunId || !sessionId) throw new Error("交易会话未就绪");
       const spec = useAppStore.getState().chartSpec;
       pushTraderDriver({
@@ -366,7 +374,7 @@ export function useTraderAgentEngine(projectId: string | null, sessionId: string
         exchange: spec.exchange,
         timeframe: spec.timeframe,
         text,
-        executionMode: "paper",
+        executionMode,
       });
       if (parsed.action === "ingest") {
         requestChartReload();
@@ -383,7 +391,15 @@ export function useTraderAgentEngine(projectId: string | null, sessionId: string
       void pollOnce();
       return data;
     },
-    [session, sessionId, pushTraderAgentLog, pushTraderMarker, pushTraderDriver, requestChartReload, pollOnce]
+    [
+      session,
+      sessionId,
+      pushTraderAgentLog,
+      pushTraderMarker,
+      pushTraderDriver,
+      requestChartReload,
+      pollOnce,
+    ]
   );
 
   const runAgentCycle = useCallback(async () => {
@@ -396,11 +412,17 @@ export function useTraderAgentEngine(projectId: string | null, sessionId: string
     pushTraderAgentLog({
       kind: "ingest",
       title: "Agent 轮询周期",
-      body: `拉取策略驱动、A2A 消息与成交决策…`,
+      body: "拉取策略驱动、A2A 消息与成交决策…",
     });
     requestChartReload();
     await pollOnce();
-  }, [traderAgentConfig.triggerMode, pushTraderAgentLog, pushTraderDriver, requestChartReload, pollOnce]);
+  }, [
+    traderAgentConfig.triggerMode,
+    pushTraderAgentLog,
+    pushTraderDriver,
+    requestChartReload,
+    pollOnce,
+  ]);
 
   return {
     session,

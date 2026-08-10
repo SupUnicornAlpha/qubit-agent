@@ -159,7 +159,7 @@ const pack: LocalePack = {
       nav: {
         ide: "研究工作台",
         team: "研究团队",
-        trader: "实时交易Agent",
+        trader: "交易",
         quant: "量化工作台",
         chart: "资讯",
         chat: "对话",
@@ -285,7 +285,7 @@ const pack: LocalePack = {
           symbolFromToolbar: "标的取自工具条",
           stdoutSummary: "策略 print 输出（{n} 字符）",
           runtimeHint:
-            "纸面/实盘策略运行时：在「实时交易」页勾选策略后启动，或调用 POST /api/v1/strategy-runtimes",
+            "纸面/实盘策略运行时：在「交易」页勾选策略后启动，或调用 POST /api/v1/strategy-runtimes",
         },
         tune: {
           intro:
@@ -351,7 +351,7 @@ const pack: LocalePack = {
           "与左侧 Agent 流、上方 K 线联动：纸面下单走统一执行管道（风控 → execution_task → 纸面成交）。",
         amountLabel: "名义金额（示意，用于估算数量）",
         qtyEstimate: "预估数量约 {qty} 股/张 · 纸面模式",
-        backendOffline: "在实时交易页连接后端后可用",
+        backendOffline: "在交易页连接后端后可用",
         long: "做多",
         short: "做空",
         submitting: "提交中…",

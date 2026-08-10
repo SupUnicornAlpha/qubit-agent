@@ -1,7 +1,7 @@
 import type { CSSProperties, FC } from "react";
 import { useEffect, useRef, useState } from "react";
-import { useAppStore } from "../../store";
 import { useTranslation } from "../../i18n";
+import { useAppStore } from "../../store";
 
 type OrderKind = "market" | "limit";
 
@@ -9,13 +9,20 @@ export const IdeQuickTradePanel: FC<{
   variant?: "sidebar" | "trader";
   traderLinked?: boolean;
   traderBusy?: boolean;
-  onPlaceOrder?: (side: "buy" | "sell", qty: number, orderKind: OrderKind) => Promise<void>;
+  executionMode?: "paper" | "sim";
+  onPlaceOrder?: (
+    side: "buy" | "sell",
+    qty: number,
+    orderKind: OrderKind,
+    limitPrice?: number
+  ) => Promise<void>;
   onPlaceBracket?: (
     side: "buy" | "sell",
     qty: number,
     orderKind: OrderKind,
     takeProfitPrice: number,
     stopLossPrice: number,
+    entryLimitPrice?: number
   ) => Promise<void>;
   onCancelLast?: () => Promise<void>;
   lastOrderIntentId?: string | null;
@@ -23,6 +30,7 @@ export const IdeQuickTradePanel: FC<{
   variant = "sidebar",
   traderLinked = false,
   traderBusy = false,
+  executionMode = "paper",
   onPlaceOrder,
   onPlaceBracket,
   onCancelLast,
@@ -32,10 +40,8 @@ export const IdeQuickTradePanel: FC<{
   const pushTraderAgentLog = useAppStore((s) => s.pushTraderAgentLog);
   const { t } = useTranslation();
   const [orderKind, setOrderKind] = useState<OrderKind>("market");
-  const [amountPct, setAmountPct] = useState(25);
-  const [notional, setNotional] = useState(10_000);
-  const [leverage, setLeverage] = useState(3);
-  const [marginMode, setMarginMode] = useState<"cross" | "isolated">("cross");
+  const [qty, setQty] = useState(100);
+  const [limitPrice, setLimitPrice] = useState("");
   const [tp, setTp] = useState("");
   const [sl, setSl] = useState("");
   const [orderErr, setOrderErr] = useState<string | null>(null);
@@ -45,37 +51,23 @@ export const IdeQuickTradePanel: FC<{
 
   useEffect(() => {
     if (!traderLinked) return;
-    const sig = `${orderKind}|${amountPct}|${leverage}|${marginMode}`;
+    const sig = `${orderKind}|${qty}|${limitPrice}|${executionMode}`;
     if (lastSig.current === sig) return;
     lastSig.current = sig;
     const timer = window.setTimeout(() => {
       pushTraderAgentLog({
         kind: "user",
         title: t("ide.quickTrade.logTitle"),
-        body: t("ide.quickTrade.logBody", {
-          kind:
-            orderKind === "market"
-              ? t("ide.quickTrade.orderKind.market")
-              : t("ide.quickTrade.orderKind.limit"),
-          pct: amountPct,
-          lev: leverage,
-          margin:
-            marginMode === "cross"
-              ? t("ide.quickTrade.margin.cross")
-              : t("ide.quickTrade.margin.isolated"),
-          symbol: chartSpec.symbol,
-          exchange: chartSpec.exchange,
-          tf: chartSpec.timeframe,
-        }),
+        body: `订单类型=${orderKind === "market" ? t("ide.quickTrade.orderKind.market") : t("ide.quickTrade.orderKind.limit")} · 数量=${qty} · 执行=${executionMode}\n品种 ${chartSpec.symbol} / ${chartSpec.exchange} · ${chartSpec.timeframe}`,
       });
     }, 450);
     return () => window.clearTimeout(timer);
   }, [
     traderLinked,
     orderKind,
-    amountPct,
-    leverage,
-    marginMode,
+    qty,
+    limitPrice,
+    executionMode,
     chartSpec.symbol,
     chartSpec.exchange,
     chartSpec.timeframe,
@@ -83,15 +75,15 @@ export const IdeQuickTradePanel: FC<{
     t,
   ]);
 
-  const qtyFromNotional = () => {
-    const base = Math.max(1, Math.floor((notional * amountPct) / 100 / 100));
-    return base;
-  };
-
   const submit = async (side: "buy" | "sell") => {
     if (!onPlaceOrder) return;
     setOrderErr(null);
     try {
+      if (!Number.isFinite(qty) || qty <= 0) throw new Error("数量必须大于 0");
+      const resolvedLimitPrice = Number(limitPrice);
+      if (orderKind === "limit" && !(resolvedLimitPrice > 0)) {
+        throw new Error("限价单必须填写有效限价");
+      }
       const takeProfitPrice = Number(tp);
       const stopLossPrice = Number(sl);
       const hasProtection = tp.trim().length > 0 || sl.trim().length > 0;
@@ -102,13 +94,19 @@ export const IdeQuickTradePanel: FC<{
         }
         await onPlaceBracket(
           side,
-          qtyFromNotional(),
+          qty,
           orderKind,
           takeProfitPrice,
           stopLossPrice,
+          orderKind === "limit" ? resolvedLimitPrice : undefined
         );
       } else {
-        await onPlaceOrder(side, qtyFromNotional(), orderKind);
+        await onPlaceOrder(
+          side,
+          qty,
+          orderKind,
+          orderKind === "limit" ? resolvedLimitPrice : undefined
+        );
       }
     } catch (e) {
       setOrderErr(e instanceof Error ? e.message : String(e));
@@ -121,7 +119,9 @@ export const IdeQuickTradePanel: FC<{
       : styles.panel;
 
   const orderKindLabel =
-    orderKind === "market" ? t("ide.quickTrade.orderKind.market") : t("ide.quickTrade.orderKind.limit");
+    orderKind === "market"
+      ? t("ide.quickTrade.orderKind.market")
+      : t("ide.quickTrade.orderKind.limit");
 
   return (
     <aside style={panelStyle} aria-label={t("ide.quickTrade.ariaLabel")}>
@@ -131,19 +131,19 @@ export const IdeQuickTradePanel: FC<{
       </p>
       {traderLinked ? <p style={styles.linkHint}>{t("ide.quickTrade.intro")}</p> : null}
       <label style={styles.lab}>
-        {t("ide.quickTrade.amountLabel")}
+        数量
         <input
           style={styles.inpActive}
           type="number"
-          min={100}
-          value={notional}
-          onChange={(e) => setNotional(Number(e.target.value) || 10_000)}
+          min={1}
+          value={qty}
+          onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))}
           disabled={!canTrade}
         />
       </label>
       <p style={styles.price}>
         {canTrade
-          ? t("ide.quickTrade.qtyEstimate", { qty: qtyFromNotional() })
+          ? `${qty} 单位 · ${executionMode === "paper" ? "纸面执行" : "券商模拟执行"}`
           : t("ide.quickTrade.backendOffline")}
       </p>
       {orderErr ? <p style={styles.err}>{orderErr}</p> : null}
@@ -191,47 +191,21 @@ export const IdeQuickTradePanel: FC<{
           {t("ide.quickTrade.orderKind.limit")}
         </button>
       </div>
-      <div style={styles.pctRow}>
-        {[10, 25, 50, 75, 100].map((p) => (
-          <button
-            key={p}
-            type="button"
-            className={`qb-chip qb-chip--sm${amountPct === p ? " qb-chip--active" : ""}`}
-            onClick={() => setAmountPct(p)}
-          >
-            {p}%
-          </button>
-        ))}
-      </div>
-      <label style={styles.lab}>
-        {t("ide.quickTrade.leverage", { n: leverage })}
-        <input
-          className="qb-range-input"
-          style={styles.range}
-          type="range"
-          min={1}
-          max={20}
-          value={leverage}
-          onInput={(e) => setLeverage(Number(e.currentTarget.value))}
-          onChange={(e) => setLeverage(Number(e.target.value))}
-        />
-      </label>
-      <div className="qb-segmented qb-segmented--inline" style={styles.segBar}>
-        <button
-          type="button"
-          className={`qb-segmented__tab${marginMode === "cross" ? " qb-segmented__tab--active" : ""}`}
-          onClick={() => setMarginMode("cross")}
-        >
-          {t("ide.quickTrade.margin.cross")}
-        </button>
-        <button
-          type="button"
-          className={`qb-segmented__tab${marginMode === "isolated" ? " qb-segmented__tab--active" : ""}`}
-          onClick={() => setMarginMode("isolated")}
-        >
-          {t("ide.quickTrade.margin.isolated")}
-        </button>
-      </div>
+      {orderKind === "limit" ? (
+        <label style={styles.lab}>
+          限价
+          <input
+            style={styles.inpActive}
+            value={limitPrice}
+            onChange={(e) => setLimitPrice(e.target.value)}
+            placeholder="订单触发价格"
+            disabled={!canTrade}
+            type="number"
+            min="0"
+            step="any"
+          />
+        </label>
+      ) : null}
       <label style={styles.lab}>
         {t("ide.quickTrade.tp")}
         <input
@@ -284,7 +258,13 @@ const styles: Record<string, CSSProperties> = {
   linkHint: { margin: 0, fontSize: 11, color: "var(--qb-main-meta, #71717a)", lineHeight: 1.45 },
   price: { margin: 0, fontSize: 12, color: "var(--qb-main-meta, #71717a)" },
   err: { margin: 0, fontSize: 12, color: "#f87171" },
-  lab: { display: "flex", flexDirection: "column", gap: 4, fontSize: 11, color: "var(--qb-main-meta, #71717a)" },
+  lab: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 4,
+    fontSize: 11,
+    color: "var(--qb-main-meta, #71717a)",
+  },
   select: {
     padding: "6px 8px",
     borderRadius: 6,
@@ -312,7 +292,5 @@ const styles: Record<string, CSSProperties> = {
   },
   lr: { display: "flex", flexDirection: "row", gap: 8 },
   segBar: { width: "100%" },
-  pctRow: { display: "flex", flexWrap: "wrap", gap: 4 },
-  range: { width: "100%", accentColor: "#3b82f6" },
   note: { margin: 0, fontSize: 10, color: "var(--qb-main-meta, #52525b)", lineHeight: 1.45 },
 };
