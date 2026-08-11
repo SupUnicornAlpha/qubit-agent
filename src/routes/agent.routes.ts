@@ -34,7 +34,11 @@ import {
   loadBuiltinConnectorSettings,
   saveBuiltinConnectorSettings,
 } from "../runtime/config/builtin-connector-settings";
-import { loadModelConfig, saveModelConfig } from "../runtime/config/model-config";
+import {
+  loadModelConfig,
+  saveModelConfig,
+  type RuntimeModelConfig,
+} from "../runtime/config/model-config";
 import {
   describeDefaultEmbeddingClient,
   getDefaultEmbeddingClient,
@@ -472,12 +476,12 @@ agentRouter.post("/definitions/:id/prompt-preview", async (c) => {
   const preview = await buildAgentPromptPreview(db, {
     definitionId,
     overrides: {
-      systemPrompt: body.systemPrompt,
-      promptMode: body.promptMode,
-      toolsJson: body.toolsJson,
-      mcpServersJson: body.mcpServersJson,
-      skillsJson: body.skillsJson,
-      subscriptionsJson: body.subscriptionsJson,
+      ...(body.systemPrompt !== undefined ? { systemPrompt: body.systemPrompt } : {}),
+      ...(body.promptMode !== undefined ? { promptMode: body.promptMode } : {}),
+      ...(body.toolsJson !== undefined ? { toolsJson: body.toolsJson } : {}),
+      ...(body.mcpServersJson !== undefined ? { mcpServersJson: body.mcpServersJson } : {}),
+      ...(body.skillsJson !== undefined ? { skillsJson: body.skillsJson } : {}),
+      ...(body.subscriptionsJson !== undefined ? { subscriptionsJson: body.subscriptionsJson } : {}),
     },
   });
   if (!preview) return c.json({ error: "Agent definition not found" }, 404);
@@ -1023,19 +1027,7 @@ agentRouter.get("/config", async (c) => {
   });
 });
 
-function toModelConfigResponse(config: {
-  provider: string;
-  model: string;
-  apiKey?: string;
-  baseUrl?: string;
-  embedding?: {
-    enabled: boolean;
-    model: string;
-    apiKey?: string;
-    baseUrl?: string;
-    dimensions?: number;
-  };
-}) {
+function toModelConfigResponse(config: RuntimeModelConfig) {
   const emb = config.embedding;
   return {
     provider: config.provider,

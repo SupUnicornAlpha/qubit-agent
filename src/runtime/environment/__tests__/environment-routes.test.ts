@@ -12,6 +12,8 @@
  * 测试验证；CI 上跑会引入网络依赖与时长波动，得不偿失。
  */
 import { beforeAll, describe, expect, test } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { config } from "../../../config";
 import { runMigrations } from "../../../db/sqlite/migrate";
 import { seedEnvRegistry } from "../seed-env-registry";
@@ -21,15 +23,18 @@ async function jsonOf<T = Record<string, unknown>>(res: Response): Promise<T> {
 }
 
 /**
- * 该测试要求外部以 `QUBIT_DATA_DIR=/tmp/...` 启动 bun test —— config 在
+ * 该测试要求 harness 以 `QUBIT_DATA_DIR=<系统临时目录>/...` 启动 bun test —— config 在
  * module-import 时立刻 frozen，没法在 beforeAll 中改。与同目录其它
  * env-mgr 测试约定一致（同时可让 npm-deps 复用 mcp-bin/node_modules）。
  */
 describe("/api/v1/environment routes", () => {
-  let app: { request: (req: Request) => Promise<Response> };
+  let app: { request: (req: Request) => Response | Promise<Response> };
 
   beforeAll(async () => {
-    expect(config.dataDir).toMatch(/\/tmp\//);
+    expect(
+      config.dataDir.startsWith(join(tmpdir(), "qubit-test-")) ||
+        config.dataDir.startsWith("/tmp/")
+    ).toBe(true);
     await runMigrations();
     await seedEnvRegistry([]); // 用空 mcp presets，避免 fmp/financex 干扰
     const server = await import("../../../server");

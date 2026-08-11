@@ -172,15 +172,21 @@ export function classifyLlmGatewayError(
       (context?.attempt !== undefined && error.attempt === undefined)
     ) {
       return new LlmGatewayError(error.code, error.message, {
-        provider: error.provider ?? context?.provider,
-        model: error.model ?? context?.model,
-        httpStatus: error.httpStatus,
         retryable: error.retryable,
         fallbackEligible: error.fallbackEligible,
         circuitRelevant: error.circuitRelevant,
-        retryAfterMs: error.retryAfterMs,
-        attempt: error.attempt ?? context?.attempt,
         cause: error.cause ?? error,
+        ...(error.provider ?? context?.provider
+          ? { provider: error.provider ?? context?.provider }
+          : {}),
+        ...(error.model ?? context?.model
+          ? { model: error.model ?? context?.model }
+          : {}),
+        ...(error.httpStatus !== undefined ? { httpStatus: error.httpStatus } : {}),
+        ...(error.retryAfterMs !== undefined ? { retryAfterMs: error.retryAfterMs } : {}),
+        ...(error.attempt ?? context?.attempt !== undefined
+          ? { attempt: error.attempt ?? context?.attempt }
+          : {}),
       });
     }
     return error;
@@ -190,11 +196,11 @@ export function classifyLlmGatewayError(
   const httpStatus = extractHttpStatus(message);
   const lower = message.toLowerCase();
   const base = {
-    provider: context?.provider,
-    model: context?.model,
-    attempt: context?.attempt,
-    httpStatus,
     cause: error,
+    ...(context?.provider ? { provider: context.provider } : {}),
+    ...(context?.model ? { model: context.model } : {}),
+    ...(context?.attempt !== undefined ? { attempt: context.attempt } : {}),
+    ...(httpStatus !== undefined ? { httpStatus } : {}),
   };
 
   if (
@@ -210,9 +216,10 @@ export function classifyLlmGatewayError(
   }
 
   if (/\bcircuit breaker open\b/i.test(message)) {
+    const retryAfterMs = extractRetryAfterMs(message);
     return new LlmGatewayError("CIRCUIT_OPEN", message, {
       ...base,
-      retryAfterMs: extractRetryAfterMs(message),
+      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
     });
   }
 

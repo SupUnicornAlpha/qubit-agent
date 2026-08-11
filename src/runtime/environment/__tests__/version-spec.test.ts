@@ -44,8 +44,8 @@ describe("parseVersionSpec / satisfies", () => {
 
   test("~=0.2.4 → >=0.2.4,<0.3", () => {
     const c = parseVersionSpec("~=0.2.4");
-    expect(c[0].op).toBe("~=");
-    expect(c[0].tildeUpper).toBe("0.3");
+    expect(c[0]?.op).toBe("~=");
+    expect(c[0]?.tildeUpper).toBe("0.3");
     expect(satisfies("0.2.4", "~=0.2.4")).toBe(true);
     expect(satisfies("0.2.99", "~=0.2.4")).toBe(true);
     expect(satisfies("0.3.0", "~=0.2.4")).toBe(false);

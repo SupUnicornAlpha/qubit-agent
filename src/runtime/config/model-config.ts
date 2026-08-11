@@ -66,8 +66,15 @@ export function loadModelConfigSync(rootDir = process.cwd()): RuntimeModelConfig
 }
 
 export async function saveModelConfig(
-  input: Partial<RuntimeModelConfig> & {
-    embedding?: Partial<EmbeddingModelConfig> | null;
+  input: Partial<Omit<RuntimeModelConfig, "embedding">> & {
+    embedding?: {
+      enabled?: boolean;
+      model?: string;
+      apiKey?: string;
+      /** `undefined` is an explicit request to clear the persisted optional value. */
+      baseUrl?: string | undefined;
+      dimensions?: number | undefined;
+    } | null;
   },
   rootDir = process.cwd()
 ): Promise<RuntimeModelConfig> {

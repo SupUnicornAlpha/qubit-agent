@@ -70,8 +70,8 @@ describe("diffPackages", () => {
     expect(d.satisfied.map((p) => p.name)).toEqual(["pandas"]);
     expect(d.missing.map((p) => p.name).sort()).toEqual(["akshare", "pytest"]);
     expect(d.versionMismatch).toHaveLength(1);
-    expect(d.versionMismatch[0].expected.name).toBe("yfinance");
-    expect(d.versionMismatch[0].installed.version).toBe("0.2.20");
+    expect(d.versionMismatch[0]?.expected.name).toBe("yfinance");
+    expect(d.versionMismatch[0]?.installed.version).toBe("0.2.20");
     expect(d.orphan.map((p) => p.name)).toEqual(["requests"]);
   });
 

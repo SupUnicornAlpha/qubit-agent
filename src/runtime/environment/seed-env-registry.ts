@@ -110,6 +110,7 @@ export function parseRequirementsTxt(
     const m = cleaned.match(/^([A-Za-z0-9_.-]+)\s*([<>=!~]=?\s*[^;]+)?$/);
     if (!m) continue;
     const [, name, spec] = m;
+    if (!name) continue;
     out.set(name.toLowerCase(), spec ? spec.replace(/\s+/g, "") : null);
   }
   return out;
@@ -145,7 +146,7 @@ export function parseNpxCommand(
   const tokens = command.trim().split(/\s+/);
   if (tokens[0] !== "npx") return null;
   let i = 1;
-  while (i < tokens.length && tokens[i].startsWith("-")) i += 1;
+  while (i < tokens.length && tokens[i]?.startsWith("-")) i += 1;
   const target = tokens[i];
   if (!target) return null;
   const rawArgs = tokens.slice(i + 1);
@@ -169,10 +170,10 @@ function buildPythonSeed(): SeedExpectedPackage[] {
       name: meta.name,
       displayName: meta.displayName,
       description: meta.description,
-      versionSpec: versionSpec ?? undefined,
       optional: meta.optional,
       capability: meta.capability,
       source,
+      ...(versionSpec ? { versionSpec } : {}),
     };
   });
 }
@@ -188,15 +189,15 @@ function buildNpmSeed(presets: RecommendedMcpPreset[]): SeedExpectedPackage[] {
       name: parsed.pkg,
       displayName: p.name,
       description: p.description,
-      versionSpec: parsed.version ? `==${parsed.version}` : undefined,
       optional: p.name.includes("fmp"),
       capability: `mcp/${p.name}`,
       source: "seed-mcp",
       extra: {
         npxArgs: parsed.rawArgs,
-        registrySlug: p.registrySlug,
         mcpServerName: p.name,
+        ...(p.registrySlug ? { registrySlug: p.registrySlug } : {}),
       },
+      ...(parsed.version ? { versionSpec: `==${parsed.version}` } : {}),
     });
   }
   return out;

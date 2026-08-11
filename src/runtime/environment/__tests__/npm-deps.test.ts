@@ -4,6 +4,7 @@
  * 不跑真实 bun add：那需要联网拉包；端到端通过 routes 集成测验证。
  */
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { config } from "../../../config";
@@ -16,11 +17,14 @@ import {
 } from "../npm-deps";
 import type { ExpectedPackage, InstalledPackage } from "../types";
 
-// QUBIT_DATA_DIR 由外部注入，必须是 /tmp 下临时目录（防止误写到真实数据）
+// QUBIT_DATA_DIR 由测试 harness 注入，必须在系统临时目录（防止误写到真实数据）
 const TEST_DIR = `${config.dataDir}/mcp-bin/node_modules`;
 
 beforeAll(() => {
-  expect(config.dataDir).toMatch(/^\/tmp\//);
+  expect(
+    config.dataDir.startsWith(join(tmpdir(), "qubit-test-")) ||
+      config.dataDir.startsWith("/tmp/")
+  ).toBe(true);
   rmSync(TEST_DIR, { recursive: true, force: true });
   mkdirSync(TEST_DIR, { recursive: true });
 

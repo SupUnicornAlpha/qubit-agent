@@ -30,8 +30,9 @@ export function parseVersionSpec(spec: string | null | undefined): ParsedConstra
     if (!part) continue;
     const m = part.match(/^(==|>=|<=|!=|~=|>|<)\s*([0-9][^\s,;]*)$/);
     if (!m) continue;
-    const op = m[1] as ComparisonOp;
+    const op = m[1] as ComparisonOp | undefined;
     const ver = m[2];
+    if (!op || !ver) continue;
     if (op === "~=") {
       out.push({ op, version: ver, tildeUpper: nextCompatibleUpper(ver) });
     } else {
@@ -53,13 +54,14 @@ function nextCompatibleUpper(ver: string): string {
   }
   // truncate to len-1，最后一节 +1
   const head = parts.slice(0, -1);
-  head[head.length - 1] = head[head.length - 1] + 1;
+  const last = head.length - 1;
+  head[last] = (head[last] ?? 0) + 1;
   return head.join(".");
 }
 
 /** 提取版本字符串中的数值序列；prerelease 标签（rc/dev/post/a/b）截断。 */
 function numericParts(v: string): number[] {
-  const cleaned = v.split(/[^0-9.]/)[0]; // 截断到首个非数字非点字符
+  const cleaned = v.split(/[^0-9.]/)[0] ?? ""; // 截断到首个非数字非点字符
   return cleaned
     .split(".")
     .filter((s) => s.length > 0)
