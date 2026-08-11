@@ -156,6 +156,9 @@ async function evolveFromGeneration(generationId: string) {
     // 交叉繁殖：从 top 中挑选父本A/B，按基因位随机继承并做轻微平均融合
     const parentA = top[i % top.length];
     const parentB = top[(i + 1 + Math.floor(Math.random() * top.length)) % top.length];
+    if (!parentA || !parentB) {
+      throw new Error("gene_evolution_requires_two_parents");
+    }
     const genesA = parentA.genesSnapshotJson as Record<string, number>;
     const genesB = parentB.genesSnapshotJson as Record<string, number>;
     const snapshot: Record<string, number> = {};

@@ -120,10 +120,12 @@ export async function placeTraderOrder(input: {
       targetPrice: targetPrice > 0 ? targetPrice : 100,
       rationale: input.rationale ?? `trader_ui:${input.side}`,
       market,
-      timeframe: input.timeframe,
       executionMode: input.executionMode ?? "paper",
-      strategyRuntimeId: input.strategyRuntimeId,
-      signalBarTime: input.signalBarTime,
+      ...(input.timeframe !== undefined ? { timeframe: input.timeframe } : {}),
+      ...(input.strategyRuntimeId !== undefined
+        ? { strategyRuntimeId: input.strategyRuntimeId }
+        : {}),
+      ...(input.signalBarTime !== undefined ? { signalBarTime: input.signalBarTime } : {}),
     },
     db,
   );
@@ -148,9 +150,11 @@ export async function placeTraderOrder(input: {
   return {
     orderIntentId: result.orderIntentId,
     executionTaskId: result.executionTaskId,
-    legacyIntentOrderId: result.legacyIntentOrderId,
     riskOutcome: result.riskOutcome,
     riskReason: result.riskReason,
+    ...(result.legacyIntentOrderId !== undefined
+      ? { legacyIntentOrderId: result.legacyIntentOrderId }
+      : {}),
   };
 }
 
@@ -271,7 +275,7 @@ export async function cancelTraderOrder(input: {
     .select()
     .from(brokerOrder)
     .where(eq(brokerOrder.orderIntentId, input.orderIntentId))
-    .orderBy(desc(brokerOrder.createdAt))
+    .orderBy(desc(brokerOrder.submittedAt))
     .limit(1);
   const bo = orders[0];
   if (!bo?.brokerOrderId) {
@@ -406,7 +410,7 @@ async function recordFeedToContext(
       kind: item.kind,
       title: item.title,
       body: item.body,
-      payload: item.payload,
+      ...(item.payload !== undefined ? { payload: item.payload } : {}),
     });
   }
 }
@@ -738,7 +742,11 @@ export function parseTraderUserCommand(text: string): {
   const lower = raw.toLowerCase();
   if (/撤单|取消|cancel/.test(lower)) {
     const idMatch = raw.match(/[0-9a-f-]{8,}/i);
-    return { action: "cancel", orderIntentId: idMatch?.[0], raw };
+    return {
+      action: "cancel",
+      raw,
+      ...(idMatch?.[0] ? { orderIntentId: idMatch[0] } : {}),
+    };
   }
   if (/买入|做多|buy|long/.test(lower)) {
     const n = raw.match(/(\d+)/);

@@ -159,9 +159,9 @@ export async function listPlugins(input: {
 
   if (tab === "catalog" || tab === "all") {
     const pageResult = await listCatalogItemsPaginated({
-      q: input.q,
       page: 1,
       pageSize: 48,
+      ...(input.q !== undefined ? { q: input.q } : {}),
     });
     for (const row of pageResult.items) {
       items.push(catalogRowAsPlugin(row));
@@ -235,7 +235,7 @@ async function upsertManualMcpServer(input: {
   name: string;
   command?: string;
   url?: string;
-  transport?: string;
+  transport?: "stdio" | "http" | "ws";
 }): Promise<{ serverName: string; reused: boolean }> {
   const db = await getDb();
   const existing = await db
@@ -256,6 +256,7 @@ async function upsertManualMcpServer(input: {
     await syncServerDefaultStarBinding({
       serverName: input.name,
       projectId: input.projectId,
+      enabled: true,
     });
     return { serverName: input.name, reused: true };
   }
@@ -272,8 +273,19 @@ async function upsertManualMcpServer(input: {
   await syncServerDefaultStarBinding({
     serverName: input.name,
     projectId: input.projectId,
+    enabled: true,
   });
   return { serverName: input.name, reused: false };
+}
+
+function normalizeMcpTransport(
+  transport: string | undefined,
+  url: string | undefined
+): "stdio" | "http" | "ws" {
+  if (transport === "stdio" || transport === "http" || transport === "ws") {
+    return transport;
+  }
+  return url ? "http" : "stdio";
 }
 
 async function installSkillRows(input: {
@@ -511,7 +523,7 @@ export async function importPluginPackage(input: {
     projectId: input.projectId,
     registry,
     skills,
-    installedBy: input.installedBy,
+    ...(input.installedBy !== undefined ? { installedBy: input.installedBy } : {}),
   });
 
   const mcpServerNames: string[] = [];
@@ -521,9 +533,9 @@ export async function importPluginPackage(input: {
     await upsertManualMcpServer({
       projectId: input.projectId,
       name,
-      command: server.command,
-      url: server.url,
-      transport: server.transport,
+      ...(server.command !== undefined ? { command: server.command } : {}),
+      ...(server.url !== undefined ? { url: server.url } : {}),
+      transport: normalizeMcpTransport(server.transport, server.url),
     });
     // Audit row so Plugins「已安装」能投影到 MCP 轨（无 catalog 时写一条 synthetic install）
     await ensureSyntheticMcpInstall({
@@ -534,9 +546,6 @@ export async function importPluginPackage(input: {
     });
     mcpServerNames.push(name);
   }
-
-  // Drop unused binding import warning
-  void mcpToolBinding;
 
   return {
     ok: true,

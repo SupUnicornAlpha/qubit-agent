@@ -20,8 +20,8 @@ export function detectRegimeFromBars(bars: BarData[]): RegimeResult {
       features: { return10: 0, relVol20: 0 },
     };
   }
-  const c0 = closes[n - 11];
-  const c1 = closes[n - 1];
+  const c0 = closes[n - 11] ?? 0;
+  const c1 = closes[n - 1] ?? 0;
   const ret10 = c0 > 0 ? (c1 - c0) / c0 : 0;
   const window = closes.slice(-Math.min(20, n));
   const mean = window.reduce((a, b) => a + b, 0) / window.length;
