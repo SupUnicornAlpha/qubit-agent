@@ -271,8 +271,10 @@ describe("Gateway P0 — OpenAI Responses API 路由", () => {
     } catch {
       threw = true;
     }
-    /** 路由到 chat 路径后 SDK 会出错（baseURL 非真实），但**绝不**应该调到 /v1/responses 的 fetch */
-    expect(fetchSpy).not.toHaveBeenCalled();
+    /** Chat SDK 同样通过 fetch 且会重试；只要未命中 /v1/responses 即验证了路由。 */
+    expect(
+      fetchSpy.mock.calls.some(([url]) => String(url).includes("/v1/responses"))
+    ).toBe(false);
     expect(threw).toBe(true);
   });
 });

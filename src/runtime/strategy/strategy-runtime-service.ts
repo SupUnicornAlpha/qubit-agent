@@ -16,6 +16,7 @@ import { resolveInstrument } from "../market/instrument-router";
 import type { OrderSide } from "../../types/entities";
 import { appendStrategyRuntimeLog } from "./strategy-runtime-log";
 import { ensureStrategyVersionForScript } from "./strategy-version-resolver";
+import { assertTradingModuleEnabled } from "../trader/trading-module-control";
 
 export interface CreateStrategyRuntimeInput {
   strategyScriptId: string;
@@ -69,6 +70,7 @@ export async function createStrategyRuntime(
   input: CreateStrategyRuntimeInput,
   db?: DbClient,
 ): Promise<typeof strategyRuntime.$inferSelect> {
+  assertTradingModuleEnabled();
   const client = db ?? (await getDb());
 
   const scripts = await client
@@ -165,6 +167,7 @@ export async function startStrategyRuntime(
   runtimeId: string,
   db?: DbClient,
 ): Promise<void> {
+  assertTradingModuleEnabled();
   const client = db ?? (await getDb());
   const runtimeRows = await client
     .select()
@@ -228,10 +231,11 @@ export async function listStrategyRuntimes(filter?: {
     .from(strategyRuntime)
     .orderBy(desc(strategyRuntime.updatedAt));
 
-  if (!filter?.workflowRunId && !filter?.sessionId) return rows;
+  if (!filter?.workflowRunId && !filter?.sessionId && !filter?.status) return rows;
 
   const out: typeof rows = [];
   for (const r of rows) {
+    if (filter?.status && r.status !== filter.status) continue;
     const scripts = await db
       .select()
       .from(indicatorStrategyScript)
@@ -242,7 +246,6 @@ export async function listStrategyRuntimes(filter?: {
     if (filter.sessionId && script.sessionId !== filter.sessionId) continue;
     if (filter.workflowRunId && script.workflowRunId !== filter.workflowRunId)
       continue;
-    if (filter.status && r.status !== filter.status) continue;
     out.push(r);
   }
   return out;

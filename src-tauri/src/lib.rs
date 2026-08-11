@@ -133,7 +133,6 @@ fn open_menu_bar_quick_chat(handle: &tauri::AppHandle) {
     .inner_size(460.0, 132.0)
     .resizable(false)
     .decorations(false)
-    .transparent(true)
     .always_on_top(true)
     .skip_taskbar(true)
     .focused(true)

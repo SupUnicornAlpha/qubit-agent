@@ -209,10 +209,10 @@ llmProviderRouter.patch("/:id", async (c) => {
     // apiKey 留空就不发送）。
     if (body.apiKey !== undefined || body.apiKeyRef !== undefined) {
       const normalized = normalizeApiKey({
-        apiKey: body.apiKey,
-        apiKeyRef: body.apiKeyRef,
         providerType: body.providerType ?? (existing[0].providerType as ProviderType),
         modelName: body.modelName ?? existing[0].modelName,
+        ...(body.apiKey !== undefined ? { apiKey: body.apiKey } : {}),
+        ...(body.apiKeyRef !== undefined ? { apiKeyRef: body.apiKeyRef } : {}),
       });
       next.apiKeyRef = normalized.apiKeyRef;
       next.apiKeySecret = normalized.apiKeySecret;
@@ -283,7 +283,7 @@ llmProviderRouter.post("/:id/test", async (c) => {
  * 给前端"查看当前默认模型"用。优先级走 LlmRouter 的逻辑。
  */
 llmProviderRouter.get("/_default/info", async (c) => {
-  const resolved = await resolveLlmForAgent({ llmProvider: undefined });
+  const resolved = await resolveLlmForAgent({});
   return c.json({
     ok: true,
     data: {

@@ -60,7 +60,7 @@ export class PythonConnectorBridgeImpl extends BaseConnector {
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
-        cwd: this.cwd,
+        ...(this.cwd ? { cwd: this.cwd } : {}),
       }
     );
 
@@ -79,7 +79,7 @@ export class PythonConnectorBridgeImpl extends BaseConnector {
     );
     return {
       status: result.healthy ? ("healthy" as const) : ("unhealthy" as const),
-      message: result.message,
+      ...(result.message ? { message: result.message } : {}),
     };
   }
 
@@ -128,7 +128,11 @@ export class PythonConnectorBridgeImpl extends BaseConnector {
       const request: JsonRpcRequest = { id, method, params };
       const line = JSON.stringify(request) + "\n";
       try {
-        this.process?.stdin?.write(line);
+        const stdin = this.process?.stdin;
+        if (!stdin || typeof stdin === "number") {
+          throw new Error(`python-bridge[${this.connectorName}] stdin is unavailable`);
+        }
+        stdin.write(line);
       } catch (err) {
         /** stdin 写挂（pipe 关闭）也立刻 reject，不要等 timeout */
         if (this.pendingRequests.delete(id)) {
@@ -168,7 +172,7 @@ export class PythonConnectorBridgeImpl extends BaseConnector {
 
   private _readStdout(): void {
     const proc = this.process;
-    if (!proc?.stdout) return;
+    if (!proc?.stdout || typeof proc.stdout === "number") return;
 
     const reader = proc.stdout.getReader();
     const decoder = new TextDecoder();
@@ -207,7 +211,7 @@ export class PythonConnectorBridgeImpl extends BaseConnector {
 
   private _pipeStderr(): void {
     const proc = this.process;
-    if (!proc?.stderr) return;
+    if (!proc?.stderr || typeof proc.stderr === "number") return;
 
     const reader = proc.stderr.getReader();
     const decoder = new TextDecoder();

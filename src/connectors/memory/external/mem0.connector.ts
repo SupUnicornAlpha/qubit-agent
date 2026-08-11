@@ -75,9 +75,9 @@ export class Mem0Connector extends BaseMemoryConnector {
       {
         user_id: metadata.projectId ?? "default",
         metadata: {
+          ...metadata,
           layer: metadata.layer,
           asofTime: metadata.asofTime,
-          ...metadata,
         },
       }
     );

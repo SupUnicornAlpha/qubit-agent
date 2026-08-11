@@ -155,9 +155,9 @@ export class NativeMemoryConnector extends BaseMemoryConnector {
           metadata: {
             layer: "midterm" as const,
             asofTime: r.asofTime,
-            projectId: filters.projectId,
+            ...(filters.projectId ? { projectId: filters.projectId } : {}),
           },
-          score: r.score ?? undefined,
+          ...(r.score !== null && r.score !== undefined ? { score: r.score } : {}),
           createdAt: r.updatedAt,
           updatedAt: r.updatedAt,
         })),
@@ -179,9 +179,11 @@ export class NativeMemoryConnector extends BaseMemoryConnector {
         metadata: {
           layer: "longterm" as const,
           asofTime: r.asofTime,
-          projectId: filters.projectId,
+          ...(filters.projectId ? { projectId: filters.projectId } : {}),
         },
-        score: r.confidenceScore ?? undefined,
+        ...(r.confidenceScore !== null && r.confidenceScore !== undefined
+          ? { score: r.confidenceScore }
+          : {}),
         createdAt: r.updatedAt,
         updatedAt: r.updatedAt,
       })),

@@ -88,19 +88,23 @@ reiaRouter.post("/safety/execute-confirmed", async (c) => {
   if (!body.intentOrderId) return c.json({ error: "intentOrderId is required" }, 400);
   const gate = await verifyConfirmationAndAllowExecute({
     intentOrderId: body.intentOrderId,
-    confirmToken: body.confirmToken,
-    forceDryRun: body.forceDryRun,
+    ...(body.confirmToken !== undefined ? { confirmToken: body.confirmToken } : {}),
+    ...(body.forceDryRun !== undefined ? { forceDryRun: body.forceDryRun } : {}),
   });
   const data =
     gate.executeMode === "live"
       ? await executeIntentLive({
           intentOrderId: body.intentOrderId,
-          deviationThreshold: body.deviationThreshold,
           provider: body.provider ?? "futu",
+          ...(body.deviationThreshold !== undefined
+            ? { deviationThreshold: body.deviationThreshold }
+            : {}),
         })
       : await executeIntentPaper({
           intentOrderId: body.intentOrderId,
-          deviationThreshold: body.deviationThreshold,
+          ...(body.deviationThreshold !== undefined
+            ? { deviationThreshold: body.deviationThreshold }
+            : {}),
         });
   return c.json({ ok: true, gate, data });
 });
@@ -145,11 +149,13 @@ reiaRouter.post("/broker/accounts/upsert", async (c) => {
   const data = await upsertBrokerAccount({
     provider: body.provider,
     accountRef: body.accountRef,
-    mode: body.mode,
-    baseUrl: body.baseUrl,
-    providerConfig: body.providerConfig as BrokerProviderConfig | undefined,
-    isDefault: body.isDefault,
-    enabled: body.enabled,
+    ...(body.mode !== undefined ? { mode: body.mode } : {}),
+    ...(body.baseUrl !== undefined ? { baseUrl: body.baseUrl } : {}),
+    ...(body.providerConfig !== undefined
+      ? { providerConfig: body.providerConfig as BrokerProviderConfig }
+      : {}),
+    ...(body.isDefault !== undefined ? { isDefault: body.isDefault } : {}),
+    ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
   });
   return c.json({ ok: true, data });
 });

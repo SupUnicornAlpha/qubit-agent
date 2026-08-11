@@ -3100,44 +3100,6 @@ export async function pollAnalystJob(
   });
 }
 
-/** 保留旧名称向后兼容 */
-export async function runAnalystTeam(params: {
-  workflowRunId: string;
-  ticker?: string;
-  scope?: import("./types").ResearchScopeInput;
-  context?: string;
-  onProgress?: (elapsedMs: number) => void;
-  analystRoles?: string[];
-  analystDefinitionIds?: string[];
-  /** 前端轮询超时（毫秒），<=0 表示不超时。默认 30 分钟。 */
-  timeoutMs?: number;
-  /** 主动停止等待。 */
-  signal?: AbortSignal;
-  /**
-   * @deprecated v1 兼容；前端自 P1-H 起不再写入。新代码请用 `hitlMode`。
-   */
-  hitlTeam?: boolean;
-  /** v2：HITL 三档模式 */
-  hitlMode?: "off" | "ai" | "always";
-  /** Agent 底座/引擎：每个角色单轮 reason 用哪个引擎（写入 loopOptions.roleReasoner）。 */
-  roleReasoner?: AgentLoopKind;
-  /** Agent 工作模式（Agent / Plan / Goal）。 */
-  agentMode?: import("./types").AgentControlMode;
-  onAwaitingApproval?: (info: AnalystTeamAwaitingApproval) => void;
-  onResume?: () => void;
-}): Promise<AnalystTeamResult> {
-  const { jobId } = await startAnalystTeam(params);
-  return pollAnalystJob(jobId, {
-    onProgress: params.onProgress,
-    ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs } : {}),
-    ...(params.signal !== undefined ? { signal: params.signal } : {}),
-    ...(params.onAwaitingApproval !== undefined
-      ? { onAwaitingApproval: params.onAwaitingApproval }
-      : {}),
-    ...(params.onResume !== undefined ? { onResume: params.onResume } : {}),
-  });
-}
-
 export async function getAnalystSignals(workflowId: string): Promise<AnalystSignalRecord[]> {
   const res = await httpGet<{ ok: boolean; data: AnalystSignalRecord[] }>(
     `/api/v1/analyst/signals/${workflowId}`
@@ -4308,7 +4270,7 @@ export interface PluginListItemDto {
   description: string;
   category: string;
   visibility: string;
-  kind: string;
+  kind: "mcp" | "skill" | "builtin_pack" | "connector";
   ref: Record<string, unknown>;
   safetyLevel: string;
   auth?: { type?: string; scopes?: string[] };
@@ -4355,7 +4317,7 @@ export async function listInstalledPlugins(projectId: string): Promise<PluginLis
 export async function installPlugin(input: {
   projectId: string;
   targetId: string;
-  kind?: "mcp" | "skill" | "builtin_pack";
+  kind?: "mcp" | "skill" | "builtin_pack" | "connector";
   serverName?: string;
 }): Promise<{ item: PluginListItemDto; warnings: string[] }> {
   const res = await httpPost<{ data: PluginListItemDto; warnings?: string[] }>(
@@ -4542,6 +4504,25 @@ export type TraderSessionContext = {
   sessionId: string;
   created?: boolean;
 };
+
+export type TradingModuleStatus = {
+  enabled: boolean;
+  changedAt: string;
+  stoppedRuntimeIds?: string[];
+};
+
+export async function getTradingModuleStatus(): Promise<TradingModuleStatus> {
+  const res = await httpGet<{ ok: boolean; data: TradingModuleStatus }>("/api/v1/trader/module");
+  return res.data;
+}
+
+export async function setTradingModuleStatus(enabled: boolean): Promise<TradingModuleStatus> {
+  const res = await httpPut<{ ok: boolean; data: TradingModuleStatus }>(
+    "/api/v1/trader/module",
+    { enabled }
+  );
+  return res.data;
+}
 
 export type TraderDriverKind =
   | "scheduled_job"

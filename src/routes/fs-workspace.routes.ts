@@ -1,7 +1,7 @@
 /**
  * FS-first Workspace API（与 DB `/api/v1/workspaces` 并列，互不替换）。
  */
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import {
   createFsWorkspace,
   discoverWorkspaces,
@@ -27,7 +27,7 @@ function errStatus(e: unknown): number {
   return 500;
 }
 
-function jsonError(c: Parameters<Parameters<typeof fsWorkspaceRouter.get>[1]>[0], e: unknown) {
+function jsonError(c: Context, e: unknown) {
   const message = e instanceof Error ? e.message : String(e);
   return c.json({ error: message }, errStatus(e) as 400 | 404 | 500);
 }
@@ -68,10 +68,10 @@ fsWorkspaceRouter.post("/", async (c) => {
     }
     const created = await createFsWorkspace({
       name: body.name,
-      description: body.description,
-      slug: body.slug,
-      seedUniverse: body.seedUniverse,
-      defaultFocus: body.defaultFocus,
+      ...(body.description !== undefined ? { description: body.description } : {}),
+      ...(body.slug !== undefined ? { slug: body.slug } : {}),
+      ...(body.seedUniverse !== undefined ? { seedUniverse: body.seedUniverse } : {}),
+      ...(body.defaultFocus !== undefined ? { defaultFocus: body.defaultFocus } : {}),
     });
     return c.json(
       {
@@ -220,12 +220,14 @@ fsWorkspaceRouter.post("/:id/memory", async (c) => {
     const { fs, manifest } = await openWorkspaceById(c.req.param("id"));
     const { memory } = resolveProviders(manifest);
     const entry = await memory.upsert(fs, {
-      id: body.id,
       title: body.title,
       body: body.body ?? "",
-      pinned: body.pinned,
-      tags: body.tags,
-      source: body.source === "experience" ? "agent_proposal" : body.source,
+      ...(body.id !== undefined ? { id: body.id } : {}),
+      ...(body.pinned !== undefined ? { pinned: body.pinned } : {}),
+      ...(body.tags !== undefined ? { tags: body.tags } : {}),
+      ...(body.source !== undefined
+        ? { source: body.source === "experience" ? "agent_proposal" : body.source }
+        : {}),
     });
     return c.json({ data: entry }, 201);
   } catch (e) {
@@ -240,7 +242,10 @@ fsWorkspaceRouter.get("/:id/memory/bootstrap", async (c) => {
       : undefined;
     const { fs, manifest } = await openWorkspaceById(c.req.param("id"));
     const { memory } = resolveProviders(manifest);
-    const text = await memory.loadBootstrap(fs, { maxChars });
+    const text = await memory.loadBootstrap(
+      fs,
+      maxChars !== undefined ? { maxChars } : {}
+    );
     return c.json({ data: { text } });
   } catch (e) {
     return jsonError(c, e);
@@ -304,7 +309,9 @@ fsWorkspaceRouter.get("/:id/decision/factors", async (c) => {
 
 fsWorkspaceRouter.post("/:id/decision/sync", async (c) => {
   try {
-    const body = await c.req.json<{ projectId?: string }>().catch(() => ({}));
+    const body = await c.req
+      .json<{ projectId?: string }>()
+      .catch((): { projectId?: string } => ({}));
     const projectId = typeof body.projectId === "string" ? body.projectId.trim() : "";
     if (!projectId) return c.json({ error: "projectId is required" }, 400);
     const { fs, manifest } = await openWorkspaceById(c.req.param("id"));
@@ -335,10 +342,10 @@ fsWorkspaceRouter.put("/:id/runs/:runId", async (c) => {
       id: c.req.param("runId"),
       title: body.title,
       status: body.status || "queued",
-      workflowId: body.workflowId,
-      sessionId: body.sessionId,
-      modelId: body.modelId,
-      focus: body.focus,
+      ...(body.workflowId !== undefined ? { workflowId: body.workflowId } : {}),
+      ...(body.sessionId !== undefined ? { sessionId: body.sessionId } : {}),
+      ...(body.modelId !== undefined ? { modelId: body.modelId } : {}),
+      ...(body.focus !== undefined ? { focus: body.focus } : {}),
     });
     return c.json({ data: { ok: true } });
   } catch (e) {

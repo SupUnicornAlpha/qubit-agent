@@ -47,10 +47,11 @@ describe("P2-E：analyst_technical × research × backtest 工具去重", () => 
     expect(t?.tools).not.toContain("run_backtest");
   });
 
-  test("def-backtest 仍持 run_backtest（这才是它该亲自跑回测的地方）", () => {
+  test("def-backtest 走事件驱动 backtest.run（这才是它该亲自跑回测的地方）", () => {
     const b = SEED_AGENT_DEFINITIONS.find((d) => d.id === "def-backtest");
     expect(b).toBeTruthy();
-    expect(b?.tools).toContain("run_backtest");
+    expect(b?.tools).toContain("backtest.run");
+    expect(b?.tools).not.toContain("run_backtest");
   });
 
   test("def-research 走的是 backtest.run（事件驱动），不持 run_backtest", () => {

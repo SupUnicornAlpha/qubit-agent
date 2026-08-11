@@ -18,6 +18,7 @@ import { resolveExecutionEvidenceBinding } from "../market/contracts/evidence-bi
 import { linkForecastBookEntry } from "../market/contracts/forecast-book-service";
 import { evaluatePreTradeForIntent } from "./pre-trade-risk";
 import type { DispatchMode } from "./live-trading-gate";
+import { assertTradingModuleEnabled } from "../trader/trading-module-control";
 
 export type { DispatchMode };
 
@@ -96,6 +97,7 @@ export async function createOrderIntentWithExecution(
   db: DbClient,
   input: CreateOrderIntentInput
 ): Promise<CreateOrderIntentResult> {
+  assertTradingModuleEnabled();
   if (!Number.isFinite(input.qty) || input.qty <= 0) {
     throw new Error("order_quantity_must_be_positive");
   }

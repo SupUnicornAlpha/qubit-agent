@@ -48,11 +48,11 @@ afterEach(() => {
 });
 
 describe("默认值", () => {
-  test("env 全空 → 默认 disabled / propose / pnl off", () => {
+  test("env 全空 → 默认启用 self-evolve、propose 安装、pnl 注入开启", () => {
     const c = getSelfEvolveConfig();
-    expect(c.enabled).toBe(false);
+    expect(c.enabled).toBe(true);
     expect(c.autoInstallMode).toBe("propose");
-    expect(c.pnlAwareReasonEnabled).toBe(false);
+    expect(c.pnlAwareReasonEnabled).toBe(true);
     expect(c.minScoreForAuto).toBe(0.85);
     expect(c.reasonPnlTopN).toBe(3);
     expect(c.reasonPnlWindowDays).toBe(7);
@@ -118,13 +118,13 @@ describe("setSelfEvolveConfigForTest", () => {
     setSelfEvolveConfigForTest({ enabled: true });
     expect(getSelfEvolveConfig().enabled).toBe(true);
     setSelfEvolveConfigForTest(null);
-    expect(getSelfEvolveConfig().enabled).toBe(false);
+    expect(getSelfEvolveConfig().enabled).toBe(true);
   });
 });
 
 describe("selfEvolveDisabledReason", () => {
-  test("默认关 → 返回原因字符串", () => {
-    expect(selfEvolveDisabledReason()).toBe("SELF_EVOLVE_ENABLED=false");
+  test("默认开 → 不返回禁用原因", () => {
+    expect(selfEvolveDisabledReason()).toBeNull();
   });
 
   test("总闸开 → 返回 null（可跑）", () => {

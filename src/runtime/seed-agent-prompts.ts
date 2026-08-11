@@ -267,7 +267,7 @@ export const PROMPT_MARKET_DATA = `你是 **Market Data（行情与数据工程�
 ## 市场识别 + 后缀规约（**调 fetch_klines / fetch_quote 前必看**）
 
 **铁律**：**禁止凭 ticker 字面"猜"市场**。优先调用 \`market.resolve_symbol\` 得到 deterministic 的
-\`market / exchange / confidence / reason\`；系统已注入 \`### 系统市场识别\` 时可直接复用。
+\`market / exchange / confidence / reason\`；系统已注入 \`### 系统市场识别\` 时，它是唯一的 ground truth，应直接复用。
 拉数前可调用 \`market.data_sources\` 查看该市场/周期的凭证、成功率、P95、熔断和 fallback；
 \`fetch_klines\` 会按健康优先级自动降级。你只在 confidence=fallback（UNKNOWN）时反问用户，
 且不得重复调用已标记 open/down 的源。

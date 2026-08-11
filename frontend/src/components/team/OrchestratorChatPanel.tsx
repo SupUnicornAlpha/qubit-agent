@@ -368,7 +368,7 @@ export function OrchestratorChatPanel({
 
   // User just sent / injected a message → resume follow so their turn is visible.
   const userMessageCount = useMemo(
-    () => visibleEvents.filter((ev) => ev.fromRole === "user").length,
+    () => visibleEvents.filter((ev) => ev.kind === "message" && ev.fromRole === "user").length,
     [visibleEvents]
   );
   const prevUserMessageCountRef = useRef(userMessageCount);

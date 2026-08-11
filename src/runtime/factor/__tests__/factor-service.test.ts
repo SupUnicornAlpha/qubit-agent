@@ -282,8 +282,9 @@ describe("FactorService", () => {
       projectId,
       name: `dr_py_skip_${randomUUID().slice(0, 6)}`,
       category: "momentum",
-      /** close[-1] / close[-21] - 1 是典型的 20 日动量因子，sandbox 可用时会真跑 */
-      expr: "close[-1] / close[-21] - 1",
+      /** Python 合约要求每根 bar 对应一个值，因此显式构造 20 日动量序列。 */
+      expr:
+        "factor_values = [None if i < 20 else close[i] / close[i - 20] - 1 for i in range(len(close))]",
       lang: "python",
       dryRun: true,
     });

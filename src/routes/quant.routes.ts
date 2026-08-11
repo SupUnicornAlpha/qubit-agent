@@ -658,10 +658,10 @@ quantRouter.post("/strategy-contract/compile", async (c) => {
       const persist = await persistCompiledStrategyScript({
         code,
         manifest: result.manifest,
-        sessionId: body.sessionId,
-        workflowRunId: body.workflowRunId,
-        scriptId: body.scriptId,
-        name: body.name,
+        ...(body.sessionId !== undefined ? { sessionId: body.sessionId } : {}),
+        ...(body.workflowRunId !== undefined ? { workflowRunId: body.workflowRunId } : {}),
+        ...(body.scriptId !== undefined ? { scriptId: body.scriptId } : {}),
+        ...(body.name !== undefined ? { name: body.name } : {}),
       });
       persistMeta = persist.persisted
         ? {

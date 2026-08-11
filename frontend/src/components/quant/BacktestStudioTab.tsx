@@ -715,8 +715,6 @@ const BacktestResultView: FC<{ job: BacktestJobRecord; onRefresh: () => Promise<
   const m = job.result?.metrics;
   const equityRaw = job.result?.equityCurve;
   const equity = Array.isArray(equityRaw) ? equityRaw : [];
-  const tradesRaw = job.result?.trades;
-  const trades = Array.isArray(tradesRaw) ? tradesRaw : [];
   const [walkForward, setWalkForward] = useState<Awaited<
     ReturnType<typeof runWalkForwardEvaluation>
   > | null>(null);

@@ -1200,6 +1200,7 @@ monitorRouter.get("/memory/experiences/:id/links", async (c) => {
     "supersedes",
     "contradicts",
     "related_to",
+    "summarize_to",
   ] as const;
   const rels = requestedRels.filter((r): r is (typeof allowedRels)[number] =>
     (allowedRels as ReadonlyArray<string>).includes(r)

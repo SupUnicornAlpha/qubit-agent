@@ -43,6 +43,7 @@ describe("scenario harness routing for bench recipe keys", () => {
       "strategy.compile",
       "strategy.contract_backtest",
       "strategy.paper_deploy",
+      "strategy.sim_deploy",
     ]);
     expect(builtinByKey("live_trading")?.toolPreset?.builtinTools).not.toContain("evaluate_risk");
     expect(builtinByKey("live_trading")?.toolPreset?.builtinTools).not.toContain("rule.evaluate");

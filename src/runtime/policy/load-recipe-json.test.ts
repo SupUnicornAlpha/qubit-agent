@@ -7,7 +7,7 @@ describe("load-recipe-json", () => {
     const recipe = resolveScenarioRecipe("stock_pick");
     expect(recipe).not.toBeNull();
     expect(recipe!.key).toBe("stock_pick");
-    expect(recipe!.version).toBe("2026-08-05.3");
+    expect(recipe!.version).toBe("2026-08-06.1");
     expect(recipe!.roleToolAllowlist?.orchestrator).toContain("agent.invoke");
     expect(recipe!.roleToolAllowlist?.orchestrator).toContain("topology.dispatch");
     expect(recipe!.checklistPrompt.some((l) => l.includes("run_screener"))).toBe(true);

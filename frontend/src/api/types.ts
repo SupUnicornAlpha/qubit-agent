@@ -408,6 +408,7 @@ export interface StepStreamEvent {
   role: string;
   type:
     | "token"
+    | "reasoning_token"
     | "tool_call_start"
     | "tool_call_end"
     | "observe"

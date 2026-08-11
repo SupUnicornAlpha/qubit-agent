@@ -4,6 +4,7 @@ import {
   approveStrategyRuntimeForLive,
   createPortfolioAllocationPlan,
   createStrategyRuntime,
+  getTradingModuleStatus,
   evaluatePaperRuntime,
   getDefaultProjectSession,
   getDefaultWorkspace,
@@ -16,6 +17,7 @@ import {
   remediatePositionReconciliation,
   scanPositionReconciliation,
   stopStrategyRuntime,
+  setTradingModuleStatus,
 } from "../../api/backend";
 import type {
   ExecutionIntentSummary,
@@ -291,24 +293,6 @@ function chartExchangeToMarket(exchange: string): string {
   return "CN";
 }
 
-const TRADING_MODULE_ENABLED_KEY = "qubit-trading-module-enabled-v1";
-
-function readTradingModuleEnabled(): boolean {
-  try {
-    return sessionStorage.getItem(TRADING_MODULE_ENABLED_KEY) !== "false";
-  } catch {
-    return true;
-  }
-}
-
-function persistTradingModuleEnabled(enabled: boolean): void {
-  try {
-    sessionStorage.setItem(TRADING_MODULE_ENABLED_KEY, String(enabled));
-  } catch {
-    /* session storage is a convenience, not a hard dependency */
-  }
-}
-
 type DecisionBatch = {
   id: string;
   rows: TraderAgentLogRecord[];
@@ -473,9 +457,7 @@ export const TraderLivePanel: FC = () => {
     ExecutionIntentSummary[]
   >([]);
   const [intentsError, setIntentsError] = useState<string | null>(null);
-  const [tradingModuleEnabled, setTradingModuleEnabled] = useState(
-    readTradingModuleEnabled,
-  );
+  const [tradingModuleEnabled, setTradingModuleEnabled] = useState(true);
   const booted = useRef(false);
 
   const engine = useTraderAgentEngine(
@@ -483,6 +465,20 @@ export const TraderLivePanel: FC = () => {
     sessionId,
     tradingModuleEnabled,
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    void getTradingModuleStatus()
+      .then((status) => {
+        if (!cancelled) setTradingModuleEnabled(status.enabled);
+      })
+      .catch(() => {
+        // 后端短暂不可达时保留默认开启，不把只读/撤单功能误锁死。
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const decisionBatches = useMemo(
     () => decisionBatchesFrom(traderAgentLog),
     [traderAgentLog],
@@ -739,41 +735,39 @@ export const TraderLivePanel: FC = () => {
     }
   };
 
-  const startTradingModule = () => {
-    setTradingModuleEnabled(true);
-    persistTradingModuleEnabled(true);
-    setRuntimeMsg("交易模块已启动：交易 Agent 与工作面已恢复。");
+  const startTradingModule = async () => {
+    setRuntimeBusy(true);
+    try {
+      const status = await setTradingModuleStatus(true);
+      setTradingModuleEnabled(status.enabled);
+      setRuntimeMsg("交易模块已启动：交易 Agent 与工作面已恢复。");
+    } catch (error) {
+      setRuntimeMsg(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRuntimeBusy(false);
+    }
   };
 
   const closeTradingModule = async () => {
-    const running = runtimes.filter((runtime) => runtime.status === "running");
-    const warning =
-      running.length > 0
-        ? `关闭交易模块将停止 ${running.length} 个运行中的策略，并暂停交易 Agent 与所有下单入口。确认关闭？`
-        : "关闭交易模块将暂停交易 Agent 与所有下单入口。确认关闭？";
-    if (!window.confirm(warning)) return;
     setRuntimeBusy(true);
     try {
-      const stopped = await Promise.all(
-        running.map((runtime) => stopStrategyRuntime(runtime.id)),
-      );
-      const stoppedById = new Map(
-        stopped.map((runtime) => [runtime.id, runtime]),
-      );
+      const status = await setTradingModuleStatus(false);
+      const stoppedById = new Set(status.stoppedRuntimeIds ?? []);
       setRuntimes((previous) =>
-        previous.map((runtime) => stoppedById.get(runtime.id) ?? runtime),
+        previous.map((runtime) =>
+          stoppedById.has(runtime.id) ? { ...runtime, status: "stopped" } : runtime,
+        ),
       );
-      setTradingModuleEnabled(false);
-      persistTradingModuleEnabled(false);
+      setTradingModuleEnabled(status.enabled);
       setRuntimeMsg(
-        running.length > 0
-          ? `交易模块已关闭，并停止 ${running.length} 个策略运行时。`
+        stoppedById.size > 0
+          ? `交易模块已关闭，并停止 ${stoppedById.size} 个策略运行时。`
           : "交易模块已关闭。",
       );
       pushTraderAgentLog({
         kind: "decision",
         title: "交易模块已关闭",
-        body: `stoppedRuntimes=${running.length}\n交易 Agent 轮询与下单入口已暂停。`,
+        body: `stoppedRuntimes=${stoppedById.size}\n后端订单创建、策略启动与交易 Agent 轮询已暂停。`,
       });
     } catch (error) {
       setRuntimeMsg(error instanceof Error ? error.message : String(error));
@@ -947,7 +941,7 @@ export const TraderLivePanel: FC = () => {
           <button
             type="button"
             className="qb-btn-primary-brand"
-            onClick={startTradingModule}
+            onClick={() => void startTradingModule()}
           >
             启动交易模块
           </button>

@@ -1,8 +1,8 @@
 /**
  * builtin.fs_memory — 读写 memory/entries + 维护 MEMORY.md 摘要。
  */
-import type { MemoryEntry } from "./types";
-import type { WorkspaceFs } from "./workspace-fs";
+import type { MemoryEntry } from "../types";
+import type { WorkspaceFs } from "../workspace-fs";
 
 export const BUILTIN_FS_MEMORY_KIND = "builtin.fs_memory";
 

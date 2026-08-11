@@ -248,7 +248,7 @@ describe("A 类 · 内容质量", () => {
       analystRole: "fundamental",
       ticker: "AAPL",
       signal: "buy",
-      reasoning: "美股 AAPL 见解",
+      reasoning: "美股 AAPL 的估值与风险见解",
     });
     await db.insert(schema.signalFusionResult).values({
       id: `sf-2-${wfId}`,
@@ -263,8 +263,8 @@ describe("A 类 · 内容质量", () => {
       scenario: "research",
       goal: "[readiness/research] AAPL 见解",
     });
-    // goal 显式含 "AAPL" 和 "见解"；signal/fusion 都覆盖
-    expect(r["A-2"]).toBeGreaterThanOrEqual(0.5);
+    // 动态 ticker 与场景声明关键词（估值/风险）均被产物覆盖。
+    expect(r["A-2"]).toBe(1);
   });
 
   /**

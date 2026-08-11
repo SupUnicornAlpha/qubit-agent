@@ -628,7 +628,7 @@ describe("api minimal integration", () => {
     expect(payload.challenge).toBe("abc-xyz");
   });
 
-  test("market: klines returns OHLCV array", async () => {
+  test("market: klines returns OHLCV or a structured unavailable response", async () => {
     const bad = await app.request(new Request("http://test/api/v1/market/klines"));
     expect(bad.status).toBe(400);
 
@@ -637,8 +637,15 @@ describe("api minimal integration", () => {
         "http://test/api/v1/market/klines?symbol=600000&exchange=SH&timeframe=1d&limit=10"
       )
     );
-    expect(res.status).toBe(200);
     const body = await jsonOf(res);
+    expect([200, 503]).toContain(res.status);
+    if (res.status === 503) {
+      expect(body.ok).toBe(false);
+      const error = body.error as Record<string, unknown>;
+      expect(error.type).toBe("klines_upstream_failed");
+      expect(String(error.message)).toContain("market_data_unavailable");
+      return;
+    }
     expect(body.ok).toBe(true);
     expect(Array.isArray(body.data)).toBe(true);
     const bars = body.data as Record<string, unknown>[];
@@ -659,12 +666,19 @@ describe("api minimal integration", () => {
     );
   });
 
-  test("market: klines intraday resolves to Yahoo chart source", async () => {
+  test("market: intraday klines reports its source or an unavailable error", async () => {
     const res = await app.request(
       new Request("http://test/api/v1/market/klines?symbol=AAPL&exchange=US&timeframe=5m&limit=20")
     );
-    expect(res.status).toBe(200);
     const body = await jsonOf(res);
+    expect([200, 503]).toContain(res.status);
+    if (res.status === 503) {
+      expect(body.ok).toBe(false);
+      const error = body.error as Record<string, unknown>;
+      expect(error.type).toBe("klines_upstream_failed");
+      expect(String(error.message)).toContain("market_data_unavailable");
+      return;
+    }
     expect(body.ok).toBe(true);
     const meta = body.meta as Record<string, unknown>;
     expect(meta.period).toBe("5m");

@@ -1102,7 +1102,7 @@ export const TeamDashboardPanel: FC = () => {
               ? { goal: goal as NonNullable<OrchestratorPlan["goal"]> }
               : {}),
           };
-          const at = snapshot.updatedAt || event.ts || new Date().toISOString();
+          const at = snapshot.updatedAt || new Date(event.ts).toISOString();
           setTeamPlanSegments((prev) => {
             const last = prev[prev.length - 1];
             const isNew =
@@ -3430,9 +3430,11 @@ export const TeamDashboardPanel: FC = () => {
                     action,
                     ...(text ? { text } : {}),
                   });
-                  setTeamPlanSegments((prev) =>
-                    upsertPlanSegment(prev, result.data, result.data.updatedAt ?? new Date().toISOString())
-                  );
+                  if (result.data) {
+                    setTeamPlanSegments((prev) =>
+                      upsertPlanSegment(prev, result.data!, result.data!.updatedAt ?? new Date().toISOString())
+                    );
+                  }
                   if (action === "resume") {
                     setTeamAgentMode("goal");
                     await handleOrchestratorChat({

@@ -25,13 +25,13 @@ describe("tool prompt efficiency", () => {
     expect(selected.length).toBe(5);
   });
 
-  test("编排工具数量超过软上限时仍全部保留", () => {
+  test("编排工具数量超过软上限时仅保留当前契约的计划与团队调用", () => {
     const selected = selectRelevantToolsForPrompt(
       ["assign_task", "update_plan", "call_mcp", "call_team_risk", "fetch_klines"],
       "查询行情",
       2
     );
-    expect(selected).toEqual(["assign_task", "update_plan", "call_mcp", "call_team_risk"]);
+    expect(selected).toEqual(["update_plan", "call_team_risk"]);
   });
 
   test("原生工具定义使用单一 qubit_action 和 enum", () => {

@@ -299,6 +299,7 @@ export function useTraderAgentEngine(
       rationale?: string;
       executionMode?: "paper" | "sim";
     }) => {
+      if (!enabled) throw new Error("交易模块已关闭");
       if (!session?.workflowRunId) throw new Error("交易会话未就绪");
       setBusy(true);
       try {
@@ -356,6 +357,7 @@ export function useTraderAgentEngine(
       pushTraderDriver,
       requestChartReload,
       pollOnce,
+      enabled,
     ],
   );
 
@@ -396,6 +398,7 @@ export function useTraderAgentEngine(
       entryLimitPrice?: number;
       executionMode?: "paper" | "sim";
     }) => {
+      if (!enabled) throw new Error("交易模块已关闭");
       if (!session?.workflowRunId) throw new Error("交易会话未就绪");
       setBusy(true);
       try {
@@ -427,11 +430,12 @@ export function useTraderAgentEngine(
         setBusy(false);
       }
     },
-    [session, pushTraderAgentLog, requestChartReload, pollOnce],
+    [session, pushTraderAgentLog, requestChartReload, pollOnce, enabled],
   );
 
   const runCommand = useCallback(
     async (text: string, executionMode: "paper" | "sim" = "paper") => {
+      if (!enabled) throw new Error("交易模块已关闭");
       if (!session?.workflowRunId || !sessionId)
         throw new Error("交易会话未就绪");
       const spec = useAppStore.getState().chartSpec;
@@ -473,6 +477,7 @@ export function useTraderAgentEngine(
       pushTraderDriver,
       requestChartReload,
       pollOnce,
+      enabled,
     ],
   );
 

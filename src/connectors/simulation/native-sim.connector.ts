@@ -16,7 +16,7 @@ export class QubitNativeSimConnector extends BaseConnector {
     connectorType: "execution",
     capabilities: ["submit_paper_order", "get_paper_position"],
     assetClasses: ["stock"],
-    latencyProfile: "low",
+    latencyProfile: "neartime",
     description: "Built-in paper trading via intent_order + execution_report.",
   };
 

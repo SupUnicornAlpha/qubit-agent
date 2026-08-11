@@ -45,7 +45,7 @@ describe("Research scenario bootstrap + service", () => {
       inputParams: { universe: "CN-A:csi500", topN: 30 },
     });
     expect(plan.scenarioKey).toBe("stock_screening");
-    expect(plan.loopOptions.maxIterations).toBe(3);
+    expect(plan.loopOptions.maxIterations).toBe(10);
   });
 
   test("planLaunch: scenario 不存在 → ScenarioError", async () => {
@@ -72,6 +72,7 @@ describe("Research scenario bootstrap + service", () => {
         "analyst_fundamental",
         "analyst_technical",
         "analyst_macro",
+        "news_event",
       ],
     });
   });

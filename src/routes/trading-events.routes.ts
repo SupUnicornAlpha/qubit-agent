@@ -38,10 +38,10 @@ tradingEventsRouter.post("/news", async (c) => {
     const data = await ingestTradingNewsEvent({
       symbols,
       headline,
-      source: body.source,
-      wakeAgent: body.wakeAgent,
-      projectId: body.projectId,
-      sessionId: body.sessionId,
+      ...(body.source !== undefined ? { source: body.source } : {}),
+      ...(body.wakeAgent !== undefined ? { wakeAgent: body.wakeAgent } : {}),
+      ...(body.projectId !== undefined ? { projectId: body.projectId } : {}),
+      ...(body.sessionId !== undefined ? { sessionId: body.sessionId } : {}),
     });
     return c.json({ ok: true, data });
   } catch (e) {

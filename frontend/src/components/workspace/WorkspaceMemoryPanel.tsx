@@ -42,7 +42,7 @@ export const WorkspaceMemoryPanel: FC<{
     }
   }, [proposeBody]);
 
-  const save = async (source: FsMemoryEntry["source"] = "user") => {
+  const save = async (source: "user" | "agent_proposal" | "import" = "user") => {
     if (!title.trim()) {
       setError("标题必填");
       return;
@@ -178,7 +178,7 @@ export const WorkspaceMemoryPanel: FC<{
                     title: full.title,
                     body: full.body,
                     pinned: !full.pinned,
-                    source: full.source,
+                    source: full.source === "experience" ? "agent_proposal" : full.source,
                   });
                   await refresh();
                   setSelected({ ...full, pinned: !full.pinned });

@@ -16,13 +16,16 @@ import { isBuiltinTool } from "../../tools/builtin-tools";
 import { resolveToolExecutionRoute } from "../../tools/tool-dispatch-resolver";
 import { BUILTIN_RESEARCH_SCENARIOS } from "../scenarios-seed";
 
-/** call_mcp / mcp:* 由 act 节点单独处理，不在 builtin/connector 注册表里 */
+/**
+ * `call_mcp` / `mcp:*` 由 act 节点单独处理；`agent.invoke` 则由 Core runtime
+ * 执行。这两类控制面工具都不在 builtin/connector 注册表里。
+ */
 function isMcpAlias(name: string): boolean {
   return name === "call_mcp" || name.startsWith("mcp:");
 }
 
 function isToolImplemented(name: string): boolean {
-  if (isMcpAlias(name)) return true;
+  if (isMcpAlias(name) || name === "agent.invoke") return true;
   const route = resolveToolExecutionRoute(name);
   if (route.route === "builtin") return isBuiltinTool(route.effectiveName);
   if (route.route === "connector") return Boolean(route.connectorName);

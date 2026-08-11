@@ -44,15 +44,16 @@ export class QubitNativeRiskConnector extends RiskConnector {
     const meta = request.metadata ?? {};
     const signal = (meta["signal"] ?? meta["fusedSignal"] ?? "hold") as AnalystSignalValue;
     const confidence = Number(meta["confidence"] ?? meta["fusedConfidence"] ?? 0.5);
+    const debateConsensusScore =
+      typeof meta["debateConsensusScore"] === "number"
+        ? meta["debateConsensusScore"]
+        : undefined;
     const result = await evaluateRiskAndVeto({
       workflowRunId: String(meta["workflowRunId"] ?? request.orderIntentId),
       ticker: String(meta["ticker"] ?? request.instrumentId),
       fusedSignal: signal,
       fusedConfidence: confidence,
-      debateConsensusScore:
-        typeof meta["debateConsensusScore"] === "number"
-          ? meta["debateConsensusScore"]
-          : undefined,
+      ...(debateConsensusScore !== undefined ? { debateConsensusScore } : {}),
     });
     return {
       orderIntentId: request.orderIntentId,

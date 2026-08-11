@@ -33,7 +33,7 @@ const ConfigSchema = z.object({
         .enum(["dual_write", "external_only", "native_only"])
         .default("native_only"),
     }),
-  }).default({}),
+  }).default({ external: {} }),
   /**
    * FSI 内容包：运行时以 content-packs/anthropic-fsi/settings.json 为准；
    * 此处仅保留占位，实际逻辑见 src/runtime/fsi/fsi-config.ts

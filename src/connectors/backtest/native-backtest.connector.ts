@@ -47,7 +47,7 @@ export class QubitNativeBacktestConnector extends BacktestConnector {
   }
 
   async runBacktest(params: RunBacktestParams): Promise<BacktestResult> {
-    const raw = params.strategyParams as NativeBacktestParams;
+    const raw = params.strategyParams as unknown as NativeBacktestParams;
     const jobId = randomUUID();
     const db = await getDb();
     const body: Record<string, unknown> = {
@@ -116,7 +116,7 @@ export class QubitNativeBacktestConnector extends BacktestConnector {
       runId,
       status: row.status === "failed" ? "failed" : row.status === "completed" ? "completed" : "running",
       progress,
-      message: row.error ?? undefined,
+      ...(row.error ? { message: row.error } : {}),
     };
   }
 
@@ -126,13 +126,13 @@ export class QubitNativeBacktestConnector extends BacktestConnector {
 
   protected async onExecute<TOutput>(operation: string, payload: unknown): Promise<TOutput> {
     if (operation === "run_backtest") {
-      const p = (payload ?? {}) as NativeBacktestParams & {
+      const p = (payload ?? {}) as unknown as NativeBacktestParams & {
         initialCapital?: number;
         commission?: number;
       };
       return this.runBacktest({
         strategyCode: "sma_crossover",
-        strategyParams: p,
+        strategyParams: { ...p },
         datasetUri: "",
         startDate: p.startDate ?? "",
         endDate: p.endDate ?? "",

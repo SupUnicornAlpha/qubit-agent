@@ -43,11 +43,9 @@ describe("ExperienceMaintenanceWorker — tick", () => {
     const res = await worker.tick();
     expect(res.janitor.ok).toBe(true);
     expect(res.janitor.summary?.scanned).toBe(0);
-    // Memory V2 P2：无 OPENAI_API_KEY 时 embedder skip
-    const oldKey = process.env.OPENAI_API_KEY;
-    if (!oldKey) {
-      expect(res.embedder.skipped).toBe("no_embedding_client");
-    }
+    // Embedding client may be supplied by the local model configuration. With
+    // no experiences both paths are valid: a deliberate skip or a no-op run.
+    expect(res.embedder.skipped === "no_embedding_client" || res.embedder.ok).toBe(true);
   });
 
   test("tick 串行：第二次并发调用返回 'previous tick still running'", async () => {

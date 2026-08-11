@@ -18,8 +18,35 @@ import {
   normalizeExecutionMarket,
   recordExecutionMark,
 } from "../runtime/execution/execution-mark-service";
+import {
+  getTradingModuleStatus,
+  setTradingModuleEnabled,
+} from "../runtime/trader/trading-module-control";
+import {
+  listStrategyRuntimes,
+  stopStrategyRuntime,
+} from "../runtime/strategy/strategy-runtime-service";
 
 export const traderRouter = new Hono();
+
+/** 总开关由后端持有，页面刷新、其它入口或 Agent 调用都会读到同一状态。 */
+traderRouter.get("/module", (c) => c.json({ ok: true, data: getTradingModuleStatus() }));
+
+traderRouter.put("/module", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { enabled?: unknown };
+  if (typeof body.enabled !== "boolean") {
+    return c.json({ ok: false, error: "enabled must be boolean" }, 400);
+  }
+  const status = setTradingModuleEnabled(body.enabled);
+  if (status.enabled) return c.json({ ok: true, data: { ...status, stoppedRuntimeIds: [] } });
+
+  const running = await listStrategyRuntimes({ status: "running" });
+  await Promise.all(running.map((runtime) => stopStrategyRuntime(runtime.id)));
+  return c.json({
+    ok: true,
+    data: { ...status, stoppedRuntimeIds: running.map((runtime) => runtime.id) },
+  });
+});
 
 traderRouter.post("/session", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as {

@@ -31,9 +31,9 @@ strategyRuntimeRouter.get("/", async (c) => {
   const sessionId = c.req.query("sessionId");
   const status = c.req.query("status");
   const data = await listStrategyRuntimes({
-    workflowRunId: workflowRunId ?? undefined,
-    sessionId: sessionId ?? undefined,
-    status: status ?? undefined,
+    ...(workflowRunId ? { workflowRunId } : {}),
+    ...(sessionId ? { sessionId } : {}),
+    ...(status ? { status } : {}),
   });
   return c.json({ ok: true, data });
 });
@@ -62,10 +62,10 @@ strategyRuntimeRouter.post("/", async (c) => {
       strategyScriptId: body.strategyScriptId.trim(),
       market: body.market.trim(),
       symbol: body.symbol.trim(),
-      timeframe: body.timeframe,
-      executionMode: body.executionMode,
-      brokerAccountId: body.brokerAccountId,
-      params: body.params,
+      ...(body.timeframe !== undefined ? { timeframe: body.timeframe } : {}),
+      ...(body.executionMode !== undefined ? { executionMode: body.executionMode } : {}),
+      ...(body.brokerAccountId !== undefined ? { brokerAccountId: body.brokerAccountId } : {}),
+      ...(body.params !== undefined ? { params: body.params } : {}),
       autoStart: body.autoStart ?? false,
     });
     return c.json({ ok: true, data: row });
@@ -104,7 +104,9 @@ strategyRuntimeRouter.post("/:id/evaluate-paper", async (c) => {
 
 strategyRuntimeRouter.post("/:id/approve-live", async (c) => {
   try {
-    const body = await c.req.json<{ reviewer?: string }>().catch(() => ({}));
+    const body = await c.req
+      .json<{ reviewer?: string }>()
+      .catch((): { reviewer?: string } => ({}));
     const data = await strategyPromotionService.approveRuntime(
       c.req.param("id"),
       body.reviewer ?? "user"

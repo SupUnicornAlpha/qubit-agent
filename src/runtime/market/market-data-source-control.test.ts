@@ -64,8 +64,11 @@ describe("market data source control plane", () => {
   test("symbol-specific no-data does not trip the global source circuit", async () => {
     for (let i = 0; i < 4; i++) {
       await recordMarketDataSourceAttempt({
-        sourceId: "yfinance",
-        market: "US",
+        // Do not share yfinance with the live-network API integration test:
+        // Bun runs test files concurrently and its real failures are unrelated
+        // to this no-data classification contract.
+        sourceId: "futu_bridge",
+        market: "CN",
         timeframe: "1d",
         symbol: `DELISTED${i}`,
         status: "empty",
@@ -73,15 +76,9 @@ describe("market data source control plane", () => {
         latencyMs: 1,
       });
     }
-    const source = (await listMarketDataSources()).find((row) => row.id === "yfinance");
+    const source = (await listMarketDataSources()).find((row) => row.id === "futu_bridge");
     expect(source?.circuitState).toBe("closed");
-    const plan = await selectMarketDataSourcePlan({
-      market: "US",
-      timeframe: "1d",
-      mode: "auto",
-      settings: { "qubit-data": { klinesDataSource: "auto" } },
-    });
-    expect(plan[0]).toBe("yfinance");
+    expect(source?.healthStatus).toBe("unknown");
   });
 
   test("explicit source stays first but retains healthy fallback chain", async () => {

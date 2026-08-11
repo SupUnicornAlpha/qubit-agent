@@ -93,7 +93,6 @@ const BUILTIN_PROVIDERS: ReadonlyArray<ExecProvider> = [
       'Anthropic Claude Code CLI 子智能体。把长 horizon 编码任务（写因子文件、改 strategy-composer、读多个文件后产 PR diff）整包外包给它。oneshot 模式：`claude -p "..."`。',
     command: "claude",
     argTemplate: ["-p", "{prompt}", "--dangerously-skip-permissions"],
-    stdinTemplate: undefined,
     outputProtocol: "text",
     defaultTimeoutMs: 10 * 60 * 1000,
     maxOutputBytes: 256 * 1024,
@@ -108,7 +107,6 @@ const BUILTIN_PROVIDERS: ReadonlyArray<ExecProvider> = [
       "Aider 开源 coding agent。git-aware，会自己 commit。适合派「在 src/runtime/factor/ 下新增 X 因子 + 改对应 tests」这种任务。",
     command: "aider",
     argTemplate: ["--yes", "--no-stream", "--message", "{prompt}"],
-    stdinTemplate: undefined,
     outputProtocol: "text",
     defaultTimeoutMs: 10 * 60 * 1000,
     maxOutputBytes: 256 * 1024,
@@ -142,10 +140,10 @@ function parseUserProvider(raw: unknown): ExecProvider {
     kind,
     description: String(r.description ?? `user-defined ${kind}: ${id}`),
     command,
-    argTemplate: Array.isArray(r.argTemplate)
-      ? (r.argTemplate as unknown[]).map(String)
-      : undefined,
-    stdinTemplate: typeof r.stdinTemplate === "string" ? r.stdinTemplate : undefined,
+    ...(Array.isArray(r.argTemplate)
+      ? { argTemplate: (r.argTemplate as unknown[]).map(String) }
+      : {}),
+    ...(typeof r.stdinTemplate === "string" ? { stdinTemplate: r.stdinTemplate } : {}),
     outputProtocol: (r.outputProtocol as ExecProvider["outputProtocol"]) ?? "text",
     defaultTimeoutMs: Number(
       r.defaultTimeoutMs ?? (kind === "cli_agent" ? 10 * 60 * 1000 : 30_000)
@@ -156,9 +154,9 @@ function parseUserProvider(raw: unknown): ExecProvider {
       : ["HOME", "LANG", "LC_ALL"],
     workdirStrategy: (r.workdirStrategy as ExecProvider["workdirStrategy"]) ?? "workflow-scoped",
     allowFreeformArgs: r.allowFreeformArgs !== false,
-    allowedSubcommands: Array.isArray(r.allowedSubcommands)
-      ? (r.allowedSubcommands as unknown[]).map(String)
-      : undefined,
+    ...(Array.isArray(r.allowedSubcommands)
+      ? { allowedSubcommands: (r.allowedSubcommands as unknown[]).map(String) }
+      : {}),
     lifecycle: (r.lifecycle as ExecProvider["lifecycle"]) ?? "experimental",
   };
 }

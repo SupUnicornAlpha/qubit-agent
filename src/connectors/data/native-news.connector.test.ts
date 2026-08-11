@@ -9,7 +9,7 @@ const request = {
 };
 
 describe("QubitNativeNewsConnector evidence safety", () => {
-  test("does not fabricate a current news row when no real source is configured", async () => {
+  test("does not fabricate a current news row when public sources return no usable item", async () => {
     const connector = new QubitNativeNewsConnector();
     await connector.init({});
     const output = await connector.execute<{
@@ -18,7 +18,9 @@ describe("QubitNativeNewsConnector evidence safety", () => {
     }>("fetch_news", request);
     expect(output.items).toEqual([]);
     expect(output.aggregateSentiment.sampleSize).toBe(0);
-    expect((await connector.healthcheck()).status).toBe("degraded");
+    // Built-in Yahoo/Google RSS is configured even when this particular request
+    // has no usable article, so the connector remains healthy.
+    expect((await connector.healthcheck()).status).toBe("healthy");
   });
 
   test("explicit demo mode marks synthetic rows so evidence gates can reject them", async () => {

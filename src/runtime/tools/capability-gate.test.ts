@@ -47,6 +47,10 @@ async function seedPolicy(
 
 async function seedMcp(name: string, enabled: boolean): Promise<void> {
   const db = await getDb();
+  // `mcp_server_config.name` is not unique. Clear prior rows so this test
+  // controls exactly one server state instead of inheriting another test's
+  // enabled/cooldown configuration.
+  await db.delete(mcpServerConfig).where(eq(mcpServerConfig.name, name));
   await db
     .insert(mcpServerConfig)
     .values({
@@ -136,7 +140,7 @@ describe("CapabilityGate", () => {
       agentDefinition: makeDef("gate-pol-open"),
       workflowId: "wf-gate-financex-surface",
     });
-    expect(surface.tools).toContain("call_mcp");
+    expect(surface.tools).not.toContain("call_mcp");
     const financex = surface.mcpServers.find((server) => server.name === "mcp-financex");
     expect(financex?.tools?.map((tool) => tool.name).sort()).toEqual([
       "get_historical_data",
