@@ -480,6 +480,8 @@ export const TeamDashboardPanel: FC = () => {
   const [teamArtifactsError, setTeamArtifactsError] = useState<string | null>(null);
 
   const [teamGraph, setTeamGraph] = useState<AnalystTeamGraphPayload | null>(null);
+  /** SSE 正常时由事件驱动拓扑回拉；断线时才启用低频轮询兜底。 */
+  const [workflowEventStreamUnavailable, setWorkflowEventStreamUnavailable] = useState(false);
   /** 单调递增；切 workflow 后丢弃过期的 getAnalystTeamGraph 响应（长对话尤其容易晚归）。 */
   const teamGraphLoadGenRef = useRef(0);
   const [graphSelection, setGraphSelection] = useState<TeamGraphSelection>(null);
@@ -526,7 +528,11 @@ export const TeamDashboardPanel: FC = () => {
     return active;
   }, []);
 
-  const loadTeamGraph = useCallback(async (opts?: { preserveSelection?: boolean }) => {
+  const loadTeamGraph = useCallback(async (opts?: {
+    preserveSelection?: boolean;
+    /** 后台同步不切换 loading，避免运行期画布像整页刷新一样闪烁。 */
+    background?: boolean;
+  }) => {
     const wf = workflowRunId.trim();
     if (!wf) {
       teamGraphLoadGenRef.current += 1;
@@ -535,7 +541,7 @@ export const TeamDashboardPanel: FC = () => {
       return;
     }
     const gen = ++teamGraphLoadGenRef.current;
-    setGraphLoading(true);
+    if (!opts?.background) setGraphLoading(true);
     try {
       const g = await getAnalystTeamGraph(wf);
       // 用户已切到其他工作流：丢掉本响应，否则长对话会把右侧/中栏「钉」回旧任务。
@@ -552,9 +558,10 @@ export const TeamDashboardPanel: FC = () => {
       if (gen !== teamGraphLoadGenRef.current || workflowRunIdRef.current.trim() !== wf) {
         return;
       }
-      setTeamGraph(null);
+      // 后台同步短暂失败时保留上一帧，不能为了一个网络抖动把画布清空。
+      if (!opts?.background) setTeamGraph(null);
     } finally {
-      if (gen === teamGraphLoadGenRef.current) {
+      if (gen === teamGraphLoadGenRef.current && !opts?.background) {
         setGraphLoading(false);
       }
     }
@@ -573,6 +580,19 @@ export const TeamDashboardPanel: FC = () => {
   useEffect(() => {
     refreshWorkflowOptionsRef.current = refreshWorkflowOptions;
   }, [refreshWorkflowOptions]);
+
+  /**
+   * 将一组紧邻的 SSE 持久化事件合并为一次后台图同步。token 本身只更新本地流式气泡，
+   * 不触发整图请求；这既保留实时输出，也避免刷新感。
+   */
+  const graphRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleTeamGraphRefresh = useCallback((delayMs = 350) => {
+    if (graphRefreshTimerRef.current) clearTimeout(graphRefreshTimerRef.current);
+    graphRefreshTimerRef.current = setTimeout(() => {
+      graphRefreshTimerRef.current = null;
+      void loadTeamGraphRef.current({ preserveSelection: true, background: true });
+    }, delayMs);
+  }, []);
 
   const handleOrchestratorChatRef = useRef<
     ((options?: {
@@ -614,23 +634,43 @@ export const TeamDashboardPanel: FC = () => {
     setActiveRationale(null);
     setOrchestratorStreamEvents([]);
     setOrchestratorChatInFlight(false);
+    setWorkflowEventStreamUnavailable(false);
     setRunning(false);
     setRunProgress("");
     setError(null);
     pendingFollowUpsRef.current = [];
     settledRolesRef.current = new Set();
+    if (graphRefreshTimerRef.current) {
+      clearTimeout(graphRefreshTimerRef.current);
+      graphRefreshTimerRef.current = null;
+    }
     void loadTeamGraph();
   }, [workflowRunId, loadTeamGraph]);
 
-  /** 分析 / orchestrator-chat 进行中轮询拓扑与台账，便于右栏对话实时更新 */
+  /**
+   * SSE 正常时，下面的 firehose 会在持久化步骤/工具事件到达后按需刷新图数据。
+   * 仅在 SSE 连接断开时低频兜底，避免 2.5 秒一次的整图替换造成画布闪烁。
+   */
   useEffect(() => {
-    if ((!running && !orchestratorChatInFlight) || !workflowRunId.trim()) return;
-    void loadTeamGraph({ preserveSelection: true });
+    if (
+      (!running && !orchestratorChatInFlight) ||
+      !workflowRunId.trim() ||
+      !workflowEventStreamUnavailable
+    ) {
+      return;
+    }
+    void loadTeamGraph({ preserveSelection: true, background: true });
     const id = window.setInterval(() => {
-      void loadTeamGraph({ preserveSelection: true });
-    }, 2500);
+      void loadTeamGraph({ preserveSelection: true, background: true });
+    }, 10_000);
     return () => window.clearInterval(id);
-  }, [running, orchestratorChatInFlight, workflowRunId, loadTeamGraph]);
+  }, [
+    running,
+    orchestratorChatInFlight,
+    workflowRunId,
+    workflowEventStreamUnavailable,
+    loadTeamGraph,
+  ]);
 
   const mergedLiveFeedRows = useMemo(() => {
     type Row = { key: string; t: number; kind: "interaction" | "debate"; body: string };
@@ -1065,6 +1105,7 @@ export const TeamDashboardPanel: FC = () => {
     setTeamPlanSegments([]);
     setActiveRationale(null);
     setOrchestratorStreamEvents([]);
+    setWorkflowEventStreamUnavailable(false);
     settledRolesRef.current = new Set();
     pendingFollowUpsRef.current = [];
     const ORCHESTRATOR_STREAM_CAP = 120;
@@ -1073,6 +1114,18 @@ export const TeamDashboardPanel: FC = () => {
       onEvent: (event) => {
         // 已切到其他任务：忽略本订阅迟到事件（长对话更易晚到）。
         if (workflowRunIdRef.current.trim() !== wf) return;
+        setWorkflowEventStreamUnavailable(false);
+        if (
+          event.type === "tool_call_start" ||
+          event.type === "tool_call_end" ||
+          event.type === "step_persisted" ||
+          event.type === "observe" ||
+          event.type === "final" ||
+          event.type === "error" ||
+          event.source === "a2a"
+        ) {
+          scheduleTeamGraphRefresh();
+        }
         const role = event.role || "unknown";
         if (
           event.type === "tool_call_start" ||
@@ -1237,17 +1290,18 @@ export const TeamDashboardPanel: FC = () => {
             // chat 路径：终态后 orchestrator→user 答复才落库，防抖回拉 + 刷新工作流状态。
             if (settleRefetchTimerRef.current) clearTimeout(settleRefetchTimerRef.current);
             settleRefetchTimerRef.current = setTimeout(() => {
-              void loadTeamGraphRef.current({ preserveSelection: true });
+              void loadTeamGraphRef.current({ preserveSelection: true, background: true });
               void refreshWorkflowOptionsRef.current();
               setTimeout(() => {
-                void loadTeamGraphRef.current({ preserveSelection: true });
+                void loadTeamGraphRef.current({ preserveSelection: true, background: true });
               }, 1500);
             }, 700);
           }
         }
       },
       onError: () => {
-        /** firehose 断开：忽略，轮询仍在兜底；下次 effect 依赖变化会重连 */
+        /** firehose 断开：低频轮询兜底，避免静默丢失已落库的拓扑变化。 */
+        setWorkflowEventStreamUnavailable(true);
       },
     });
     return () => {
@@ -1256,8 +1310,12 @@ export const TeamDashboardPanel: FC = () => {
         clearTimeout(settleRefetchTimerRef.current);
         settleRefetchTimerRef.current = null;
       }
+      if (graphRefreshTimerRef.current) {
+        clearTimeout(graphRefreshTimerRef.current);
+        graphRefreshTimerRef.current = null;
+      }
     };
-  }, [workflowRunId]);
+  }, [workflowRunId, scheduleTeamGraphRefresh]);
 
   /**
    * 沉淀式交接：仅在同 role 的 reason step 已保存了**相同完整文本**时才删在飞缓冲。
