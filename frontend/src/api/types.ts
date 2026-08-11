@@ -100,6 +100,32 @@ export interface KlinesResponseMeta {
   returned: number;
 }
 
+/** 研究级美股期权链；来自 `/market/options/chain`，不可用作实盘报价。 */
+export interface OptionContract {
+  contractSymbol: string;
+  right: "call" | "put";
+  strike: number;
+  lastPrice: number | null;
+  bid: number | null;
+  ask: number | null;
+  change: number | null;
+  percentChange: number | null;
+  volume: number | null;
+  openInterest: number | null;
+  impliedVolatility: number | null;
+  inTheMoney: boolean;
+  expiration: string | null;
+}
+
+export interface OptionChain {
+  underlying: string;
+  source: "yahoo_chart";
+  fetchedAt: string;
+  expirations: string[];
+  calls: OptionContract[];
+  puts: OptionContract[];
+}
+
 export interface MarketDataReadiness {
   status: "checking" | "ready" | "degraded" | "down";
   checkedAt: string | null;
@@ -1115,7 +1141,7 @@ export type ResearchScopeInput = {
   peers?: string[];
   /** explore 模式专用：用户给的研究主题 */
   theme?: string;
-  instrument?: "equity" | "option";
+  instrument?: "equity" | "option" | "future" | "crypto";
   positionSide?: "long" | "short";
   exchange?: string;
   option?: {

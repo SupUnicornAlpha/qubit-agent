@@ -684,6 +684,16 @@
 .qb-decision-batch[data-status="error"] .qb-decision-batch__summary > i {
   background: #fb7185;
 }
+.qb-decision-batch[data-emphasis="execution"] {
+  border-left: 3px solid #34d399;
+  background: color-mix(in srgb, #065f46 22%, var(--qb-main-card-bg, #18181b));
+}
+.qb-decision-batch[data-emphasis="execution"] .qb-decision-batch__main strong {
+  color: #86efac;
+}
+.qb-decision-batch[data-emphasis="risk"] {
+  border-left: 3px solid #fb7185;
+}
 .qb-decision-batch__main {
   display: grid;
   gap: 3px;
@@ -750,6 +760,230 @@
   white-space: pre-wrap;
 }
 
+.qb-risk-workbench {
+  flex: 1;
+  overflow: auto;
+  background: var(--qb-main-panel-bg, #111114);
+}
+.qb-risk-workbench__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  min-height: 78px;
+  padding: 14px 18px !important;
+  cursor: default !important;
+  list-style: none;
+  border-bottom: 1px solid var(--qb-kline-header-border, #27272a);
+  background: linear-gradient(
+    100deg,
+    #111827 0%,
+    var(--qb-main-panel-bg, #111114) 55%
+  );
+}
+.qb-risk-workbench__header::-webkit-details-marker {
+  display: none;
+}
+.qb-risk-workbench__header > span:first-child {
+  display: grid;
+  gap: 4px;
+}
+.qb-risk-workbench__header small {
+  color: #a78bfa;
+  font-size: 10px;
+  letter-spacing: 0.11em;
+}
+.qb-risk-workbench__header strong {
+  color: var(--qb-body-fg, #e4e4e7);
+  font-size: 18px;
+}
+.qb-risk-workbench__header em {
+  color: var(--qb-main-meta, #a1a1aa);
+  font-size: 11px;
+  font-style: normal;
+}
+.qb-risk-workbench__metrics {
+  display: flex;
+  align-self: stretch;
+  border: 1px solid var(--qb-kline-header-border, #27272a);
+}
+.qb-risk-workbench__metrics b {
+  display: grid;
+  align-content: center;
+  min-width: 88px;
+  padding: 0 12px;
+  border-right: 1px solid var(--qb-kline-header-border, #27272a);
+  color: #fbbf24;
+  font-size: 11px;
+  font-weight: 600;
+}
+.qb-risk-workbench__metrics b:last-child {
+  border-right: 0;
+}
+.qb-risk-workbench__metrics b[data-status="success"] {
+  color: #34d399;
+}
+.qb-risk-workbench__metrics b[data-status="error"] {
+  color: #fb7185;
+}
+.qb-risk-workbench__metrics b[data-status="neutral"] {
+  color: var(--qb-main-meta, #a1a1aa);
+}
+.qb-risk-workbench__grid {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  gap: 12px;
+  padding: 14px 18px 24px !important;
+}
+.qb-risk-workbench__grid > * {
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--qb-kline-header-border, #27272a);
+  border-radius: 7px;
+  background: color-mix(
+    in srgb,
+    var(--qb-main-card-bg, #18181b) 72%,
+    transparent
+  );
+}
+.qb-risk-workbench__grid > .qb-risk-module--orders,
+.qb-risk-workbench__grid > .qb-risk-module--orders + div,
+.qb-risk-workbench__grid > p {
+  grid-column: 1 / -1;
+}
+.qb-risk-module--orders {
+  max-height: 360px !important;
+  padding: 0 !important;
+  border-color: color-mix(
+    in srgb,
+    #a78bfa 35%,
+    var(--qb-kline-header-border, #27272a)
+  ) !important;
+}
+.qb-risk-module--orders > :first-child {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--qb-kline-header-border, #27272a);
+}
+.qb-risk-intent {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--qb-kline-header-border, #27272a);
+}
+.qb-risk-intent:last-child {
+  border-bottom: 0;
+}
+.qb-risk-intent__side {
+  padding: 4px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, #34d399 17%, transparent);
+  color: #6ee7b7;
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+}
+.qb-risk-intent[data-status="blocked"] .qb-risk-intent__side {
+  background: color-mix(in srgb, #fb7185 18%, transparent);
+  color: #fda4af;
+}
+.qb-risk-intent[data-status="pending"] .qb-risk-intent__side {
+  background: color-mix(in srgb, #fbbf24 16%, transparent);
+  color: #fcd34d;
+}
+.qb-risk-intent__main,
+.qb-risk-intent__state {
+  display: grid;
+  gap: 3px;
+}
+.qb-risk-intent__main strong,
+.qb-risk-intent__state strong {
+  color: var(--qb-body-fg, #e4e4e7);
+  font-size: 12px;
+}
+.qb-risk-intent__main small,
+.qb-risk-intent__state small {
+  color: var(--qb-main-meta, #a1a1aa);
+  font-size: 10px;
+}
+.qb-risk-intent__state {
+  min-width: 108px;
+  text-align: right;
+}
+.qb-risk-intent[data-status="filled"] .qb-risk-intent__state strong {
+  color: #34d399;
+}
+.qb-risk-intent[data-status="blocked"] .qb-risk-intent__state strong {
+  color: #fb7185;
+}
+.qb-trade-module-switch {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 2px 7px;
+  align-items: center;
+  min-width: 116px;
+  padding-left: 10px;
+  border-left: 1px solid var(--qb-kline-header-border, #27272a);
+}
+.qb-trade-module-switch > span {
+  color: var(--qb-main-meta, #a1a1aa);
+  font-size: 10px;
+}
+.qb-trade-module-switch > strong {
+  color: #fb7185;
+  font-size: 11px;
+}
+.qb-trade-module-switch > strong[data-enabled="true"] {
+  color: #34d399;
+}
+.qb-trade-module-switch > button {
+  grid-column: 1 / -1;
+}
+.qb-trade-nav button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+.qb-trade-module-paused {
+  display: grid;
+  place-content: center;
+  justify-items: start;
+  flex: 1;
+  gap: 8px;
+  min-height: 280px;
+  padding: 48px;
+  border-top: 1px solid var(--qb-kline-header-border, #27272a);
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, #312e81 13%, transparent),
+      transparent 48%
+    ),
+    var(--qb-main-panel-bg, #111114);
+}
+.qb-trade-module-paused p {
+  margin: 0;
+  color: #a78bfa;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+.qb-trade-module-paused h2 {
+  margin: 0;
+  color: var(--qb-body-fg, #e4e4e7);
+  font-size: 22px;
+}
+.qb-trade-module-paused span {
+  max-width: 510px;
+  color: var(--qb-main-meta, #a1a1aa);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.qb-trade-module-paused button {
+  margin-top: 8px;
+}
+
 @media (max-width: 1100px) {
   .qb-strategy-workbench__header {
     align-items: flex-start;
@@ -773,9 +1007,32 @@
     width: 100%;
     max-width: none;
   }
+  .qb-trade-module-switch {
+    border-left: 0;
+    padding-left: 0;
+  }
 }
 
 @media (max-width: 860px) {
+  .qb-risk-workbench__header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .qb-risk-workbench__metrics {
+    width: 100%;
+  }
+  .qb-risk-workbench__metrics b {
+    flex: 1;
+    min-width: 0;
+  }
+  .qb-risk-workbench__grid {
+    grid-template-columns: 1fr;
+  }
+  .qb-risk-workbench__grid > .qb-risk-module--orders,
+  .qb-risk-workbench__grid > .qb-risk-module--orders + div,
+  .qb-risk-workbench__grid > p {
+    grid-column: auto;
+  }
   .qb-strategy-workbench__metrics {
     width: 100%;
     grid-template-columns: repeat(2, minmax(0, 1fr));

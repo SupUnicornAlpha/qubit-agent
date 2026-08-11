@@ -133,11 +133,25 @@ describe("resolveTickerMarket — short US ticker", () => {
   });
 });
 
-describe("resolveTickerMarket — Yahoo index/futures symbols", () => {
-  test.each([["^VIX"], ["^GSPC"], ["GC=F"]])("%s → US inferred", (symbol) => {
+describe("resolveTickerMarket — Yahoo indices", () => {
+  test.each([["^VIX"], ["^GSPC"]])("%s → US inferred", (symbol) => {
     const result = resolveTickerMarket(symbol);
     expect(result.market).toBe("US");
     expect(result.exchange).toBe("US");
+  });
+});
+
+describe("resolveTickerMarket — futures and options", () => {
+  test.each([["GC=F"], ["/ES"], ["ESH5"], ["CL2503"]])("%s → FUTURES/CME", (symbol) => {
+    const result = resolveTickerMarket(symbol);
+    expect(result.market).toBe("FUTURES");
+    expect(result.exchange).toBe("CME");
+  });
+
+  test("compact OCC contract → OPTION/OPRA", () => {
+    const result = resolveTickerMarket("AAPL240621C00200000");
+    expect(result.market).toBe("OPTION");
+    expect(result.exchange).toBe("OPRA");
   });
 });
 

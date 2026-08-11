@@ -59,10 +59,7 @@ impl InvocationService {
         cancels: Option<&TurnCancelRegistry>,
     ) -> Result<InvocationRecord, RuntimeError> {
         let parent = self.store.get_session(&req.parent_session_id).await?;
-        let caller_spec = self
-            .store
-            .get_spec(&parent.view.agent_spec_id)
-            .await?;
+        let caller_spec = self.store.get_spec(&parent.view.agent_spec_id).await?;
         let callee_spec = self.store.get_spec(&req.callee_spec_id).await?;
         self.admission
             .admit_invocation(&caller_spec, &callee_spec)?;
@@ -325,8 +322,7 @@ fn build_isolated_goal(req: &InvocationRequest) -> String {
         }
     }
     parts.push(
-        "[isolation] This is an isolated child context. Do not assume parent transcript."
-            .into(),
+        "[isolation] This is an isolated child context. Do not assume parent transcript.".into(),
     );
     parts.join("\n\n")
 }

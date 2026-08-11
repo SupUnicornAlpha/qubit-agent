@@ -24,10 +24,7 @@ pub enum TurnState {
 impl TurnState {
     /// Terminal for Bun pollers / resume — HITL is pause, not terminal.
     pub fn is_terminal(self) -> bool {
-        matches!(
-            self,
-            Self::Completed | Self::Failed | Self::Cancelled
-        )
+        matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
     }
 
     /// Mid-flight states that should not survive process death without a live task.

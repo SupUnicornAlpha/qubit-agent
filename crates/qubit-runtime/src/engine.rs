@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use qubit_policy::{builtin_catalog, load_policy_snapshot, RecipeCatalog};
 use qubit_protocol::{
     DeliveryVerdict, EffectLedger, ErrorObject, HitlChannelHint, HitlInboxId, HitlInboxItem,
-    HitlInputKind, HitlPrompt, HitlPromptId, HitlSource, HitlInboxStatus, Lifecycle, ProtocolError,
+    HitlInboxStatus, HitlInputKind, HitlPrompt, HitlPromptId, HitlSource, Lifecycle, ProtocolError,
     RuntimeEvent, SessionId, ToolCallId, ToolResult, TurnId, TurnState, UserInput,
 };
 
@@ -163,7 +163,10 @@ impl TurnEngine {
         // Already terminal — leave as-is.
         if matches!(
             turn.state,
-            TurnState::Completed | TurnState::Failed | TurnState::Cancelled | TurnState::AwaitingHitl
+            TurnState::Completed
+                | TurnState::Failed
+                | TurnState::Cancelled
+                | TurnState::AwaitingHitl
         ) {
             return Ok(());
         }
@@ -390,16 +393,11 @@ impl TurnEngine {
             .bind_turn_context(session.view.workspace_id.as_str(), session_id)
             .await;
 
-        let recipe_key = opts
-            .recipe_key
-            .or(spec.default_recipe_id.clone());
+        let recipe_key = opts.recipe_key.or(spec.default_recipe_id.clone());
         let policy_snap = load_policy_snapshot(&self.policy, recipe_key.as_deref())
             .map_err(|e| RuntimeError::Internal(e.to_string()))?;
         let mut ledger = EffectLedger::default();
-        let max_iterations = opts
-            .max_iterations
-            .unwrap_or(spec.max_iterations)
-            .max(1);
+        let max_iterations = opts.max_iterations.unwrap_or(spec.max_iterations).max(1);
 
         let seq = self.events.next_seq().await;
         self.store.bump_event_seq(session_id, seq).await?;
@@ -426,15 +424,19 @@ impl TurnEngine {
         if !policy_snap.tool_allowlist.is_empty() {
             // Soft intersect: keep tools that appear on allowlist OR are L0 meta.
             // MCP: keep `mcp:<server>:<tool>` when allowlist enables MCP.
-            let allow_mcp = policy_snap.tool_allowlist.iter().any(|a| {
-                a == "call_mcp" || a.starts_with("mcp:")
-            });
+            let allow_mcp = policy_snap
+                .tool_allowlist
+                .iter()
+                .any(|a| a == "call_mcp" || a.starts_with("mcp:"));
             tool_names.retain(|n| {
                 let bare = n.strip_prefix("tool/").unwrap_or(n);
                 bare == "update_plan"
                     || bare == "agent.invoke"
                     || (allow_mcp && bare.starts_with("mcp:"))
-                    || policy_snap.tool_allowlist.iter().any(|a| a == bare || a == n)
+                    || policy_snap
+                        .tool_allowlist
+                        .iter()
+                        .any(|a| a == bare || a == n)
             });
             if tool_names.is_empty() {
                 tool_names = self
@@ -472,7 +474,9 @@ impl TurnEngine {
         let mut system = if rendered.system.is_empty() {
             format!(
                 "You are agent {} ({:?}). mode={}",
-                spec.display_name, spec.execution_kind, mode.as_str()
+                spec.display_name,
+                spec.execution_kind,
+                mode.as_str()
             )
         } else {
             rendered.system
@@ -729,40 +733,38 @@ impl TurnEngine {
             let invoke_fut = self
                 .tools
                 .invoke_all(sample.tool_calls.clone(), cancel.child());
-            let results = match tokio::time::timeout(
-                std::time::Duration::from_secs(acting_secs),
-                invoke_fut,
-            )
-            .await
-            {
-                Ok(r) => r?,
-                Err(_) => {
-                    tracing::warn!(
-                        turn_id = %turn_id,
-                        secs = acting_secs,
-                        tools = sample.tool_calls.len(),
-                        "acting batch timed out; soft-failing tool results"
-                    );
-                    sample
-                        .tool_calls
-                        .iter()
-                        .map(|c| ToolResult {
-                            call_id: ToolCallId::new(c.call_id.clone()),
-                            ok: false,
-                            observation: Some(serde_json::json!({
-                                "ok": false,
-                                "error": format!(
-                                    "acting batch timeout after {acting_secs}s"
-                                ),
-                                "error_code": "acting_batch_timeout",
-                            })),
-                            effects: vec![],
-                            retryable: true,
-                            error_code: Some("acting_batch_timeout".into()),
-                        })
-                        .collect()
-                }
-            };
+            let results =
+                match tokio::time::timeout(std::time::Duration::from_secs(acting_secs), invoke_fut)
+                    .await
+                {
+                    Ok(r) => r?,
+                    Err(_) => {
+                        tracing::warn!(
+                            turn_id = %turn_id,
+                            secs = acting_secs,
+                            tools = sample.tool_calls.len(),
+                            "acting batch timed out; soft-failing tool results"
+                        );
+                        sample
+                            .tool_calls
+                            .iter()
+                            .map(|c| ToolResult {
+                                call_id: ToolCallId::new(c.call_id.clone()),
+                                ok: false,
+                                observation: Some(serde_json::json!({
+                                    "ok": false,
+                                    "error": format!(
+                                        "acting batch timeout after {acting_secs}s"
+                                    ),
+                                    "error_code": "acting_batch_timeout",
+                                })),
+                                effects: vec![],
+                                retryable: true,
+                                error_code: Some("acting_batch_timeout".into()),
+                            })
+                            .collect()
+                    }
+                };
 
             // Feed tool observations back into the next sample (OpenAI chat format).
             // CRITICAL: every assistant tool_calls message must be followed ONLY by the
@@ -836,10 +838,8 @@ impl TurnEngine {
                             .to_string()
                         }
                     });
-                let content = truncate_observation(
-                    &content,
-                    opts.context.tool_observation_max_chars(),
-                );
+                let content =
+                    truncate_observation(&content, opts.context.tool_observation_max_chars());
                 history.push(json!({
                     "role": "tool",
                     "tool_call_id": call.call_id,
@@ -896,9 +896,7 @@ impl TurnEngine {
             history.extend(pending_nudges);
 
             turn.state = TurnState::Observing;
-            self.store
-                .set_active_turn(session_id, Some(turn))
-                .await?;
+            self.store.set_active_turn(session_id, Some(turn)).await?;
             turn = self
                 .store
                 .get_session(session_id)

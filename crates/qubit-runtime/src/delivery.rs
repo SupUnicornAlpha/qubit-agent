@@ -1,8 +1,6 @@
 //! DeliveryEvaluator — thin Core engine over PolicySnapshot + EffectLedger (01 §10).
 
-use qubit_protocol::{
-    DeliveryStatus, DeliveryVerdict, EffectLedger, PolicySnapshot, TurnView,
-};
+use qubit_protocol::{DeliveryStatus, DeliveryVerdict, EffectLedger, PolicySnapshot, TurnView};
 
 /// Sole author of DeliveryVerdict in Core. Business predicates stay in snapshot DATA.
 pub trait DeliveryEvaluator: Send + Sync {
@@ -36,7 +34,10 @@ impl DeliveryEvaluator for LedgerDeliveryEvaluator {
 
         if snap.recipe_key.is_none() {
             reasons.push("scenario_recipe_missing".into());
-            let answer_ok = answer_schema_ok(&snap.completion.answer_schema.required_sections, ledger.answer_text.as_deref());
+            let answer_ok = answer_schema_ok(
+                &snap.completion.answer_schema.required_sections,
+                ledger.answer_text.as_deref(),
+            );
             if !answer_ok {
                 soft.push("answer_schema_unsatisfied".into());
             }

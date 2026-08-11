@@ -17,7 +17,10 @@ const SEEN_KEY = "qubit-trader-feed-seen-v1";
 
 function loadSince(): string {
   try {
-    return sessionStorage.getItem(SEEN_KEY) ?? new Date(Date.now() - 60_000).toISOString();
+    return (
+      sessionStorage.getItem(SEEN_KEY) ??
+      new Date(Date.now() - 60_000).toISOString()
+    );
   } catch {
     return new Date(Date.now() - 60_000).toISOString();
   }
@@ -34,30 +37,70 @@ function persistSince(iso: string) {
 function ingestFeedEvent(
   ev: TraderFeedEvent,
   handlers: {
-    pushTraderAgentLog: ReturnType<typeof useAppStore.getState>["pushTraderAgentLog"];
-    pushTraderMarker: ReturnType<typeof useAppStore.getState>["pushTraderMarker"];
-  }
+    pushTraderAgentLog: ReturnType<
+      typeof useAppStore.getState
+    >["pushTraderAgentLog"];
+    pushTraderMarker: ReturnType<
+      typeof useAppStore.getState
+    >["pushTraderMarker"];
+  },
 ) {
   if (ev.type === "strategy_log") {
     const p = ev.payload;
     const isBuy = ev.message === "buy_signal_executed";
+    const isSell = ev.message === "sell_signal_executed";
+    const isExecution =
+      isBuy || isSell || ev.message === "contract_target_executed";
 
     const barTime = typeof p.barTime === "string" ? p.barTime : undefined;
-    const orderIntentId = typeof p.orderIntentId === "string" ? p.orderIntentId : undefined;
+    const orderIntentId =
+      typeof p.orderIntentId === "string" ? p.orderIntentId : undefined;
     const price = typeof p.price === "number" ? p.price : undefined;
-    handlers.pushTraderMarker({
-      side: isBuy ? "buy" : "sell",
-      text: isBuy
-        ? `策略买入${price != null ? ` @${price}` : ""}`
-        : `策略卖出${price != null ? ` @${price}` : ""}`,
-      source: "strategy",
-      barTime,
-      orderIntentId,
-    });
+    const symbol = typeof p.symbol === "string" ? p.symbol : "—";
+    const action =
+      typeof p.action === "string"
+        ? p.action
+        : isBuy
+          ? "buy"
+          : isSell
+            ? "sell"
+            : "hold";
+    const currentQty = typeof p.currentQty === "number" ? p.currentQty : null;
+    const targetQty = typeof p.targetQty === "number" ? p.targetQty : null;
+    const delta = typeof p.delta === "number" ? p.delta : null;
+    const reason = typeof p.reason === "string" ? p.reason : null;
+    const error = typeof p.error === "string" ? p.error : null;
+
+    if (isExecution) {
+      const side = isSell || action === "sell" ? "sell" : "buy";
+      handlers.pushTraderMarker({
+        side,
+        text: `${side === "buy" ? "策略买入" : "策略卖出"}${price != null ? ` @${price}` : ""}`,
+        source: "strategy",
+        barTime,
+        orderIntentId,
+      });
+    }
     handlers.pushTraderAgentLog({
       kind: "strategy",
-      title: isBuy ? "策略信号 · 买入已提交" : "策略信号 · 卖出已提交",
-      body: `runtime=${ev.runtimeId.slice(0, 8)}…\norderIntent=${orderIntentId ?? "—"}\nbarTime=${barTime ?? "—"}`,
+      title: isExecution
+        ? `策略订单已提交 · ${action === "sell" || isSell ? "卖出" : "买入"} · ${symbol}`
+        : error
+          ? `策略评估失败 · ${symbol}`
+          : `策略评估 · ${symbol} · ${action === "buy" ? "加仓" : action === "sell" ? "减仓" : "持有"}`,
+      body: [
+        `runtime=${ev.runtimeId.slice(0, 8)}…`,
+        `barTime=${barTime ?? "—"}`,
+        price != null ? `price=${price}` : null,
+        currentQty != null ? `currentQty=${currentQty}` : null,
+        targetQty != null ? `targetQty=${targetQty}` : null,
+        delta != null ? `delta=${delta}` : null,
+        reason ? `reason=${reason}` : null,
+        error ? `error=${error}` : null,
+        isExecution ? `orderIntent=${orderIntentId ?? "—"}` : null,
+      ]
+        .filter((value): value is string => Boolean(value))
+        .join("\n"),
     });
     return;
   }
@@ -80,7 +123,7 @@ function ingestFeedEvent(
 
 function ingestDriver(
   ev: TraderDriverEvent,
-  pushTraderDriver: ReturnType<typeof useAppStore.getState>["pushTraderDriver"]
+  pushTraderDriver: ReturnType<typeof useAppStore.getState>["pushTraderDriver"],
 ) {
   pushTraderDriver({
     id: ev.id,
@@ -93,7 +136,9 @@ function ingestDriver(
 
 function ingestAgentMessage(
   ev: TraderAgentMessageEvent,
-  pushTraderAgentMessage: ReturnType<typeof useAppStore.getState>["pushTraderAgentMessage"]
+  pushTraderAgentMessage: ReturnType<
+    typeof useAppStore.getState
+  >["pushTraderAgentMessage"],
 ) {
   const body = [
     `${ev.senderRole} → ${ev.receiverRole ?? "广播"}`,
@@ -112,7 +157,11 @@ function ingestAgentMessage(
   });
 }
 
-export function useTraderAgentEngine(projectId: string | null, sessionId: string | null) {
+export function useTraderAgentEngine(
+  projectId: string | null,
+  sessionId: string | null,
+  enabled = true,
+) {
   const chartSpec = useAppStore((s) => s.chartSpec);
   const traderAgentConfig = useAppStore((s) => s.traderAgentConfig);
   const pushTraderAgentLog = useAppStore((s) => s.pushTraderAgentLog);
@@ -128,7 +177,7 @@ export function useTraderAgentEngine(projectId: string | null, sessionId: string
   const sinceRef = useRef(loadSince());
 
   useEffect(() => {
-    if (!projectId || !sessionId) return;
+    if (!enabled || !projectId || !sessionId) return;
     let cancelled = false;
     void (async () => {
       try {
@@ -152,19 +201,26 @@ export function useTraderAgentEngine(projectId: string | null, sessionId: string
     return () => {
       cancelled = true;
     };
-  }, [projectId, sessionId, pushTraderAgentLog]);
+  }, [enabled, projectId, sessionId, pushTraderAgentLog]);
 
   const pollOnce = useCallback(async () => {
-    if (!sessionId || !session?.workflowRunId || !chartSpec.symbol.trim()) return;
+    if (
+      !enabled ||
+      !sessionId ||
+      !session?.workflowRunId ||
+      !chartSpec.symbol.trim()
+    )
+      return;
     try {
-      const { events, drivers, agentMessages, contextMessages, serverTime } = await pollTraderFeed({
-        sessionId,
-        workflowRunId: session.workflowRunId,
-        symbol: chartSpec.symbol.trim(),
-        exchange: chartSpec.exchange,
-        since: sinceRef.current,
-        includeNews: true,
-      });
+      const { events, drivers, agentMessages, contextMessages, serverTime } =
+        await pollTraderFeed({
+          sessionId,
+          workflowRunId: session.workflowRunId,
+          symbol: chartSpec.symbol.trim(),
+          exchange: chartSpec.exchange,
+          since: sinceRef.current,
+          includeNews: true,
+        });
       for (const ev of events) {
         if (seenIds.current.has(ev.id)) continue;
         seenIds.current.add(ev.id);
@@ -204,6 +260,7 @@ export function useTraderAgentEngine(projectId: string | null, sessionId: string
       /* silent poll */
     }
   }, [
+    enabled,
     sessionId,
     session?.workflowRunId,
     chartSpec.symbol,
@@ -215,7 +272,7 @@ export function useTraderAgentEngine(projectId: string | null, sessionId: string
   ]);
 
   useEffect(() => {
-    if (!sessionId) return;
+    if (!enabled || !sessionId) return;
     void pollOnce();
     const ms =
       traderAgentConfig.triggerMode === "interval"
@@ -225,7 +282,13 @@ export function useTraderAgentEngine(projectId: string | null, sessionId: string
           : 12000;
     const t = window.setInterval(() => void pollOnce(), ms);
     return () => window.clearInterval(t);
-  }, [sessionId, traderAgentConfig.triggerMode, traderAgentConfig.intervalSec, pollOnce]);
+  }, [
+    enabled,
+    sessionId,
+    traderAgentConfig.triggerMode,
+    traderAgentConfig.intervalSec,
+    pollOnce,
+  ]);
 
   const placeOrder = useCallback(
     async (input: {
@@ -273,7 +336,10 @@ export function useTraderAgentEngine(projectId: string | null, sessionId: string
         });
         pushTraderAgentLog({
           kind: "user",
-          title: input.side === "buy" ? "快捷交易 · 买入已提交" : "快捷交易 · 卖出已提交",
+          title:
+            input.side === "buy"
+              ? "快捷交易 · 买入已提交"
+              : "快捷交易 · 卖出已提交",
           body: `orderIntent=${data.orderIntentId}\nstatus=${data.riskOutcome}`,
         });
         requestChartReload();
@@ -283,7 +349,14 @@ export function useTraderAgentEngine(projectId: string | null, sessionId: string
         setBusy(false);
       }
     },
-    [session, pushTraderAgentLog, pushTraderMarker, pushTraderDriver, requestChartReload, pollOnce]
+    [
+      session,
+      pushTraderAgentLog,
+      pushTraderMarker,
+      pushTraderDriver,
+      requestChartReload,
+      pollOnce,
+    ],
   );
 
   const cancelOrder = useCallback(
@@ -310,7 +383,7 @@ export function useTraderAgentEngine(projectId: string | null, sessionId: string
         setBusy(false);
       }
     },
-    [session?.workflowRunId, pushTraderAgentLog, pushTraderDriver, pollOnce]
+    [session?.workflowRunId, pushTraderAgentLog, pushTraderDriver, pollOnce],
   );
 
   const placeBracketOrder = useCallback(
@@ -354,12 +427,13 @@ export function useTraderAgentEngine(projectId: string | null, sessionId: string
         setBusy(false);
       }
     },
-    [session, pushTraderAgentLog, requestChartReload, pollOnce]
+    [session, pushTraderAgentLog, requestChartReload, pollOnce],
   );
 
   const runCommand = useCallback(
     async (text: string, executionMode: "paper" | "sim" = "paper") => {
-      if (!session?.workflowRunId || !sessionId) throw new Error("交易会话未就绪");
+      if (!session?.workflowRunId || !sessionId)
+        throw new Error("交易会话未就绪");
       const spec = useAppStore.getState().chartSpec;
       pushTraderDriver({
         driverKind: "user_command",
@@ -399,7 +473,7 @@ export function useTraderAgentEngine(projectId: string | null, sessionId: string
       pushTraderDriver,
       requestChartReload,
       pollOnce,
-    ]
+    ],
   );
 
   const runAgentCycle = useCallback(async () => {

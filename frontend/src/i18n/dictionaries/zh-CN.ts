@@ -157,8 +157,8 @@ const pack: LocalePack = {
         activityHintExpand: "{label}（点击展开 Explorer）",
       },
       nav: {
-        ide: "研究工作台",
-        team: "研究团队",
+        ide: "工作台",
+        team: "研究",
         trader: "交易",
         quant: "量化工作台",
         chart: "资讯",

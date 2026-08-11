@@ -23,10 +23,16 @@ pub enum ExecutionKind {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum CallerSelector {
-    SpecId { id: String },
-    Label { label: String },
+    SpecId {
+        id: String,
+    },
+    Label {
+        label: String,
+    },
     /// Field renamed from `kind` to avoid serde internal-tag clash with `tag = "kind"`.
-    ExecutionKind { execution_kind: ExecutionKind },
+    ExecutionKind {
+        execution_kind: ExecutionKind,
+    },
 }
 
 /// External wake-up sources for [`ExecutionKind::Reactor`].

@@ -9,9 +9,7 @@ use serde_json::{json, Value};
 use crate::cancel::CancelToken;
 use crate::error::RuntimeError;
 use crate::model::{ModelClient, NormalizedToolCall, SampleRequest, SampleResponse};
-use crate::reasoning_extract::{
-    estimate_reasoning_tokens, extract_reasoning_from_chat_completion,
-};
+use crate::reasoning_extract::{estimate_reasoning_tokens, extract_reasoning_from_chat_completion};
 
 #[derive(Clone, Debug)]
 pub struct OpenAiCompatibleConfig {
@@ -112,7 +110,10 @@ fn is_transient_model_error(msg: &str) -> bool {
 fn body_preview(bytes: &[u8], max: usize) -> String {
     let n = bytes.len().min(max);
     let s = String::from_utf8_lossy(&bytes[..n]);
-    let compact: String = s.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    let compact: String = s
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
     if bytes.len() > max {
         format!("{compact}…(total {} bytes)", bytes.len())
     } else {
@@ -424,10 +425,7 @@ fn extract_answer_text(message: &Value) -> String {
             texts.join("\n")
         }
         Some(Value::Null) | None => String::new(),
-        Some(other) => other
-            .as_str()
-            .map(|s| s.to_string())
-            .unwrap_or_default(),
+        Some(other) => other.as_str().map(|s| s.to_string()).unwrap_or_default(),
     }
 }
 
@@ -455,8 +453,7 @@ fn extract_tool_calls(
             .cloned()
             .unwrap_or(Value::Null);
         let args: Value = match args_raw {
-            Value::String(s) => serde_json::from_str(&s)
-                .unwrap_or_else(|_| json!({ "raw": s })),
+            Value::String(s) => serde_json::from_str(&s).unwrap_or_else(|_| json!({ "raw": s })),
             other => other,
         };
         if id.is_empty() || name.is_empty() {
@@ -599,10 +596,8 @@ impl ModelClient for OpenAiCompatibleClient {
                         %status,
                         "LLM HTTP error; retrying"
                     );
-                    tokio::time::sleep(std::time::Duration::from_millis(
-                        400 * u64::from(attempt),
-                    ))
-                    .await;
+                    tokio::time::sleep(std::time::Duration::from_millis(400 * u64::from(attempt)))
+                        .await;
                     continue;
                 }
                 return Err(RuntimeError::Model(last_err));
@@ -697,7 +692,9 @@ mod tests {
     #[test]
     fn detects_transient_decode_errors() {
         assert!(is_transient_model_error("error decoding response body"));
-        assert!(is_transient_model_error("error reading response body: unexpected EOF"));
+        assert!(is_transient_model_error(
+            "error reading response body: unexpected EOF"
+        ));
         assert!(is_transient_model_error("HTTP 503: unavailable"));
         assert!(!is_transient_model_error("HTTP 401: invalid api key"));
     }

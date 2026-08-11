@@ -167,12 +167,13 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     role: "market_data",
     name: "行情数据",
     /** 2.7.0：行情取证 + 微观结构（ticks/order book/trades/chip）唯一归行情 Agent。 */
-    version: "2.7.0",
+    version: "2.8.0",
     systemPrompt: PROMPT_MARKET_DATA,
     tools: [
       ...MARKET_GOVERNANCE_TOOLS,
       "fetch_klines",
       "fetch_quote",
+      "fetch_option_chain",
       "fetch_ticks",
       "fetch_order_book",
       "fetch_trades",

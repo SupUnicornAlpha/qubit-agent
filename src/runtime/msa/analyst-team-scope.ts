@@ -43,6 +43,16 @@ export function formatResearchScopePreamble(scope: NormalizedResearchScope): str
     if (o?.strike != null) lines.push(`  - 行权价：${o.strike}`);
     if (o?.right) lines.push(`  - 方向：${o.right === "call" ? "认购 Call" : "认沽 Put"}`);
     lines.push("- 关注：隐含波动率、时间价值衰减、Delta/Gamma 风险、流动性；缺数据则标 [待核实]");
+  } else if (scope.instrument === "future") {
+    lines.push(
+      "- **工具**：期货 / 商品 / 金融期货",
+      "- 关注：合约到期与换月、期限结构、保证金、基差、流动性和隔夜跳空；不得把连续合约当作可直接交易的到期合约。"
+    );
+  } else if (scope.instrument === "crypto") {
+    lines.push(
+      "- **工具**：加密资产现货（如涉及永续合约，必须额外说明资金费率、杠杆和清算风险）",
+      "- 关注：24×7 交易、交易所/托管风险、稳定币与链上事件、流动性碎片化。"
+    );
   } else if (scope.positionSide === "short") {
     lines.push(
       "- **工具**：股票做空 / 融券 / 可卖空标的",
@@ -81,7 +91,11 @@ export function defaultResearchUserContext(scope: NormalizedResearchScope): stri
   const inst =
     scope.instrument === "option"
       ? "期权合约"
-      : scope.positionSide === "short"
+      : scope.instrument === "future"
+        ? "期货合约"
+        : scope.instrument === "crypto"
+          ? "加密资产"
+          : scope.positionSide === "short"
         ? "做空标的"
         : "标的";
   return `请对 ${scope.primarySymbol}（${inst}）进行全面分析。`;

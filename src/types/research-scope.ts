@@ -3,7 +3,7 @@
  */
 
 export type ResearchPositionSide = "long" | "short";
-export type ResearchInstrumentKind = "equity" | "option";
+export type ResearchInstrumentKind = "equity" | "option" | "future" | "crypto";
 
 export type ResearchScopeInput = {
   /**
@@ -63,11 +63,15 @@ const MAX_BASKET_SYMBOLS = 8;
  * 解决方式：分隔符里加 `、`，且 resolveResearchScope 对 scope.symbols 元素
  * 再做一次 parseSymbolList 兜底拆分。
  */
-export function parseSymbolList(raw: string): string[] {
+export function parseSymbolList(
+  raw: string,
+  options: { preserveCryptoPair?: boolean } = {}
+): string[] {
+  const separator = options.preserveCryptoPair ? /[,，;；、\\|\s\n]+/ : /[,，;；、\/\\|\s\n]+/;
   return [
     ...new Set(
       raw
-        .split(/[,，;；、\/\\|\s\n]+/)
+        .split(separator)
         .map((s) => s.trim().toUpperCase())
         .filter((s) => s.length > 0 && s.length <= 24)
     ),
@@ -133,6 +137,8 @@ export function looksLikeTicker(raw: unknown): boolean {
 
   if (/^\d{6}$/.test(upper)) return true; // A 股
   if (/^(?:\d{4,5}|[A-Z]{1,6})\.HK$/.test(upper)) return true; // 港股
+  if (/^[A-Z0-9]{1,8}=F$/.test(upper) || /^\/[A-Z0-9]{1,4}$/.test(upper)) return true; // Yahoo / CME 连续期货
+  if (/^[A-Z]{1,4}[FGHJKMNQUVXZ]\d$/.test(upper)) return true; // CME 月份代码，如 ESH5
   if (/^[A-Z][A-Z.\-]{0,9}$/.test(upper)) return true; // US 含 BRK.B / BF-A
   if (/^[A-Z]{2,6}[-/](?:USDT?|BTC|ETH|EUR|GBP|JPY)$/.test(upper)) return true; // 加密
   if (/^[A-Z]{1,4}\d{2,4}$/.test(upper)) return true; // 期货数字合约
@@ -189,10 +195,14 @@ export function resolveResearchScope(input: {
 }): NormalizedResearchScope {
   const scope = input.scope;
   const instrument: ResearchInstrumentKind =
-    scope?.instrument === "option" ? "option" : "equity";
+    scope?.instrument === "option" || scope?.instrument === "future" || scope?.instrument === "crypto"
+      ? scope.instrument
+      : "equity";
   const positionSide: ResearchPositionSide =
     scope?.positionSide === "short" ? "short" : "long";
   const exchange = scope?.exchange?.trim() || undefined;
+  const parseSymbols = (raw: string) =>
+    parseSymbolList(raw, { preserveCryptoPair: instrument === "crypto" });
 
   let kind: NormalizedResearchScope["kind"] = scope?.kind ?? "single";
   let symbols: string[] = [];
@@ -205,17 +215,17 @@ export function resolveResearchScope(input: {
      * （例如板块快捷选项里"成分股"输入框被当作整段字符串提交）。
      * 这里对每个元素再走一遍 parseSymbolList，确保拿到的是真正的 ticker 列表。
      */
-    symbols = [...new Set(scope.symbols.flatMap((s) => parseSymbolList(String(s ?? ""))))];
+    symbols = [...new Set(scope.symbols.flatMap((s) => parseSymbols(String(s ?? ""))))];
   } else if (scope?.ticker?.trim()) {
-    symbols = parseSymbolList(scope.ticker);
+    symbols = parseSymbols(scope.ticker);
   } else if (input.ticker?.trim()) {
-    symbols = parseSymbolList(input.ticker);
+    symbols = parseSymbols(input.ticker);
   }
 
   if (kind === "sector") {
     sector = (scope?.sector ?? "").trim() || undefined;
     const peers = [
-      ...new Set((scope?.peers ?? []).flatMap((s) => parseSymbolList(String(s ?? "")))),
+      ...new Set((scope?.peers ?? []).flatMap((s) => parseSymbols(String(s ?? "")))),
     ];
     if (peers.length > 0) {
       symbols = [...new Set([...symbols, ...peers])];
@@ -322,7 +332,15 @@ function buildDisplayLabel(p: {
   primarySymbol: string;
 }): string {
   const side =
-    p.positionSide === "short" ? "做空" : p.instrument === "option" ? "期权" : "多头";
+    p.positionSide === "short"
+      ? "做空"
+      : p.instrument === "option"
+        ? "期权"
+        : p.instrument === "future"
+          ? "期货"
+          : p.instrument === "crypto"
+            ? "加密资产"
+            : "多头";
   if (p.kind === "explore") {
     const theme = p.theme && p.theme.length > 0 ? p.theme : "自由探索";
     const hint = p.symbols.length > 0 ? `（候选 ${p.symbols.slice(0, 4).join(", ")}）` : "";
@@ -344,5 +362,7 @@ function buildDisplayLabel(p: {
     const contract = p.option?.contractSymbol ? ` ${p.option.contractSymbol}` : "";
     return `期权·${u}${right}${strike}${exp}${contract}`.trim();
   }
+  if (p.instrument === "future") return `期货·${p.primarySymbol}·${side}`;
+  if (p.instrument === "crypto") return `加密资产·${p.primarySymbol}·${side}`;
   return `${p.primarySymbol}·${side}`;
 }

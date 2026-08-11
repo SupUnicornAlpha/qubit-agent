@@ -26,7 +26,10 @@ import {
   getTraderContextTail,
   listTraderContextMessages,
 } from "./trader-context-store";
-import { getOrCreateTraderWorkflow, TRADER_WORKFLOW_GOAL } from "./trader-workflow";
+import {
+  getOrCreateTraderWorkflow,
+  TRADER_WORKFLOW_GOAL,
+} from "./trader-workflow";
 
 export interface TraderSessionContext {
   workflowRunId: string;
@@ -122,7 +125,7 @@ export async function placeTraderOrder(input: {
       strategyRuntimeId: input.strategyRuntimeId,
       signalBarTime: input.signalBarTime,
     },
-    db
+    db,
   );
 
   await processExecutionTasks(db);
@@ -169,7 +172,12 @@ export async function placeTraderBracketOrder(input: {
   const symbol = input.symbol.trim().toUpperCase();
   const market = chartExchangeToMarket(input.exchange);
   const db = await getDb();
-  const context = await resolveExecutionStrategyContext(db, input.workflowRunId, symbol, market);
+  const context = await resolveExecutionStrategyContext(
+    db,
+    input.workflowRunId,
+    symbol,
+    market,
+  );
   let brokerAccountId = input.brokerAccountId;
   const dispatchMode =
     input.executionMode === "live"
@@ -178,13 +186,13 @@ export async function placeTraderBracketOrder(input: {
         ? "sim"
         : "paper";
   if (dispatchMode === "sim" && !brokerAccountId) {
-    const { resolveDefaultSimBrokerAccountId } = await import(
-      "../execution/resolve-sim-broker-account"
-    );
-    brokerAccountId = (await resolveDefaultSimBrokerAccountId("futu")) ?? undefined;
+    const { resolveDefaultSimBrokerAccountId } =
+      await import("../execution/resolve-sim-broker-account");
+    brokerAccountId =
+      (await resolveDefaultSimBrokerAccountId("futu")) ?? undefined;
     if (!brokerAccountId) {
       throw new Error(
-        "sim_execution_requires_broker_account: configure an enabled Futu sandbox account"
+        "sim_execution_requires_broker_account: configure an enabled Futu sandbox account",
       );
     }
   }
@@ -196,7 +204,9 @@ export async function placeTraderBracketOrder(input: {
     qty: input.qty,
     entryOrderType: input.entryOrderType,
     entryReferencePrice: input.entryReferencePrice,
-    ...(input.entryLimitPrice != null ? { entryLimitPrice: input.entryLimitPrice } : {}),
+    ...(input.entryLimitPrice != null
+      ? { entryLimitPrice: input.entryLimitPrice }
+      : {}),
     takeProfitPrice: input.takeProfitPrice,
     stopLossPrice: input.stopLossPrice,
     timeInForce: "gtc",
@@ -244,7 +254,8 @@ export async function cancelTraderOrder(input: {
     return { cancelled: true, detail: `broker_order ${input.brokerOrderId}` };
   }
 
-  if (!input.orderIntentId) throw new Error("orderIntentId or brokerOrderId is required");
+  if (!input.orderIntentId)
+    throw new Error("orderIntentId or brokerOrderId is required");
 
   const tasks = await db
     .select()
@@ -385,7 +396,7 @@ async function recordFeedToContext(
     title: string;
     body: string;
     payload?: Record<string, unknown>;
-  }>
+  }>,
 ): Promise<void> {
   for (const item of items) {
     await appendTraderContextMessage({
@@ -430,22 +441,29 @@ export async function pollTraderFeed(input: {
       if (log.createdAt <= since) continue;
       const payload = (log.payloadJson ?? {}) as Record<string, unknown>;
       const isExec =
-        log.message === "buy_signal_executed" || log.message === "sell_signal_executed";
+        log.message === "buy_signal_executed" ||
+        log.message === "sell_signal_executed" ||
+        log.message === "contract_target_executed";
+      // The decision timeline needs the actual evaluation result as well as the
+      // eventual execution.  This gives the UI target/current quantity, action
+      // and evaluation error without flattening it into generic context input.
+      events.push({
+        type: "strategy_log",
+        id: log.id,
+        ts: log.createdAt,
+        runtimeId: rt.id,
+        level: log.level,
+        message: log.message,
+        payload,
+      });
       if (isExec) {
-        events.push({
-          type: "strategy_log",
-          id: log.id,
-          ts: log.createdAt,
-          runtimeId: rt.id,
-          level: log.level,
-          message: log.message,
-          payload,
-        });
         toContext.push({
           sourceId: `rtlog-${log.id}`,
           role: "driver",
           kind: "strategy_signal",
-          title: isExec ? `策略${log.message === "buy_signal_executed" ? "买入" : "卖出"}` : log.message,
+          title: isExec
+            ? `策略${log.message === "buy_signal_executed" ? "买入" : "卖出"}`
+            : log.message,
           body: `${rt.symbol} · ${rt.timeframe}`,
           payload,
         });
@@ -492,7 +510,12 @@ export async function pollTraderFeed(input: {
     const runs = await db
       .select()
       .from(scheduledJobRun)
-      .where(and(eq(scheduledJobRun.jobId, job.id), gt(scheduledJobRun.createdAt, since)))
+      .where(
+        and(
+          eq(scheduledJobRun.jobId, job.id),
+          gt(scheduledJobRun.createdAt, since),
+        ),
+      )
       .orderBy(desc(scheduledJobRun.createdAt))
       .limit(5);
     for (const run of runs) {
@@ -527,8 +550,8 @@ export async function pollTraderFeed(input: {
     .where(
       and(
         eq(communicationMessageLog.direction, "inbound"),
-        gt(communicationMessageLog.createdAt, since)
-      )
+        gt(communicationMessageLog.createdAt, since),
+      ),
     )
     .orderBy(desc(communicationMessageLog.createdAt))
     .limit(10);
@@ -566,7 +589,8 @@ export async function pollTraderFeed(input: {
     .orderBy(desc(alertEvent.createdAt))
     .limit(15);
   for (const row of alerts) {
-    const hay = `${row.title} ${row.alertType} ${JSON.stringify(row.detailsJson ?? {})}`.toUpperCase();
+    const hay =
+      `${row.title} ${row.alertType} ${JSON.stringify(row.detailsJson ?? {})}`.toUpperCase();
     if (!hay.includes(sym) && row.scopeType !== "system") continue;
     drivers.push({
       type: "driver",
@@ -591,7 +615,10 @@ export async function pollTraderFeed(input: {
     .select()
     .from(orderIntent)
     .where(
-      and(eq(orderIntent.workflowRunId, input.workflowRunId), gt(orderIntent.intentTime, since))
+      and(
+        eq(orderIntent.workflowRunId, input.workflowRunId),
+        gt(orderIntent.intentTime, since),
+      ),
     )
     .orderBy(desc(orderIntent.intentTime))
     .limit(20);

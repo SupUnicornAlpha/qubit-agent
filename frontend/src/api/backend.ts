@@ -74,6 +74,7 @@ import type {
   KlineBar,
   KlinesErrorPayload,
   KlinesResponseMeta,
+  OptionChain,
   MarketNewsBriefPayload,
   WindSessionStatus,
   AgentDefinitionDraftRecord,
@@ -445,6 +446,19 @@ export async function getKlines(params: {
     meta: KlinesResponseMeta;
     error?: KlinesErrorPayload;
   }>(`/api/v1/market/klines?${q.toString()}`);
+}
+
+/** 研究级期权链。Yahoo 公共数据仅用于研究和展示，不应作为交易报价。 */
+export async function getOptionChain(params: {
+  symbol: string;
+  expiry?: string;
+}): Promise<OptionChain> {
+  const q = new URLSearchParams({ symbol: params.symbol });
+  if (params.expiry) q.set("expiry", params.expiry);
+  const response = await httpGet<{ ok: boolean; data: OptionChain }>(
+    `/api/v1/market/options/chain?${q.toString()}`
+  );
+  return response.data;
 }
 
 export async function getMarketQuote(params: {

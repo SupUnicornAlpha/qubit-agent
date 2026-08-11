@@ -3,14 +3,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use qubit_protocol::AgentSpecId;
 use qubit_protocol::{
     HitlInboxFilter, InteractionMode, SessionCreate, SessionGet, TurnStart, UserInput,
 };
-use qubit_runtime::{
-    CoreRuntimeService, NormalizedToolCall, SampleResponse, ScriptedModelClient,
-};
+use qubit_runtime::{CoreRuntimeService, NormalizedToolCall, SampleResponse, ScriptedModelClient};
 use serde_json::json;
-use qubit_protocol::AgentSpecId;
 
 #[tokio::test]
 async fn always_mode_pauses_before_tools() {
@@ -85,7 +83,9 @@ async fn always_mode_pauses_before_tools() {
         .await
         .unwrap();
     assert!(!pending.is_empty(), "inbox must have pending HITL");
-    assert!(pending[0].prompt.body.contains("update_plan") || pending[0].prompt.title.contains("工具"));
+    assert!(
+        pending[0].prompt.body.contains("update_plan") || pending[0].prompt.title.contains("工具")
+    );
     let _ = started;
 }
 

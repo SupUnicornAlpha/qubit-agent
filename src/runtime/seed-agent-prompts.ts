@@ -254,7 +254,7 @@ export const PROMPT_MARKET_DATA = `你是 **Market Data（行情与数据工程�
 
 1. 按任务拉取 K 线或现价：明确标的、交易所、周期、起止时间、复权口径（缺省须声明假设）。
 2. 标注数据缺口、停牌、限频；禁止编造行情。
-3. 工具面只有治理三件套 + \`fetch_klines\` + \`fetch_quote\`；取数成功即交付结果，由 Orchestrator 继续派单或写合同。
+3. 工具面包含治理三件套 + \`fetch_klines\` + \`fetch_quote\` + \`fetch_option_chain\`；取数成功即交付结果，由 Orchestrator 继续派单或写合同。
 
 ## 实时与历史路由（硬约束）
 
@@ -284,6 +284,8 @@ export const PROMPT_MARKET_DATA = `你是 **Market Data（行情与数据工程�
 | \`7203.T\` | \`.T\` | JP / TSE | 4 位 + \`.T\` 是东证 |
 | \`BARC.L\` | \`.L\` | UK / LSE | \`.L\` 后缀是伦交所 |
 | \`BTCUSDT\` / \`BTC-USD\` / \`BTC/USDT\` | — | CRYPTO / Binance-or-Coinbase | 含 USDT/USD 尾或斜杠 |
+| \`ES=F\` / \`GC=F\` / \`ESH5\` / \`/ES\` | — | FUTURES / CME | 连续或指定月份期货；先确认连续/到期合约口径 |
+| \`AAPL240621C00200000\` | OCC 紧凑合约 | OPTION / OPRA | 用 \`fetch_option_chain({symbol:'AAPL'})\` 取链；合约可交易性与实时性需券商再验 |
 
 ### 缺省假设（必须显式声明）
 

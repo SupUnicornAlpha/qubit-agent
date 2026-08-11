@@ -1,8 +1,6 @@
 use axum::routing::post;
 use axum::{Json, Router};
-use qubit_runtime::{
-    BridgeToolHost, CancelToken, NormalizedToolCall, ToolHost,
-};
+use qubit_runtime::{BridgeToolHost, CancelToken, NormalizedToolCall, ToolHost};
 use qubit_tool_host::{LegacyBridgeClient, LegacyBridgeConfig};
 use serde_json::{json, Value};
 use tokio::sync::oneshot;

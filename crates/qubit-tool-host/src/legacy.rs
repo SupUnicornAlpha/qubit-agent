@@ -30,6 +30,7 @@ pub const DEFAULT_BRIDGED_TOOLS: &[&str] = &[
     "strategy.contract_backtest",
     "strategy.paper_deploy",
     "strategy.paper_run",
+    "strategy.sim_deploy",
     "factor.register",
     "factor.list",
     "factor.compute",
@@ -79,6 +80,7 @@ mod tests {
             "fetch_klines",
             "compute_indicators",
             "fetch_news",
+            "strategy.sim_deploy",
         ] {
             assert!(
                 is_default_bridged_tool_name(name),

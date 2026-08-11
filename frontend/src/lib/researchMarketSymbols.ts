@@ -66,7 +66,10 @@ export function symbolsFromResearchScope(input: {
   const uniq = [...new Set(list)];
   return uniq.map((symbol) => ({
     symbol,
-    exchange: coerceChartMarketExchange(guessChartExchangeFromSymbol(symbol)),
+    exchange:
+      input.instrument === "option"
+        ? "OPRA"
+        : coerceChartMarketExchange(guessChartExchangeFromSymbol(symbol)),
   }));
 }
 

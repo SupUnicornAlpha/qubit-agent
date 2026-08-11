@@ -50,7 +50,7 @@ export const PAGE_REGISTRY: readonly PageDescriptor[] = [
     id: "team",
     titleKey: "sidebar.nav.team",
     shells: ["pro"],
-    order: 20,
+    order: 0,
     layout: "team",
     component: TeamDashboardPanel,
   },

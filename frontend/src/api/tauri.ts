@@ -6,6 +6,26 @@ export function isTauriEnv(): boolean {
   return "__TAURI_INTERNALS__" in window;
 }
 
+export function isMacosTauriEnv(): boolean {
+  return (
+    isTauriEnv() &&
+    /Macintosh|Mac OS X/.test(`${navigator.userAgent} ${navigator.platform ?? ""}`)
+  );
+}
+
+export type TauriMenuBarSummary = {
+  backendConnected: boolean;
+  runningWorkflows: Array<{ id: string; goal: string }>;
+  runningStrategies: number;
+  latestTradeMessage?: string | null;
+};
+
+/** 将运行摘要写入原生 macOS 菜单栏；非桌面环境不做任何事。 */
+export async function tauriUpdateMenuBarSummary(summary: TauriMenuBarSummary): Promise<void> {
+  if (!isMacosTauriEnv()) return;
+  await invoke("update_menu_bar_summary", { summary });
+}
+
 export interface TauriBackendStatus {
   running: boolean;
   ready: boolean;

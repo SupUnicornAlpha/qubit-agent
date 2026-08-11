@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">量子比特 Agent 图标方案二：薛定谔叠加态</title>
+  <desc id="desc">青绿色圆角方形内，两层错位的猫咪轮廓象征叠加态与量子测量。</desc>
+  <defs>
+    <linearGradient id="bg" x1="122" y1="97" x2="905" y2="929" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#075E69"/>
+      <stop offset=".58" stop-color="#063E59"/>
+      <stop offset="1" stop-color="#092643"/>
+    </linearGradient>
+    <linearGradient id="front" x1="299" y1="254" x2="710" y2="819" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F6FFFF"/>
+      <stop offset="1" stop-color="#BEEAE9"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="226" fill="url(#bg)"/>
+  <path d="M197 278h91M737 278h91M512 153v83M512 788v83M197 746h91M737 746h91" stroke="#74F0E5" stroke-linecap="round" stroke-width="22" opacity=".45"/>
+  <path d="M289 433 315 250l125 95a216 216 0 0 1 144 0l125-95 26 183v169c0 143-97 237-223 237S289 745 289 602V433Z" fill="none" stroke="#5FF3E4" stroke-dasharray="28 27" stroke-linejoin="round" stroke-width="31" opacity=".62" transform="translate(40 -22)"/>
+  <path d="M289 433 315 250l125 95a216 216 0 0 1 144 0l125-95 26 183v169c0 143-97 237-223 237S289 745 289 602V433Z" fill="url(#front)"/>
+  <path d="M373 503c39-29 86-43 139-43s100 14 139 43" fill="none" stroke="#82C9D1" stroke-linecap="round" stroke-width="23"/>
+  <path d="M400 583h95M529 583h95" stroke="#102D52" stroke-linecap="round" stroke-width="31"/>
+  <circle cx="427" cy="581" r="13" fill="#FFF"/>
+  <circle cx="556" cy="581" r="13" fill="#FFF"/>
+  <path d="m512 630-31 27 31 26 31-26-31-27Z" fill="#FFCC70"/>
+  <path d="M512 686c-18 29-55 27-70 2M512 686c18 29 55 27 70 2" fill="none" stroke="#4E8199" stroke-linecap="round" stroke-width="18"/>
+  <circle cx="234" cy="401" r="23" fill="#FFCC70"/>
+  <circle cx="794" cy="632" r="15" fill="#75F1E6"/>
+</svg>

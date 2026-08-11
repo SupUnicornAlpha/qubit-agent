@@ -124,7 +124,7 @@ describe("previousTradingDay", () => {
 });
 
 describe("SUPPORTED_MARKETS", () => {
-  test("含 4 个 market", () => {
-    expect(SUPPORTED_MARKETS).toEqual(["CN", "US", "HK", "CRYPTO"]);
+  test("含现货、加密与衍生品 market", () => {
+    expect(SUPPORTED_MARKETS).toEqual(["CN", "US", "HK", "CRYPTO", "FUTURES", "OPTION"]);
   });
 });

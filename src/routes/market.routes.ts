@@ -47,6 +47,7 @@ import {
   queryMarketTrades,
 } from "../runtime/market/microstructure-query";
 import { marketStreamGateway } from "../runtime/market/market-stream-gateway";
+import { fetchYahooOptionChain } from "../runtime/market/options-chain";
 
 export const marketRouter = new Hono();
 
@@ -97,6 +98,26 @@ marketRouter.get("/quote", async (c) => {
     const data = await queryMarketQuote({
       symbol,
       ...(c.req.query("exchange") ? { exchange: c.req.query("exchange")! } : {}),
+    });
+    return c.json({ ok: true, data });
+  } catch (error) {
+    return c.json(
+      { ok: false, error: error instanceof Error ? error.message : String(error) },
+      503
+    );
+  }
+});
+
+/** 研究级期权链（Yahoo 公开 fallback；不用于实盘交易或 Greeks 推导）。 */
+marketRouter.get("/options/chain", async (c) => {
+  try {
+    const symbol = c.req.query("symbol")?.trim() ?? c.req.query("underlying")?.trim() ?? "";
+    if (!symbol) return c.json({ ok: false, error: "symbol is required" }, 400);
+    const settings = await loadBuiltinConnectorSettings();
+    const data = await fetchYahooOptionChain({
+      symbol,
+      ...(c.req.query("expiry") ? { expiry: c.req.query("expiry")! } : {}),
+      settings,
     });
     return c.json({ ok: true, data });
   } catch (error) {

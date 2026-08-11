@@ -41,6 +41,12 @@ describe("symbolToYahooSymbol", () => {
     expect(symbolToYahooSymbol("ASTS", "US")).toBe("ASTS");
   });
 
+  test("futures and options preserve their provider symbols", () => {
+    expect(symbolToYahooSymbol("GC=F", "CME")).toBe("GC=F");
+    expect(symbolToYahooSymbol("/ES", "CME")).toBe("ES=F");
+    expect(symbolToYahooSymbol("AAPL240621C00200000", "OPRA")).toBe("AAPL240621C00200000");
+  });
+
   test("six digits without exchange — resolver-driven SH/SZ", () => {
     // 6 头沪市保持 .SS
     expect(symbolToYahooSymbol("600000", "")).toBe("600000.SS");
@@ -211,6 +217,17 @@ describe("resolveEffectiveKlinesSource", () => {
         exchange: "CRYPTO",
       })
     ).toBe("binance_crypto");
+  });
+
+  test("auto + IB account prefers IB for futures and options", () => {
+    const common = {
+      settings: { ...base, "qubit-data": { klinesDataSource: "auto" } },
+      period: "1h",
+      hasTushareToken: false,
+      hasIbAvailable: true,
+    } as const;
+    expect(resolveEffectiveKlinesSource({ ...common, symbol: "GC=F", exchange: "CME" })).toBe("ib_bridge");
+    expect(resolveEffectiveKlinesSource({ ...common, symbol: "AAPL240621C00200000", exchange: "OPRA" })).toBe("ib_bridge");
   });
 
   test("explicit binance_crypto mode", () => {

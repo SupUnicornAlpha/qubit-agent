@@ -1,6 +1,6 @@
 import { resolveTickerMarket } from "../market/resolve-ticker-market";
 
-export type MarketScope = "US" | "CN" | "HK" | "CRYPTO" | "UNKNOWN";
+export type MarketScope = "US" | "CN" | "HK" | "CRYPTO" | "FUTURES" | "OPTION" | "UNKNOWN";
 
 export type ToolGovernanceDecision =
   | { allowed: true; market: MarketScope }
@@ -32,7 +32,14 @@ export function inferMarketScope(params: Record<string, unknown>): MarketScope {
   const exchange = typeof params.exchange === "string" ? params.exchange : undefined;
   for (const value of candidates) {
     const market = resolveTickerMarket(value, { hintExchange: exchange }).market;
-    if (market === "US" || market === "CN" || market === "HK" || market === "CRYPTO") {
+    if (
+      market === "US" ||
+      market === "CN" ||
+      market === "HK" ||
+      market === "CRYPTO" ||
+      market === "FUTURES" ||
+      market === "OPTION"
+    ) {
       return market;
     }
   }

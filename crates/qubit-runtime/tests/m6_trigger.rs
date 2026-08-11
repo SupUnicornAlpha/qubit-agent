@@ -1,8 +1,8 @@
-use serde_json::json;
 use qubit_protocol::{
     AgentSpecId, ExecutionKind, TriggerEvent, TriggerEventId, TriggerSpec, WorkspaceId,
 };
 use qubit_runtime::CoreRuntimeService;
+use serde_json::json;
 
 #[tokio::test]
 async fn trigger_ingest_wakes_reactor() {

@@ -130,6 +130,8 @@ export const TeamResearchSettingsPanel: FC<TeamResearchSettingsPanelProps> = ({
           <option value="equity_long">股票多头</option>
           <option value="equity_short">股票做空</option>
           <option value="option">期权</option>
+          <option value="future">期货</option>
+          <option value="crypto">加密资产</option>
         </select>
       </div>
       <div style={{ ...teamStyles.field, marginTop: 8 }}>
@@ -157,7 +159,13 @@ export const TeamResearchSettingsPanel: FC<TeamResearchSettingsPanelProps> = ({
             value={ticker}
             onChange={(e) => onTickerChange(e.target.value)}
             placeholder={
-              researchInstrument === "option" ? "标的或 OCC 合约" : "e.g. AAPL / 600519"
+              researchInstrument === "option"
+                ? "标的或 OCC 合约"
+                : researchInstrument === "future"
+                  ? "e.g. ES=F / GC=F / ESH5"
+                  : researchInstrument === "crypto"
+                    ? "e.g. BTCUSDT / ETH/USDT"
+                    : "e.g. AAPL / 600519"
             }
           />
         </div>

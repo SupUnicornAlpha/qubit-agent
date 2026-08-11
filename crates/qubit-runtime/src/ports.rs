@@ -5,9 +5,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use qubit_protocol::{
-    AgentListResult, HitlInboxFilter, HitlInboxItem, HitlInboxStatus, HitlRespond, InvocationRecord,
-    InvocationRequest, RuntimeEvent, RuntimeHealth, SessionCreate, SessionGet, SessionSetMode,
-    SessionView, TriggerEvent, TurnCancel, TurnId, TurnStart, TurnStartResult, TurnState,
+    AgentListResult, HitlInboxFilter, HitlInboxItem, HitlInboxStatus, HitlRespond,
+    InvocationRecord, InvocationRequest, RuntimeEvent, RuntimeHealth, SessionCreate, SessionGet,
+    SessionSetMode, SessionView, TriggerEvent, TurnCancel, TurnId, TurnStart, TurnStartResult,
+    TurnState,
 };
 
 use crate::admission::{AgentAdmission, DefaultAdmission};
@@ -77,7 +78,11 @@ impl CoreRuntimeService {
         models: Arc<dyn ModelClient>,
     ) -> Result<Self, RuntimeError> {
         let db = Arc::new(CoreDb::open(path)?);
-        Ok(Self::build(Some(db), Some(models), RuntimeLimits::default()))
+        Ok(Self::build(
+            Some(db),
+            Some(models),
+            RuntimeLimits::default(),
+        ))
     }
 
     /// Open default Core DB (`QUBIT_CORE_DB` / `~/.qubit/core/runtime.sqlite`) + model.
@@ -95,10 +100,7 @@ impl CoreRuntimeService {
         Self::build(None, Some(models), RuntimeLimits::default())
     }
 
-    pub fn new_with_model_and_limits(
-        models: Arc<dyn ModelClient>,
-        limits: RuntimeLimits,
-    ) -> Self {
+    pub fn new_with_model_and_limits(models: Arc<dyn ModelClient>, limits: RuntimeLimits) -> Self {
         Self::build(None, Some(models), limits)
     }
 
@@ -162,15 +164,10 @@ impl CoreRuntimeService {
             )))
         };
         let supervisor = TurnSupervisor::new(limits);
-        let mut engine = TurnEngine::new(
-            Arc::clone(&store),
-            models,
-            tools,
-            events,
-            Arc::clone(&hitl),
-        )
-        .with_context(context)
-        .with_l0(Arc::clone(&l0));
+        let mut engine =
+            TurnEngine::new(Arc::clone(&store), models, tools, events, Arc::clone(&hitl))
+                .with_context(context)
+                .with_l0(Arc::clone(&l0));
         if let Some(ref cp) = checkpoints {
             engine = engine.with_checkpoints(Arc::clone(cp));
         }
@@ -306,10 +303,7 @@ impl CoreRuntimeService {
     }
 
     /// Like [`Self::start_turn`], but returns an abort handle (M6 kill-9 / soak).
-    pub async fn start_turn_abortable(
-        &self,
-        req: TurnStart,
-    ) -> Result<StartedTurn, RuntimeError> {
+    pub async fn start_turn_abortable(&self, req: TurnStart) -> Result<StartedTurn, RuntimeError> {
         let permit = self.supervisor.try_acquire()?;
         let turn_id = new_turn_id();
         let token = CancelToken::new();
@@ -336,13 +330,7 @@ impl CoreRuntimeService {
                 let tid = tid.clone();
                 tokio::spawn(async move {
                     engine
-                        .run_turn_preallocated(
-                            &session_id,
-                            tid,
-                            input,
-                            token,
-                            turn_opts,
-                        )
+                        .run_turn_preallocated(&session_id, tid, input, token, turn_opts)
                         .await
                 })
             };
@@ -378,11 +366,7 @@ impl CoreRuntimeService {
             // Heal empty-run orphans: task ended but active_turn still mid-flight
             // (cancel races / incomplete state transitions).
             if let Err(heal_err) = engine
-                .heal_orphan_turn(
-                    &session_id,
-                    &tid,
-                    "turn task exited without terminal state",
-                )
+                .heal_orphan_turn(&session_id, &tid, "turn task exited without terminal state")
                 .await
             {
                 tracing::warn!(turn_id = %tid, error = %heal_err, "orphan turn heal failed");
@@ -475,7 +459,8 @@ impl CoreRuntimeService {
             } else {
                 HitlInboxStatus::Rejected
             };
-            cp.update_hitl_status(item.inbox_id.as_str(), status).await?;
+            cp.update_hitl_status(item.inbox_id.as_str(), status)
+                .await?;
         }
         Ok(())
     }

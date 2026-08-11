@@ -62,11 +62,7 @@ async fn happy_path_primary_turn() {
     assert_eq!(health.core_backend, "rust");
     // FakeModelClient marks health degraded — expected in unit tests without LLM.
     assert!(
-        health.status == "ok"
-            || health
-                .degraded_reasons
-                .iter()
-                .any(|r| r == "fake_model"),
+        health.status == "ok" || health.degraded_reasons.iter().any(|r| r == "fake_model"),
         "unexpected health: {:?}",
         health.degraded_reasons
     );

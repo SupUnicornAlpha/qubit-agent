@@ -4,12 +4,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use qubit_protocol::{
-    AgentInstance, AgentSpec, HitlInboxItem, HitlInboxStatus, SessionId,
-};
-use rusqlite::{params, Connection, OptionalExtension};
 use crate::error::RuntimeError;
 use crate::store::SessionRecord;
+use qubit_protocol::{AgentInstance, AgentSpec, HitlInboxItem, HitlInboxStatus, SessionId};
+use rusqlite::{params, Connection, OptionalExtension};
 
 fn now_ms() -> i64 {
     SystemTime::now()
@@ -29,9 +27,8 @@ impl CoreDb {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, RuntimeError> {
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                RuntimeError::Internal(format!("create core db dir: {e}"))
-            })?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| RuntimeError::Internal(format!("create core db dir: {e}")))?;
         }
         let conn = Connection::open(&path)
             .map_err(|e| RuntimeError::Internal(format!("open sqlite: {e}")))?;
@@ -90,8 +87,8 @@ impl CoreDb {
     }
 
     pub fn upsert_spec(&self, spec: &AgentSpec) -> Result<(), RuntimeError> {
-        let json = serde_json::to_string(spec)
-            .map_err(|e| RuntimeError::Internal(e.to_string()))?;
+        let json =
+            serde_json::to_string(spec).map_err(|e| RuntimeError::Internal(e.to_string()))?;
         let g = self
             .conn
             .lock()
@@ -123,16 +120,15 @@ impl CoreDb {
         for r in rows {
             let json = r.map_err(|e| RuntimeError::Internal(e.to_string()))?;
             out.push(
-                serde_json::from_str(&json)
-                    .map_err(|e| RuntimeError::Internal(e.to_string()))?,
+                serde_json::from_str(&json).map_err(|e| RuntimeError::Internal(e.to_string()))?,
             );
         }
         Ok(out)
     }
 
     pub fn upsert_instance(&self, key: &str, inst: &AgentInstance) -> Result<(), RuntimeError> {
-        let json = serde_json::to_string(inst)
-            .map_err(|e| RuntimeError::Internal(e.to_string()))?;
+        let json =
+            serde_json::to_string(inst).map_err(|e| RuntimeError::Internal(e.to_string()))?;
         let g = self
             .conn
             .lock()
@@ -158,21 +154,22 @@ impl CoreDb {
             .prepare("SELECT key, payload_json FROM agent_instances")
             .map_err(|e| RuntimeError::Internal(e.to_string()))?;
         let rows = stmt
-            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
             .map_err(|e| RuntimeError::Internal(e.to_string()))?;
         let mut out = Vec::new();
         for r in rows {
             let (key, json) = r.map_err(|e| RuntimeError::Internal(e.to_string()))?;
-            let inst: AgentInstance = serde_json::from_str(&json)
-                .map_err(|e| RuntimeError::Internal(e.to_string()))?;
+            let inst: AgentInstance =
+                serde_json::from_str(&json).map_err(|e| RuntimeError::Internal(e.to_string()))?;
             out.push((key, inst));
         }
         Ok(out)
     }
 
     pub fn upsert_session(&self, rec: &SessionRecord) -> Result<(), RuntimeError> {
-        let json = serde_json::to_string(rec)
-            .map_err(|e| RuntimeError::Internal(e.to_string()))?;
+        let json = serde_json::to_string(rec).map_err(|e| RuntimeError::Internal(e.to_string()))?;
         let g = self
             .conn
             .lock()
@@ -204,8 +201,7 @@ impl CoreDb {
             .map_err(|e| RuntimeError::Internal(format!("session get: {e}")))?;
         match json {
             Some(j) => Ok(Some(
-                serde_json::from_str(&j)
-                    .map_err(|e| RuntimeError::Internal(e.to_string()))?,
+                serde_json::from_str(&j).map_err(|e| RuntimeError::Internal(e.to_string()))?,
             )),
             None => Ok(None),
         }
@@ -226,16 +222,15 @@ impl CoreDb {
         for r in rows {
             let json = r.map_err(|e| RuntimeError::Internal(e.to_string()))?;
             out.push(
-                serde_json::from_str(&json)
-                    .map_err(|e| RuntimeError::Internal(e.to_string()))?,
+                serde_json::from_str(&json).map_err(|e| RuntimeError::Internal(e.to_string()))?,
             );
         }
         Ok(out)
     }
 
     pub fn save_hitl(&self, item: &HitlInboxItem) -> Result<(), RuntimeError> {
-        let json = serde_json::to_string(item)
-            .map_err(|e| RuntimeError::Internal(e.to_string()))?;
+        let json =
+            serde_json::to_string(item).map_err(|e| RuntimeError::Internal(e.to_string()))?;
         let status = status_str(item.status);
         let g = self
             .conn
@@ -254,10 +249,7 @@ impl CoreDb {
         Ok(())
     }
 
-    pub fn list_hitl(
-        &self,
-        pending_only: bool,
-    ) -> Result<Vec<HitlInboxItem>, RuntimeError> {
+    pub fn list_hitl(&self, pending_only: bool) -> Result<Vec<HitlInboxItem>, RuntimeError> {
         let g = self
             .conn
             .lock()
@@ -277,8 +269,7 @@ impl CoreDb {
         for r in rows {
             let json = r.map_err(|e| RuntimeError::Internal(e.to_string()))?;
             out.push(
-                serde_json::from_str(&json)
-                    .map_err(|e| RuntimeError::Internal(e.to_string()))?,
+                serde_json::from_str(&json).map_err(|e| RuntimeError::Internal(e.to_string()))?,
             );
         }
         Ok(out)
@@ -299,8 +290,7 @@ impl CoreDb {
             .map_err(|e| RuntimeError::Internal(format!("hitl get: {e}")))?;
         match json {
             Some(j) => Ok(Some(
-                serde_json::from_str(&j)
-                    .map_err(|e| RuntimeError::Internal(e.to_string()))?,
+                serde_json::from_str(&j).map_err(|e| RuntimeError::Internal(e.to_string()))?,
             )),
             None => Ok(None),
         }
@@ -337,5 +327,8 @@ fn dirs_fallback() -> PathBuf {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".qubit").join("core").join("runtime.sqlite")
+    PathBuf::from(home)
+        .join(".qubit")
+        .join("core")
+        .join("runtime.sqlite")
 }

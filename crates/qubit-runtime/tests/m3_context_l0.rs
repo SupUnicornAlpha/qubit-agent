@@ -44,7 +44,12 @@ async fn context_assembler_renders_slots() {
         .unwrap();
     let rendered = env.rendered.unwrap();
     assert!(rendered.system.contains("IDENTITY_LINE"));
-    assert!(rendered.system.contains("MODE=plan") || rendered.user.contains("MODE=plan") || rendered.system.contains("plan") || env.slots.contains_key("control"));
+    assert!(
+        rendered.system.contains("MODE=plan")
+            || rendered.user.contains("MODE=plan")
+            || rendered.system.contains("plan")
+            || env.slots.contains_key("control")
+    );
     assert!(rendered.user.contains("design factor pipeline") || env.slots.get("goal").is_some());
     assert!(env.slots.contains_key("identity"));
     assert!(env.slots.contains_key("goal"));

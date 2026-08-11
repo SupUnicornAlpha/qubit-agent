@@ -3,9 +3,7 @@
 use qubit_protocol::{
     AgentSpecId, InteractionMode, InvocationState, SessionCreate, SessionGet, TurnStart, UserInput,
 };
-use qubit_runtime::{
-    CoreRuntimeService, NormalizedToolCall, SampleResponse, ScriptedModelClient,
-};
+use qubit_runtime::{CoreRuntimeService, NormalizedToolCall, SampleResponse, ScriptedModelClient};
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;

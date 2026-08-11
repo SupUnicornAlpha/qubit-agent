@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">量子比特 Agent 图标方案三：量子终端猫</title>
+  <desc id="desc">紫黑色圆角方形内，猫咪耳朵与发光量子比特终端符号合为一体。</desc>
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="20%" r="92%">
+      <stop stop-color="#5A3CA8"/>
+      <stop offset=".58" stop-color="#28195B"/>
+      <stop offset="1" stop-color="#120D31"/>
+    </radialGradient>
+    <linearGradient id="panel" x1="258" y1="293" x2="770" y2="760" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#211A52"/>
+      <stop offset="1" stop-color="#100E31"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="18" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" rx="226" fill="url(#bg)"/>
+  <path d="M169 734C321 834 687 867 856 716" fill="none" stroke="#B8A6FF" stroke-width="23" opacity=".22"/>
+  <path d="M280 360c0-33 27-60 60-60h96l76-72 76 72h96c33 0 60 27 60 60v322c0 69-56 125-125 125H405c-69 0-125-56-125-125V360Z" fill="url(#panel)" stroke="#A895FF" stroke-width="21"/>
+  <path d="m367 360 72-60v89M657 360l-72-60v89" fill="none" stroke="#D2CAFF" stroke-linecap="round" stroke-linejoin="round" stroke-width="25"/>
+  <path d="M371 476c44-29 91-42 141-42s97 13 141 42" fill="none" stroke="#8378C8" stroke-linecap="round" stroke-width="20"/>
+  <g fill="none" stroke="#70F4E8" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)">
+    <path d="m376 563 67 58-67 58M534 694h122" stroke-width="34"/>
+    <circle cx="604" cy="564" r="47" stroke-width="24"/>
+    <path d="M604 493v142M533 564h142" stroke-width="17" opacity=".88"/>
+  </g>
+  <path d="m512 723-26 23 26 22 26-22-26-23Z" fill="#FFC562"/>
+  <circle cx="221" cy="318" r="17" fill="#70F4E8"/>
+  <circle cx="790" cy="288" r="25" fill="#FFC562"/>
+</svg>

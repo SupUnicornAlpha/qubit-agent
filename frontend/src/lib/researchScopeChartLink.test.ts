@@ -8,6 +8,8 @@ describe("researchScopeChartLink", () => {
     expect(guessChartExchangeFromSymbol("000001")).toBe("SZ");
     expect(guessChartExchangeFromSymbol("AAPL")).toBe("US");
     expect(guessChartExchangeFromSymbol("00700")).toBe("HK");
+    expect(guessChartExchangeFromSymbol("GC=F")).toBe("CME");
+    expect(guessChartExchangeFromSymbol("AAPL240621C00200000")).toBe("OPRA");
   });
 
   test("single ticker becomes primary symbol", () => {
@@ -46,5 +48,15 @@ describe("researchScopeChartLink", () => {
         optionUnderlying: "TSLA",
       })
     ).toBe("TSLA");
+    expect(
+      chartPatchFromResearchScope({
+        mode: "single",
+        ticker: "OCCCONTRACT",
+        basketTickers: "",
+        sectorPeers: "",
+        instrument: "option",
+        optionUnderlying: "TSLA",
+      })
+    ).toEqual({ symbol: "TSLA", exchange: "OPRA" });
   });
 });

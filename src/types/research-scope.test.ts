@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseSymbolList, resolveResearchScope } from "./research-scope";
+import { looksLikeTicker, parseSymbolList, resolveResearchScope } from "./research-scope";
 
 describe("research-scope", () => {
   test("single equity long", () => {
@@ -29,6 +29,19 @@ describe("research-scope", () => {
 
   test("parseSymbolList", () => {
     expect(parseSymbolList("aapl, msft\nnvda")).toEqual(["AAPL", "MSFT", "NVDA"]);
+  });
+
+  test("crypto pair stays intact in crypto scope", () => {
+    const s = resolveResearchScope({
+      scope: { kind: "single", instrument: "crypto", symbols: ["ETH/USDT"] },
+    });
+    expect(s.symbols).toEqual(["ETH/USDT"]);
+    expect(s.primarySymbol).toBe("ETH/USDT");
+  });
+
+  test("recognizes continuous and month-code futures", () => {
+    expect(looksLikeTicker("GC=F")).toBe(true);
+    expect(looksLikeTicker("ESH5")).toBe(true);
   });
 
   /**

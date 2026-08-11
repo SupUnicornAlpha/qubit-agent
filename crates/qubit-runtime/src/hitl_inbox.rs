@@ -13,7 +13,10 @@ use crate::error::RuntimeError;
 #[async_trait]
 pub trait HitlInbox: Send + Sync {
     async fn enqueue(&self, item: HitlInboxItem) -> Result<(), RuntimeError>;
-    async fn list_pending(&self, filter: HitlInboxFilter) -> Result<Vec<HitlInboxItem>, RuntimeError>;
+    async fn list_pending(
+        &self,
+        filter: HitlInboxFilter,
+    ) -> Result<Vec<HitlInboxItem>, RuntimeError>;
     async fn respond(&self, response: HitlResponse) -> Result<HitlInboxItem, RuntimeError>;
 }
 
@@ -52,7 +55,10 @@ impl HitlInbox for MemoryHitlInbox {
         Ok(())
     }
 
-    async fn list_pending(&self, filter: HitlInboxFilter) -> Result<Vec<HitlInboxItem>, RuntimeError> {
+    async fn list_pending(
+        &self,
+        filter: HitlInboxFilter,
+    ) -> Result<Vec<HitlInboxItem>, RuntimeError> {
         let items = self.items.read().await;
         Ok(items
             .iter()
@@ -104,7 +110,10 @@ impl HitlInbox for SqliteHitlInbox {
             .map_err(|e| RuntimeError::Internal(format!("join: {e}")))?
     }
 
-    async fn list_pending(&self, filter: HitlInboxFilter) -> Result<Vec<HitlInboxItem>, RuntimeError> {
+    async fn list_pending(
+        &self,
+        filter: HitlInboxFilter,
+    ) -> Result<Vec<HitlInboxItem>, RuntimeError> {
         let db = Arc::clone(&self.db);
         let pending_only = filter.pending_only;
         let items = tokio::task::spawn_blocking(move || db.list_hitl(pending_only))
@@ -119,13 +128,11 @@ impl HitlInbox for SqliteHitlInbox {
     async fn respond(&self, response: HitlResponse) -> Result<HitlInboxItem, RuntimeError> {
         let db = Arc::clone(&self.db);
         tokio::task::spawn_blocking(move || {
-            let mut item = db
-                .get_hitl(response.inbox_id.as_str())?
-                .ok_or_else(|| {
-                    RuntimeError::from(ProtocolError::NotFound {
-                        resource: format!("inbox {}", response.inbox_id),
-                    })
-                })?;
+            let mut item = db.get_hitl(response.inbox_id.as_str())?.ok_or_else(|| {
+                RuntimeError::from(ProtocolError::NotFound {
+                    resource: format!("inbox {}", response.inbox_id),
+                })
+            })?;
             if item.status != HitlInboxStatus::Pending {
                 return Err(ProtocolError::Conflict {
                     message: "inbox item not pending".into(),

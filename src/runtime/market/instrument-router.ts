@@ -18,6 +18,8 @@ const MARKET_DEFAULT_PROVIDER: Record<MarketCode, BrokerProvider> = {
   US: "ib",
   CN: "futu",
   CRYPTO: "ccxt",
+  FUTURES: "ib",
+  OPTION: "ib",
 };
 
 function normalizeSymbol(market: MarketCode, symbol: string): string {
@@ -62,7 +64,12 @@ export async function resolveInstrument(input: {
 }): Promise<ResolvedInstrument> {
   const marketKey = input.market.toUpperCase() as MarketCode;
   const market: MarketCode =
-    marketKey === "HK" || marketKey === "US" || marketKey === "CN" || marketKey === "CRYPTO"
+    marketKey === "HK" ||
+    marketKey === "US" ||
+    marketKey === "CN" ||
+    marketKey === "CRYPTO" ||
+    marketKey === "FUTURES" ||
+    marketKey === "OPTION"
       ? marketKey
       : "US";
 

@@ -44,6 +44,9 @@ export function chartPatchFromResearchScope(input: {
   if (!symbol) return null;
   return {
     symbol,
-    exchange: coerceChartMarketExchange(guessChartExchangeFromSymbol(symbol)),
+    exchange:
+      input.instrument === "option"
+        ? "OPRA"
+        : coerceChartMarketExchange(guessChartExchangeFromSymbol(symbol)),
   };
 }

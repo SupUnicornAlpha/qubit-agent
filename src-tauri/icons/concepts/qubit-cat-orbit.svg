@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">量子比特 Agent 图标方案一：量子轨道猫</title>
+  <desc id="desc">深蓝星云中，一只圆润的银渐层猫咪被发光量子轨道环绕。</desc>
+  <defs>
+    <linearGradient id="bg" x1="130" y1="74" x2="896" y2="955" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#173B87"/>
+      <stop offset=".47" stop-color="#0A2056"/>
+      <stop offset="1" stop-color="#03091E"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="46%" cy="38%" r="65%">
+      <stop stop-color="#3479E7" stop-opacity=".32"/>
+      <stop offset=".54" stop-color="#163B97" stop-opacity=".12"/>
+      <stop offset="1" stop-color="#081C58" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="cat" cx="47%" cy="31%" r="76%">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset=".48" stop-color="#E8EDF6"/>
+      <stop offset=".77" stop-color="#B8C1D2"/>
+      <stop offset="1" stop-color="#828FA8"/>
+    </radialGradient>
+    <linearGradient id="ear" x1="384" y1="320" x2="464" y2="434" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E3B6C4"/>
+      <stop offset="1" stop-color="#9A7189"/>
+    </linearGradient>
+    <radialGradient id="eye" cx="34%" cy="27%" r="72%">
+      <stop stop-color="#5B87CC"/>
+      <stop offset=".78" stop-color="#243D79"/>
+      <stop offset="1" stop-color="#111D48"/>
+    </radialGradient>
+    <linearGradient id="orbit" x1="235" y1="315" x2="816" y2="714" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#D9E5FF"/>
+      <stop offset=".5" stop-color="#7FB7FF"/>
+      <stop offset="1" stop-color="#4677D4"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="28" stdDeviation="23" flood-color="#080D32" flood-opacity=".42"/>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" rx="226" fill="url(#bg)"/>
+  <rect width="1024" height="1024" rx="226" fill="url(#halo)"/>
+  <ellipse cx="258" cy="667" rx="350" ry="251" fill="#0C4FAE" opacity=".12" transform="rotate(-28 258 667)"/>
+  <ellipse cx="788" cy="287" rx="281" ry="184" fill="#2E65D0" opacity=".13" transform="rotate(25 788 287)"/>
+  <g fill="#D8E9FF">
+    <circle cx="205" cy="289" r="7" opacity=".74"/><circle cx="278" cy="188" r="4" opacity=".55"/>
+    <circle cx="754" cy="214" r="6" opacity=".64"/><circle cx="858" cy="573" r="5" opacity=".62"/>
+    <circle cx="735" cy="778" r="5" opacity=".52"/><circle cx="168" cy="730" r="4" opacity=".62"/>
+    <circle cx="845" cy="686" r="3" opacity=".75"/><circle cx="338" cy="823" r="3" opacity=".58"/>
+  </g>
+  <path d="M149 729C293 864 672 899 850 713" fill="none" stroke="#94C5FF" stroke-linecap="round" stroke-width="25" opacity=".16"/>
+  <path d="M181 269C286 147 531 103 722 184" fill="none" stroke="#C4DDFF" stroke-linecap="round" stroke-width="23" opacity=".12"/>
+  <g fill="none" stroke="url(#orbit)" stroke-width="34" opacity=".96">
+    <ellipse cx="512" cy="520" rx="350" ry="141" transform="rotate(-28 512 520)"/>
+    <ellipse cx="512" cy="520" rx="350" ry="141" transform="rotate(28 512 520)" opacity=".62"/>
+  </g>
+  <circle cx="804" cy="367" r="49" fill="#71B5FF" opacity=".15"/>
+  <circle cx="804" cy="367" r="28" fill="#8BC6FF"/>
+  <circle cx="794" cy="356" r="9" fill="#E6F5FF" opacity=".9"/>
+  <g filter="url(#shadow)">
+    <path fill="url(#cat)" d="M292 470 317 294C320 269 349 257 369 273l99 77c29-10 58-14 88-14s59 4 88 14l99-77c20-16 49-4 52 21l25 176v145C732 755 636 846 512 846S292 755 292 615V470Z"/>
+    <path d="m337 311 88 69-76 37zM687 311l-88 69 76 37z" fill="url(#ear)" opacity=".94"/>
+    <path d="M512 364v73M470 376l22 59M554 376l-22 59" fill="none" stroke="#8A96AA" stroke-linecap="round" stroke-width="18" opacity=".78"/>
+    <path d="M329 531c35-30 75-43 121-40M574 491c46-3 86 10 121 40" fill="none" stroke="#9CA7BA" stroke-linecap="round" stroke-width="18" opacity=".76"/>
+    <path d="M347 612c26 15 53 20 81 15M677 612c-26 15-53 20-81 15" fill="none" stroke="#9AA5B8" stroke-linecap="round" stroke-width="16" opacity=".7"/>
+    <ellipse cx="419" cy="569" rx="48" ry="50" fill="url(#eye)"/>
+    <ellipse cx="605" cy="569" rx="48" ry="50" fill="url(#eye)"/>
+    <ellipse cx="401" cy="549" rx="15" ry="17" fill="#FFF"/>
+    <ellipse cx="587" cy="549" rx="15" ry="17" fill="#FFF"/>
+    <circle cx="433" cy="587" r="8" fill="#A8C9FF" opacity=".72"/>
+    <circle cx="619" cy="587" r="8" fill="#A8C9FF" opacity=".72"/>
+    <ellipse cx="512" cy="676" rx="100" ry="81" fill="#F7F9FC" opacity=".68"/>
+    <path d="m512 630-29 24 29 24 29-24-29-24Z" fill="#B9798B"/>
+    <path d="M497 640h30l-15 13z" fill="#F7CDD5" opacity=".95"/>
+    <path d="M512 678c-17 27-49 28-66 4M512 678c17 27 49 28 66 4" fill="none" stroke="#66738B" stroke-linecap="round" stroke-width="17"/>
+    <path d="M345 667h77M602 667h77" fill="none" stroke="#7E899C" stroke-linecap="round" stroke-width="13" opacity=".72"/>
+  </g>
+  <circle cx="207" cy="568" r="29" fill="#74C8FF" opacity=".13"/>
+  <circle cx="207" cy="568" r="16" fill="#8DD4FF"/>
+  <path d="M138 811c134 99 482 143 717 11" fill="none" stroke="#C9E4FF" stroke-linecap="round" stroke-width="13" opacity=".11"/>
+</svg>

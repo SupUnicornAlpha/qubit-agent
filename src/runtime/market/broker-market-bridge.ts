@@ -46,7 +46,7 @@ const BUILTIN: BrokerMarketBridgeDescriptor[] = [
     sourceId: "ib_bridge",
     name: "Interactive Brokers Market Bridge",
     vendor: "IB Gateway / TWS",
-    markets: ["US", "HK"],
+    markets: ["US", "HK", "FUTURES", "OPTION"],
     envKeys: ["QUBIT_IB_MARKET_WS_URL", "QUBIT_BROKER_MARKET_WS_URL_IB"],
     upstreamFamily: "ib",
   },

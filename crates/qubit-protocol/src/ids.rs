@@ -47,4 +47,8 @@ id_newtype!(ToolCallId, "tc_", "Tool call id (`tc_*`).");
 id_newtype!(HitlPromptId, "hitl_", "HITL prompt id (`hitl_*`).");
 id_newtype!(HitlInboxId, "inbox_", "HITL inbox item id (`inbox_*`).");
 id_newtype!(WorkspaceId, "ws_", "Workspace id.");
-id_newtype!(TriggerEventId, "evt_", "Trigger event id (idempotency key).");
+id_newtype!(
+    TriggerEventId,
+    "evt_",
+    "Trigger event id (idempotency key)."
+);

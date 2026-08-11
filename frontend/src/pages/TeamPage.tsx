@@ -127,8 +127,7 @@ export const TeamDashboardPanel: FC = () => {
    *   - basket → 切到非 basket 时清空 basketTickers
    *   - sector → 切到非 sector 时清空 sectorName / sectorPeers
    *   - explore → 切到非 explore 时清空 exploreTheme / exploreCandidates
-   *   - instrument: 切到 basket / sector / explore 时强制回 equity_long，
-   *     避免"篮子 + 期权"这种非法组合穿透
+   *   - instrument: 期权只允许单标的；期货与加密资产可保留在篮子/主题研究中。
    *   - 期权字段：所有非 single 模式都清空（option 模式只在 single 下有意义）
    */
   const handleScopeModeChange = (next: ResearchScopeMode) => {
@@ -143,7 +142,7 @@ export const TeamDashboardPanel: FC = () => {
       setExploreTheme("");
       setExploreCandidates("");
     }
-    if (next !== "single") {
+    if (next !== "single" && researchInstrument === "option") {
       setResearchInstrument("equity_long");
       setOptionUnderlying("");
       setOptionContract("");

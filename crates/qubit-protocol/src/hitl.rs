@@ -4,9 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::agent::ExecutionKind;
-use crate::ids::{
-    AgentInstanceId, HitlInboxId, HitlPromptId, SessionId, TurnId, WorkspaceId,
-};
+use crate::ids::{AgentInstanceId, HitlInboxId, HitlPromptId, SessionId, TurnId, WorkspaceId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]

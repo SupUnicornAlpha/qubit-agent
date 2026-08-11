@@ -79,6 +79,13 @@ describe("broker-market-bridge", () => {
     expect(selectBrokerMarketBridge({ market: "CN" })).toBeNull();
   });
 
+  test("IB bridge covers futures and listed options", () => {
+    clearBridgeEnv();
+    process.env.QUBIT_IB_MARKET_WS_URL = "ws://ib";
+    expect(selectBrokerMarketBridge({ market: "FUTURES" })?.id).toBe("ib");
+    expect(selectBrokerMarketBridge({ market: "OPTION" })?.id).toBe("ib");
+  });
+
   test("auto prefers healthy broker over configured-but-down peer", () => {
     clearBridgeEnv();
     process.env.QUBIT_FUTU_MARKET_WS_URL = "ws://futu";

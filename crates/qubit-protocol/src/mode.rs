@@ -61,10 +61,7 @@ impl InteractionMode {
             Self::Ask => {
                 matches!(
                     name,
-                    "update_plan"
-                        | "workspace.read"
-                        | "workspace.list"
-                        | "session.diagnose"
+                    "update_plan" | "workspace.read" | "workspace.list" | "session.diagnose"
                 )
             }
         }

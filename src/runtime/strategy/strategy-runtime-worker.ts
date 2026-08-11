@@ -184,6 +184,17 @@ async function tickOneRuntime(
   if (!bars.length) return;
 
   const lastBar = bars[bars.length - 1]!;
+  // A worker tick may run every few seconds while the newest closed bar remains
+  // unchanged.  Evaluate each bar once; otherwise an invalid expression floods
+  // the trace and a healthy strategy wastes cycles re-evaluating the same input.
+  if (runtime.lastBarTime === lastBar.timestamp) return;
+
+  const markBarEvaluated = async () => {
+    await db
+      .update(strategyRuntime)
+      .set({ lastBarTime: lastBar.timestamp, updatedAt: now.toISOString() })
+      .where(eq(strategyRuntime.id, runtime.id));
+  };
   const contractMode =
     params.strategyMode === "contract" || isStrategyApiV2Script(script);
   if (contractMode) {
@@ -209,21 +220,42 @@ async function tickOneRuntime(
       params: params as Record<string, unknown>,
     });
     if ("error" in target) {
+      await markBarEvaluated();
       await appendStrategyRuntimeLog(db, {
         strategyRuntimeId: runtime.id,
         level: "error",
         message: "contract_signal_eval_error",
-        payload: { error: target.error },
+        payload: {
+          error: target.error,
+          symbol: runtime.symbol,
+          timeframe: runtime.timeframe,
+          barTime: lastBar.timestamp,
+          price: lastBar.close,
+          currentQty,
+        },
       });
       return;
     }
 
     const barTime = lastBar.timestamp;
-    await db
-      .update(strategyRuntime)
-      .set({ lastBarTime: barTime, updatedAt: now.toISOString() })
-      .where(eq(strategyRuntime.id, runtime.id));
+    await markBarEvaluated();
     const delta = target.targetQty - currentQty;
+    await appendStrategyRuntimeLog(db, {
+      strategyRuntimeId: runtime.id,
+      level: "info",
+      message: "contract_signal_evaluated",
+      payload: {
+        symbol: runtime.symbol,
+        timeframe: runtime.timeframe,
+        barTime,
+        price: lastBar.close,
+        currentQty,
+        targetQty: target.targetQty,
+        delta,
+        reason: target.reason,
+        action: delta > 0 ? "buy" : delta < 0 ? "sell" : "hold",
+      },
+    });
     if (!delta) return;
     const side = delta > 0 ? "buy" : "sell";
     const fresh = await recordSignalDedup(db, {
@@ -277,26 +309,42 @@ async function tickOneRuntime(
   const signal = await evaluateSignalCode(script.signalCode, bars, evalMode);
 
   if (signal.error) {
+    await markBarEvaluated();
     await appendStrategyRuntimeLog(db, {
       strategyRuntimeId: runtime.id,
       level: "error",
       message: "signal_eval_error",
-      payload: { error: signal.error },
+      payload: {
+        error: signal.error,
+        symbol: runtime.symbol,
+        timeframe: runtime.timeframe,
+        barTime: lastBar.timestamp,
+        price: lastBar.close,
+      },
     });
     return;
   }
 
   const barTime = signal.barTime ?? lastBar.timestamp;
-  await db
-    .update(strategyRuntime)
-    .set({
-      lastBarTime: barTime,
-      updatedAt: now.toISOString(),
-    })
-    .where(eq(strategyRuntime.id, runtime.id));
+  await markBarEvaluated();
 
   const orderQty = params.orderQty ?? 100;
   const price = lastBar.close;
+
+  await appendStrategyRuntimeLog(db, {
+    strategyRuntimeId: runtime.id,
+    level: "info",
+    message: "signal_evaluated",
+    payload: {
+      symbol: runtime.symbol,
+      timeframe: runtime.timeframe,
+      barTime,
+      price,
+      buy: signal.buy,
+      sell: signal.sell,
+      action: signal.buy ? "buy" : signal.sell ? "sell" : "hold",
+    },
+  });
 
   if (signal.buy) {
     const fresh = await recordSignalDedup(db, {

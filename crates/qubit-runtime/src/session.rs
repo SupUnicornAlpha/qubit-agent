@@ -27,7 +27,10 @@ impl SessionManager {
         let workspace_id = req
             .workspace_id
             .unwrap_or_else(|| WorkspaceId::new("ws_default"));
-        let instance = self.store.ensure_instance(&spec, workspace_id.clone()).await?;
+        let instance = self
+            .store
+            .ensure_instance(&spec, workspace_id.clone())
+            .await?;
         Ok(self
             .store
             .create_session(workspace_id, &instance, &spec, mode)

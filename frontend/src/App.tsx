@@ -4,17 +4,21 @@ import { getHealth } from "./api/backend";
 import { syncBackendUrlForDesktop } from "./api/packaged-backend";
 import { isTauriEnv, tauriBackendStatus, tauriStartBackend } from "./api/tauri";
 import { SimpleWorkspace } from "./components/layout/SimpleWorkspace";
+import { useMacosMenuBar } from "./hooks/useMacosMenuBar";
+import { MenuBarQuickChat } from "./pages/MenuBarQuickChat";
 import { AgentDockProvider } from "./shell/pro/AgentDockContext";
 import { CommandPalette } from "./shell/pro/CommandPalette";
 import { ProWorkbench } from "./shell/pro/ProWorkbench";
 import { useTranslation } from "./i18n";
 import { useAppStore } from "./store";
 
-const App: FC = () => {
+const MainApp: FC = () => {
   const setBackendConnected = useAppStore((s) => s.setBackendConnected);
   const setBackendHint = useAppStore((s) => s.setBackendHint);
   const interfaceMode = useAppStore((s) => s.interfaceMode);
   const { t } = useTranslation();
+
+  useMacosMenuBar();
 
   useEffect(() => {
     const CONNECTED_INTERVAL_MS = 15_000;
@@ -125,6 +129,13 @@ const App: FC = () => {
     </AgentDockProvider>
   );
 };
+
+const App: FC = () =>
+  typeof window !== "undefined" && window.location.hash === "#menu-bar-quick-chat" ? (
+    <MenuBarQuickChat />
+  ) : (
+    <MainApp />
+  );
 
 export default App;
 

@@ -291,12 +291,31 @@ function chartExchangeToMarket(exchange: string): string {
   return "CN";
 }
 
+const TRADING_MODULE_ENABLED_KEY = "qubit-trading-module-enabled-v1";
+
+function readTradingModuleEnabled(): boolean {
+  try {
+    return sessionStorage.getItem(TRADING_MODULE_ENABLED_KEY) !== "false";
+  } catch {
+    return true;
+  }
+}
+
+function persistTradingModuleEnabled(enabled: boolean): void {
+  try {
+    sessionStorage.setItem(TRADING_MODULE_ENABLED_KEY, String(enabled));
+  } catch {
+    /* session storage is a convenience, not a hard dependency */
+  }
+}
+
 type DecisionBatch = {
   id: string;
   rows: TraderAgentLogRecord[];
   operation: string;
   outcome: string;
   status: "success" | "warning" | "error" | "neutral";
+  emphasis: "execution" | "risk" | "normal";
 };
 
 function isStrategyDecisionRow(row: TraderAgentLogRecord): boolean {
@@ -323,6 +342,7 @@ function eventSummary(
         operation: "用最新已收盘 K 线评估策略表达式",
         outcome: "表达式评估失败，未创建订单或变更仓位",
         status: "error",
+        emphasis: "risk",
       };
     }
     if (executed || hasIntent) {
@@ -330,12 +350,14 @@ function eventSummary(
         operation: "将策略目标仓位转换为委托",
         outcome: "已创建执行意图，等待风控与成交回报",
         status: "success",
+        emphasis: "execution",
       };
     }
     return {
       operation: "扫描策略信号与目标仓位",
       outcome: "本轮未形成需要执行的仓位变更",
       status: "neutral",
+      emphasis: "normal",
     };
   }
 
@@ -344,6 +366,7 @@ function eventSummary(
       operation: "接收市场、资讯或工作流输入",
       outcome: "已写入决策上下文，等待后续 Agent 或策略消费",
       status: "neutral",
+      emphasis: "normal",
     };
   }
   if (failed) {
@@ -351,6 +374,7 @@ function eventSummary(
       operation: row.title,
       outcome: "操作被阻断或失败，未造成持仓变更",
       status: "error",
+      emphasis: "risk",
     };
   }
   return {
@@ -358,6 +382,7 @@ function eventSummary(
     outcome:
       executed || hasIntent ? "已提交，等待下游回报" : "已记录到交易工作流",
     status: executed ? "success" : "warning",
+    emphasis: executed || hasIntent ? "execution" : "normal",
   };
 }
 
@@ -378,7 +403,9 @@ function decisionBatchesFrom(rows: TraderAgentLogRecord[]): DecisionBatch[] {
     }
     batches.set(key, { id: key, rows: [row], ...summary });
   }
-  return [...batches.values()];
+  // The event store can retain more history, while this operational surface only
+  // renders the newest traces so a high-frequency runtime remains readable.
+  return [...batches.values()].slice(0, 16);
 }
 
 export const TraderLivePanel: FC = () => {
@@ -446,9 +473,16 @@ export const TraderLivePanel: FC = () => {
     ExecutionIntentSummary[]
   >([]);
   const [intentsError, setIntentsError] = useState<string | null>(null);
+  const [tradingModuleEnabled, setTradingModuleEnabled] = useState(
+    readTradingModuleEnabled,
+  );
   const booted = useRef(false);
 
-  const engine = useTraderAgentEngine(projectId, sessionId);
+  const engine = useTraderAgentEngine(
+    projectId,
+    sessionId,
+    tradingModuleEnabled,
+  );
   const decisionBatches = useMemo(
     () => decisionBatchesFrom(traderAgentLog),
     [traderAgentLog],
@@ -460,9 +494,27 @@ export const TraderLivePanel: FC = () => {
       failed: traderAgentLog.filter(
         (row) => eventSummary(row).status === "error",
       ).length,
+      executions: traderAgentLog.filter(
+        (row) => eventSummary(row).emphasis === "execution",
+      ).length,
     }),
     [traderAgentLog],
   );
+  const riskSummary = useMemo(() => {
+    const blocked = executionIntents.filter((intent) =>
+      /(blocked|rejected|cancelled|failed)/i.test(intent.lifecycleStatus),
+    ).length;
+    const filled = executionIntents.filter(
+      (intent) => intent.lifecycleStatus === "filled",
+    ).length;
+    const active = executionIntents.filter(
+      (intent) =>
+        !/(filled|blocked|rejected|cancelled|failed)/i.test(
+          intent.lifecycleStatus,
+        ),
+    ).length;
+    return { active, blocked, filled };
+  }, [executionIntents]);
 
   const refreshExecutionIntents = useCallback(async () => {
     if (!engine.session?.workflowRunId) return;
@@ -687,6 +739,49 @@ export const TraderLivePanel: FC = () => {
     }
   };
 
+  const startTradingModule = () => {
+    setTradingModuleEnabled(true);
+    persistTradingModuleEnabled(true);
+    setRuntimeMsg("交易模块已启动：交易 Agent 与工作面已恢复。");
+  };
+
+  const closeTradingModule = async () => {
+    const running = runtimes.filter((runtime) => runtime.status === "running");
+    const warning =
+      running.length > 0
+        ? `关闭交易模块将停止 ${running.length} 个运行中的策略，并暂停交易 Agent 与所有下单入口。确认关闭？`
+        : "关闭交易模块将暂停交易 Agent 与所有下单入口。确认关闭？";
+    if (!window.confirm(warning)) return;
+    setRuntimeBusy(true);
+    try {
+      const stopped = await Promise.all(
+        running.map((runtime) => stopStrategyRuntime(runtime.id)),
+      );
+      const stoppedById = new Map(
+        stopped.map((runtime) => [runtime.id, runtime]),
+      );
+      setRuntimes((previous) =>
+        previous.map((runtime) => stoppedById.get(runtime.id) ?? runtime),
+      );
+      setTradingModuleEnabled(false);
+      persistTradingModuleEnabled(false);
+      setRuntimeMsg(
+        running.length > 0
+          ? `交易模块已关闭，并停止 ${running.length} 个策略运行时。`
+          : "交易模块已关闭。",
+      );
+      pushTraderAgentLog({
+        kind: "decision",
+        title: "交易模块已关闭",
+        body: `stoppedRuntimes=${running.length}\n交易 Agent 轮询与下单入口已暂停。`,
+      });
+    } catch (error) {
+      setRuntimeMsg(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRuntimeBusy(false);
+    }
+  };
+
   const evaluatePaperById = async (id: string) => {
     setRuntimeBusy(true);
     try {
@@ -750,6 +845,7 @@ export const TraderLivePanel: FC = () => {
             <span>策略运行</span>
             <strong
               className={
+                tradingModuleEnabled &&
                 runtimes.some((r) => r.status === "running")
                   ? "qb-trade-status--ok"
                   : ""
@@ -762,10 +858,16 @@ export const TraderLivePanel: FC = () => {
             <span>Agent 会话</span>
             <strong
               className={
-                engine.session ? "qb-trade-status--ok" : "qb-trade-status--warn"
+                tradingModuleEnabled && engine.session
+                  ? "qb-trade-status--ok"
+                  : "qb-trade-status--warn"
               }
             >
-              {engine.session ? "已连接" : "连接中"}
+              {tradingModuleEnabled
+                ? engine.session
+                  ? "已连接"
+                  : "连接中"
+                : "已暂停"}
             </strong>
           </div>
           <div>
@@ -790,6 +892,28 @@ export const TraderLivePanel: FC = () => {
             <option value="sim">券商模拟</option>
           </select>
         </label>
+        <div className="qb-trade-module-switch">
+          <span>交易模块</span>
+          <strong data-enabled={tradingModuleEnabled}>
+            {tradingModuleEnabled ? "运行中" : "已关闭"}
+          </strong>
+          <button
+            type="button"
+            className={
+              tradingModuleEnabled
+                ? "qb-btn-ghost qb-btn--compact"
+                : "qb-btn-primary-brand"
+            }
+            disabled={runtimeBusy}
+            onClick={() =>
+              void (tradingModuleEnabled
+                ? closeTradingModule()
+                : startTradingModule())
+            }
+          >
+            {tradingModuleEnabled ? "关闭模块" : "启动模块"}
+          </button>
+        </div>
       </header>
       <nav className="qb-trade-nav" aria-label="交易工作面">
         {(
@@ -805,862 +929,966 @@ export const TraderLivePanel: FC = () => {
             key={id}
             type="button"
             data-active={surface === id ? "true" : "false"}
+            disabled={!tradingModuleEnabled}
             onClick={() => setSurface(id)}
           >
             {label}
           </button>
         ))}
       </nav>
-      {surface === "quant" ? (
-        <QuantStrategyWorkbench
-          scripts={scripts}
-          runtimes={runtimes}
-          runtimeBusy={runtimeBusy}
-          runtimeMsg={runtimeMsg}
-          strategyMode={strategyMode}
-          setStrategyMode={setStrategyMode}
-          brokerAccounts={brokerAccounts}
-          brokerAccountId={strategyBrokerAccountId}
-          setBrokerAccountId={setStrategyBrokerAccountId}
-          onStart={(scriptId, paperCapital, orderQty) =>
-            void startSelectedStrategyRuntime(scriptId, paperCapital, orderQty)
-          }
-          onStop={(runtimeId) => void stopRuntimeById(runtimeId)}
-          onEvaluatePaper={(runtimeId) => void evaluatePaperById(runtimeId)}
-          onApproveLive={(runtimeId) => void approveLiveById(runtimeId)}
-        />
-      ) : null}
-      {surface === "risk" ? (
-        <details
-          open
-          className="qb-a3d-tilt"
-          style={styles.details}
-          data-qb-trader-bar
-        >
-          <summary style={styles.summary}>交易 Agent 配置</summary>
-          <div style={styles.configBody}>
-            <p style={styles.hint}>
-              触发方式持久化于 sessionStorage。策略信号由后台 worker
-              评估并下单；定时/资讯由 Agent 轮询 feed
-              写入左侧流；用户可在下方输入「买入 100」「撤单
-              &lt;intentId&gt;」等指令。
-            </p>
-            {surface === "risk" ? (
-              <section style={styles.scriptList} aria-label="近期委托与风控">
-                <div
-                  style={{
-                    ...styles.scriptRow,
-                    justifyContent: "space-between",
-                  }}
+      {!tradingModuleEnabled ? (
+        <section className="qb-trade-module-paused" aria-label="交易模块已关闭">
+          <p>TRADING MODULE PAUSED</p>
+          <h2>交易模块已关闭</h2>
+          <span>
+            所有交易入口与 Agent
+            轮询已暂停；运行中的策略已在关闭时停止。启动模块后可继续查看策略、委托与风控。
+          </span>
+          <button
+            type="button"
+            className="qb-btn-primary-brand"
+            onClick={startTradingModule}
+          >
+            启动交易模块
+          </button>
+        </section>
+      ) : (
+        <>
+          {surface === "quant" ? (
+            <QuantStrategyWorkbench
+              scripts={scripts}
+              runtimes={runtimes}
+              runtimeBusy={runtimeBusy}
+              runtimeMsg={runtimeMsg}
+              strategyMode={strategyMode}
+              setStrategyMode={setStrategyMode}
+              brokerAccounts={brokerAccounts}
+              brokerAccountId={strategyBrokerAccountId}
+              setBrokerAccountId={setStrategyBrokerAccountId}
+              onStart={(scriptId, paperCapital, orderQty) =>
+                void startSelectedStrategyRuntime(
+                  scriptId,
+                  paperCapital,
+                  orderQty,
+                )
+              }
+              onStop={(runtimeId) => void stopRuntimeById(runtimeId)}
+              onEvaluatePaper={(runtimeId) => void evaluatePaperById(runtimeId)}
+              onApproveLive={(runtimeId) => void approveLiveById(runtimeId)}
+            />
+          ) : null}
+          {surface === "risk" ? (
+            <details
+              open
+              className="qb-a3d-tilt qb-risk-workbench"
+              style={styles.details}
+              data-qb-trader-bar
+            >
+              <summary
+                style={styles.summary}
+                className="qb-risk-workbench__header"
+              >
+                <span>
+                  <small>ORDER &amp; RISK CONTROL</small>
+                  <strong>委托与风控</strong>
+                  <em>先看执行状态，再进入对账、修复与组合约束。</em>
+                </span>
+                <span
+                  className="qb-risk-workbench__metrics"
+                  aria-label="风控摘要"
                 >
-                  <strong style={{ color: "var(--qb-body-fg, #e4e4e7)" }}>
-                    近期委托与风控
-                  </strong>
-                  <button
-                    type="button"
-                    className="qb-btn-ghost qb-btn--compact"
-                    onClick={() => void refreshExecutionIntents()}
+                  <b>待处理 {riskSummary.active}</b>
+                  <b data-status="success">已成交 {riskSummary.filled}</b>
+                  <b
+                    data-status={riskSummary.blocked > 0 ? "error" : "neutral"}
                   >
-                    刷新委托
-                  </button>
-                </div>
-                {intentsError ? (
-                  <span style={{ ...styles.hint, color: "#ef4444" }}>
-                    {intentsError}
-                  </span>
-                ) : null}
-                {executionIntents.length === 0 && !intentsError ? (
-                  <span style={styles.hint}>
-                    暂无委托；这里展示执行引擎中的权威订单生命周期。
-                  </span>
-                ) : null}
-                {executionIntents.map((intent) => (
-                  <div
-                    key={intent.id}
-                    style={{
-                      ...styles.scriptRow,
-                      justifyContent: "space-between",
-                    }}
+                    已拦截 {riskSummary.blocked}
+                  </b>
+                </span>
+              </summary>
+              <div
+                style={{ ...styles.configBody, maxWidth: "none" }}
+                className="qb-risk-workbench__grid"
+              >
+                {surface === "risk" ? (
+                  <section
+                    style={styles.scriptList}
+                    className="qb-risk-module qb-risk-module--orders"
+                    aria-label="近期委托与风控"
                   >
-                    <span>
-                      <strong>
-                        {intent.side === "buy" ? "买入" : "卖出"}{" "}
-                        {intent.symbol ?? "—"}
-                      </strong>{" "}
-                      · {intent.qty} · {intent.orderType}
-                    </span>
-                    <span
+                    <div
                       style={{
-                        ...styles.hint,
-                        color:
-                          intent.lifecycleStatus.includes("blocked") ||
-                          intent.lifecycleStatus.includes("rejected")
-                            ? "#ef4444"
-                            : intent.lifecycleStatus === "filled"
-                              ? "#22c55e"
-                              : "#f59e0b",
+                        ...styles.scriptRow,
+                        justifyContent: "space-between",
                       }}
                     >
-                      {intent.lifecycleStatus} ·{" "}
-                      {new Date(intent.lifecycleUpdatedAt).toLocaleTimeString()}
-                    </span>
-                  </div>
-                ))}
-              </section>
-            ) : null}
-            <div style={styles.row}>
-              <label style={styles.lab}>
-                触发方式
-                <select
-                  style={styles.select}
-                  value={traderAgentConfig.triggerMode}
-                  onChange={(e) =>
-                    setTraderAgentConfig({
-                      triggerMode: e.target.value as
-                        "manual" | "interval" | "strategy_signal",
-                    })
-                  }
-                >
-                  <option value="manual">手动（快捷交易 + 用户指令）</option>
-                  <option value="interval">
-                    定时轮询（资讯 + 策略日志 + K 线刷新）
-                  </option>
-                  <option value="strategy_signal">
-                    策略信号（后台运行时自动下单）
-                  </option>
-                </select>
-              </label>
-              {traderAgentConfig.triggerMode === "interval" ? (
-                <label style={styles.lab}>
-                  间隔（秒）
-                  <input
-                    style={styles.inp}
-                    type="number"
-                    min={10}
-                    max={3600}
-                    value={traderAgentConfig.intervalSec}
-                    onChange={(e) =>
-                      setTraderAgentConfig({
-                        intervalSec: Number(e.target.value) || 60,
-                      })
-                    }
-                  />
-                </label>
-              ) : null}
-              <button
-                type="button"
-                className="qb-btn-ghost"
-                onClick={() => requestChartReload()}
-              >
-                刷新 K 线数据
-              </button>
-              <button
-                type="button"
-                className="qb-btn-ghost"
-                onClick={ingestChartToAgent}
-              >
-                将当前品种写入对话流
-              </button>
-            </div>
-            <div style={styles.row}>
-              <label style={styles.lab}>
-                持仓对账券商
-                <select
-                  style={styles.select}
-                  value={reconcileProvider}
-                  onChange={(event) =>
-                    setReconcileProvider(event.target.value as BrokerProvider)
-                  }
-                >
-                  <option value="futu">Futu</option>
-                  <option value="ib">IB</option>
-                  <option value="ccxt">CCXT</option>
-                  <option value="alpaca">Alpaca</option>
-                  <option value="supermind">同花顺 SuperMind</option>
-                  <option value="eastmoney_emt">东方财富 EMT</option>
-                </select>
-              </label>
-              <button
-                type="button"
-                className="qb-btn-secondary"
-                disabled={!projectId}
-                onClick={() => void runPositionReconciliation()}
-              >
-                对账内部账本 / 券商持仓
-              </button>
-              {reconcileReport ? (
-                <span
-                  style={{
-                    ...styles.hint,
-                    color:
-                      reconcileReport.summary.mismatched > 0
-                        ? "#f59e0b"
-                        : "#22c55e",
-                  }}
-                >
-                  匹配 {reconcileReport.summary.matched}/
-                  {reconcileReport.summary.symbols} · 偏差标的
-                  {reconcileReport.summary.mismatched} · 名义偏差{" "}
-                  {reconcileReport.summary.absoluteNotionalDelta.toFixed(2)}
-                </span>
-              ) : null}
-              {reconcileError ? (
-                <span
-                  style={{
-                    ...styles.hint,
-                    color: reconcileError.startsWith("已提交")
-                      ? "#22c55e"
-                      : "#ef4444",
-                  }}
-                >
-                  {reconcileError}
-                </span>
-              ) : null}
-            </div>
-            {remediationPlan?.actions.length ? (
-              <div style={styles.scriptList}>
-                <strong style={{ fontSize: 12, color: "#f59e0b" }}>
-                  修复提案 · 仅显式确认后提交 · {remediationPlan.actions.length}{" "}
-                  笔
-                </strong>
-                {remediationPlan.actions.map((action) => (
-                  <div
-                    key={action.symbol}
-                    style={{
-                      ...styles.scriptRow,
-                      justifyContent: "space-between",
-                    }}
-                  >
-                    <span>
-                      {action.action === "buy" ? "买入" : "卖出"}{" "}
-                      {action.symbol} · {action.quantity}
-                    </span>
-                    <span style={styles.hint}>
-                      估算名义 {action.estimatedNotional.toFixed(2)}
-                    </span>
-                  </div>
-                ))}
+                      <strong style={{ color: "var(--qb-body-fg, #e4e4e7)" }}>
+                        近期委托与风控
+                      </strong>
+                      <button
+                        type="button"
+                        className="qb-btn-ghost qb-btn--compact"
+                        onClick={() => void refreshExecutionIntents()}
+                      >
+                        刷新委托
+                      </button>
+                    </div>
+                    {intentsError ? (
+                      <span style={{ ...styles.hint, color: "#ef4444" }}>
+                        {intentsError}
+                      </span>
+                    ) : null}
+                    {executionIntents.length === 0 && !intentsError ? (
+                      <span style={styles.hint}>
+                        暂无委托；这里展示执行引擎中的权威订单生命周期。
+                      </span>
+                    ) : null}
+                    {executionIntents.map((intent) => (
+                      <div
+                        key={intent.id}
+                        className="qb-risk-intent"
+                        data-status={
+                          intent.lifecycleStatus.includes("blocked") ||
+                          intent.lifecycleStatus.includes("rejected")
+                            ? "blocked"
+                            : intent.lifecycleStatus === "filled"
+                              ? "filled"
+                              : "pending"
+                        }
+                      >
+                        <span className="qb-risk-intent__side">
+                          {intent.side === "buy" ? "BUY" : "SELL"}
+                        </span>
+                        <span className="qb-risk-intent__main">
+                          <strong>
+                            {intent.symbol ?? "—"} · {intent.qty} 股
+                          </strong>
+                          <small>
+                            {intent.orderType} ·{" "}
+                            {intent.timeInForce.toUpperCase()}
+                            {intent.price != null
+                              ? ` · ${intent.price}`
+                              : " · 市价"}
+                          </small>
+                        </span>
+                        <span className="qb-risk-intent__state">
+                          <strong>{intent.lifecycleStatus}</strong>
+                          <small>
+                            {new Date(
+                              intent.lifecycleUpdatedAt,
+                            ).toLocaleTimeString()}
+                          </small>
+                          {!/(filled|blocked|rejected|cancelled|failed)/i.test(
+                            intent.lifecycleStatus,
+                          ) ? (
+                            <button
+                              type="button"
+                              className="qb-btn-ghost qb-btn--compact"
+                              disabled={engine.busy}
+                              onClick={() => {
+                                if (
+                                  !window.confirm(
+                                    `确认撤销 ${intent.symbol ?? "该标的"} 的委托？`,
+                                  )
+                                ) {
+                                  return;
+                                }
+                                void engine
+                                  .cancelOrder(intent.id)
+                                  .then(() => refreshExecutionIntents());
+                              }}
+                            >
+                              撤单
+                            </button>
+                          ) : null}
+                        </span>
+                      </div>
+                    ))}
+                  </section>
+                ) : null}
                 <div style={styles.row}>
                   <label style={styles.lab}>
-                    修复执行上下文（Live Runtime）
+                    触发方式
                     <select
                       style={styles.select}
-                      value={remediationRuntimeId}
-                      onChange={(event) =>
-                        setRemediationRuntimeId(event.target.value)
+                      value={traderAgentConfig.triggerMode}
+                      onChange={(e) =>
+                        setTraderAgentConfig({
+                          triggerMode: e.target.value as
+                            "manual" | "interval" | "strategy_signal",
+                        })
                       }
                     >
-                      <option value="">请选择已审批的 Live Runtime</option>
-                      {runtimes
-                        .filter(
-                          (runtime) =>
-                            runtime.executionMode === "live" &&
-                            runtime.brokerAccountId,
+                      <option value="manual">
+                        手动（快捷交易 + 用户指令）
+                      </option>
+                      <option value="interval">
+                        定时轮询（资讯 + 策略日志 + K 线刷新）
+                      </option>
+                      <option value="strategy_signal">
+                        策略信号（后台运行时自动下单）
+                      </option>
+                    </select>
+                  </label>
+                  {traderAgentConfig.triggerMode === "interval" ? (
+                    <label style={styles.lab}>
+                      间隔（秒）
+                      <input
+                        style={styles.inp}
+                        type="number"
+                        min={10}
+                        max={3600}
+                        value={traderAgentConfig.intervalSec}
+                        onChange={(e) =>
+                          setTraderAgentConfig({
+                            intervalSec: Number(e.target.value) || 60,
+                          })
+                        }
+                      />
+                    </label>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="qb-btn-ghost"
+                    onClick={() => requestChartReload()}
+                  >
+                    刷新 K 线数据
+                  </button>
+                  <button
+                    type="button"
+                    className="qb-btn-ghost"
+                    onClick={ingestChartToAgent}
+                  >
+                    将当前品种写入对话流
+                  </button>
+                </div>
+                <div style={styles.row}>
+                  <label style={styles.lab}>
+                    持仓对账券商
+                    <select
+                      style={styles.select}
+                      value={reconcileProvider}
+                      onChange={(event) =>
+                        setReconcileProvider(
+                          event.target.value as BrokerProvider,
                         )
-                        .map((runtime) => (
-                          <option key={runtime.id} value={runtime.id}>
-                            {runtime.symbol} · {runtime.status} ·{" "}
-                            {runtime.id.slice(0, 8)}
-                          </option>
-                        ))}
+                      }
+                    >
+                      <option value="futu">Futu</option>
+                      <option value="ib">IB</option>
+                      <option value="ccxt">CCXT</option>
+                      <option value="alpaca">Alpaca</option>
+                      <option value="supermind">同花顺 SuperMind</option>
+                      <option value="eastmoney_emt">东方财富 EMT</option>
                     </select>
                   </label>
                   <button
                     type="button"
                     className="qb-btn-secondary"
-                    disabled={remediationBusy || !remediationRuntimeId}
-                    onClick={() => void executePositionRemediation()}
+                    disabled={!projectId}
+                    onClick={() => void runPositionReconciliation()}
                   >
-                    {remediationBusy ? "重新核对中…" : "确认并进入风控下单"}
+                    对账内部账本 / 券商持仓
                   </button>
+                  {reconcileReport ? (
+                    <span
+                      style={{
+                        ...styles.hint,
+                        color:
+                          reconcileReport.summary.mismatched > 0
+                            ? "#f59e0b"
+                            : "#22c55e",
+                      }}
+                    >
+                      匹配 {reconcileReport.summary.matched}/
+                      {reconcileReport.summary.symbols} · 偏差标的
+                      {reconcileReport.summary.mismatched} · 名义偏差{" "}
+                      {reconcileReport.summary.absoluteNotionalDelta.toFixed(2)}
+                    </span>
+                  ) : null}
+                  {reconcileError ? (
+                    <span
+                      style={{
+                        ...styles.hint,
+                        color: reconcileError.startsWith("已提交")
+                          ? "#22c55e"
+                          : "#ef4444",
+                      }}
+                    >
+                      {reconcileError}
+                    </span>
+                  ) : null}
                 </div>
-                {!runtimes.some(
-                  (runtime) =>
-                    runtime.executionMode === "live" && runtime.brokerAccountId,
-                ) ? (
-                  <span style={{ ...styles.hint, color: "#f59e0b" }}>
-                    暂无绑定券商账户的 Live Runtime；请先完成策略晋级和 Live
-                    配置。
-                  </span>
+                {remediationPlan?.actions.length ? (
+                  <div style={styles.scriptList}>
+                    <strong style={{ fontSize: 12, color: "#f59e0b" }}>
+                      修复提案 · 仅显式确认后提交 ·{" "}
+                      {remediationPlan.actions.length} 笔
+                    </strong>
+                    {remediationPlan.actions.map((action) => (
+                      <div
+                        key={action.symbol}
+                        style={{
+                          ...styles.scriptRow,
+                          justifyContent: "space-between",
+                        }}
+                      >
+                        <span>
+                          {action.action === "buy" ? "买入" : "卖出"}{" "}
+                          {action.symbol} · {action.quantity}
+                        </span>
+                        <span style={styles.hint}>
+                          估算名义 {action.estimatedNotional.toFixed(2)}
+                        </span>
+                      </div>
+                    ))}
+                    <div style={styles.row}>
+                      <label style={styles.lab}>
+                        修复执行上下文（Live Runtime）
+                        <select
+                          style={styles.select}
+                          value={remediationRuntimeId}
+                          onChange={(event) =>
+                            setRemediationRuntimeId(event.target.value)
+                          }
+                        >
+                          <option value="">请选择已审批的 Live Runtime</option>
+                          {runtimes
+                            .filter(
+                              (runtime) =>
+                                runtime.executionMode === "live" &&
+                                runtime.brokerAccountId,
+                            )
+                            .map((runtime) => (
+                              <option key={runtime.id} value={runtime.id}>
+                                {runtime.symbol} · {runtime.status} ·{" "}
+                                {runtime.id.slice(0, 8)}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                      <button
+                        type="button"
+                        className="qb-btn-secondary"
+                        disabled={remediationBusy || !remediationRuntimeId}
+                        onClick={() => void executePositionRemediation()}
+                      >
+                        {remediationBusy ? "重新核对中…" : "确认并进入风控下单"}
+                      </button>
+                    </div>
+                    {!runtimes.some(
+                      (runtime) =>
+                        runtime.executionMode === "live" &&
+                        runtime.brokerAccountId,
+                    ) ? (
+                      <span style={{ ...styles.hint, color: "#f59e0b" }}>
+                        暂无绑定券商账户的 Live Runtime；请先完成策略晋级和 Live
+                        配置。
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
+                <div style={styles.row}>
+                  <label style={styles.lab}>
+                    组合总资金
+                    <input
+                      style={styles.inp}
+                      type="number"
+                      min={1}
+                      value={portfolioCapital}
+                      onChange={(event) =>
+                        setPortfolioCapital(
+                          Math.max(1, Number(event.target.value) || 1),
+                        )
+                      }
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="qb-btn-secondary"
+                    disabled={!projectId}
+                    onClick={() => void runPortfolioAllocation()}
+                  >
+                    从有效推荐生成组合计划
+                  </button>
+                  {portfolioPlan ? (
+                    <span style={{ ...styles.hint, color: "#22c55e" }}>
+                      {portfolioPlan.rows.length} 个目标仓位 · 总暴露{" "}
+                      {(portfolioPlan.exposures.grossExposure * 100).toFixed(1)}
+                      % · 净暴露{" "}
+                      {(portfolioPlan.exposures.netExposure * 100).toFixed(1)}%
+                      · 止损风险预算
+                      {(
+                        portfolioPlan.exposures.estimatedLossAtStopsPct * 100
+                      ).toFixed(2)}
+                      %
+                      {portfolioPlan.risk?.metrics
+                        ? ` · VaR95 ${(portfolioPlan.risk.metrics.historicalVar95Pct * 100).toFixed(2)}% · ES95 ${(portfolioPlan.risk.metrics.expectedShortfall95Pct * 100).toFixed(2)}%`
+                        : " · 历史风险数据不足"}
+                    </span>
+                  ) : null}
+                  {portfolioError ? (
+                    <span style={{ ...styles.hint, color: "#ef4444" }}>
+                      {portfolioError}
+                    </span>
+                  ) : null}
+                </div>
+                {portfolioPlan ? (
+                  <div style={styles.scriptList}>
+                    {portfolioPlan.rows.map((row) => (
+                      <div
+                        key={row.symbol}
+                        style={{
+                          ...styles.scriptRow,
+                          justifyContent: "space-between",
+                        }}
+                      >
+                        <strong>
+                          {row.symbol} · {row.side.toUpperCase()}
+                        </strong>
+                        <span style={styles.hint}>
+                          目标 {(row.targetWeight * 100).toFixed(2)}% /{" "}
+                          {row.targetQty.toFixed(2)} 股 · 调仓
+                          {row.rebalanceQty >= 0 ? "+" : ""}
+                          {row.rebalanceQty.toFixed(2)} · 风险
+                          {(row.riskContributionPct * 100).toFixed(2)}%
+                        </span>
+                      </div>
+                    ))}
+                    {portfolioPlan.warnings.map((warning) => (
+                      <span
+                        key={warning}
+                        style={{ ...styles.hint, color: "#f59e0b" }}
+                      >
+                        ⚠ {warning}
+                      </span>
+                    ))}
+                    {portfolioPlan.risk?.stressTests
+                      .slice(0, 2)
+                      .map((stress) => (
+                        <span
+                          key={stress.scenario}
+                          style={{
+                            ...styles.hint,
+                            color:
+                              stress.lossAmount > 0 ? "#f59e0b" : "#22c55e",
+                          }}
+                        >
+                          压力 {stress.scenario}：
+                          {(stress.portfolioReturnPct * 100).toFixed(2)}% / 损失{" "}
+                          {stress.lossAmount.toFixed(2)}
+                        </span>
+                      ))}
+                    {portfolioPlan.risk?.warnings.map((warning) => (
+                      <span
+                        key={`risk-${warning}`}
+                        style={{ ...styles.hint, color: "#f59e0b" }}
+                      >
+                        ⚠ {warning}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+                <div>
+                  <div style={{ ...styles.lab, marginBottom: 6 }}>
+                    运行策略（Python 策略库 · 多选）
+                  </div>
+                  {scriptsErr ? (
+                    <p style={{ ...styles.hint, color: "#ef4444" }}>
+                      {scriptsErr}
+                    </p>
+                  ) : null}
+                  <div style={styles.scriptList}>
+                    {scripts.length === 0 ? (
+                      <span
+                        style={{
+                          fontSize: 12,
+                          color: "var(--qb-main-meta, #71717a)",
+                        }}
+                      >
+                        暂无脚本；请先在 IDE 保存策略或写入会话策略库。
+                      </span>
+                    ) : (
+                      scripts.map((s) => (
+                        <label key={s.id} style={styles.scriptRow}>
+                          <input
+                            type="checkbox"
+                            checked={traderAgentConfig.strategyScriptIds.includes(
+                              s.id,
+                            )}
+                            onChange={() => toggleTraderStrategyScriptId(s.id)}
+                          />
+                          <span>
+                            <strong
+                              style={{ color: "var(--qb-body-fg, #e4e4e7)" }}
+                            >
+                              {s.name}
+                            </strong>
+                            <span
+                              style={{ color: "var(--qb-main-meta, #52525b)" }}
+                            >
+                              {" "}
+                              · {s.purpose}
+                            </span>
+                          </span>
+                        </label>
+                      ))
+                    )}
+                  </div>
+                </div>
+                <div style={styles.row}>
+                  <button
+                    type="button"
+                    className="qb-btn-primary-brand"
+                    disabled={runtimeBusy}
+                    onClick={() => void startSelectedStrategyRuntime()}
+                  >
+                    启动
+                    {strategyMode === "paper"
+                      ? "纸面"
+                      : strategyMode === "sim"
+                        ? "券商模拟"
+                        : "实盘"}
+                    策略
+                  </button>
+                  {runtimeMsg ? (
+                    <span style={styles.hint}>{runtimeMsg}</span>
+                  ) : null}
+                </div>
+                {runtimes.length > 0 ? (
+                  <div style={styles.scriptList}>
+                    {runtimes.slice(0, 5).map((r) => (
+                      <div
+                        key={r.id}
+                        style={{
+                          ...styles.scriptRow,
+                          justifyContent: "space-between",
+                        }}
+                      >
+                        <span>
+                          {r.symbol} · {r.status} · {r.executionMode}
+                        </span>
+                        {r.status === "running" ? (
+                          <button
+                            type="button"
+                            className="qb-btn-ghost qb-btn--compact"
+                            disabled={runtimeBusy}
+                            onClick={() => void stopRuntimeById(r.id)}
+                          >
+                            停止
+                          </button>
+                        ) : (
+                          <span style={{ display: "flex", gap: 6 }}>
+                            {r.executionMode === "paper" ? (
+                              <button
+                                type="button"
+                                className="qb-btn-ghost qb-btn--compact"
+                                disabled={runtimeBusy}
+                                onClick={() => void evaluatePaperById(r.id)}
+                              >
+                                评估 Paper
+                              </button>
+                            ) : null}
+                            {r.executionMode === "paper" ? (
+                              <button
+                                type="button"
+                                className="qb-btn-ghost qb-btn--compact"
+                                disabled={runtimeBusy}
+                                onClick={() => void approveLiveById(r.id)}
+                              >
+                                申请实盘晋级
+                              </button>
+                            ) : null}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 ) : null}
               </div>
-            ) : null}
-            <div style={styles.row}>
-              <label style={styles.lab}>
-                组合总资金
-                <input
-                  style={styles.inp}
-                  type="number"
-                  min={1}
-                  value={portfolioCapital}
-                  onChange={(event) =>
-                    setPortfolioCapital(
-                      Math.max(1, Number(event.target.value) || 1),
-                    )
-                  }
-                />
-              </label>
-              <button
-                type="button"
-                className="qb-btn-secondary"
-                disabled={!projectId}
-                onClick={() => void runPortfolioAllocation()}
-              >
-                从有效推荐生成组合计划
-              </button>
-              {portfolioPlan ? (
-                <span style={{ ...styles.hint, color: "#22c55e" }}>
-                  {portfolioPlan.rows.length} 个目标仓位 · 总暴露{" "}
-                  {(portfolioPlan.exposures.grossExposure * 100).toFixed(1)}% ·
-                  净暴露{" "}
-                  {(portfolioPlan.exposures.netExposure * 100).toFixed(1)}% ·
-                  止损风险预算
-                  {(
-                    portfolioPlan.exposures.estimatedLossAtStopsPct * 100
-                  ).toFixed(2)}
-                  %
-                  {portfolioPlan.risk?.metrics
-                    ? ` · VaR95 ${(portfolioPlan.risk.metrics.historicalVar95Pct * 100).toFixed(2)}% · ES95 ${(portfolioPlan.risk.metrics.expectedShortfall95Pct * 100).toFixed(2)}%`
-                    : " · 历史风险数据不足"}
-                </span>
-              ) : null}
-              {portfolioError ? (
-                <span style={{ ...styles.hint, color: "#ef4444" }}>
-                  {portfolioError}
-                </span>
-              ) : null}
-            </div>
-            {portfolioPlan ? (
-              <div style={styles.scriptList}>
-                {portfolioPlan.rows.map((row) => (
-                  <div
-                    key={row.symbol}
-                    style={{
-                      ...styles.scriptRow,
-                      justifyContent: "space-between",
-                    }}
-                  >
-                    <strong>
-                      {row.symbol} · {row.side.toUpperCase()}
-                    </strong>
-                    <span style={styles.hint}>
-                      目标 {(row.targetWeight * 100).toFixed(2)}% /{" "}
-                      {row.targetQty.toFixed(2)} 股 · 调仓
-                      {row.rebalanceQty >= 0 ? "+" : ""}
-                      {row.rebalanceQty.toFixed(2)} · 风险
-                      {(row.riskContributionPct * 100).toFixed(2)}%
-                    </span>
+            </details>
+          ) : null}
+
+          {surface === "quant" || surface === "risk" ? null : (
+            <div className="qb-trade-surface" data-surface={surface}>
+              <div className="qb-trade-main-grid" style={styles.mainRow}>
+                <div
+                  className="qb-trader-module qb-a3d-tilt qb-trade-flow"
+                  style={styles.flowCol}
+                >
+                  <div style={styles.flowHead} data-qb-trader-bar>
+                    交易 Agent 工作台
                   </div>
-                ))}
-                {portfolioPlan.warnings.map((warning) => (
-                  <span
-                    key={warning}
-                    style={{ ...styles.hint, color: "#f59e0b" }}
-                  >
-                    ⚠ {warning}
-                  </span>
-                ))}
-                {portfolioPlan.risk?.stressTests.slice(0, 2).map((stress) => (
-                  <span
-                    key={stress.scenario}
-                    style={{
-                      ...styles.hint,
-                      color: stress.lossAmount > 0 ? "#f59e0b" : "#22c55e",
-                    }}
-                  >
-                    压力 {stress.scenario}：
-                    {(stress.portfolioReturnPct * 100).toFixed(2)}% / 损失{" "}
-                    {stress.lossAmount.toFixed(2)}
-                  </span>
-                ))}
-                {portfolioPlan.risk?.warnings.map((warning) => (
-                  <span
-                    key={`risk-${warning}`}
-                    style={{ ...styles.hint, color: "#f59e0b" }}
-                  >
-                    ⚠ {warning}
-                  </span>
-                ))}
-              </div>
-            ) : null}
-            <div>
-              <div style={{ ...styles.lab, marginBottom: 6 }}>
-                运行策略（Python 策略库 · 多选）
-              </div>
-              {scriptsErr ? (
-                <p style={{ ...styles.hint, color: "#ef4444" }}>{scriptsErr}</p>
-              ) : null}
-              <div style={styles.scriptList}>
-                {scripts.length === 0 ? (
-                  <span
-                    style={{
-                      fontSize: 12,
-                      color: "var(--qb-main-meta, #71717a)",
-                    }}
-                  >
-                    暂无脚本；请先在 IDE 保存策略或写入会话策略库。
-                  </span>
-                ) : (
-                  scripts.map((s) => (
-                    <label key={s.id} style={styles.scriptRow}>
-                      <input
-                        type="checkbox"
-                        checked={traderAgentConfig.strategyScriptIds.includes(
-                          s.id,
-                        )}
-                        onChange={() => toggleTraderStrategyScriptId(s.id)}
-                      />
-                      <span>
-                        <strong style={{ color: "var(--qb-body-fg, #e4e4e7)" }}>
-                          {s.name}
-                        </strong>
-                        <span style={{ color: "var(--qb-main-meta, #52525b)" }}>
-                          {" "}
-                          · {s.purpose}
-                        </span>
-                      </span>
-                    </label>
-                  ))
-                )}
-              </div>
-            </div>
-            <div style={styles.row}>
-              <button
-                type="button"
-                className="qb-btn-primary-brand"
-                disabled={runtimeBusy}
-                onClick={() => void startSelectedStrategyRuntime()}
-              >
-                启动
-                {strategyMode === "paper"
-                  ? "纸面"
-                  : strategyMode === "sim"
-                    ? "券商模拟"
-                    : "实盘"}
-                策略
-              </button>
-              {runtimeMsg ? (
-                <span style={styles.hint}>{runtimeMsg}</span>
-              ) : null}
-            </div>
-            {runtimes.length > 0 ? (
-              <div style={styles.scriptList}>
-                {runtimes.slice(0, 5).map((r) => (
-                  <div
-                    key={r.id}
-                    style={{
-                      ...styles.scriptRow,
-                      justifyContent: "space-between",
-                    }}
-                  >
-                    <span>
-                      {r.symbol} · {r.status} · {r.executionMode}
-                    </span>
-                    {r.status === "running" ? (
+                  <div style={styles.flowTabs} data-qb-trader-bar>
+                    {(
+                      [
+                        ["decision", "决策流", traderAgentLog.length],
+                        ["drivers", "策略驱动", traderDrivers.length],
+                        ["messages", "Agent 消息", traderAgentMessages.length],
+                      ] as const
+                    ).map(([key, label, count]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        data-qb-trader-flow-tab
+                        data-active={flowTab === key ? "true" : "false"}
+                        style={{
+                          ...styles.flowTab,
+                          ...(flowTab === key ? styles.flowTabActive : {}),
+                        }}
+                        onClick={() => setFlowTab(key)}
+                      >
+                        {label}
+                        {count > 0 ? ` (${count})` : ""}
+                      </button>
+                    ))}
+                  </div>
+                  <div style={styles.flowActions} data-qb-trader-bar>
+                    <button
+                      type="button"
+                      className="qb-btn-primary-brand"
+                      disabled={engine.busy || !engine.session}
+                      onClick={() => void engine.runAgentCycle()}
+                    >
+                      同步 Agent 信息流
+                    </button>
+                    <button
+                      type="button"
+                      className="qb-btn-ghost"
+                      onClick={() => {
+                        if (flowTab === "decision") clearTraderAgentLog();
+                        else if (flowTab === "drivers") clearTraderDrivers();
+                        else clearTraderAgentMessages();
+                      }}
+                    >
+                      清空当前页
+                    </button>
+                    <button
+                      type="button"
+                      className="qb-btn-ghost"
+                      onClick={clearTraderMarkers}
+                    >
+                      清空 K 线标记
+                    </button>
+                  </div>
+                  <div style={styles.flowScroll} data-qb-trader-scroll>
+                    {flowTab === "decision" ? (
+                      traderAgentLog.length === 0 ? (
+                        <div
+                          style={{
+                            fontSize: 12,
+                            color: "var(--qb-main-meta, #71717a)",
+                          }}
+                        >
+                          暂无决策记录。成交、风控结果与用户操作将显示在此。
+                        </div>
+                      ) : (
+                        <>
+                          <div
+                            className="qb-decision-rollup"
+                            aria-label="决策流摘要"
+                          >
+                            <div>
+                              <span>近期 trace</span>
+                              <strong>
+                                {Math.min(decisionSummary.total, 16)}
+                              </strong>
+                            </div>
+                            <div>
+                              <span>策略评估</span>
+                              <strong>{decisionSummary.strategyRuns}</strong>
+                            </div>
+                            <div
+                              data-status={
+                                decisionSummary.executions > 0
+                                  ? "success"
+                                  : "neutral"
+                              }
+                            >
+                              <span>已执行</span>
+                              <strong>{decisionSummary.executions}</strong>
+                            </div>
+                          </div>
+                          {decisionBatches.map((batch) => {
+                            const newest = batch.rows[0]!;
+                            const isExpanded = expandedDecisionBatches.has(
+                              batch.id,
+                            );
+                            const count = batch.rows.length;
+                            return (
+                              <article
+                                key={batch.id}
+                                className="qb-decision-batch"
+                                data-status={batch.status}
+                                data-emphasis={batch.emphasis}
+                              >
+                                <button
+                                  type="button"
+                                  className="qb-decision-batch__summary"
+                                  aria-expanded={isExpanded}
+                                  onClick={() => {
+                                    setExpandedDecisionBatches((current) => {
+                                      const next = new Set(current);
+                                      if (next.has(batch.id))
+                                        next.delete(batch.id);
+                                      else next.add(batch.id);
+                                      return next;
+                                    });
+                                  }}
+                                >
+                                  <i aria-hidden="true" />
+                                  <span className="qb-decision-batch__main">
+                                    <small>
+                                      {new Date(newest.ts).toLocaleString()} ·{" "}
+                                      {count > 1
+                                        ? `策略批次 × ${count}`
+                                        : newest.kind}
+                                    </small>
+                                    <strong>{batch.operation}</strong>
+                                    <em>收获：{batch.outcome}</em>
+                                  </span>
+                                  <span className="qb-decision-batch__toggle">
+                                    {isExpanded
+                                      ? "收起"
+                                      : count > 1
+                                        ? `查看 ${count} 条`
+                                        : "详情"}
+                                  </span>
+                                </button>
+                                {isExpanded ? (
+                                  <div className="qb-decision-batch__events">
+                                    {batch.rows.map((row) => (
+                                      <div key={row.id}>
+                                        <small>
+                                          {new Date(
+                                            row.ts,
+                                          ).toLocaleTimeString()}
+                                        </small>
+                                        <strong>{row.title}</strong>
+                                        <pre>{row.body}</pre>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : null}
+                              </article>
+                            );
+                          })}
+                        </>
+                      )
+                    ) : null}
+                    {flowTab === "drivers" ? (
+                      traderDrivers.length === 0 ? (
+                        <div
+                          style={{
+                            fontSize: 12,
+                            color: "var(--qb-main-meta, #71717a)",
+                          }}
+                        >
+                          暂无策略驱动。来源包括：策略运行时评估、定时任务、资讯
+                          RSS、外部通信、告警与用户指令。
+                        </div>
+                      ) : (
+                        [...traderDrivers].reverse().map((row) => (
+                          <div
+                            key={row.id}
+                            style={styles.logCard}
+                            data-qb-trader-card
+                          >
+                            <div style={styles.logMeta}>
+                              {new Date(row.ts).toLocaleString()}
+                              <span style={styles.driverKind}>
+                                {row.driverKind}
+                              </span>
+                            </div>
+                            <div style={styles.logTitle}>{row.title}</div>
+                            <div style={styles.logBody}>{row.body}</div>
+                          </div>
+                        ))
+                      )
+                    ) : null}
+                    {flowTab === "messages" ? (
+                      traderAgentMessages.length === 0 ? (
+                        <div
+                          style={{
+                            fontSize: 12,
+                            color: "var(--qb-main-meta, #71717a)",
+                          }}
+                        >
+                          暂无 A2A 消息。工作流内 Agent 间 TASK_ASSIGN /
+                          ORDER_INTENT / RISK_BLOCK 等将显示在此。
+                        </div>
+                      ) : (
+                        [...traderAgentMessages].reverse().map((row) => (
+                          <div
+                            key={row.id}
+                            style={styles.logCard}
+                            data-qb-trader-card
+                          >
+                            <div style={styles.logMeta}>
+                              {new Date(row.ts).toLocaleString()}
+                              <span style={styles.msgType}>
+                                {row.messageType}
+                              </span>
+                            </div>
+                            <div style={styles.logTitle}>
+                              {row.senderRole} → {row.receiverRole ?? "—"}
+                            </div>
+                            <div style={styles.logBody}>{row.summary}</div>
+                            <div
+                              style={{
+                                ...styles.logBody,
+                                marginTop: 4,
+                                fontSize: 11,
+                                opacity: 0.85,
+                              }}
+                            >
+                              {row.body}
+                            </div>
+                          </div>
+                        ))
+                      )
+                    ) : null}
+                  </div>
+                  <div style={styles.cmdRow} data-qb-trader-bar>
+                    <input
+                      style={styles.cmdInp}
+                      value={userCmd}
+                      onChange={(e) => setUserCmd(e.target.value)}
+                      placeholder="用户指令：买入 100 / 卖出 50 / 撤单 <intentId>"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void submitUserCmd();
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="qb-btn-primary-brand"
+                      disabled={
+                        engine.busy || !engine.session || !userCmd.trim()
+                      }
+                      onClick={() => void submitUserCmd()}
+                    >
+                      执行
+                    </button>
+                  </div>
+                </div>
+
+                <div
+                  className="qb-trader-module qb-a3d-tilt qb-trade-execution"
+                  style={styles.rightCol}
+                >
+                  <div style={styles.klineSlot}>
+                    <div style={styles.klineToolbar} data-qb-trader-bar>
+                      <label style={styles.lab}>
+                        代码
+                        <input
+                          style={styles.field}
+                          value={chartSpec.symbol}
+                          onChange={(e) =>
+                            setChartSpec({ symbol: e.target.value })
+                          }
+                          placeholder="600000"
+                        />
+                      </label>
+                      <div style={styles.lab}>
+                        <span>市场</span>
+                        <ChartMarketSelect
+                          style={styles.field}
+                          value={chartSpec.exchange}
+                          onChange={(exchange) => setChartSpec({ exchange })}
+                        />
+                      </div>
+                      <label style={styles.lab}>
+                        周期
+                        <select
+                          style={styles.field}
+                          value={chartSpec.timeframe}
+                          onChange={(e) =>
+                            setChartSpec({ timeframe: e.target.value })
+                          }
+                        >
+                          {CHART_TIMEFRAMES.map((tf) => (
+                            <option key={tf} value={tf}>
+                              {tf}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
                       <button
                         type="button"
                         className="qb-btn-ghost qb-btn--compact"
-                        disabled={runtimeBusy}
-                        onClick={() => void stopRuntimeById(r.id)}
+                        onClick={() => requestChartReload()}
                       >
-                        停止
+                        刷新
                       </button>
-                    ) : (
-                      <span style={{ display: "flex", gap: 6 }}>
-                        {r.executionMode === "paper" ? (
-                          <button
-                            type="button"
-                            className="qb-btn-ghost qb-btn--compact"
-                            disabled={runtimeBusy}
-                            onClick={() => void evaluatePaperById(r.id)}
-                          >
-                            评估 Paper
-                          </button>
-                        ) : null}
-                        {r.executionMode === "paper" ? (
-                          <button
-                            type="button"
-                            className="qb-btn-ghost qb-btn--compact"
-                            disabled={runtimeBusy}
-                            onClick={() => void approveLiveById(r.id)}
-                          >
-                            申请实盘晋级
-                          </button>
-                        ) : null}
-                      </span>
-                    )}
+                    </div>
+                    <div
+                      style={{
+                        flex: 1,
+                        minHeight: 0,
+                        display: "flex",
+                        flexDirection: "column",
+                      }}
+                    >
+                      <KlinePanel embedded linkTraderMarkers />
+                    </div>
                   </div>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        </details>
-      ) : null}
-
-      {surface === "quant" || surface === "risk" ? null : (
-        <div className="qb-trade-surface" data-surface={surface}>
-          <div className="qb-trade-main-grid" style={styles.mainRow}>
-            <div
-              className="qb-trader-module qb-a3d-tilt qb-trade-flow"
-              style={styles.flowCol}
-            >
-              <div style={styles.flowHead} data-qb-trader-bar>
-                交易 Agent 工作台
-              </div>
-              <div style={styles.flowTabs} data-qb-trader-bar>
-                {(
-                  [
-                    ["decision", "决策流", traderAgentLog.length],
-                    ["drivers", "策略驱动", traderDrivers.length],
-                    ["messages", "Agent 消息", traderAgentMessages.length],
-                  ] as const
-                ).map(([key, label, count]) => (
-                  <button
-                    key={key}
-                    type="button"
-                    data-qb-trader-flow-tab
-                    data-active={flowTab === key ? "true" : "false"}
-                    style={{
-                      ...styles.flowTab,
-                      ...(flowTab === key ? styles.flowTabActive : {}),
-                    }}
-                    onClick={() => setFlowTab(key)}
-                  >
-                    {label}
-                    {count > 0 ? ` (${count})` : ""}
-                  </button>
-                ))}
-              </div>
-              <div style={styles.flowActions} data-qb-trader-bar>
-                <button
-                  type="button"
-                  className="qb-btn-primary-brand"
-                  disabled={engine.busy || !engine.session}
-                  onClick={() => void engine.runAgentCycle()}
-                >
-                  同步 Agent 信息流
-                </button>
-                <button
-                  type="button"
-                  className="qb-btn-ghost"
-                  onClick={() => {
-                    if (flowTab === "decision") clearTraderAgentLog();
-                    else if (flowTab === "drivers") clearTraderDrivers();
-                    else clearTraderAgentMessages();
-                  }}
-                >
-                  清空当前页
-                </button>
-                <button
-                  type="button"
-                  className="qb-btn-ghost"
-                  onClick={clearTraderMarkers}
-                >
-                  清空 K 线标记
-                </button>
-              </div>
-              <div style={styles.flowScroll} data-qb-trader-scroll>
-                {flowTab === "decision" ? (
-                  traderAgentLog.length === 0 ? (
-                    <div
-                      style={{
-                        fontSize: 12,
-                        color: "var(--qb-main-meta, #71717a)",
+                  <div style={styles.tradeSlot}>
+                    <IdeQuickTradePanel
+                      variant="trader"
+                      traderLinked
+                      traderBusy={engine.busy}
+                      executionMode={executionMode}
+                      lastOrderIntentId={lastOrderIntentId}
+                      onPlaceOrder={async (side, qty, orderKind, price) => {
+                        const data = await engine.placeOrder({
+                          side,
+                          qty,
+                          orderType: orderKind,
+                          price,
+                          executionMode,
+                        });
+                        if (data?.orderIntentId)
+                          setLastOrderIntentId(data.orderIntentId);
+                        void refreshExecutionIntents();
                       }}
-                    >
-                      暂无决策记录。成交、风控结果与用户操作将显示在此。
-                    </div>
-                  ) : (
-                    <>
-                      <div
-                        className="qb-decision-rollup"
-                        aria-label="决策流摘要"
-                      >
-                        <div>
-                          <span>事件</span>
-                          <strong>{decisionSummary.total}</strong>
-                        </div>
-                        <div>
-                          <span>策略评估</span>
-                          <strong>{decisionSummary.strategyRuns}</strong>
-                        </div>
-                        <div
-                          data-status={
-                            decisionSummary.failed > 0 ? "error" : "success"
-                          }
-                        >
-                          <span>需处理</span>
-                          <strong>{decisionSummary.failed}</strong>
-                        </div>
-                      </div>
-                      {decisionBatches.map((batch) => {
-                        const newest = batch.rows[0]!;
-                        const isExpanded = expandedDecisionBatches.has(
-                          batch.id,
-                        );
-                        const count = batch.rows.length;
-                        return (
-                          <article
-                            key={batch.id}
-                            className="qb-decision-batch"
-                            data-status={batch.status}
-                          >
-                            <button
-                              type="button"
-                              className="qb-decision-batch__summary"
-                              aria-expanded={isExpanded}
-                              onClick={() => {
-                                setExpandedDecisionBatches((current) => {
-                                  const next = new Set(current);
-                                  if (next.has(batch.id)) next.delete(batch.id);
-                                  else next.add(batch.id);
-                                  return next;
-                                });
-                              }}
-                            >
-                              <i aria-hidden="true" />
-                              <span className="qb-decision-batch__main">
-                                <small>
-                                  {new Date(newest.ts).toLocaleString()} ·{" "}
-                                  {count > 1
-                                    ? `策略批次 × ${count}`
-                                    : newest.kind}
-                                </small>
-                                <strong>{batch.operation}</strong>
-                                <em>收获：{batch.outcome}</em>
-                              </span>
-                              <span className="qb-decision-batch__toggle">
-                                {isExpanded
-                                  ? "收起"
-                                  : count > 1
-                                    ? `查看 ${count} 条`
-                                    : "详情"}
-                              </span>
-                            </button>
-                            {isExpanded ? (
-                              <div className="qb-decision-batch__events">
-                                {batch.rows.map((row) => (
-                                  <div key={row.id}>
-                                    <small>
-                                      {new Date(row.ts).toLocaleTimeString()}
-                                    </small>
-                                    <strong>{row.title}</strong>
-                                    <pre>{row.body}</pre>
-                                  </div>
-                                ))}
-                              </div>
-                            ) : null}
-                          </article>
-                        );
-                      })}
-                    </>
-                  )
-                ) : null}
-                {flowTab === "drivers" ? (
-                  traderDrivers.length === 0 ? (
-                    <div
-                      style={{
-                        fontSize: 12,
-                        color: "var(--qb-main-meta, #71717a)",
+                      onPlaceBracket={async (
+                        side,
+                        qty,
+                        orderKind,
+                        takeProfitPrice,
+                        stopLossPrice,
+                        entryLimitPrice,
+                      ) => {
+                        const data = await engine.placeBracketOrder({
+                          side,
+                          qty,
+                          entryOrderType: orderKind,
+                          takeProfitPrice,
+                          stopLossPrice,
+                          ...(entryLimitPrice !== undefined
+                            ? { entryLimitPrice }
+                            : {}),
+                          executionMode,
+                        });
+                        setLastOrderIntentId(data.entry.orderIntentId);
+                        void refreshExecutionIntents();
                       }}
-                    >
-                      暂无策略驱动。来源包括：策略运行时评估、定时任务、资讯
-                      RSS、外部通信、告警与用户指令。
-                    </div>
-                  ) : (
-                    [...traderDrivers].reverse().map((row) => (
-                      <div
-                        key={row.id}
-                        style={styles.logCard}
-                        data-qb-trader-card
-                      >
-                        <div style={styles.logMeta}>
-                          {new Date(row.ts).toLocaleString()}
-                          <span style={styles.driverKind}>
-                            {row.driverKind}
-                          </span>
-                        </div>
-                        <div style={styles.logTitle}>{row.title}</div>
-                        <div style={styles.logBody}>{row.body}</div>
-                      </div>
-                    ))
-                  )
-                ) : null}
-                {flowTab === "messages" ? (
-                  traderAgentMessages.length === 0 ? (
-                    <div
-                      style={{
-                        fontSize: 12,
-                        color: "var(--qb-main-meta, #71717a)",
-                      }}
-                    >
-                      暂无 A2A 消息。工作流内 Agent 间 TASK_ASSIGN /
-                      ORDER_INTENT / RISK_BLOCK 等将显示在此。
-                    </div>
-                  ) : (
-                    [...traderAgentMessages].reverse().map((row) => (
-                      <div
-                        key={row.id}
-                        style={styles.logCard}
-                        data-qb-trader-card
-                      >
-                        <div style={styles.logMeta}>
-                          {new Date(row.ts).toLocaleString()}
-                          <span style={styles.msgType}>{row.messageType}</span>
-                        </div>
-                        <div style={styles.logTitle}>
-                          {row.senderRole} → {row.receiverRole ?? "—"}
-                        </div>
-                        <div style={styles.logBody}>{row.summary}</div>
-                        <div
-                          style={{
-                            ...styles.logBody,
-                            marginTop: 4,
-                            fontSize: 11,
-                            opacity: 0.85,
-                          }}
-                        >
-                          {row.body}
-                        </div>
-                      </div>
-                    ))
-                  )
-                ) : null}
-              </div>
-              <div style={styles.cmdRow} data-qb-trader-bar>
-                <input
-                  style={styles.cmdInp}
-                  value={userCmd}
-                  onChange={(e) => setUserCmd(e.target.value)}
-                  placeholder="用户指令：买入 100 / 卖出 50 / 撤单 <intentId>"
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") void submitUserCmd();
-                  }}
-                />
-                <button
-                  type="button"
-                  className="qb-btn-primary-brand"
-                  disabled={engine.busy || !engine.session || !userCmd.trim()}
-                  onClick={() => void submitUserCmd()}
-                >
-                  执行
-                </button>
-              </div>
-            </div>
-
-            <div
-              className="qb-trader-module qb-a3d-tilt qb-trade-execution"
-              style={styles.rightCol}
-            >
-              <div style={styles.klineSlot}>
-                <div style={styles.klineToolbar} data-qb-trader-bar>
-                  <label style={styles.lab}>
-                    代码
-                    <input
-                      style={styles.field}
-                      value={chartSpec.symbol}
-                      onChange={(e) => setChartSpec({ symbol: e.target.value })}
-                      placeholder="600000"
-                    />
-                  </label>
-                  <div style={styles.lab}>
-                    <span>市场</span>
-                    <ChartMarketSelect
-                      style={styles.field}
-                      value={chartSpec.exchange}
-                      onChange={(exchange) => setChartSpec({ exchange })}
-                    />
-                  </div>
-                  <label style={styles.lab}>
-                    周期
-                    <select
-                      style={styles.field}
-                      value={chartSpec.timeframe}
-                      onChange={(e) =>
-                        setChartSpec({ timeframe: e.target.value })
+                      onCancelLast={
+                        lastOrderIntentId
+                          ? async () => {
+                              await engine.cancelOrder(lastOrderIntentId);
+                              setLastOrderIntentId(null);
+                              void refreshExecutionIntents();
+                            }
+                          : undefined
                       }
-                    >
-                      {CHART_TIMEFRAMES.map((tf) => (
-                        <option key={tf} value={tf}>
-                          {tf}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <button
-                    type="button"
-                    className="qb-btn-ghost qb-btn--compact"
-                    onClick={() => requestChartReload()}
-                  >
-                    刷新
-                  </button>
+                    />
+                  </div>
                 </div>
-                <div
-                  style={{
-                    flex: 1,
-                    minHeight: 0,
-                    display: "flex",
-                    flexDirection: "column",
-                  }}
-                >
-                  <KlinePanel embedded linkTraderMarkers />
-                </div>
-              </div>
-              <div style={styles.tradeSlot}>
-                <IdeQuickTradePanel
-                  variant="trader"
-                  traderLinked
-                  traderBusy={engine.busy}
-                  executionMode={executionMode}
-                  lastOrderIntentId={lastOrderIntentId}
-                  onPlaceOrder={async (side, qty, orderKind, price) => {
-                    const data = await engine.placeOrder({
-                      side,
-                      qty,
-                      orderType: orderKind,
-                      price,
-                      executionMode,
-                    });
-                    if (data?.orderIntentId)
-                      setLastOrderIntentId(data.orderIntentId);
-                    void refreshExecutionIntents();
-                  }}
-                  onPlaceBracket={async (
-                    side,
-                    qty,
-                    orderKind,
-                    takeProfitPrice,
-                    stopLossPrice,
-                    entryLimitPrice,
-                  ) => {
-                    const data = await engine.placeBracketOrder({
-                      side,
-                      qty,
-                      entryOrderType: orderKind,
-                      takeProfitPrice,
-                      stopLossPrice,
-                      ...(entryLimitPrice !== undefined
-                        ? { entryLimitPrice }
-                        : {}),
-                      executionMode,
-                    });
-                    setLastOrderIntentId(data.entry.orderIntentId);
-                    void refreshExecutionIntents();
-                  }}
-                  onCancelLast={
-                    lastOrderIntentId
-                      ? async () => {
-                          await engine.cancelOrder(lastOrderIntentId);
-                          setLastOrderIntentId(null);
-                          void refreshExecutionIntents();
-                        }
-                      : undefined
-                  }
-                />
               </div>
             </div>
-          </div>
-        </div>
+          )}
+        </>
       )}
     </div>
   );

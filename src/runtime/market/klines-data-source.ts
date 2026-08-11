@@ -135,7 +135,16 @@ export function resolveEffectiveKlinesSource(params: {
   ) {
     return "futu_bridge";
   }
-  if (params.hasIbAvailable && (market === "US" || market === "HK")) {
+  const isCompactOptionContract = /^[A-Z]{1,6}\d{6}[CP]\d{8}$/.test(
+    (params.symbol ?? "").trim().toUpperCase()
+  );
+  if (
+    params.hasIbAvailable &&
+    (market === "US" ||
+      market === "HK" ||
+      market === "FUTURES" ||
+      (market === "OPTION" && isCompactOptionContract))
+  ) {
     return "ib_bridge";
   }
   if (params.period === "1d" && params.hasTushareToken) return "tushare_daily";
@@ -148,6 +157,14 @@ export function symbolToYahooSymbol(symbol: string, exchange: string): string {
   const s = symbol.trim().toUpperCase();
   const ex = exchange.trim().toUpperCase();
   if (!s) return s;
+  // Yahoo 原生连续期货与指数符号，不可按股票代码重写。
+  if (/^[A-Z0-9]{1,8}=F$/.test(s) || /^\^[A-Z0-9.-]{1,12}$/.test(s)) return s;
+  if (ex === "CME" || ex === "FUTURES") {
+    if (/^\/[A-Z0-9]{1,4}$/.test(s)) return `${s.slice(1)}=F`;
+    return s;
+  }
+  // 期权图表由上层先切到 underlying；若显式请求 OCC 合约，保留代码并让上游透明报无覆盖。
+  if (ex === "OPRA" || ex === "OPTION") return s;
   if (s.includes(".")) {
     if (s.endsWith(".SH")) return `${s.slice(0, -3)}.SS`;
     return s;

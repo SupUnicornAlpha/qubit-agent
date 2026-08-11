@@ -132,7 +132,14 @@ export function previousTradingDay(d: Date, market: string): Date {
 }
 
 /** 显式的市场列表（与 trading-calendar.ts 的 MarketCode 一致） */
-export const SUPPORTED_MARKETS: ReadonlyArray<MarketCode> = ["CN", "US", "HK", "CRYPTO"];
+export const SUPPORTED_MARKETS: ReadonlyArray<MarketCode> = [
+  "CN",
+  "US",
+  "HK",
+  "CRYPTO",
+  "FUTURES",
+  "OPTION",
+];
 
 /**
  * ISO 'YYYY-MM-DD' → UTC 00:00:00 Date。给 listTradingDays / mark fetcher 串 ISO 用。

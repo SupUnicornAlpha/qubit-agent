@@ -140,8 +140,7 @@ impl CheckpointStore for SqliteCheckpointStore {
                 .map_err(|e| RuntimeError::Internal(format!("load: {e}")))?;
             match json {
                 Some(j) => Ok(Some(
-                    serde_json::from_str(&j)
-                        .map_err(|e| RuntimeError::Internal(e.to_string()))?,
+                    serde_json::from_str(&j).map_err(|e| RuntimeError::Internal(e.to_string()))?,
                 )),
                 None => Ok(None),
             }
@@ -200,9 +199,9 @@ impl CheckpointStore for SqliteCheckpointStore {
         let db = Arc::clone(&self.db);
         let inbox_id = inbox_id.to_string();
         tokio::task::spawn_blocking(move || {
-            let mut item = db.get_hitl(&inbox_id)?.ok_or_else(|| {
-                RuntimeError::Internal(format!("hitl get: missing {inbox_id}"))
-            })?;
+            let mut item = db
+                .get_hitl(&inbox_id)?
+                .ok_or_else(|| RuntimeError::Internal(format!("hitl get: missing {inbox_id}")))?;
             item.status = status;
             db.update_hitl(&item)
         })

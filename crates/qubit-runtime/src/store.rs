@@ -249,11 +249,11 @@ impl MemoryStore {
     ) -> Result<(), RuntimeError> {
         let snapshot = {
             let mut map = self.sessions.write().await;
-            let rec = map.get_mut(session_id.as_str()).ok_or_else(|| {
-                ProtocolError::NotFound {
+            let rec = map
+                .get_mut(session_id.as_str())
+                .ok_or_else(|| ProtocolError::NotFound {
                     resource: format!("session {session_id}"),
-                }
-            })?;
+                })?;
             rec.view.updated_at_ms = now_ms();
             rec.active_turn = turn;
             rec.clone()
@@ -262,14 +262,18 @@ impl MemoryStore {
         Ok(())
     }
 
-    pub async fn bump_event_seq(&self, session_id: &SessionId, seq: u64) -> Result<(), RuntimeError> {
+    pub async fn bump_event_seq(
+        &self,
+        session_id: &SessionId,
+        seq: u64,
+    ) -> Result<(), RuntimeError> {
         let snapshot = {
             let mut map = self.sessions.write().await;
-            let rec = map.get_mut(session_id.as_str()).ok_or_else(|| {
-                ProtocolError::NotFound {
+            let rec = map
+                .get_mut(session_id.as_str())
+                .ok_or_else(|| ProtocolError::NotFound {
                     resource: format!("session {session_id}"),
-                }
-            })?;
+                })?;
             rec.view.event_seq = seq;
             rec.view.updated_at_ms = now_ms();
             rec.clone()
@@ -285,11 +289,11 @@ impl MemoryStore {
     ) -> Result<(), RuntimeError> {
         let snapshot = {
             let mut map = self.sessions.write().await;
-            let rec = map.get_mut(session_id.as_str()).ok_or_else(|| {
-                ProtocolError::NotFound {
+            let rec = map
+                .get_mut(session_id.as_str())
+                .ok_or_else(|| ProtocolError::NotFound {
                     resource: format!("session {session_id}"),
-                }
-            })?;
+                })?;
             rec.plan = plan;
             rec.view.updated_at_ms = now_ms();
             rec.clone()
@@ -298,7 +302,10 @@ impl MemoryStore {
         Ok(())
     }
 
-    pub async fn get_plan(&self, session_id: &SessionId) -> Result<Option<AgentPlanSnapshot>, RuntimeError> {
+    pub async fn get_plan(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Option<AgentPlanSnapshot>, RuntimeError> {
         Ok(self.get_session(session_id).await?.plan)
     }
 
@@ -310,11 +317,11 @@ impl MemoryStore {
     ) -> Result<(), RuntimeError> {
         let snapshot = {
             let mut map = self.sessions.write().await;
-            let rec = map.get_mut(session_id.as_str()).ok_or_else(|| {
-                ProtocolError::NotFound {
+            let rec = map
+                .get_mut(session_id.as_str())
+                .ok_or_else(|| ProtocolError::NotFound {
                     resource: format!("session {session_id}"),
-                }
-            })?;
+                })?;
             let id = record.request.invocation_id.as_str();
             if let Some(slot) = rec
                 .invocations

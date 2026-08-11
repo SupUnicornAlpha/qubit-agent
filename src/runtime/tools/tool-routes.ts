@@ -8,6 +8,7 @@ export const TOOL_CONNECTOR_ROUTES: Record<string, string> = {
   fetch_klines: "qubit-data",
   fetch_ticks: "qubit-data",
   fetch_quote: "qubit-data",
+  fetch_option_chain: "qubit-data",
   fetch_order_book: "qubit-data",
   fetch_trades: "qubit-data",
   fetch_chip_distribution: "qubit-data",

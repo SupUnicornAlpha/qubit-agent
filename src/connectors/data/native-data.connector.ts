@@ -4,6 +4,7 @@ import {
 } from "../../runtime/config/builtin-connector-settings";
 import { fetchAkshareBars, fetchAkshareTencentBars } from "../../runtime/market/akshare-klines";
 import { fetchBinanceBars } from "../../runtime/market/binance-klines";
+import { fetchYahooOptionChain } from "../../runtime/market/options-chain";
 import { isCryptoMarket } from "../../runtime/market/crypto-market";
 import { fetchEastMoneyBars, isChinaAShareMarket } from "../../runtime/market/eastmoney-klines";
 import {
@@ -182,6 +183,7 @@ export class QubitNativeDataConnector extends DataConnector {
       "fetch_klines",
       "fetch_ticks",
       "fetch_quote",
+      "fetch_option_chain",
       "fetch_order_book",
       "fetch_trades",
       "fetch_chip_distribution",
@@ -194,7 +196,7 @@ export class QubitNativeDataConnector extends DataConnector {
       "fetch_asset_info",
       "write_snapshot",
     ],
-    assetClasses: ["stock", "crypto"],
+    assetClasses: ["stock", "option", "future", "crypto"],
     latencyProfile: "batch",
     description:
       "Built-in market data: daily (Tushare / East Money / Yahoo) and intraday OHLCV (East Money A-share / Yahoo); empty when unavailable.",
@@ -406,6 +408,22 @@ export class QubitNativeDataConnector extends DataConnector {
         } as TOutput;
       }
       return bars as TOutput;
+    }
+    if (operation === "fetch_option_chain") {
+      const raw = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
+      const p = raw as Record<string, unknown>;
+      const symbol =
+        (typeof p.symbol === "string" && p.symbol.trim()) ||
+        (typeof p.underlying === "string" && p.underlying.trim()) ||
+        (typeof p.ticker === "string" && p.ticker.trim()) ||
+        "";
+      if (!symbol) throw new Error("missing_symbol: fetch_option_chain: symbol or underlying is required");
+      const liveSettings = await loadBuiltinConnectorSettings();
+      return (await fetchYahooOptionChain({
+        symbol,
+        ...(typeof p.expiry === "string" && p.expiry.trim() ? { expiry: p.expiry } : {}),
+        settings: liveSettings,
+      })) as TOutput;
     }
     if (operation === "fetch_quote") {
       const raw = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};

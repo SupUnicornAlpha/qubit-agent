@@ -29,13 +29,12 @@ impl AgentAdmission for DefaultAdmission {
         }
         match spec.execution_kind {
             ExecutionKind::Primary => Ok(()),
-            ExecutionKind::Subagent | ExecutionKind::Reactor => Err(ProtocolError::AdmissionDenied {
-                message: format!(
-                    "{:?} cannot accept user turns",
-                    spec.execution_kind
-                ),
+            ExecutionKind::Subagent | ExecutionKind::Reactor => {
+                Err(ProtocolError::AdmissionDenied {
+                    message: format!("{:?} cannot accept user turns", spec.execution_kind),
+                }
+                .into())
             }
-            .into()),
         }
     }
 

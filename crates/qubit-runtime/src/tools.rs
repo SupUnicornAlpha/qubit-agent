@@ -336,12 +336,13 @@ pub fn infer_callee_from_goal(goal: &str, specs: &[AgentSpec]) -> Option<String>
             "def-analyst-sentiment",
             &["舆情分析", "情绪", "sentiment analyst"],
         ),
-        ("def-research", &["因子", "策略", "回测", "factor", "strategy"]),
+        (
+            "def-research",
+            &["因子", "策略", "回测", "factor", "strategy"],
+        ),
     ];
     for (spec_id, keys) in candidates {
-        if keys.iter().any(|k| g.contains(k))
-            && specs.iter().any(|s| s.id.as_str() == *spec_id)
-        {
+        if keys.iter().any(|k| g.contains(k)) && specs.iter().any(|s| s.id.as_str() == *spec_id) {
             return Some((*spec_id).to_string());
         }
     }
@@ -360,7 +361,12 @@ fn format_available_specs(specs: &[AgentSpec]) -> String {
         })
         .map(|s| {
             let labels = s.labels.join(",");
-            format!("{} ({}; labels=[{}])", s.id.as_str(), s.display_name, labels)
+            format!(
+                "{} ({}; labels=[{}])",
+                s.id.as_str(),
+                s.display_name,
+                labels
+            )
         })
         .collect();
     rows.sort();
@@ -457,10 +463,7 @@ impl L0ToolHost {
         let sid = match self.session_id.read().await.clone() {
             Some(s) => s,
             None => {
-                return Ok(tool_err(
-                    &call.call_id,
-                    "update_plan: no session bound",
-                ));
+                return Ok(tool_err(&call.call_id, "update_plan: no session bound"));
             }
         };
         let session_mode = self
@@ -605,20 +608,14 @@ impl L0ToolHost {
         let mut record = match invoker.invoke_agent(req, cancel).await {
             Ok(r) => r,
             Err(e) => {
-                return Ok(tool_err(
-                    &call.call_id,
-                    format!("agent.invoke failed: {e}"),
-                ));
+                return Ok(tool_err(&call.call_id, format!("agent.invoke failed: {e}")));
             }
         };
 
         // Child turn rebinds L0 session; restore parent for subsequent tools.
         self.bind_session(parent_sid).await;
 
-        let mut ok = matches!(
-            record.state,
-            qubit_protocol::InvocationState::Completed
-        );
+        let mut ok = matches!(record.state, qubit_protocol::InvocationState::Completed);
         // Cursor/Codex-style: empty child answer is a failed handoff, not success.
         // Mark not-ok so FAIL_CIRCUIT can strip blind retries and parent synthesizes.
         let empty_handoff = {
@@ -827,11 +824,13 @@ mod tests {
     #[test]
     fn agent_invoke_extracts_aliases() {
         assert_eq!(
-            extract_agent_invoke_callee_hint(&json!({"role": "news_event", "goal": "g"})).as_deref(),
+            extract_agent_invoke_callee_hint(&json!({"role": "news_event", "goal": "g"}))
+                .as_deref(),
             Some("news_event")
         );
         assert_eq!(
-            extract_agent_invoke_callee_hint(&json!({"agent": {"id": "def-news-event"}})).as_deref(),
+            extract_agent_invoke_callee_hint(&json!({"agent": {"id": "def-news-event"}}))
+                .as_deref(),
             Some("def-news-event")
         );
         assert_eq!(

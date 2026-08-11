@@ -46,6 +46,7 @@ const MARKET_DATA_TOOLS = new Set([
   "fetch_fundamentals",
   "fetch_ticks",
   "fetch_quote",
+  "fetch_option_chain",
   "market.snapshot.get",
   ...MARKET_GOVERNANCE_TOOLS,
 ]);

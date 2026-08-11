@@ -103,6 +103,8 @@ function instrumentKey(symbol: string, venue: string): string {
 function inferAssetClass(symbol: string, venue: string): MarketAssetClass {
   const market = resolveTickerMarket(symbol, { hintExchange: venue }).market;
   if (market === "CRYPTO") return "crypto";
+  if (market === "FUTURES") return "future";
+  if (market === "OPTION") return "option";
   if (market === "US" || market === "CN" || market === "HK") return "equity";
   return "unknown";
 }

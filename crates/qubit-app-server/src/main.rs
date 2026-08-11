@@ -240,9 +240,11 @@ async fn dispatch(state: &AppState, method: &str, params: Value) -> Result<Value
             Ok(json!({ "ok": true }))
         }
         methods::HITL_INBOX_LIST => {
-            let filter: HitlInboxFilter =
-                serde_json::from_value(params).unwrap_or_default();
-            let items = rt.list_hitl_inbox(filter).await.map_err(|e| e.to_string())?;
+            let filter: HitlInboxFilter = serde_json::from_value(params).unwrap_or_default();
+            let items = rt
+                .list_hitl_inbox(filter)
+                .await
+                .map_err(|e| e.to_string())?;
             serde_json::to_value(items).map_err(|e| e.to_string())
         }
         methods::AGENT_LIST => {
@@ -261,8 +263,7 @@ async fn dispatch(state: &AppState, method: &str, params: Value) -> Result<Value
             serde_json::to_value(rec).map_err(|e| e.to_string())
         }
         methods::TRIGGER_INGEST => {
-            let event: TriggerEvent =
-                serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let event: TriggerEvent = serde_json::from_value(params).map_err(|e| e.to_string())?;
             let turn = rt.ingest_trigger(event).await.map_err(|e| e.to_string())?;
             Ok(json!({ "turn_id": turn }))
         }
@@ -312,13 +313,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn build_runtime() -> CoreRuntimeService {
-    use std::sync::Arc as StdArc;
     use qubit_runtime::{OpenAiCompatibleClient, OpenAiCompatibleConfig};
+    use std::sync::Arc as StdArc;
 
     let has_key = std::env::var("QUBIT_LLM_API_KEY")
         .ok()
         .filter(|s| !s.trim().is_empty())
-        .or_else(|| std::env::var("OPENAI_API_KEY").ok().filter(|s| !s.trim().is_empty()))
+        .or_else(|| {
+            std::env::var("OPENAI_API_KEY")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+        })
         .is_some();
     let force_fake = std::env::var("QUBIT_CORE_FAKE_MODEL")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -347,29 +352,30 @@ fn build_runtime() -> CoreRuntimeService {
         };
     }
 
-    let models: Option<StdArc<dyn qubit_runtime::ModelClient>> =
-        if has_key || std::env::var("QUBIT_LLM_BASE_URL").is_ok() {
-            match OpenAiCompatibleClient::from_env() {
-                Ok(client) => {
-                    let cfg = OpenAiCompatibleConfig::default();
-                    info!(
-                        model = %cfg.model,
-                        base_url = %cfg.base_url,
-                        "Core LLM: OpenAI-compatible client"
-                    );
-                    Some(StdArc::new(client))
-                }
-                Err(e) => {
-                    warn!(error = %e, "failed to init OpenAI client; falling back to FakeModelClient");
-                    None
-                }
+    let models: Option<StdArc<dyn qubit_runtime::ModelClient>> = if has_key
+        || std::env::var("QUBIT_LLM_BASE_URL").is_ok()
+    {
+        match OpenAiCompatibleClient::from_env() {
+            Ok(client) => {
+                let cfg = OpenAiCompatibleConfig::default();
+                info!(
+                    model = %cfg.model,
+                    base_url = %cfg.base_url,
+                    "Core LLM: OpenAI-compatible client"
+                );
+                Some(StdArc::new(client))
             }
-        } else {
-            warn!(
+            Err(e) => {
+                warn!(error = %e, "failed to init OpenAI client; falling back to FakeModelClient");
+                None
+            }
+        }
+    } else {
+        warn!(
                 "no QUBIT_LLM_API_KEY / OPENAI_API_KEY — Core using FakeModelClient stub (will not echo prompts)"
             );
-            None
-        };
+        None
+    };
 
     if skip_db {
         return match models {
@@ -403,10 +409,7 @@ fn build_runtime() -> CoreRuntimeService {
     }
 }
 
-async fn load_agent_specs_file(
-    rt: &CoreRuntimeService,
-    path: &str,
-) -> Result<usize, String> {
+async fn load_agent_specs_file(rt: &CoreRuntimeService, path: &str) -> Result<usize, String> {
     let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
     let specs: Vec<AgentSpec> = serde_json::from_str(&text).map_err(|e| e.to_string())?;
     let n = specs.len();

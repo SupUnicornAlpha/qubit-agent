@@ -1,7 +1,7 @@
 import type { ResearchScopeInput } from "../api/types";
 
 export type ResearchScopeMode = "single" | "basket" | "sector" | "explore";
-export type ResearchInstrumentUi = "equity_long" | "equity_short" | "option";
+export type ResearchInstrumentUi = "equity_long" | "equity_short" | "option" | "future" | "crypto";
 
 export function parseSymbolList(raw: string): string[] {
   return [
@@ -29,7 +29,10 @@ export function buildResearchScopePayload(input: {
   optionStrike: string;
   optionRight: "call" | "put" | "";
 }): ResearchScopeInput | null {
-  const instrument = input.instrument === "option" ? "option" : "equity";
+  const instrument =
+    input.instrument === "option" || input.instrument === "future" || input.instrument === "crypto"
+      ? input.instrument
+      : "equity";
   const positionSide = input.instrument === "equity_short" ? "short" : "long";
 
   if (input.mode === "explore") {
@@ -107,6 +110,8 @@ export function scopeModeLabel(mode: ResearchScopeMode): string {
 export function instrumentLabel(i: ResearchInstrumentUi): string {
   if (i === "equity_short") return "股票做空";
   if (i === "option") return "期权";
+  if (i === "future") return "期货";
+  if (i === "crypto") return "加密资产";
   return "股票多头";
 }
 
@@ -241,6 +246,35 @@ export const RESEARCH_PROMPT_TEMPLATES: ResearchPromptTemplate[] = [
       "3. 识别合适的波动率策略：long straddle / short iron condor / calendar spread 等；",
       "4. Greeks：Delta-neutral 入场点 + Gamma / Vega 风险预算；",
       "5. 流动性：bid-ask spread、open interest 验证可执行性。",
+    ].join("\n"),
+  },
+  {
+    id: "futures-term-structure",
+    label: "期货趋势与期限结构",
+    modes: ["single", "basket", "explore"],
+    instruments: ["future"],
+    summary: "趋势、换月、基差与保证金风险的完整研究框架",
+    prompt: [
+      "请对当前期货合约进行研究，先用 `fetch_klines` 校验合约/连续合约与数据覆盖：",
+      "1. 区分连续合约和可交易到期合约，标明最近可交割合约与换月风险；",
+      "2. 评估趋势、波动率、关键价格位和成交量/持仓量（缺数据必须标注）；",
+      "3. 分析期限结构、基差、宏观驱动和跨品种相关性；",
+      "4. 给出保证金、隔夜跳空、流动性和交割相关风险，而非直接把连续价视为可执行价格。",
+    ].join("\n"),
+  },
+  {
+    id: "crypto-market-structure",
+    label: "加密资产市场结构",
+    modes: ["single", "basket", "explore"],
+    instruments: ["crypto"],
+    summary: "24×7 行情、波动率、流动性与交易所风险研究",
+    prompt: [
+      "请对当前加密资产开展研究，先用 `fetch_klines` 获取并校验行情：",
+      "1. 评估多周期趋势、波动率、成交量及与 BTC/ETH 的相关性；",
+      "2. 说明 24×7 市场中周末流动性、跳价及交易所间价差风险；",
+      "3. 若涉及永续合约，必须单列资金费率、杠杆和清算风险；",
+      "4. 纳入稳定币、交易所托管、监管与链上事件的非价格风险；",
+      "5. 所有结论注明数据来源与时间，不可把现货研究级数据作为实盘执行报价。",
     ].join("\n"),
   },
   {

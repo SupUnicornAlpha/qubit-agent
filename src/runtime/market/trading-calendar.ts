@@ -1,4 +1,4 @@
-export type MarketCode = "HK" | "US" | "CN" | "CRYPTO";
+export type MarketCode = "HK" | "US" | "CN" | "CRYPTO" | "FUTURES" | "OPTION";
 
 export interface TradingSessionConfig {
   tradingDays: number[];
@@ -31,6 +31,19 @@ const DEFAULT_SESSIONS: Record<MarketCode, TradingSessionConfig> = {
     tradingStart: "00:00",
     tradingEnd: "23:59",
     timezone: "UTC",
+  },
+  FUTURES: {
+    // CME Globex: 周日傍晚开盘、周五傍晚收盘；实际休市日仍由上游行情源裁剪。
+    tradingDays: [0, 1, 2, 3, 4, 5],
+    tradingStart: "18:00",
+    tradingEnd: "17:00",
+    timezone: "America/Chicago",
+  },
+  OPTION: {
+    tradingDays: [1, 2, 3, 4, 5],
+    tradingStart: "09:30",
+    tradingEnd: "16:00",
+    timezone: "America/New_York",
   },
 };
 

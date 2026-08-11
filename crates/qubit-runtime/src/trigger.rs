@@ -64,7 +64,11 @@ impl TriggerIngressService {
             if spec.execution_kind != ExecutionKind::Reactor || !spec.enabled {
                 continue;
             }
-            if spec.triggers.iter().any(|t| trigger_matches(t, &event.source)) {
+            if spec
+                .triggers
+                .iter()
+                .any(|t| trigger_matches(t, &event.source))
+            {
                 matches.push(spec);
             }
         }
@@ -110,19 +114,12 @@ impl TriggerIngress for TriggerIngressService {
             .await?;
         let session = self
             .store
-            .create_session(
-                workspace_id,
-                &instance,
-                &spec,
-                InteractionMode::Agent,
-            )
+            .create_session(workspace_id, &instance, &spec, InteractionMode::Agent)
             .await;
 
         let goal = format!(
             "[reactor trigger]\nevent_id={}\ncorrelation={:?}\npayload={}",
-            event.event_id,
-            event.correlation_id,
-            event.payload
+            event.event_id, event.correlation_id, event.payload
         );
 
         let (turn_id, outcome) = self
@@ -140,7 +137,10 @@ impl TriggerIngress for TriggerIngressService {
                 CancelToken::new(),
                 RunTurnOpts {
                     max_iterations: Some(spec.max_iterations.min(4).max(1)),
-                    recipe_key: spec.default_recipe_id.clone().or_else(|| Some("open".into())),
+                    recipe_key: spec
+                        .default_recipe_id
+                        .clone()
+                        .or_else(|| Some("open".into())),
                     ..Default::default()
                 },
             )
@@ -164,9 +164,10 @@ fn trigger_matches(configured: &TriggerSpec, incoming: &TriggerSpec) -> bool {
         (TriggerSpec::Queue { topic: a, .. }, TriggerSpec::Queue { topic: b, .. }) => a == b,
         (TriggerSpec::A2a { capability: a }, TriggerSpec::A2a { capability: b }) => a == b,
         (TriggerSpec::Webhook { path: a, .. }, TriggerSpec::Webhook { path: b, .. }) => a == b,
-        (TriggerSpec::DomainEvent { event_name: a }, TriggerSpec::DomainEvent { event_name: b }) => {
-            a == b
-        }
+        (
+            TriggerSpec::DomainEvent { event_name: a },
+            TriggerSpec::DomainEvent { event_name: b },
+        ) => a == b,
         (TriggerSpec::Schedule { cron: a }, TriggerSpec::Schedule { cron: b }) => a == b,
         _ => false,
     }

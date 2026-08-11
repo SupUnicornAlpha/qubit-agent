@@ -84,7 +84,10 @@ pub fn prune_tool_observations(history: &mut [Value], protect_chars: usize) {
 pub fn tool_round_is_well_formed(history: &[Value]) -> bool {
     let mut i = 0;
     while i < history.len() {
-        let role = history[i].get("role").and_then(|v| v.as_str()).unwrap_or("");
+        let role = history[i]
+            .get("role")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         if role != "assistant" {
             i += 1;
             continue;
@@ -104,7 +107,10 @@ pub fn tool_round_is_well_formed(history: &[Value]) -> bool {
         let mut seen = 0usize;
         let mut j = i + 1;
         while j < history.len() {
-            let r = history[j].get("role").and_then(|v| v.as_str()).unwrap_or("");
+            let r = history[j]
+                .get("role")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             if r != "tool" {
                 break;
             }

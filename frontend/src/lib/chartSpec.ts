@@ -69,8 +69,15 @@ export const CHART_MARKET_GROUPS: ChartMarketGroup[] = [
     ],
   },
   {
-    label: "其他",
-    options: [{ value: "CRYPTO", label: "加密货币 (USD)" }],
+    label: "衍生品",
+    options: [
+      { value: "CME", label: "期货（CME / Yahoo 连续合约）" },
+      { value: "OPRA", label: "美股期权（OPRA，合约链）" },
+    ],
+  },
+  {
+    label: "数字资产",
+    options: [{ value: "CRYPTO", label: "加密货币（Binance 现货）" }],
   },
 ];
 
@@ -115,6 +122,14 @@ const EXCHANGE_ALIASES: Record<string, string> = {
   CC: "CRYPTO",
   BINANCE: "CRYPTO",
   CRYPTO: "CRYPTO",
+  CME: "CME",
+  CBOT: "CME",
+  NYMEX: "CME",
+  COMEX: "CME",
+  FUTURES: "CME",
+  OPRA: "OPRA",
+  OCC: "OPRA",
+  OPTION: "OPRA",
 };
 
 export function coerceChartMarketExchange(raw: string): string {
@@ -142,8 +157,10 @@ export function guessChartExchangeFromSymbol(symbol: string): string {
     if (sym.startsWith("4") || sym.startsWith("8")) return "BJ";
   }
   if (/^\d{5}$/.test(sym)) return "HK";
-  if (/^[A-Z]{1,5}$/.test(sym)) return "US";
   if (/^[A-Z0-9]+USDT?$/.test(sym) || sym.includes("BTC") || sym.includes("ETH")) return "CRYPTO";
+  if (/^[A-Z0-9]{1,8}=F$/.test(sym) || /^\/[A-Z0-9]{1,4}$/.test(sym)) return "CME";
+  if (/^[A-Z]{1,6}\d{6}[CP]\d{8}$/.test(sym)) return "OPRA";
+  if (/^[A-Z]{1,5}$/.test(sym)) return "US";
   return DEFAULT_CHART_SPEC.exchange;
 }
 

@@ -26,13 +26,10 @@ impl TurnCancelRegistry {
     }
 
     pub async fn insert(&self, turn_id: &TurnId, token: CancelToken) {
-        self.inner.write().await.insert(
-            turn_id.as_str().to_string(),
-            Entry {
-                token,
-                abort: None,
-            },
-        );
+        self.inner
+            .write()
+            .await
+            .insert(turn_id.as_str().to_string(), Entry { token, abort: None });
     }
 
     pub async fn set_abort(&self, turn_id: &TurnId, abort: AbortHandle) {

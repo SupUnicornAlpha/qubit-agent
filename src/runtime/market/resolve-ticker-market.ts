@@ -18,10 +18,7 @@
  *  - **可信度 (confidence) 暴露**：调用方可据此决定是否额外向用户/LLM 澄清。
  *  - **A 股深沪精确按首位**：6XXXXX → SH，0/3XXXXX → SZ，4/8XXXXX → BJ。
  *
- * 非目标（不在 P0 内）：
- *  - 期权 OCC 21 位 symbol（如 `AAPL  240119C00185000`）—— 未来 P1 单独 resolver。
- *  - 期货 / 商品（USTBOND / GC=F 等）—— 未来按 Yahoo 后缀扩展。
- *  - ISIN / CUSIP 编码 —— 通常由 broker / FIGI lookup 解决，不在 prompt 路径上。
+ * 仍未覆盖：ISIN / CUSIP 编码，通常由 broker / FIGI lookup 解决，不在 prompt 路径上。
  */
 
 /** 已知的市场代号；未来可继续扩展（保持纯字符串 union 便于 LLM JSON 输出对齐） */
@@ -30,6 +27,8 @@ export type MarketCode =
   | "HK"
   | "US"
   | "CRYPTO"
+  | "FUTURES"
+  | "OPTION"
   | "JP"
   | "UK"
   | "DE"
@@ -78,6 +77,12 @@ const CRYPTO_HINT_EXCHANGES = new Set([
   "OKX",
   "BYBIT",
 ]);
+const FUTURES_HINT_EXCHANGES = new Set(["CME", "CBOT", "NYMEX", "COMEX", "ICE", "FUTURES"]);
+const OPTION_HINT_EXCHANGES = new Set(["OPRA", "OCC", "OPTION", "OPTIONS"]);
+const FUTURES_ROOTS = [
+  "ES", "NQ", "YM", "RTY", "CL", "NG", "GC", "SI", "HG", "ZB", "ZN", "ZF", "ZT",
+  "6E", "6J", "ZC", "ZS", "ZW", "HE", "LE", "KC", "SB",
+] as const;
 
 /** Yahoo 风格后缀 → (market, exchange) 映射；用于显式后缀路径 */
 const YAHOO_SUFFIX_MAP: Record<string, { market: MarketCode; exchange: string }> = {
@@ -121,6 +126,8 @@ function hintExchangeToMarket(rawHint: string): { market: MarketCode; exchange: 
   const hint = rawHint.trim().toUpperCase();
   if (!hint || hint === "UNKNOWN") return null;
   if (CRYPTO_HINT_EXCHANGES.has(hint)) return { market: "CRYPTO", exchange: "CRYPTO" };
+  if (FUTURES_HINT_EXCHANGES.has(hint)) return { market: "FUTURES", exchange: "CME" };
+  if (OPTION_HINT_EXCHANGES.has(hint)) return { market: "OPTION", exchange: "OPRA" };
   if (YAHOO_SUFFIX_MAP[hint]) return YAHOO_SUFFIX_MAP[hint];
   if (hint === "US" || hint === "NASDAQ" || hint === "NYSE" || hint === "AMEX" || hint === "OTC") {
     return { market: "US", exchange: "US" };
@@ -162,6 +169,19 @@ function looksLikeCrypto(symbolUpper: string): boolean {
   }
   if (/^[A-Z0-9]{2,12}-(USD|USDT|USDC|BUSD)$/.test(symbolUpper)) return true;
   return false;
+}
+
+function looksLikeOptionContract(symbolUpper: string): boolean {
+  // 紧凑 OCC / OPRA 格式：AAPL240621C00200000（根代码 1–6 位）。
+  return /^[A-Z]{1,6}\d{6}[CP]\d{8}$/.test(symbolUpper);
+}
+
+function looksLikeFuture(symbolUpper: string): boolean {
+  if (/^[A-Z0-9]{1,8}=F$/.test(symbolUpper) || /^\/[A-Z0-9]{1,4}$/.test(symbolUpper)) return true;
+  const root = FUTURES_ROOTS.find((candidate) => symbolUpper.startsWith(candidate));
+  if (!root) return false;
+  const suffix = symbolUpper.slice(root.length);
+  return /^[FGHJKMNQUVXZ]\d$/.test(suffix) || /^\d{2,4}$/.test(suffix);
 }
 
 /**
@@ -242,7 +262,29 @@ export function resolveTickerMarket(
     }
   }
 
-  // 3) 加密
+  // 3) 上市期权（合约优先，避免被短字母 underlying 误路由到 US 股票）。
+  if (looksLikeOptionContract(symbol)) {
+    return {
+      market: "OPTION",
+      exchange: "OPRA",
+      symbol,
+      confidence: "inferred",
+      reason: "compact OCC/OPRA option contract",
+    };
+  }
+
+  // 4) 期货连续/到期合约；Yahoo 连续合约使用 GC=F，CME 常见简码用 /ES 或 ESH5。
+  if (looksLikeFuture(symbol)) {
+    return {
+      market: "FUTURES",
+      exchange: "CME",
+      symbol,
+      confidence: "inferred",
+      reason: "futures continuous or contract symbol",
+    };
+  }
+
+  // 5) 加密
   if (looksLikeCrypto(symbol)) {
     return {
       market: "CRYPTO",
@@ -253,8 +295,8 @@ export function resolveTickerMarket(
     };
   }
 
-  // 4) Yahoo-style US indices/futures (^VIX, ^GSPC, GC=F).
-  if (/^\^[A-Z0-9.-]{1,10}$/.test(symbol) || /^[A-Z0-9]{1,6}=F$/.test(symbol)) {
+  // 6) Yahoo-style US indices（期货已在上面识别）。
+  if (/^\^[A-Z0-9.-]{1,10}$/.test(symbol)) {
     return {
       market: "US",
       exchange: "US",

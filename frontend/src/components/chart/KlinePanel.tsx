@@ -10,7 +10,7 @@ import {
   type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { getKlines, listMarketDataSources } from "../../api/backend";
+import { getKlines, getOptionChain, listMarketDataSources } from "../../api/backend";
 import type {
   KlineBar,
   KlinesErrorPayload,
@@ -18,6 +18,7 @@ import type {
   MarketDataReadiness,
   MarketDataSourceRecord,
   MarketStreamEvent,
+  OptionChain,
 } from "../../api/types";
 import { backendWebSocketUrl } from "../../api/client";
 import { CHART_TIMEFRAMES, chartControlStyle } from "../../lib/chartSpec";
@@ -150,6 +151,8 @@ export const KlinePanel: FC<{
   const [lastBars, setLastBars] = useState<KlineBar[]>([]);
   const [sourceRows, setSourceRows] = useState<MarketDataSourceRecord[]>([]);
   const [readiness, setReadiness] = useState<MarketDataReadiness | null>(null);
+  const [optionChain, setOptionChain] = useState<OptionChain | null>(null);
+  const [optionChainError, setOptionChainError] = useState<string | null>(null);
 
   const layoutChart = useCallback(() => {
     const el = wrapRef.current;
@@ -382,6 +385,29 @@ export const KlinePanel: FC<{
     chartSpec.limit,
     load,
   ]);
+
+  useEffect(() => {
+    if (chartSpec.exchange !== "OPRA" || !chartSpec.symbol.trim()) {
+      setOptionChain(null);
+      setOptionChainError(null);
+      return;
+    }
+    let cancelled = false;
+    setOptionChain(null);
+    setOptionChainError(null);
+    void getOptionChain({ symbol: chartSpec.symbol.trim() })
+      .then((chain) => {
+        if (!cancelled) setOptionChain(chain);
+      })
+      .catch((reason: unknown) => {
+        if (!cancelled) {
+          setOptionChainError(reason instanceof Error ? reason.message : String(reason));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [chartSpec.exchange, chartSpec.symbol]);
 
   useEffect(() => {
     if (chartReloadNonce === 0) return;
@@ -827,6 +853,9 @@ export const KlinePanel: FC<{
             </div>
           ) : null}
           <div ref={wrapRef} style={styles.chartCanvas} />
+          {chartSpec.exchange === "OPRA" ? (
+            <OptionChainPreview chain={optionChain} error={optionChainError} />
+          ) : null}
         </div>
       ) : (
         <div
@@ -846,6 +875,50 @@ export const KlinePanel: FC<{
         />
       ) : null}
     </div>
+  );
+};
+
+const OptionChainPreview: FC<{ chain: OptionChain | null; error: string | null }> = ({
+  chain,
+  error,
+}) => {
+  if (error) return <div style={styles.optionChainError}>期权链加载失败：{error}</div>;
+  if (!chain) return <div style={styles.optionChainHint}>正在加载研究级期权链…</div>;
+  const calls = [...chain.calls].sort((a, b) => a.strike - b.strike).slice(0, 6);
+  const puts = [...chain.puts].sort((a, b) => a.strike - b.strike).slice(0, 6);
+  const rows = Array.from({ length: Math.max(calls.length, puts.length) }, (_, index) => ({
+    call: calls[index],
+    put: puts[index],
+  }));
+  return (
+    <section style={styles.optionChain} aria-label="期权链">
+      <div style={styles.optionChainTitle}>
+        <strong>{chain.underlying} 期权链</strong>
+        <span>Yahoo 研究级数据 · 非实盘报价</span>
+      </div>
+      <div style={styles.optionChainTableWrap}>
+        <table style={styles.optionChainTable}>
+          <thead>
+            <tr>
+              <th>Call</th><th>行权价</th><th>Put</th><th>到期</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ call, put }, index) => {
+              const expiry = call?.expiration ?? put?.expiration;
+              return (
+                <tr key={`${call?.contractSymbol ?? ""}-${put?.contractSymbol ?? index}`}>
+                  <td>{call ? `${call.bid ?? "—"} / ${call.ask ?? "—"}` : "—"}</td>
+                  <td>{call?.strike ?? put?.strike ?? "—"}</td>
+                  <td>{put ? `${put.bid ?? "—"} / ${put.ask ?? "—"}` : "—"}</td>
+                  <td>{expiry ? expiry.slice(0, 10) : "—"}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 };
 
@@ -950,6 +1023,30 @@ const styles: Record<string, React.CSSProperties> = {
     color: "var(--qb-text-muted)",
     fontSize: 10,
   },
+  optionChain: {
+    margin: "0 16px 10px",
+    border: "1px solid var(--qb-kline-header-border, #27272a)",
+    borderRadius: 8,
+    overflow: "hidden",
+    fontSize: 12,
+  },
+  optionChainTitle: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: 12,
+    padding: "7px 10px",
+    background: "var(--qb-kline-embedded-bar-bg, #111114)",
+    color: "var(--qb-text-muted, #a1a1aa)",
+  },
+  optionChainTableWrap: { overflowX: "auto" },
+  optionChainTable: {
+    borderCollapse: "collapse",
+    width: "100%",
+    minWidth: 420,
+    color: "var(--qb-body-fg, #e4e4e7)",
+  },
+  optionChainHint: { padding: "8px 16px", color: "var(--qb-text-muted, #a1a1aa)", fontSize: 12 },
+  optionChainError: { padding: "8px 16px", color: "#fca5a5", fontSize: 12 },
   metaCompact: {
     fontSize: 11,
     color: "var(--qb-main-meta, #71717a)",

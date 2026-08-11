@@ -1,9 +1,9 @@
+use qubit_policy::{builtin_catalog, load_policy_snapshot};
 use qubit_protocol::{
     DeliveryStatus, EffectKind, EffectLedger, EffectRecord, PolicySnapshot, TurnState, TurnView,
 };
-use qubit_policy::{builtin_catalog, load_policy_snapshot};
-use qubit_runtime::LedgerDeliveryEvaluator;
 use qubit_runtime::DeliveryEvaluator;
+use qubit_runtime::LedgerDeliveryEvaluator;
 
 #[test]
 fn open_recipe_delivers_without_artifacts() {
@@ -88,13 +88,15 @@ fn stock_pick_research_ok_with_gaps() {
             meta: None,
         }],
     );
-    ledger.answer_text = Some(
-        "## goal\nx\n## evidence\ny\n## decision\nz\n## risks\nr\n## gaps\ng".into(),
-    );
+    ledger.answer_text =
+        Some("## goal\nx\n## evidence\ny\n## decision\nz\n## risks\nr\n## gaps\ng".into());
     let v = eval.evaluate(&snap, &ledger, &turn);
     // research floors met (1 each) but upgrade min_rows=3 → delivered_with_gaps
     assert_eq!(v.status, DeliveryStatus::DeliveredWithGaps);
-    assert!(v.reasons.iter().any(|r| r.starts_with("artifact_underfill:")));
+    assert!(v
+        .reasons
+        .iter()
+        .any(|r| r.starts_with("artifact_underfill:")));
 }
 
 #[test]

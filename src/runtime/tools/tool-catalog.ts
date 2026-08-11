@@ -291,6 +291,12 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
       "支持单个 symbol/ticker/code 或批量 symbols/tickers；单标返回扁平 Quote，多标返回 {quotes,warnings?}。",
     category: "market",
   },
+  fetch_option_chain: {
+    description:
+      "查询美股上市期权链（Call/Put、行权价、到期、Bid/Ask、成交量、未平仓、隐含波动率）。" +
+      "params: symbol 或 underlying，expiry?；数据源为 Yahoo 研究级公开 fallback，只能研究，不能作为实盘报价或 Greeks 的推导依据。",
+    category: "market",
+  },
   fetch_order_book: {
     description:
       "拉取标准化买卖盘口；CN 当前支持东财五档，CRYPTO 支持 Binance 深度",

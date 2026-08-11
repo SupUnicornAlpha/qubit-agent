@@ -91,10 +91,7 @@ fn arg_sig_for_family(family: &str, args: &Value) -> String {
     ) {
         parts.insert("symbol".into(), normalize_symbol(sym));
     }
-    if let Some(ind) = str_field(
-        &flat,
-        &["indicator", "indicators", "indicator_type", "ta"],
-    ) {
+    if let Some(ind) = str_field(&flat, &["indicator", "indicators", "indicator_type", "ta"]) {
         parts.insert("indicator".into(), normalize_indicator(ind));
     }
     if let Some(period) = str_field(&flat, &["period", "interval", "timeframe", "tf"]) {
@@ -102,7 +99,11 @@ fn arg_sig_for_family(family: &str, args: &Value) -> String {
     }
     if let Some(expr) = str_field(&flat, &["expression", "expr", "formula"]) {
         // mathjs / code-like — keep short normalized form
-        let compact: String = expr.chars().filter(|c| !c.is_whitespace()).take(80).collect();
+        let compact: String = expr
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .take(80)
+            .collect();
         parts.insert("expr".into(), compact.to_ascii_lowercase());
     }
     if let Some(q) = str_field(&flat, &["query", "q", "goal"]) {
@@ -168,10 +169,7 @@ pub fn stall_fingerprint(tool_name: &str, args: &Value, key: &str) -> String {
     let family = tool_family(tool_name, args);
     // web.* / news connectors: different URLs must share one success budget or agents
     // burn the turn paging news sites.
-    if family.starts_with("web.")
-        || family == "fetch_news"
-        || family == "fetch_news_sentiment"
-    {
+    if family.starts_with("web.") || family == "fetch_news" || family == "fetch_news_sentiment" {
         return family;
     }
     match key {
@@ -296,9 +294,9 @@ mod tests {
             "{{\"goal\":{{\"text\":\"{}\"}}}}",
             "获取半导体相关标的新闻，并在A股半导体板块中筛选超跌反弹个股".repeat(3)
         );
-        let args: Value = serde_json::from_str(&goal).unwrap_or_else(|_| {
-            json!({ "goal": { "text": "超跌反弹选股方案说明文字".repeat(20) } })
-        });
+        let args: Value = serde_json::from_str(&goal).unwrap_or_else(
+            |_| json!({ "goal": { "text": "超跌反弹选股方案说明文字".repeat(20) } }),
+        );
         let fp = stall_fingerprint("update_plan", &args, "tool_fingerprint");
         assert!(!fp.is_empty());
         assert!(fp.is_char_boundary(fp.len()));
@@ -309,7 +307,10 @@ mod tests {
         let s = r#"{"goal":{"text":"筛选A股半导体超跌反弹个股"}}"#;
         let out = truncate_utf8(s, 40);
         assert!(out.ends_with('…') || out.len() <= 40);
-        assert!(out.is_char_boundary(out.len().saturating_sub(out.ends_with('…') as usize * "…".len())));
+        assert!(out.is_char_boundary(
+            out.len()
+                .saturating_sub(out.ends_with('…') as usize * "…".len())
+        ));
         // Round-trip: truncated prefix must be valid UTF-8 (already str).
         let _ = out.chars().count();
     }

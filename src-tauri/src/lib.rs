@@ -7,8 +7,16 @@ use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+#[cfg(target_os = "macos")]
+use tauri::Emitter;
 use tauri::Manager;
+#[cfg(target_os = "macos")]
+use tauri::{
+    menu::{Menu, MenuItem, PredefinedMenuItem},
+    tray::TrayIconBuilder,
+    WebviewUrl, WebviewWindowBuilder,
+};
 use tauri_plugin_shell::process::CommandChild;
 use tauri_plugin_shell::ShellExt;
 
@@ -46,6 +54,300 @@ struct BackendStatus {
     url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+}
+
+/** 浏览器层上报给 macOS 菜单栏的极简运行摘要。 */
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct MenuBarSummary {
+    backend_connected: bool,
+    #[serde(default)]
+    running_workflows: Vec<MenuBarWorkflow>,
+    #[serde(default)]
+    running_strategies: u32,
+    #[serde(default)]
+    latest_trade_message: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct MenuBarWorkflow {
+    id: String,
+    goal: String,
+}
+
+impl Default for MenuBarSummary {
+    fn default() -> Self {
+        Self {
+            backend_connected: false,
+            running_workflows: Vec::new(),
+            running_strategies: 0,
+            latest_trade_message: None,
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn menu_label(value: &str, max_chars: usize) -> String {
+    let compact = value.replace(['\n', '\r'], " ");
+    let mut chars = compact.chars();
+    let label: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{label}…")
+    } else {
+        label
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn emit_menu_bar_action(handle: &tauri::AppHandle, action: &str, workflow_id: Option<String>) {
+    let _ = handle.emit(
+        "qubit:menu-bar-action",
+        serde_json::json!({ "action": action, "workflowId": workflow_id }),
+    );
+}
+
+#[cfg(target_os = "macos")]
+fn reveal_main_window(handle: &tauri::AppHandle) {
+    if let Some(window) = handle.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn open_menu_bar_quick_chat(handle: &tauri::AppHandle) {
+    if let Some(window) = handle.get_webview_window("menu-bar-quick-chat") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+        return;
+    }
+
+    let _ = WebviewWindowBuilder::new(
+        handle,
+        "menu-bar-quick-chat",
+        WebviewUrl::App("index.html#menu-bar-quick-chat".into()),
+    )
+    .title("快速对话")
+    .inner_size(460.0, 132.0)
+    .resizable(false)
+    .decorations(false)
+    .transparent(true)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .focused(true)
+    .center()
+    .build();
+}
+
+#[cfg(target_os = "macos")]
+fn build_menu_bar_menu(
+    handle: &tauri::AppHandle,
+    summary: &MenuBarSummary,
+) -> Result<Menu<tauri::Wry>, String> {
+    let menu = Menu::new(handle).map_err(|e| e.to_string())?;
+
+    let heading = MenuItem::with_id(
+        handle,
+        "menu-bar:heading",
+        "QUBIT · 量化 Agent",
+        false,
+        None::<&str>,
+    )
+    .map_err(|e| e.to_string())?;
+    menu.append(&heading).map_err(|e| e.to_string())?;
+
+    let backend = MenuItem::with_id(
+        handle,
+        "menu-bar:backend",
+        if summary.backend_connected {
+            "● 后端已连接"
+        } else {
+            "○ 后端离线"
+        },
+        false,
+        None::<&str>,
+    )
+    .map_err(|e| e.to_string())?;
+    menu.append(&backend).map_err(|e| e.to_string())?;
+    let separator = PredefinedMenuItem::separator(handle).map_err(|e| e.to_string())?;
+    menu.append(&separator).map_err(|e| e.to_string())?;
+
+    let workflows_heading = MenuItem::with_id(
+        handle,
+        "menu-bar:workflows-heading",
+        format!("运行中的工作流 · {}", summary.running_workflows.len()),
+        false,
+        None::<&str>,
+    )
+    .map_err(|e| e.to_string())?;
+    menu.append(&workflows_heading).map_err(|e| e.to_string())?;
+    if summary.running_workflows.is_empty() {
+        let empty = MenuItem::with_id(
+            handle,
+            "menu-bar:workflows-empty",
+            "暂无运行中的 Agent Workflow",
+            false,
+            None::<&str>,
+        )
+        .map_err(|e| e.to_string())?;
+        menu.append(&empty).map_err(|e| e.to_string())?;
+    } else {
+        for workflow in summary.running_workflows.iter().take(3) {
+            let item = MenuItem::with_id(
+                handle,
+                format!("menu-bar:workflow:{}", workflow.id),
+                format!("● {}", menu_label(&workflow.goal, 48)),
+                true,
+                None::<&str>,
+            )
+            .map_err(|e| e.to_string())?;
+            menu.append(&item).map_err(|e| e.to_string())?;
+        }
+    }
+
+    let separator = PredefinedMenuItem::separator(handle).map_err(|e| e.to_string())?;
+    menu.append(&separator).map_err(|e| e.to_string())?;
+    let trading = MenuItem::with_id(
+        handle,
+        "menu-bar:trading-status",
+        format!("交易 · {} 个策略运行中", summary.running_strategies),
+        false,
+        None::<&str>,
+    )
+    .map_err(|e| e.to_string())?;
+    menu.append(&trading).map_err(|e| e.to_string())?;
+    if let Some(message) = summary.latest_trade_message.as_deref() {
+        let latest = MenuItem::with_id(
+            handle,
+            "menu-bar:latest-trade",
+            format!("最新交易 · {}", menu_label(message, 54)),
+            false,
+            None::<&str>,
+        )
+        .map_err(|e| e.to_string())?;
+        menu.append(&latest).map_err(|e| e.to_string())?;
+    }
+    let open_trading =
+        MenuItem::with_id(handle, "menu-bar:trading", "打开交易台", true, None::<&str>)
+            .map_err(|e| e.to_string())?;
+    let open_monitoring = MenuItem::with_id(
+        handle,
+        "menu-bar:monitoring",
+        "打开运行监控",
+        true,
+        None::<&str>,
+    )
+    .map_err(|e| e.to_string())?;
+    menu.append(&open_trading).map_err(|e| e.to_string())?;
+    menu.append(&open_monitoring).map_err(|e| e.to_string())?;
+
+    let separator = PredefinedMenuItem::separator(handle).map_err(|e| e.to_string())?;
+    menu.append(&separator).map_err(|e| e.to_string())?;
+    let quick_chat = MenuItem::with_id(
+        handle,
+        "menu-bar:quick-chat",
+        "快速对话",
+        true,
+        None::<&str>,
+    )
+    .map_err(|e| e.to_string())?;
+    let show = MenuItem::with_id(handle, "menu-bar:show", "显示 QUBIT", true, None::<&str>)
+        .map_err(|e| e.to_string())?;
+    let quit = MenuItem::with_id(handle, "menu-bar:quit", "退出 QUBIT", true, None::<&str>)
+        .map_err(|e| e.to_string())?;
+    menu.append(&quick_chat).map_err(|e| e.to_string())?;
+    menu.append(&show).map_err(|e| e.to_string())?;
+    menu.append(&quit).map_err(|e| e.to_string())?;
+
+    Ok(menu)
+}
+
+#[cfg(target_os = "macos")]
+fn update_menu_bar_summary_internal(
+    handle: &tauri::AppHandle,
+    summary: &MenuBarSummary,
+) -> Result<(), String> {
+    // 前端的 health 状态与端口探测二者任一成立即视为在线；前者与窗口 UI 一致，
+    // 后者可以覆盖 Webview 刚启动、摘要尚未抵达时的短暂状态差。
+    let mut effective_summary = summary.clone();
+    effective_summary.backend_connected |= backend_port_ready();
+    let tray = handle
+        .tray_by_id("qubit-menu-bar")
+        .ok_or_else(|| "menu bar icon is unavailable".to_string())?;
+    let menu = build_menu_bar_menu(handle, &effective_summary)?;
+    tray.set_menu(Some(menu)).map_err(|e| e.to_string())?;
+    // 菜单栏只留图标：离线用系统灰阶模板图，在线恢复彩色品牌图。
+    tray.set_icon_as_template(!effective_summary.backend_connected)
+        .map_err(|e| e.to_string())?;
+    tray.set_title(None::<String>).map_err(|e| e.to_string())?;
+    tray.set_tooltip(Some(format!(
+        "QUBIT · {} workflow(s), {} strategy runtime(s)",
+        effective_summary.running_workflows.len(),
+        effective_summary.running_strategies
+    )))
+    .map_err(|e| e.to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn setup_macos_menu_bar(app: &tauri::App) -> Result<(), String> {
+    let initial = MenuBarSummary::default();
+    let menu = build_menu_bar_menu(app.handle(), &initial)?;
+    let icon = app
+        .default_window_icon()
+        .cloned()
+        .ok_or_else(|| "application icon is unavailable".to_string())?;
+    TrayIconBuilder::with_id("qubit-menu-bar")
+        .icon(icon)
+        .tooltip("QUBIT · 量化 Agent")
+        .icon_as_template(true)
+        .menu(&menu)
+        .on_menu_event(|handle, event| {
+            let id = event.id().as_ref();
+            match id {
+                "menu-bar:show" => {
+                    reveal_main_window(handle);
+                    emit_menu_bar_action(handle, "show", None);
+                }
+                "menu-bar:quick-chat" => {
+                    open_menu_bar_quick_chat(handle);
+                }
+                "menu-bar:trading" => {
+                    reveal_main_window(handle);
+                    emit_menu_bar_action(handle, "trading", None);
+                }
+                "menu-bar:monitoring" => {
+                    reveal_main_window(handle);
+                    emit_menu_bar_action(handle, "monitoring", None);
+                }
+                "menu-bar:quit" => handle.exit(0),
+                _ => {
+                    if let Some(workflow_id) = id.strip_prefix("menu-bar:workflow:") {
+                        reveal_main_window(handle);
+                        emit_menu_bar_action(handle, "workflow", Some(workflow_id.to_string()));
+                    }
+                }
+            }
+        })
+        .build(app)
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn update_menu_bar_summary(
+    handle: tauri::AppHandle,
+    summary: MenuBarSummary,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    return update_menu_bar_summary_internal(&handle, &summary);
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (handle, summary);
+        Ok(())
+    }
 }
 
 fn backend_url() -> String {
@@ -370,9 +672,7 @@ fn spawn_backend_sidecar(
             cmd = cmd.env("QUBIT_APP_SERVER_BIN", p);
         }
     }
-    let (_rx, child) = cmd
-        .spawn()
-        .map_err(|e| format!("sidecar spawn: {e}"))?;
+    let (_rx, child) = cmd.spawn().map_err(|e| format!("sidecar spawn: {e}"))?;
 
     let pid = child.pid();
     *child_guard = Some(child);
@@ -431,6 +731,11 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .manage(BackendState::default())
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            if let Err(error) = setup_macos_menu_bar(app) {
+                eprintln!("[QUBIT] failed to set up macOS menu bar: {error}");
+            }
+
             #[cfg(debug_assertions)]
             {
                 if let Some(window) = app.get_webview_window("main") {
@@ -454,7 +759,8 @@ pub fn run() {
             start_backend,
             stop_backend,
             restart_backend,
-            backend_status
+            backend_status,
+            update_menu_bar_summary
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

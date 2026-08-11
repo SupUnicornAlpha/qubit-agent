@@ -41,10 +41,10 @@ function expectTools(defId: string, requiredTools: string[]) {
 }
 
 describe("Seed Agent 定义 — 精品工具面契约", () => {
-  test("每个专家 Agent 默认授权工具 ≤10；行情 Agent 可有 12 个取证工具", () => {
+  test("每个专家 Agent 默认授权工具 ≤10；行情 Agent 可有 13 个取证工具", () => {
     for (const id of SPECIALIST_IDS) {
       const def = BY_ID.get(id)!;
-      const limit = id === "def-market-data" ? 12 : 10;
+      const limit = id === "def-market-data" ? 13 : 10;
       expect(def.tools.length, `${id} has ${def.tools.length} tools`).toBeLessThanOrEqual(limit);
     }
   });
@@ -184,6 +184,7 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
       "fetch_order_book",
       "fetch_trades",
       "fetch_chip_distribution",
+      "fetch_option_chain",
     ]);
     for (const id of SPECIALIST_IDS.filter((id) => id !== "def-market-data")) {
       const tools = BY_ID.get(id)!.tools;
