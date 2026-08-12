@@ -15,6 +15,7 @@ export const TopBar: FC = () => {
   const setInterfaceMode = useAppStore((s) => s.setInterfaceMode);
   const { t } = useTranslation();
   const [restarting, setRestarting] = useState(false);
+  const [brandImageFailed, setBrandImageFailed] = useState(false);
   const inTauri = isTauriEnv();
 
   const onRestartBackend = async () => {
@@ -45,14 +46,21 @@ export const TopBar: FC = () => {
   return (
     <header className="qb-topbar" style={styles.bar}>
       <div style={styles.brand}>
-        <img
-          src="/icon.png"
-          alt="QUBIT"
-          width={28}
-          height={28}
-          className="qb-brand-mark"
-          style={styles.mark}
-        />
+        {brandImageFailed ? (
+          <span className="qb-brand-mark" role="img" aria-label="QUBIT" style={styles.markFallback}>
+            Q
+          </span>
+        ) : (
+          <img
+            src="/icon.png"
+            alt="QUBIT"
+            width={28}
+            height={28}
+            className="qb-brand-mark"
+            style={styles.mark}
+            onError={() => setBrandImageFailed(true)}
+          />
+        )}
         <span className="qb-logo-text" style={styles.logo}>
           QUBIT
         </span>
@@ -157,6 +165,19 @@ const styles: Record<string, CSSProperties> = {
     height: 28,
     borderRadius: 7,
     objectFit: "cover",
+  },
+  markFallback: {
+    display: "grid",
+    width: 28,
+    height: 28,
+    placeItems: "center",
+    borderRadius: 7,
+    background: "linear-gradient(135deg, #175a94, #0e2f55)",
+    boxShadow: "inset 0 0 0 1px rgba(255,255,255,.22)",
+    color: "#f8fafc",
+    fontSize: 16,
+    fontWeight: 800,
+    lineHeight: 1,
   },
   logo: {
     fontWeight: 700,

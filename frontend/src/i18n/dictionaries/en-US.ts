@@ -172,6 +172,7 @@ const pack: LocalePack = {
         discovery: "Discovery",
         composer: "Composer",
         backtest: "Backtest",
+        evolution: "Evaluation & Evolution",
         script: "Scripts",
       },
       config: {

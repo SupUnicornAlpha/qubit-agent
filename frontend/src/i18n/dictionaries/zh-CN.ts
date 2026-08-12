@@ -172,6 +172,7 @@ const pack: LocalePack = {
         discovery: "挖掘工坊",
         composer: "组合工坊",
         backtest: "回测工坊",
+        evolution: "评估与进化",
         script: "脚本工坊",
       },
       config: {

@@ -15,6 +15,7 @@ const QUANT_SUB: readonly { id: QuantTab; i18nKey: string }[] = [
   { id: "discovery", i18nKey: "sidebar.quant.discovery" },
   { id: "composer", i18nKey: "sidebar.quant.composer" },
   { id: "backtest", i18nKey: "sidebar.quant.backtest" },
+  { id: "evolution", i18nKey: "sidebar.quant.evolution" },
   { id: "script", i18nKey: "sidebar.quant.script" },
 ];
 
