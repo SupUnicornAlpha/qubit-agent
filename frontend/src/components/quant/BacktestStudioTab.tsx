@@ -55,6 +55,8 @@ export const BacktestStudioTab: FC = () => {
   const [rawReverse, setRawReverse] = useState(false);
 
   const [symbols, setSymbols] = useState("AAPL,MSFT,GOOG");
+  // 默认以 SPY 衡量美股组合的市场暴露；留空即可只计算绝对收益指标。
+  const [benchmark, setBenchmark] = useState("SPY");
   const [startDate, setStartDate] = useState("2026-01-01");
   const [endDate, setEndDate] = useState("2026-04-30");
   const [capital, setCapital] = useState(100_000);
@@ -272,6 +274,7 @@ export const BacktestStudioTab: FC = () => {
           capital,
           costs: { commissionBps, slippageBps },
           rebalance,
+          ...(benchmark.trim() ? { benchmark: benchmark.trim().toUpperCase() } : {}),
           ...(typeof topN === "number" ? { topN } : {}),
         });
         setInfo(
@@ -299,6 +302,7 @@ export const BacktestStudioTab: FC = () => {
       commissionBps,
       slippageBps,
       rebalance,
+      benchmark,
       topN,
       reloadJobs,
     ]
@@ -449,6 +453,17 @@ export const BacktestStudioTab: FC = () => {
               placeholder="AAPL,MSFT,GOOG"
               style={styles.input}
             />
+          </label>
+          <label style={styles.formLabel}>
+            基准（用于 Alpha / Beta）
+            <input
+              type="text"
+              value={benchmark}
+              onChange={(e) => setBenchmark(e.target.value)}
+              placeholder="SPY；留空则不计算相对指标"
+              style={styles.input}
+            />
+            <span style={styles.formHelp}>美股组合通常使用 SPY；输入可用行情标的，留空仅计算绝对收益。</span>
           </label>
           <div style={styles.formRow}>
             <label style={styles.formLabel}>
@@ -1040,7 +1055,7 @@ const BacktestResultView: FC<{
 const PerformanceDiagnostics: FC<{ metrics: BacktestMetricsDto }> = ({ metrics }) => {
   const benchmark = metrics.benchmark;
   return (
-    <section className="qb-quant-hero-card" style={styles.diagnostics}>
+    <section className="qb-quant-hero-card qb-quant-performance-diagnostics" style={styles.diagnostics}>
       <div style={styles.diagnosticsHeader}>
         <div>
           <strong>全维绩效画像</strong>
@@ -1049,10 +1064,12 @@ const PerformanceDiagnostics: FC<{ metrics: BacktestMetricsDto }> = ({ metrics }
           </div>
         </div>
         <span className="qb-quant-detail-meta" style={styles.detailMeta}>
-          {benchmark ? `基准观测 ${benchmark.observations} 期` : "未配置基准：相对收益指标暂不可用"}
+          {benchmark
+            ? `基准观测 ${benchmark.observations} 期`
+            : "本次未配置基准：在左侧填入 SPY 后重新回测"}
         </span>
       </div>
-      <div style={styles.diagnosticColumns}>
+      <div className="qb-quant-performance-grid" style={styles.diagnosticColumns}>
         <DiagnosticGroup title="下行与尾部" description="比波动率更关注亏损形态">
           <DiagnosticValue label="下行波动" value={metrics.downsideDeviation} pct />
           <DiagnosticValue label="VaR 95%" value={metrics.valueAtRisk95} pct risk />
@@ -1085,7 +1102,7 @@ const DiagnosticGroup: FC<{ title: string; description: string; children: ReactN
   description,
   children,
 }) => (
-  <div style={styles.diagnosticGroup}>
+  <div className="qb-quant-performance-group" style={styles.diagnosticGroup}>
     <div style={styles.diagnosticGroupTitle}>{title}</div>
     <div style={styles.diagnosticGroupDescription}>{description}</div>
     <div style={styles.diagnosticList}>{children}</div>
@@ -1343,6 +1360,7 @@ const styles: Record<string, CSSProperties> = {
     minWidth: 0,
     flex: 1,
   },
+  formHelp: { fontSize: 10, lineHeight: 1.35, color: "var(--qb-text-muted)" },
   input: {
     fontSize: 12,
     padding: "4px 6px",
@@ -1437,7 +1455,15 @@ const styles: Record<string, CSSProperties> = {
   },
   metricLabel: { fontSize: 10, color: "var(--qb-text-muted)" },
   metricValue: { fontSize: 13, fontWeight: 600, marginTop: 2 },
-  diagnostics: { display: "flex", flexDirection: "column", gap: 10 },
+  diagnostics: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+    height: "auto",
+    minHeight: "max-content",
+    maxHeight: "none",
+    alignSelf: "stretch",
+  },
   diagnosticsHeader: {
     display: "flex",
     justifyContent: "space-between",
@@ -1446,8 +1472,9 @@ const styles: Record<string, CSSProperties> = {
   },
   diagnosticColumns: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(185px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 205px), 1fr))",
     gap: 14,
+    alignItems: "start",
   },
   diagnosticGroup: {
     borderLeft: "2px solid var(--qb-border-subtle)",

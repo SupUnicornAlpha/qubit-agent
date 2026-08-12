@@ -217,6 +217,56 @@ html[data-qb-theme="dark-purple"] {
   opacity: 0.5;
 }
 
+/* 绩效画像与基因池是可变长度的数据面板。不能继承紧凑 hero 卡片的裁剪，
+ * 否则在较矮的工作台窗口里会只显示标题而把指标行截掉。 */
+.qb-quant-performance-diagnostics,
+.qb-quant-evolution-panel {
+  height: auto;
+  min-height: max-content;
+  max-height: none;
+}
+
+.qb-quant-performance-diagnostics {
+  overflow: visible;
+}
+
+.qb-quant-performance-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 205px), 1fr));
+  align-items: start;
+}
+
+.qb-quant-performance-group {
+  min-width: 0;
+  min-height: max-content;
+}
+
+.qb-quant-evolution-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 130px), 1fr));
+  align-items: start;
+}
+
+@media (max-width: 760px) {
+  .qb-quant-performance-diagnostics {
+    overflow: visible;
+  }
+
+  .qb-quant-performance-diagnostics > div:first-child,
+  .qb-quant-evolution-panel > div:first-child {
+    flex-wrap: wrap;
+  }
+
+  .qb-quant-evolution-row {
+    grid-template-columns: minmax(100px, 1fr) auto auto !important;
+  }
+
+  .qb-quant-evolution-row > :nth-child(4),
+  .qb-quant-evolution-row > :nth-child(5) {
+    display: none;
+  }
+}
+
 /* discovery / composer / backtest 各自的 accent 条 */
 .qb-quant-tab-root--discovery .qb-quant-hero-card::before {
   background: linear-gradient(

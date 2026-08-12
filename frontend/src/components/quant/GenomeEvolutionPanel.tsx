@@ -107,7 +107,7 @@ export const GenomeEvolutionPanel: FC<{ projectId: string }> = ({ projectId }) =
 
   if (generations.length === 0) {
     return (
-      <section className="qb-quant-hero-card" style={styles.panel}>
+      <section className="qb-quant-hero-card qb-quant-evolution-panel" style={styles.panel}>
         <div style={styles.header}>
           <div>
             <strong>自进化 / 基因池</strong>
@@ -130,7 +130,7 @@ export const GenomeEvolutionPanel: FC<{ projectId: string }> = ({ projectId }) =
   }
 
   return (
-    <section className="qb-quant-hero-card" style={styles.panel}>
+    <section className="qb-quant-hero-card qb-quant-evolution-panel" style={styles.panel}>
       <div style={styles.header}>
         <div>
           <strong>自进化 / 基因池</strong>
@@ -153,7 +153,7 @@ export const GenomeEvolutionPanel: FC<{ projectId: string }> = ({ projectId }) =
         </button>
       </div>
 
-      <div style={styles.summary}>
+      <div className="qb-quant-evolution-summary" style={styles.summary}>
         <label style={styles.selectLabel}>
           当前世代
           <select
@@ -194,6 +194,7 @@ export const GenomeEvolutionPanel: FC<{ projectId: string }> = ({ projectId }) =
               <button
                 type="button"
                 onClick={() => setExpandedId(expanded ? null : genome.id)}
+                className="qb-quant-evolution-row"
                 style={styles.rowButton}
                 aria-expanded={expanded}
               >
@@ -247,12 +248,19 @@ const EvolutionStat: FC<{ label: string; value: string; tone?: "success" }> = ({
 );
 
 const styles: Record<string, CSSProperties> = {
-  panel: { display: "flex", flexDirection: "column", gap: 10 },
+  panel: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+    height: "auto",
+    minHeight: "max-content",
+    maxHeight: "none",
+  },
   header: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
   meta: { marginTop: 4 },
   summary: {
     display: "grid",
-    gridTemplateColumns: "minmax(160px, 1.3fr) repeat(4, minmax(88px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 130px), 1fr))",
     gap: 6,
   },
   selectLabel: {
