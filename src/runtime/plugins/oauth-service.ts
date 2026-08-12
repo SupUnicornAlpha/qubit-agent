@@ -106,10 +106,7 @@ function toPublic(row: typeof connectorAuth.$inferSelect): ConnectorAuthPublic {
 
 export async function listConnectorAuthStatus(projectId: string): Promise<ConnectorAuthPublic[]> {
   const db = await getDb();
-  const rows = await db
-    .select()
-    .from(connectorAuth)
-    .where(eq(connectorAuth.projectId, projectId));
+  const rows = await db.select().from(connectorAuth).where(eq(connectorAuth.projectId, projectId));
   return rows.map(toPublic);
 }
 
@@ -152,10 +149,7 @@ export async function upsertConnectorAuthConfig(
           existing.displayName ||
           input.pluginId,
         clientId,
-        clientSecret:
-          input.clientSecret !== undefined
-            ? input.clientSecret
-            : existing.clientSecret,
+        clientSecret: input.clientSecret !== undefined ? input.clientSecret : existing.clientSecret,
         authorizeUrl,
         tokenUrl,
         scopes: (input.scopes ?? preset?.scopes ?? existing.scopes).trim(),
@@ -178,8 +172,7 @@ export async function upsertConnectorAuthConfig(
     projectId: input.projectId,
     pluginId: input.pluginId,
     provider: input.provider ?? preset?.provider ?? "generic_oauth2",
-    displayName:
-      input.displayName?.trim() || preset?.displayName || input.pluginId,
+    displayName: input.displayName?.trim() || preset?.displayName || input.pluginId,
     status: "pending",
     clientId,
     clientSecret: input.clientSecret ?? "",
@@ -275,9 +268,7 @@ async function exchangeToken(input: {
   }
   if (!response.ok || data.error || !data.access_token) {
     throw new Error(
-      data.error_description ||
-        data.error ||
-        `token exchange failed: HTTP ${response.status}`
+      data.error_description || data.error || `token exchange failed: HTTP ${response.status}`
     );
   }
   return data;

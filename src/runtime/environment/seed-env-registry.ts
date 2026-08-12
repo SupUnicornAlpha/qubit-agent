@@ -28,8 +28,8 @@ import { getDb } from "../../db/sqlite/client";
 import { envRegistry } from "../../db/sqlite/schema";
 import { getPythonConnectorsDir } from "../app-paths";
 import {
-  buildRecommendedMcpPresets,
   type RecommendedMcpPreset,
+  buildRecommendedMcpPresets,
 } from "../seed-recommended-mcp-servers";
 import type { EnvSource, SeedExpectedPackage } from "./types";
 
@@ -57,8 +57,7 @@ const BUILTIN_PYTHON_META: ReadonlyArray<
   {
     name: "akshare",
     displayName: "AKShare",
-    description:
-      "国内 A 股 / 港股 / 期货数据源（免费）。klinesDataSource=akshare 时启用。",
+    description: "国内 A 股 / 港股 / 期货数据源（免费）。klinesDataSource=akshare 时启用。",
     optional: true,
     capability: "data-source/akshare",
   },
@@ -98,9 +97,7 @@ const BUILTIN_PYTHON_META: ReadonlyArray<
  * 解析 requirements.txt 中"未注释行"为 `{name, versionSpec}` 字典；
  * 跳过空行 / `#` 注释 / `-r xxx` 等指令行。
  */
-export function parseRequirementsTxt(
-  content: string
-): Map<string, string | null> {
+export function parseRequirementsTxt(content: string): Map<string, string | null> {
   const out = new Map<string, string | null>();
   for (const rawLine of content.split(/\r?\n/)) {
     const line = rawLine.trim();
@@ -131,9 +128,7 @@ function readRequirementsMap(): Map<string, string | null> {
   try {
     return parseRequirementsTxt(readFileSync(p, "utf-8"));
   } catch (e) {
-    console.warn(
-      `[Seed:env] failed to read requirements.txt: ${(e as Error).message}`
-    );
+    console.warn(`[Seed:env] failed to read requirements.txt: ${(e as Error).message}`);
     return new Map();
   }
 }
@@ -163,8 +158,7 @@ function buildPythonSeed(): SeedExpectedPackage[] {
   const reqs = readRequirementsMap();
   return BUILTIN_PYTHON_META.map((meta) => {
     const versionSpec = reqs.get(meta.name.toLowerCase()) ?? undefined;
-    const source: EnvSource =
-      versionSpec !== undefined ? "requirements" : "connector-meta";
+    const source: EnvSource = versionSpec !== undefined ? "requirements" : "connector-meta";
     return {
       kind: "python" as const,
       name: meta.name,
@@ -212,10 +206,7 @@ export async function seedEnvRegistry(
 ): Promise<{ inserted: number; updated: number; total: number }> {
   const db = await getDb();
   const presets = mcpPresetsOverride ?? buildRecommendedMcpPresets();
-  const seeds: SeedExpectedPackage[] = [
-    ...buildPythonSeed(),
-    ...buildNpmSeed(presets),
-  ];
+  const seeds: SeedExpectedPackage[] = [...buildPythonSeed(), ...buildNpmSeed(presets)];
 
   let inserted = 0;
   let updated = 0;

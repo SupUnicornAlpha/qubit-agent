@@ -1,12 +1,12 @@
-import { randomUUID } from "node:crypto";
 import { beforeAll, describe, expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { getDb } from "../../../db/sqlite/client";
-import * as schema from "../../../db/sqlite/schema";
 import { runMigrations } from "../../../db/sqlite/migrate";
+import * as schema from "../../../db/sqlite/schema";
 import { _resetBootstrapForTests, bootstrapProviders } from "../../provider/bootstrap";
-import { discoveryService, DiscoveryError } from "../discovery-service";
-import { GpGenerator } from "../gp-generator";
 import { ALPHA_TEMPLATES } from "../alpha-templates";
+import { DiscoveryError, discoveryService } from "../discovery-service";
+import { GpGenerator } from "../gp-generator";
 
 let projectId = "";
 
@@ -71,8 +71,8 @@ describe("DiscoveryService", () => {
     expect(job.candidates.length).toBeLessThanOrEqual(5);
     // top K 应当按 |IC| 降序
     for (let i = 1; i < job.candidates.length; i++) {
-      expect(job.candidates[i - 1]!.metrics.score).toBeGreaterThanOrEqual(
-        job.candidates[i]!.metrics.score
+      expect(job.candidates[i - 1]?.metrics.score).toBeGreaterThanOrEqual(
+        job.candidates[i]?.metrics.score
       );
     }
     // 所有候选都有 sampleSize > 0
@@ -156,8 +156,8 @@ describe("DiscoveryService", () => {
     expect(job.candidates.length).toBeGreaterThan(0);
     expect(job.candidates.length).toBeLessThanOrEqual(3);
     for (let i = 1; i < job.candidates.length; i++) {
-      expect(job.candidates[i - 1]!.metrics.score).toBeGreaterThanOrEqual(
-        job.candidates[i]!.metrics.score
+      expect(job.candidates[i - 1]?.metrics.score).toBeGreaterThanOrEqual(
+        job.candidates[i]?.metrics.score
       );
     }
     for (const c of job.candidates) expect(c.lang).toBe("qlib_expr");
@@ -223,11 +223,11 @@ describe("DiscoveryService", () => {
     expect(factor.providerKey).toBe("qlib_expr");
     // 校验 definition 里保留了 lineage
     const fresh = await factorService.get(factor.id);
-    const lineage = fresh.definition["promotedFrom"] as Record<string, unknown> | undefined;
+    const lineage = fresh.definition.promotedFrom as Record<string, unknown> | undefined;
     expect(lineage).toBeDefined();
-    expect(lineage!["discoveryJobId"]).toBe(job.id);
-    expect(lineage!["candidateId"]).toBe(cand.id);
-    expect(lineage!["ic"]).toBe(cand.metrics.ic);
+    expect(lineage?.discoveryJobId).toBe(job.id);
+    expect(lineage?.candidateId).toBe(cand.id);
+    expect(lineage?.ic).toBe(cand.metrics.ic);
   });
 
   test("promoteCandidate：候选不存在 → validation_failed", async () => {

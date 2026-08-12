@@ -121,11 +121,7 @@ describe("B2 — search() 真正按 query 过滤", () => {
   });
 
   test("midterm 层 query=momentum 仅返回相关项", async () => {
-    const hits = await nativeMemoryConnector.search(
-      "momentum",
-      { layer: "midterm", projectId },
-      5
-    );
+    const hits = await nativeMemoryConnector.search("momentum", { layer: "midterm", projectId }, 5);
     expect(hits.length).toBeGreaterThan(0);
     expect(hits.length).toBeLessThan(10); // 不应该把"价值/成交量"也带回来
     expect(hits[0]?.content.toLowerCase()).toContain("momentum");

@@ -106,10 +106,9 @@ export async function enrichSystemPromptWithFsi(params: {
     }))
     .sort((a, b) => b.score - a.score || a.index - b.index);
   const matchedPlaybooks = rankedPlaybooks.filter((item) => item.score > 0);
-  const selectedPlaybooks = (matchedPlaybooks.length > 0 ? matchedPlaybooks : rankedPlaybooks).slice(
-    0,
-    params.maxPlaybooks ?? 1
-  );
+  const selectedPlaybooks = (
+    matchedPlaybooks.length > 0 ? matchedPlaybooks : rankedPlaybooks
+  ).slice(0, params.maxPlaybooks ?? 1);
   let playbookBudget = params.maxPlaybookChars ?? 2500;
   for (const { playbook: pb } of selectedPlaybooks) {
     if (playbookBudget <= 0) break;
@@ -117,9 +116,7 @@ export async function enrichSystemPromptWithFsi(params: {
     const body = await resolveFsiPlaybookBody(pb.path, maxChars);
     if (!body) continue;
     playbookBudget -= body.length;
-    blocks.push(
-      `\n\n---\n## FSI 工作流：${pb.slug}\n${body}`
-    );
+    blocks.push(`\n\n---\n## FSI 工作流：${pb.slug}\n${body}`);
   }
 
   return blocks.join("");

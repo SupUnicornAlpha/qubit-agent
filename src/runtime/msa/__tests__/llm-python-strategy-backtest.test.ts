@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 /**
  * P1-A 闭环单测：
  *
@@ -21,7 +22,6 @@
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 
 const tmpDir = join(tmpdir(), `qubit-llm-python-backtest-${process.pid}-${Date.now()}`);
 rmSync(tmpDir, { recursive: true, force: true });
@@ -29,9 +29,7 @@ mkdirSync(join(tmpDir, "db"), { recursive: true });
 process.env.QUBIT_DATA_DIR = tmpDir;
 process.env.HOME = tmpDir;
 
-const { afterAll, beforeAll, beforeEach, describe, expect, mock, test } = await import(
-  "bun:test"
-);
+const { afterAll, beforeAll, beforeEach, describe, expect, mock, test } = await import("bun:test");
 
 /**
  * mock klines-query：只覆盖 queryBarsRange；其它 export（timeframeToPeriod /
@@ -46,7 +44,11 @@ mock.module("../../market/klines-query", () => ({
     return Array.from({ length: stubBarsCount }, (_, i) => ({
       symbol: "TEST",
       exchange: "US",
-      open: 100 + i, high: 102 + i, low: 99 + i, close: 101 + i, volume: 1000,
+      open: 100 + i,
+      high: 102 + i,
+      low: 99 + i,
+      close: 101 + i,
+      volume: 1000,
       timestamp: `2026-01-${String((i % 28) + 1).padStart(2, "0")}T00:00:00Z`,
     }));
   },

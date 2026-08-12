@@ -26,7 +26,7 @@
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { getDb } from "../../../db/sqlite/client";
 import { runMigrations } from "../../../db/sqlite/migrate";
 import {
@@ -244,7 +244,12 @@ async function insertFill(opts: {
   return fillId;
 }
 
-async function insertMark(market: string, symbol: string, day: string, close: number): Promise<void> {
+async function insertMark(
+  market: string,
+  symbol: string,
+  day: string,
+  close: number
+): Promise<void> {
   const db = await getDb();
   await db
     .insert(dailyMarkPrice)
@@ -259,16 +264,18 @@ async function insertMark(market: string, symbol: string, day: string, close: nu
     .run();
 }
 
-async function fetchSnapshots(runtimeId: string): Promise<Array<{
-  tradingDay: string;
-  symbol: string;
-  qty: number;
-  realizedPnlDaily: number;
-  unrealizedPnlDaily: number;
-  feeDaily: number;
-  markPrice: number | null;
-  source: string;
-}>> {
+async function fetchSnapshots(runtimeId: string): Promise<
+  Array<{
+    tradingDay: string;
+    symbol: string;
+    qty: number;
+    realizedPnlDaily: number;
+    unrealizedPnlDaily: number;
+    feeDaily: number;
+    markPrice: number | null;
+    source: string;
+  }>
+> {
   const db = await getDb();
   const rows = await db
     .select({
@@ -512,7 +519,7 @@ describe("PnlAttributor runOnce", () => {
       toDay: "2026-06-01",
       runtimeIds: [fixture.runtimeUSId],
     });
-    expect((await fetchSnapshots(fixture.runtimeUSId))).toHaveLength(1);
+    expect(await fetchSnapshots(fixture.runtimeUSId)).toHaveLength(1);
 
     // 第二次：day2 sell 30@160（仅在 day2 引入新 fill，不重跑 day1）
     await insertFill({

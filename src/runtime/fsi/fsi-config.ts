@@ -38,13 +38,13 @@ function readManifestDefaultsSync(): { enabled?: boolean; enabledBundles?: strin
   if (!existsSync(path)) return {};
   try {
     const m = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
-    const d = m["defaults"];
+    const d = m.defaults;
     if (!d || typeof d !== "object") return {};
     const def = d as Record<string, unknown>;
     return {
-      enabled: typeof def["enabled"] === "boolean" ? def["enabled"] : undefined,
-      enabledBundles: Array.isArray(def["enabledBundles"])
-        ? (def["enabledBundles"] as string[])
+      enabled: typeof def.enabled === "boolean" ? def.enabled : undefined,
+      enabledBundles: Array.isArray(def.enabledBundles)
+        ? (def.enabledBundles as string[])
         : undefined,
     };
   } catch {
@@ -65,30 +65,28 @@ function getResolvedFsi(): ResolvedFsi {
   const manifestDef = readManifestDefaultsSync();
 
   const envEnabled = envFlag("QUBIT_FSI_ENABLED");
-  const envDisabled = process.env["QUBIT_FSI_DISABLED"] === "true";
+  const envDisabled = process.env.QUBIT_FSI_DISABLED === "true";
 
-  let enabledBundles =
-    file.enabledBundles ?? manifestDef.enabledBundles ?? ["quant-research"];
-  const envBundles = process.env["QUBIT_FSI_BUNDLES"]?.trim();
+  let enabledBundles = file.enabledBundles ?? manifestDef.enabledBundles ?? ["quant-research"];
+  const envBundles = process.env.QUBIT_FSI_BUNDLES?.trim();
   if (envBundles) {
-    enabledBundles = envBundles.split(",").map((s) => s.trim()).filter(Boolean);
+    enabledBundles = envBundles
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
   }
 
   resolved = {
     enabled: envDisabled ? false : (envEnabled ?? file.enabled ?? manifestDef.enabled ?? true),
     enabledBundles,
     applyAgentMappings:
-      process.env["QUBIT_FSI_APPLY_AGENTS"] === "false"
-        ? false
-        : (file.applyAgentMappings ?? true),
+      process.env.QUBIT_FSI_APPLY_AGENTS === "false" ? false : (file.applyAgentMappings ?? true),
     validateOutput:
-      process.env["QUBIT_FSI_VALIDATE_OUTPUT"] === "false"
-        ? false
-        : (file.validateOutput ?? true),
+      process.env.QUBIT_FSI_VALIDATE_OUTPUT === "false" ? false : (file.validateOutput ?? true),
     seedMcpCatalog:
-      process.env["QUBIT_FSI_SEED_MCP"] === "false" ? false : (file.seedMcpCatalog ?? true),
-    contentRootOverride: process.env["QUBIT_FSI_CONTENT_ROOT"]?.trim() || undefined,
-    maxSkillInjectChars: Number(process.env["QUBIT_FSI_MAX_SKILL_CHARS"] ?? 6000) || 6000,
+      process.env.QUBIT_FSI_SEED_MCP === "false" ? false : (file.seedMcpCatalog ?? true),
+    contentRootOverride: process.env.QUBIT_FSI_CONTENT_ROOT?.trim() || undefined,
+    maxSkillInjectChars: Number(process.env.QUBIT_FSI_MAX_SKILL_CHARS ?? 6000) || 6000,
   };
   return resolved;
 }

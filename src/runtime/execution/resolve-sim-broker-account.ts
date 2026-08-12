@@ -9,7 +9,7 @@ import { brokerAccount } from "../../db/sqlite/schema";
 
 export async function resolveDefaultSimBrokerAccountId(
   preferredProvider: "futu" | "ib" | "supermind" | null = "futu",
-  db?: DbClient,
+  db?: DbClient
 ): Promise<string | null> {
   const client = db ?? (await getDb());
   if (preferredProvider) {
@@ -20,8 +20,8 @@ export async function resolveDefaultSimBrokerAccountId(
         and(
           eq(brokerAccount.provider, preferredProvider),
           eq(brokerAccount.enabled, true),
-          or(eq(brokerAccount.mode, "sandbox"), eq(brokerAccount.mode, "mock")),
-        ),
+          or(eq(brokerAccount.mode, "sandbox"), eq(brokerAccount.mode, "mock"))
+        )
       )
       .orderBy(desc(brokerAccount.isDefault), desc(brokerAccount.updatedAt))
       .limit(1);
@@ -33,8 +33,8 @@ export async function resolveDefaultSimBrokerAccountId(
     .where(
       and(
         eq(brokerAccount.enabled, true),
-        or(eq(brokerAccount.mode, "sandbox"), eq(brokerAccount.mode, "mock")),
-      ),
+        or(eq(brokerAccount.mode, "sandbox"), eq(brokerAccount.mode, "mock"))
+      )
     )
     .orderBy(desc(brokerAccount.isDefault), desc(brokerAccount.updatedAt))
     .limit(1);

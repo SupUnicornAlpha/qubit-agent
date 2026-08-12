@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { projectCoreInvocationsFromSnapshot } from "../project-core-to-graph";
-import { corePlanToBunSnapshot, finalizeCompletedCorePlan } from "../project-core-activity";
 import { workflowIdFromCoreWorkspace } from "../bridge-run-context";
+import { corePlanToBunSnapshot, finalizeCompletedCorePlan } from "../project-core-activity";
+import { projectCoreInvocationsFromSnapshot } from "../project-core-to-graph";
 
 describe("corePlanToBunSnapshot", () => {
   test("maps Core snake_case plan wire to Bun snapshot", () => {

@@ -2,8 +2,8 @@
  * DecisionRecord 后验写回（05 §4.3.1 / A3→A4）
  */
 
-import type { ExperienceStore } from "../experience/experience-store";
 import { getExperienceStore } from "../experience";
+import type { ExperienceStore } from "../experience/experience-store";
 import { incContextMetric } from "./context-metrics";
 import type { DecisionRecordOutcome } from "./types";
 
@@ -27,10 +27,10 @@ export async function applyDecisionOutcome(
 
   const meta = { ...(row.metadataJson ?? {}) } as Record<string, unknown>;
   const existing =
-    meta["decisionRecord"] && typeof meta["decisionRecord"] === "object"
-      ? (meta["decisionRecord"] as Record<string, unknown>)
+    meta.decisionRecord && typeof meta.decisionRecord === "object"
+      ? (meta.decisionRecord as Record<string, unknown>)
       : {};
-  meta["decisionRecord"] = {
+  meta.decisionRecord = {
     ...existing,
     outcome: input.outcome,
   };
@@ -131,15 +131,15 @@ export async function applyRecommendationOutcomeToExperiences(input: {
   const sameSymbol: typeof candidates = [];
   for (const exp of candidates) {
     const meta = exp.metadataJson ?? {};
-    const symbols = Array.isArray(meta["symbols"])
-      ? (meta["symbols"] as unknown[]).map((s) => String(s).toUpperCase())
+    const symbols = Array.isArray(meta.symbols)
+      ? (meta.symbols as unknown[]).map((s) => String(s).toUpperCase())
       : [];
     const tagHit = exp.tagsJson.some(
       (t) => t.toUpperCase() === `SYMBOL:${sym}` || t.toUpperCase() === sym
     );
     if (!symbols.includes(sym) && !tagHit) continue;
     const sameRun =
-      exp.sourceRunId === input.workflowRunId || meta["workflowRunId"] === input.workflowRunId;
+      exp.sourceRunId === input.workflowRunId || meta.workflowRunId === input.workflowRunId;
     if (sameRun) sameRunFirst.push(exp);
     else sameSymbol.push(exp);
   }

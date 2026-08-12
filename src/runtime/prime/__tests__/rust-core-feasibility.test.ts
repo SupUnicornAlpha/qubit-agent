@@ -3,13 +3,13 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { spawn, type Subprocess } from "bun";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { type Subprocess, spawn } from "bun";
 import {
+  RustCoreClient,
   buildPrimeAgentSpecs,
   resetCoreRuntimeCache,
-  RustCoreClient,
   summarizePrimeSeed,
 } from "../index";
 
@@ -24,10 +24,9 @@ function resolveAppServerBin(): string | null {
   const fromEnv = process.env.CARGO_TARGET_DIR
     ? join(process.env.CARGO_TARGET_DIR, "debug", "qubit-app-server")
     : null;
-  const candidates = [
-    fromEnv,
-    join(ROOT, "target/debug/qubit-app-server"),
-  ].filter(Boolean) as string[];
+  const candidates = [fromEnv, join(ROOT, "target/debug/qubit-app-server")].filter(
+    Boolean
+  ) as string[];
   for (const p of candidates) {
     if (existsSync(p)) return p;
   }
@@ -72,9 +71,7 @@ describe("rust core agent feasibility", () => {
       serverReady = true;
       resetCoreRuntimeCache();
     } catch (e) {
-      const errText = proc.stderr
-        ? await new Response(proc.stderr).text()
-        : "";
+      const errText = proc.stderr ? await new Response(proc.stderr).text() : "";
       console.warn("server failed to start:", e, errText.slice(0, 800));
       proc.kill();
       proc = null;
@@ -101,12 +98,8 @@ describe("rust core agent feasibility", () => {
     }
     const listed = await client.listAgents();
     expect(listed.agents.some((a) => a.id === "def-orchestrator")).toBe(true);
-    expect(
-      listed.agents.find((a) => a.id === "def-orchestrator")?.execution_kind
-    ).toBe("primary");
-    expect(
-      listed.agents.find((a) => a.id === "def-research")?.execution_kind
-    ).toBe("subagent");
+    expect(listed.agents.find((a) => a.id === "def-orchestrator")?.execution_kind).toBe("primary");
+    expect(listed.agents.find((a) => a.id === "def-research")?.execution_kind).toBe("subagent");
 
     const session = await client.createSession({
       workspace_id: "ws_feasibility",
@@ -120,11 +113,7 @@ describe("rust core agent feasibility", () => {
       input: { text: "feasibility: ping core", attachments: [] },
       idempotency_key: `feas-${Date.now()}`,
     });
-    const snap = await client.awaitTurnTerminal(
-      session.session_id,
-      started.turn_id,
-      10_000
-    );
+    const snap = await client.awaitTurnTerminal(session.session_id, started.turn_id, 10_000);
     expect(snap.active_turn?.state).toBe("completed");
     expect(snap.active_turn?.lifecycle).toBe("completed");
     expect(snap.active_turn?.delivery?.status).toBe("delivered");
@@ -157,7 +146,7 @@ describe("rust core agent feasibility", () => {
       goal: "quick research note",
       budget: { max_iterations: 2 },
     });
-    expect(inv["state"]).toBe("completed");
-    expect(String(inv["child_session_id"])).not.toBe(parent.session_id);
+    expect(inv.state).toBe("completed");
+    expect(String(inv.child_session_id)).not.toBe(parent.session_id);
   }, 30_000);
 });

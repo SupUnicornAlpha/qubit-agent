@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { BuiltinFactorEvalProvider } from "../builtin-factor-eval-provider";
 import type { FactorComputeRow } from "../../../types";
+import { BuiltinFactorEvalProvider } from "../builtin-factor-eval-provider";
 
 const provider = new BuiltinFactorEvalProvider();
 
@@ -19,7 +19,12 @@ describe("BuiltinFactorEvalProvider v0.2", () => {
         futures.push(row(`S${i}`, d, i * 0.01));
       }
     }
-    const r = await provider.evaluate({ factorId: "f1", universe: "test", values, futureReturns: futures });
+    const r = await provider.evaluate({
+      factorId: "f1",
+      universe: "test",
+      values,
+      futureReturns: futures,
+    });
     expect(r.ic).toBeGreaterThan(0.99);
     expect(r.rankIc).toBeCloseTo(1, 4);
     expect(r.sampleSize).toBe(15);
@@ -44,7 +49,12 @@ describe("BuiltinFactorEvalProvider v0.2", () => {
         futures.push(row(`S${i}`, d, ret));
       }
     }
-    const r = await provider.evaluate({ factorId: "f", universe: "test", values, futureReturns: futures });
+    const r = await provider.evaluate({
+      factorId: "f",
+      universe: "test",
+      values,
+      futureReturns: futures,
+    });
     expect(Number.isFinite(r.ir)).toBe(true);
     expect(r.ir).not.toBe(0);
   });
@@ -58,14 +68,24 @@ describe("BuiltinFactorEvalProvider v0.2", () => {
         futures.push(row(`S${i}`, d, -i * 0.01));
       }
     }
-    const r = await provider.evaluate({ factorId: "f1", universe: "test", values, futureReturns: futures });
+    const r = await provider.evaluate({
+      factorId: "f1",
+      universe: "test",
+      values,
+      futureReturns: futures,
+    });
     expect(r.ic).toBeLessThan(-0.99);
   });
 
   test("sample 太小 → error=sample_size_too_small", async () => {
     const values = [row("A", "2026-04-01", 1), row("B", "2026-04-01", 2)];
     const futures = [row("A", "2026-04-01", 0.01), row("B", "2026-04-01", 0.02)];
-    const r = await provider.evaluate({ factorId: "f1", universe: "test", values, futureReturns: futures });
+    const r = await provider.evaluate({
+      factorId: "f1",
+      universe: "test",
+      values,
+      futureReturns: futures,
+    });
     expect(r.error).toBe("sample_size_too_small");
   });
 

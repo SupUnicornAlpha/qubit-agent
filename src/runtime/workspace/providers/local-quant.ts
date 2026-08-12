@@ -4,7 +4,6 @@
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "../../../db/sqlite/client";
 import { factorDefinition, strategy, strategyVersion } from "../../../db/sqlite/schema";
-import type { WorkspaceFs } from "../workspace-fs";
 import type { DecisionEngineProvider } from "./resolve";
 
 function slugFile(name: string, id: string): string {

@@ -2,11 +2,7 @@ import { randomUUID } from "node:crypto";
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { screenerCandidate, screenerRun } from "../../db/sqlite/schema";
-import {
-  STOCK_UNIVERSE,
-  type StockUniverseKey,
-  type UniverseStock,
-} from "./universe-pool";
+import { STOCK_UNIVERSE, type StockUniverseKey, type UniverseStock } from "./universe-pool";
 
 export interface ScreenerInput {
   workflowRunId: string;
@@ -76,10 +72,7 @@ function scoreStock(stock: UniverseStock): ScreenerCandidateResult {
   const sentimentScore = stock.sentiment;
 
   const finalScore =
-    qualityScore * 0.35 +
-    momentumScore * 0.3 +
-    valuationScore * 0.2 +
-    sentimentScore * 0.15;
+    qualityScore * 0.35 + momentumScore * 0.3 + valuationScore * 0.2 + sentimentScore * 0.15;
 
   return {
     ticker: stock.ticker,
@@ -138,15 +131,24 @@ export async function runStockScreener(input: ScreenerInput): Promise<ScreenerRu
     if (countryFilter && s.country !== countryFilter) return false;
     if (sectorFilter && s.sector.toLowerCase() !== sectorFilter) return false;
     if (industryRegex && !industryRegex.test(s.industry)) return false;
-    if (typeof criteria.minMarketCapBillion === "number" && s.marketCapBillion < criteria.minMarketCapBillion) return false;
+    if (
+      typeof criteria.minMarketCapBillion === "number" &&
+      s.marketCapBillion < criteria.minMarketCapBillion
+    )
+      return false;
     if (typeof criteria.maxPe === "number" && s.pe > 0 && s.pe > criteria.maxPe) return false;
-    if (typeof criteria.minMomentum30d === "number" && s.momentum30d < criteria.minMomentum30d) return false;
+    if (typeof criteria.minMomentum30d === "number" && s.momentum30d < criteria.minMomentum30d)
+      return false;
     if (typeof criteria.minQuality === "number" && s.quality < criteria.minQuality) return false;
-    if (typeof criteria.minSentiment === "number" && s.sentiment < criteria.minSentiment) return false;
+    if (typeof criteria.minSentiment === "number" && s.sentiment < criteria.minSentiment)
+      return false;
     return true;
   });
 
-  const scored = filtered.map(scoreStock).sort((a, b) => b.score - a.score).slice(0, topN);
+  const scored = filtered
+    .map(scoreStock)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, topN);
 
   const runId = randomUUID();
   await db.insert(screenerRun).values({
@@ -173,9 +175,9 @@ export async function runStockScreener(input: ScreenerInput): Promise<ScreenerRu
   if (scored.length === 0) {
     hint =
       `0 个候选命中（universe=${universe} 池中 ${STOCK_UNIVERSE.length} 只；filter 后 ${filtered.length} 只）。` +
-      `建议放宽 criteria（移除 sector/industry 或调低 minMarketCapBillion / minMomentum30d / minQuality）` +
+      "建议放宽 criteria（移除 sector/industry 或调低 minMarketCapBillion / minMomentum30d / minQuality）" +
       `；或试 universe="ALL" / 切换 country 维度。可参考的 sector 取值：Tech, Financials, Healthcare, Consumer, Energy, ` +
-      `Industrials, Materials, REIT, Utilities, Telecom, Crypto。`;
+      "Industrials, Materials, REIT, Utilities, Telecom, Crypto。";
   }
 
   return {
@@ -191,7 +193,11 @@ export async function runStockScreener(input: ScreenerInput): Promise<ScreenerRu
 
 export async function listScreenerRuns(workflowRunId: string) {
   const db = await getDb();
-  return db.select().from(screenerRun).where(eq(screenerRun.workflowRunId, workflowRunId)).orderBy(desc(screenerRun.createdAt));
+  return db
+    .select()
+    .from(screenerRun)
+    .where(eq(screenerRun.workflowRunId, workflowRunId))
+    .orderBy(desc(screenerRun.createdAt));
 }
 
 export async function listScreenerCandidates(screenerRunId: string) {

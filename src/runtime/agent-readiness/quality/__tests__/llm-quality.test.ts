@@ -13,9 +13,7 @@ process.env.HOME = tmpDir;
 
 const { afterAll, beforeAll, describe, expect, test } = await import("bun:test");
 const { runMigrations } = await import("../../../../db/sqlite/migrate");
-const { getDb, closeDb, getSqliteForTesting } = await import(
-  "../../../../db/sqlite/client"
-);
+const { getDb, closeDb, getSqliteForTesting } = await import("../../../../db/sqlite/client");
 const schema = await import("../../../../db/sqlite/schema");
 const { collectLlmQuality } = await import("../llm-quality");
 
@@ -103,8 +101,7 @@ describe("C 类 · LLM 调用质量", () => {
 
   test("C-3 token：单次 max + 总和 + p95 都返回", async () => {
     const wfId = await setupWf();
-    for (let i = 0; i < 100; i++)
-      await insertLlm({ wfId, i, totalTokens: 1000 + i * 10 });
+    for (let i = 0; i < 100; i++) await insertLlm({ wfId, i, totalTokens: 1000 + i * 10 });
     const sqlite = getSqliteForTesting();
     const r = await collectLlmQuality(sqlite, wfId);
     expect(r["C-3-total"]).toBeGreaterThan(0);
@@ -115,8 +112,7 @@ describe("C 类 · LLM 调用质量", () => {
 
   test("C-5 输出格式合规：5 stop + 1 length → 1/6 ≈ 0.167（截断率）", async () => {
     const wfId = await setupWf();
-    for (let i = 0; i < 5; i++)
-      await insertLlm({ wfId, i, finishReason: "stop" });
+    for (let i = 0; i < 5; i++) await insertLlm({ wfId, i, finishReason: "stop" });
     await insertLlm({ wfId, i: 5, finishReason: "length" });
     const sqlite = getSqliteForTesting();
     const r = await collectLlmQuality(sqlite, wfId);

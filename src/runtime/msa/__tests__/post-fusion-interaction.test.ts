@@ -107,9 +107,7 @@ describe("runPostFusionPipeline interaction fromRole/toRole", () => {
     });
 
     /** 校验：每个 slot 跑完都写了一条 post_fusion 总结 */
-    const postFusionCalls = interactionCalls.filter(
-      (c) => c.payloadJson?.["phase"] === "post_fusion"
-    );
+    const postFusionCalls = interactionCalls.filter((c) => c.payloadJson?.phase === "post_fusion");
     expect(postFusionCalls.length).toBe(3);
     for (const call of postFusionCalls) {
       const role = (call.payloadJson as { role: string }).role;
@@ -120,16 +118,12 @@ describe("runPostFusionPipeline interaction fromRole/toRole", () => {
 
     /** 校验：slot 入场前的 handoff 提示 fromRole=prevRole（research → backtest 这种） */
     const handoffCalls = interactionCalls.filter(
-      (c) => c.payloadJson?.["phase"] === "post_fusion_handoff"
+      (c) => c.payloadJson?.phase === "post_fusion_handoff"
     );
     /** 第一个 slot（research）没有 prevRole（首轮是 orchestrator）；2/3 才有 */
     expect(handoffCalls.length).toBeGreaterThanOrEqual(2);
-    const r2b = handoffCalls.find(
-      (c) => c.fromRole === "research" && c.toRole === "backtest"
-    );
-    const b2r = handoffCalls.find(
-      (c) => c.fromRole === "backtest" && c.toRole === "risk"
-    );
+    const r2b = handoffCalls.find((c) => c.fromRole === "research" && c.toRole === "backtest");
+    const b2r = handoffCalls.find((c) => c.fromRole === "backtest" && c.toRole === "risk");
     expect(r2b).toBeTruthy();
     expect(b2r).toBeTruthy();
   });

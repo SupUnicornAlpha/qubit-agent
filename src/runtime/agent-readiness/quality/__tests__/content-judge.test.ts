@@ -13,9 +13,7 @@ process.env.HOME = tmpDir;
 
 const { afterAll, beforeAll, describe, expect, test } = await import("bun:test");
 const { runMigrations } = await import("../../../../db/sqlite/migrate");
-const { getDb, closeDb, getSqliteForTesting } = await import(
-  "../../../../db/sqlite/client"
-);
+const { getDb, closeDb, getSqliteForTesting } = await import("../../../../db/sqlite/client");
 const schema = await import("../../../../db/sqlite/schema");
 const { collectContentJudge } = await import("../content-judge");
 const { parseJudgeResponse } = await import("../content-judge-rubric");
@@ -94,9 +92,9 @@ describe("A-3 LLM-as-Judge", () => {
       "\n```";
     const r = parseJudgeResponse(raw);
     expect(r).not.toBeNull();
-    expect(r!.scores.data_grounding).toBe(4);
+    expect(r?.scores.data_grounding).toBe(4);
     // overall 重新计算 = (4+3+4+2+3)/5 = 3.2
-    expect(r!.overall).toBeCloseTo(3.2, 1);
+    expect(r?.overall).toBeCloseTo(3.2, 1);
   });
 
   test("parseJudgeResponse 解析失败 → null（不抛错）", () => {

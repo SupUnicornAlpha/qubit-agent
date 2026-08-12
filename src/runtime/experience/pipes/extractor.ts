@@ -314,8 +314,7 @@ defineRule("R3_iteration_summary", async (ctx) => {
 
 // ── R4: regime 关键词 → semantic.regime ───────────────────────────────────────
 
-const REGIME_REGEX =
-  /\b(risk[\s_-]?on|risk[\s_-]?off|高波|低波|牛市|熊市|震荡市|regime)\b/i;
+const REGIME_REGEX = /\b(risk[\s_-]?on|risk[\s_-]?off|高波|低波|牛市|熊市|震荡市|regime)\b/i;
 
 defineRule("R4_regime", async (ctx) => {
   const answer = ctx.participant.finalAnswer?.trim() ?? "";
@@ -411,14 +410,10 @@ defineRule("R5_research_conclusion", async (ctx) => {
 function extractSymbolsFromText(text: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
-  const patterns = [
-    /\b[0-9]{6}(?:\.(?:SH|SZ|BJ))?\b/g,
-    /\b[0-9]{5}\.HK\b/gi,
-    /\b[A-Z]{1,5}\b/g,
-  ];
+  const patterns = [/\b[0-9]{6}(?:\.(?:SH|SZ|BJ))?\b/g, /\b[0-9]{5}\.HK\b/gi, /\b[A-Z]{1,5}\b/g];
   for (const re of patterns) {
     for (const m of text.matchAll(re)) {
-      const s = m[0]!.toUpperCase();
+      const s = m[0]?.toUpperCase();
       if (s.length < 2) continue;
       if (["THE", "AND", "FOR", "WITH", "FROM", "THIS"].includes(s)) continue;
       if (seen.has(s)) continue;

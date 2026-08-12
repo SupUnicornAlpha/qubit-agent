@@ -136,9 +136,7 @@ const PROVIDER_CACHE_DISCOUNT: ReadonlyMap<string, number> = new Map([
  * `inUsdPerM × 1.25` 收费（这部分钱 5 分钟内被 cache_read 的 0.1× 折扣摊还回来）。
  * OpenAI Responses 不区分 cache write 与普通 input，统一按 input 价收。
  */
-const PROVIDER_CACHE_WRITE_MULTIPLIER: ReadonlyMap<string, number> = new Map([
-  ["anthropic", 1.25],
-]);
+const PROVIDER_CACHE_WRITE_MULTIPLIER: ReadonlyMap<string, number> = new Map([["anthropic", 1.25]]);
 
 /**
  * 估算单次 LLM 调用成本（USD）。
@@ -175,11 +173,7 @@ export function resolveLlmProviderForPricing(
   if (raw && raw !== "openai_compatible" && raw !== "prime_core" && raw !== "unknown") {
     return raw;
   }
-  if (
-    raw === "deepseek" ||
-    modelL.includes("deepseek") ||
-    baseL.includes("deepseek")
-  ) {
+  if (raw === "deepseek" || modelL.includes("deepseek") || baseL.includes("deepseek")) {
     return "deepseek";
   }
   if (raw === "anthropic" || modelL.includes("claude") || baseL.includes("anthropic")) {
@@ -194,7 +188,12 @@ export function resolveLlmProviderForPricing(
   if (raw === "ollama" || baseL.includes("11434")) {
     return "ollama";
   }
-  if (raw === "openai" || modelL.startsWith("gpt-") || modelL.startsWith("o1") || modelL.startsWith("o3")) {
+  if (
+    raw === "openai" ||
+    modelL.startsWith("gpt-") ||
+    modelL.startsWith("o1") ||
+    modelL.startsWith("o3")
+  ) {
     return "openai";
   }
   // Generic OpenAI-compatible without hints — treat as openai fallback pricing.
@@ -219,10 +218,7 @@ export function estimateLlmCostUsd(input: LlmPricingInput): number {
   const cacheWritten = Math.max(0, Math.min(promptTokens, Math.floor(rawWrite)));
   const rawRead = input.cachedPromptTokens ?? 0;
   /** cache_read 与 cache_write 不能同时占用同一 token，read 在剩余预算里 clamp */
-  const cacheRead = Math.max(
-    0,
-    Math.min(promptTokens - cacheWritten, Math.floor(rawRead)),
-  );
+  const cacheRead = Math.max(0, Math.min(promptTokens - cacheWritten, Math.floor(rawRead)));
   const uncached = promptTokens - cacheWritten - cacheRead;
   const readDiscount = row.cachedDiscount ?? PROVIDER_CACHE_DISCOUNT.get(provider) ?? 1;
   const writeMultiplier = PROVIDER_CACHE_WRITE_MULTIPLIER.get(provider) ?? 1;

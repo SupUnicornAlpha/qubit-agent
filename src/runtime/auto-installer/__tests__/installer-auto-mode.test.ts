@@ -114,11 +114,11 @@ describe("AutoInstaller auto 模式", () => {
       .select()
       .from(autoInstallProposal)
       .where(eq(autoInstallProposal.gapLogId, gapId));
-    expect(p!.state).toBe("approved");
-    expect(p!.stateBy).toBe("auto_installer");
+    expect(p?.state).toBe("approved");
+    expect(p?.stateBy).toBe("auto_installer");
 
     const [g] = await db.select().from(toolGapLog).where(eq(toolGapLog.id, gapId));
-    expect(g!.status).toBe("installed");
+    expect(g?.status).toBe("installed");
 
     // 真装写下 server + binding
     const servers = await db.select().from(mcpServerConfig);
@@ -152,7 +152,7 @@ describe("AutoInstaller auto 模式", () => {
       .select()
       .from(autoInstallProposal)
       .where(eq(autoInstallProposal.gapLogId, gapId));
-    expect(p!.state).toBe("pending_review");
+    expect(p?.state).toBe("pending_review");
   });
 
   test("score 不足阈值 → propose 而非 auto", async () => {
@@ -181,8 +181,8 @@ describe("AutoInstaller auto 模式", () => {
       .select()
       .from(autoInstallProposal)
       .where(eq(autoInstallProposal.gapLogId, gapId));
-    expect(p!.state).toBe("pending_review");
-    expect(p!.matchScore).toBeLessThan(0.95);
+    expect(p?.state).toBe("pending_review");
+    expect(p?.matchScore).toBeLessThan(0.95);
   });
 
   test("external (source=registry) 即便 low/high-score 也不自动装", async () => {
@@ -214,8 +214,8 @@ describe("AutoInstaller auto 模式", () => {
       .select()
       .from(autoInstallProposal)
       .where(eq(autoInstallProposal.gapLogId, gapId));
-    expect(p!.state).toBe("pending_review");
-    expect(p!.proposalKind).toBe("install_mcp_external");
+    expect(p?.state).toBe("pending_review");
+    expect(p?.proposalKind).toBe("install_mcp_external");
   });
 
   test("默认 mode=propose（autoModeOverride 不传）→ P8 行为不变", async () => {
@@ -240,7 +240,7 @@ describe("AutoInstaller auto 模式", () => {
       .select()
       .from(autoInstallProposal)
       .where(eq(autoInstallProposal.gapLogId, gapId));
-    expect(p!.state).toBe("pending_review");
+    expect(p?.state).toBe("pending_review");
   });
 
   test("emit summary 含 mode / autoInstalled", async () => {
@@ -271,7 +271,7 @@ describe("AutoInstaller auto 模式", () => {
     const ev = evs.find((e) => e.type === "maintenance_run" && e.kind === "auto_installer");
     expect(ev).toBeDefined();
     const s = (ev as { summary: Record<string, unknown> }).summary;
-    expect(s["mode"]).toBe("auto");
-    expect(s["autoInstalled"]).toBe(1);
+    expect(s.mode).toBe("auto");
+    expect(s.autoInstalled).toBe(1);
   });
 });

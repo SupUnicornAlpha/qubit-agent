@@ -6,10 +6,10 @@
 
 import { Hono } from "hono";
 import {
-  discoveryService,
   DiscoveryError,
   type DiscoveryKind,
   type DiscoverySubmitInput,
+  discoveryService,
 } from "../runtime/discovery/discovery-service";
 
 export const discoveryRouter = new Hono();
@@ -24,8 +24,9 @@ function asError(e: unknown) {
 /** GET /api/v1/discovery-jobs?project_id=&kind= */
 discoveryRouter.get("/", async (c) => {
   try {
+    const projectId = c.req.query("project_id");
     const data = await discoveryService.list({
-      ...(c.req.query("project_id") ? { projectId: c.req.query("project_id")! } : {}),
+      ...(projectId ? { projectId } : {}),
       ...(c.req.query("kind") ? { kind: c.req.query("kind") as DiscoveryKind } : {}),
     });
     return c.json({ ok: true, data });
@@ -91,13 +92,7 @@ discoveryRouter.post("/:id/candidates/:candidateId/promote", async (c) => {
     const candidateId = c.req.param("candidateId");
     const body = await c.req.json<{
       name: string;
-      category?:
-        | "value"
-        | "momentum"
-        | "volatility"
-        | "news"
-        | "quality"
-        | "macro";
+      category?: "value" | "momentum" | "volatility" | "news" | "quality" | "macro";
       status?: "draft" | "active" | "archived";
     }>();
     const data = await discoveryService.promoteCandidate(jobId, candidateId, body);

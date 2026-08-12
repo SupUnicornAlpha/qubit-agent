@@ -78,7 +78,7 @@ export class LongtermMemoryStore {
       lanceFilter
     );
 
-    const ids = hits.map((h) => String(h["longtermMemoryId"])).filter(Boolean);
+    const ids = hits.map((h) => String(h.longtermMemoryId)).filter(Boolean);
     if (ids.length === 0) return [];
 
     const db = await getDb();

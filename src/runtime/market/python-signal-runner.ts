@@ -15,7 +15,10 @@ export interface PythonSignalRunOutput {
   sell: boolean[];
 }
 
-async function runWithBinary(bin: string, input: PythonSignalRunInput): Promise<PythonSignalRunOutput> {
+async function runWithBinary(
+  bin: string,
+  input: PythonSignalRunInput
+): Promise<PythonSignalRunOutput> {
   const script = resolve(import.meta.dir, "python_backtest_runner.py");
   const { parsed } = await runPythonOneShot<{
     ok: boolean;
@@ -38,7 +41,9 @@ async function runWithBinary(bin: string, input: PythonSignalRunInput): Promise<
   return { buy, sell };
 }
 
-export async function runPythonSignalGenerator(input: PythonSignalRunInput): Promise<PythonSignalRunOutput> {
+export async function runPythonSignalGenerator(
+  input: PythonSignalRunInput
+): Promise<PythonSignalRunOutput> {
   const primary = getPythonBin();
   try {
     return await runWithBinary(primary, input);

@@ -22,8 +22,7 @@ export function readHttpProviderConfig(ref: ProviderRef): HttpProviderConfig | n
   return {
     baseUrl: baseUrl.replace(/\/+$/, ""),
     apiKey: typeof raw.apiKey === "string" ? raw.apiKey : undefined,
-    timeoutMs:
-      typeof raw.timeoutMs === "number" && raw.timeoutMs > 0 ? raw.timeoutMs : 8000,
+    timeoutMs: typeof raw.timeoutMs === "number" && raw.timeoutMs > 0 ? raw.timeoutMs : 8000,
     headers:
       raw.headers && typeof raw.headers === "object" && !Array.isArray(raw.headers)
         ? (raw.headers as Record<string, string>)

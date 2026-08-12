@@ -149,15 +149,17 @@ function computeResearchArtifactsOk(input: {
 
 function countTableRows(sqlite: Database, workflowId: string, table: string): number {
   const sql: Record<string, string> = {
-    recommendation_snapshot: `SELECT COUNT(*) AS c FROM recommendation_snapshot WHERE workflow_run_id = ?`,
+    recommendation_snapshot:
+      "SELECT COUNT(*) AS c FROM recommendation_snapshot WHERE workflow_run_id = ?",
     screener_candidate: `SELECT COUNT(*) AS c FROM screener_candidate sc
       JOIN screener_run sr ON sr.id = sc.screener_run_id WHERE sr.workflow_run_id = ?`,
-    factor_definition: `SELECT COUNT(*) AS c FROM factor_definition WHERE workflow_run_id = ?`,
+    factor_definition: "SELECT COUNT(*) AS c FROM factor_definition WHERE workflow_run_id = ?",
     factor_evaluation: `SELECT COUNT(*) AS c FROM factor_evaluation fe
       JOIN factor_definition fd ON fd.id = fe.factor_id WHERE fd.workflow_run_id = ?`,
-    strategy_version: `SELECT COUNT(*) AS c FROM strategy_version WHERE workflow_run_id = ?`,
-    strategy_composition: `SELECT COUNT(*) AS c FROM strategy_composition WHERE workflow_run_id = ?`,
-    order_intent: `SELECT COUNT(*) AS c FROM order_intent WHERE workflow_run_id = ?`,
+    strategy_version: "SELECT COUNT(*) AS c FROM strategy_version WHERE workflow_run_id = ?",
+    strategy_composition:
+      "SELECT COUNT(*) AS c FROM strategy_composition WHERE workflow_run_id = ?",
+    order_intent: "SELECT COUNT(*) AS c FROM order_intent WHERE workflow_run_id = ?",
     risk_decision: `SELECT COUNT(*) AS c FROM risk_decision rd
       JOIN order_intent oi ON oi.id = rd.order_intent_id WHERE oi.workflow_run_id = ?`,
   };

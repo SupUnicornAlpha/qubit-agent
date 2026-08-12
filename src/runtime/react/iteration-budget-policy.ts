@@ -33,8 +33,7 @@ export function didTurnMakeProgress(input: {
 }): boolean {
   const newCalls = input.afterObserve.toolCalls.slice(input.beforeAct.toolCalls.length);
   return newCalls.some(
-    (call) =>
-      call.status === "success" && !NON_EVIDENCE_TOOLS.has(String(call.toolName))
+    (call) => call.status === "success" && !NON_EVIDENCE_TOOLS.has(String(call.toolName))
   );
 }
 
@@ -68,9 +67,7 @@ export function shouldRecoverFromUnproductiveBudget(input: {
   if (input.researchFloorMet) return false;
   const max = input.maxUnproductiveRecoveries ?? DEFAULT_MAX_UNPRODUCTIVE_RECOVERIES;
   if ((input.unproductiveRecoveryCount ?? 0) >= max) return false;
-  return (
-    input.notAttemptedCapabilities.length > 0 || input.missingArtifactTables.length > 0
-  );
+  return input.notAttemptedCapabilities.length > 0 || input.missingArtifactTables.length > 0;
 }
 
 /** LLM 网关故障文案：不应被当成「模型已决定 tool=none」结案。 */

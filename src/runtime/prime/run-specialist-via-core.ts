@@ -4,19 +4,13 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { syncPrimeSpecsToRustCore } from "./bootstrap";
+import { clearPrimeBridgeRunContext, setPrimeBridgeRunContext } from "./bridge-run-context";
 import { resolveCoreBackend } from "./core-runtime";
 import { asRustCoreClient, ensureCoreSession } from "./ensure-core-session";
-import { syncPrimeSpecsToRustCore } from "./bootstrap";
-import {
-  beginCoreMonitorTurn,
-  finalizeCoreMonitorTurn,
-} from "./project-core-monitor";
+import { beginCoreMonitorTurn, finalizeCoreMonitorTurn } from "./project-core-monitor";
 import { projectCoreInvocation } from "./project-core-to-graph";
 import { buildPrimeAgentSpecs } from "./seed-prime-agent-specs";
-import {
-  clearPrimeBridgeRunContext,
-  setPrimeBridgeRunContext,
-} from "./bridge-run-context";
 import type { SessionSnapshot } from "./types";
 
 export function resolveCalleeSpecId(input: {
@@ -33,9 +27,7 @@ export function resolveCalleeSpecId(input: {
   return "def-research";
 }
 
-function extractAnswerFromInvokeRecord(
-  record: Record<string, unknown>
-): string {
+function extractAnswerFromInvokeRecord(record: Record<string, unknown>): string {
   const handoff = record.handoff_out;
   if (handoff && typeof handoff === "object" && !Array.isArray(handoff)) {
     const narrative = (handoff as Record<string, unknown>).narrative;
@@ -88,10 +80,8 @@ export async function reasonSpecialistViaCore(input: {
   });
   const client = asRustCoreClient();
   const parentSnap = await client.sessionSnapshot(sessionId);
-  const parentTurnId =
-    parentSnap.active_turn?.turn_id ?? `trn_parent_${randomUUID().slice(0, 8)}`;
-  const callerInstanceId =
-    agentInstanceId ?? parentSnap.session.agent_instance_id;
+  const parentTurnId = parentSnap.active_turn?.turn_id ?? `trn_parent_${randomUUID().slice(0, 8)}`;
+  const callerInstanceId = agentInstanceId ?? parentSnap.session.agent_instance_id;
 
   const goalParts = [input.goal.trim()];
   if (input.context?.trim()) {
@@ -145,11 +135,8 @@ export async function reasonSpecialistViaCore(input: {
   }
 
   const childSessionId =
-    typeof record.child_session_id === "string"
-      ? record.child_session_id
-      : undefined;
-  const childTurnId =
-    typeof record.child_turn_id === "string" ? record.child_turn_id : undefined;
+    typeof record.child_session_id === "string" ? record.child_session_id : undefined;
+  const childTurnId = typeof record.child_turn_id === "string" ? record.child_turn_id : undefined;
   const state = typeof record.state === "string" ? record.state : undefined;
 
   // Prefer child session answer_text over handoff narrative (may still be stub).

@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { assertAnswerSchema } from "./answer-schema";
 import { getContractAutoAdvanceMode, isThinLoopEnabled } from "./flags";
-import { resolveScenarioRecipe } from "./scenario-recipe";
-import { BUSINESS_WRITE_TOOLS } from "./types";
 import { planContractRecovery } from "./recovery";
+import { resolveScenarioRecipe } from "./scenario-recipe";
 import type { ScenarioRuntimeSnapshot } from "./scenario-snapshot";
+import { BUSINESS_WRITE_TOOLS } from "./types";
 
 describe("scenario recipes", () => {
   test("resolves aliases to pin-versioned recipes", () => {

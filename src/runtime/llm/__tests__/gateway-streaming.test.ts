@@ -47,18 +47,18 @@ function jsonResponse(body: unknown): Response {
 
 describe("Gateway P1 — Anthropic streaming SSE", () => {
   let fetchSpy: ReturnType<typeof spyOn>;
-  const origNonStream = process.env["QUBIT_LLM_ANTHROPIC_NON_STREAM"];
+  const origNonStream = process.env.QUBIT_LLM_ANTHROPIC_NON_STREAM;
 
   beforeEach(() => {
-    process.env["ANTHROPIC_API_KEY"] = "sk-test";
-    delete process.env["QUBIT_LLM_ANTHROPIC_NON_STREAM"];
+    process.env.ANTHROPIC_API_KEY = "sk-test";
+    delete process.env.QUBIT_LLM_ANTHROPIC_NON_STREAM;
     fetchSpy = spyOn(globalThis, "fetch");
   });
 
   afterEach(() => {
     fetchSpy.mockRestore();
-    if (origNonStream === undefined) delete process.env["QUBIT_LLM_ANTHROPIC_NON_STREAM"];
-    else process.env["QUBIT_LLM_ANTHROPIC_NON_STREAM"] = origNonStream;
+    if (origNonStream === undefined) delete process.env.QUBIT_LLM_ANTHROPIC_NON_STREAM;
+    else process.env.QUBIT_LLM_ANTHROPIC_NON_STREAM = origNonStream;
   });
 
   test("text_delta 累积 + responseId + stop_reason + cachedPromptTokens", async () => {
@@ -94,7 +94,7 @@ describe("Gateway P1 — Anthropic streaming SSE", () => {
             },
           },
           { event: "message_stop", data: { type: "message_stop" } },
-        ]),
+        ])
       );
     });
 
@@ -119,7 +119,7 @@ describe("Gateway P1 — Anthropic streaming SSE", () => {
   });
 
   test("ENV QUBIT_LLM_ANTHROPIC_NON_STREAM=1 → 回退非流式（兼容老代理）", async () => {
-    process.env["QUBIT_LLM_ANTHROPIC_NON_STREAM"] = "1";
+    process.env.QUBIT_LLM_ANTHROPIC_NON_STREAM = "1";
     fetchSpy.mockImplementation((_url: string | URL, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body ?? "{}"));
       expect(body.stream).toBeUndefined();
@@ -129,7 +129,7 @@ describe("Gateway P1 — Anthropic streaming SSE", () => {
           content: [{ type: "text", text: "ok" }],
           stop_reason: "end_turn",
           usage: { input_tokens: 5, output_tokens: 1 },
-        }),
+        })
       );
     });
     const result = await runLlmGateway({
@@ -145,19 +145,19 @@ describe("Gateway P1 — Anthropic streaming SSE", () => {
 
 describe("Gateway P1 — OpenAI Responses streaming SSE", () => {
   let fetchSpy: ReturnType<typeof spyOn>;
-  const origNonStream = process.env["QUBIT_LLM_RESPONSES_NON_STREAM"];
+  const origNonStream = process.env.QUBIT_LLM_RESPONSES_NON_STREAM;
 
   beforeEach(() => {
-    process.env["OPENAI_API_KEY"] = "sk-test-openai";
-    delete process.env["QUBIT_LLM_RESPONSES_NON_STREAM"];
-    delete process.env["QUBIT_LLM_USE_RESPONSES_API"];
+    process.env.OPENAI_API_KEY = "sk-test-openai";
+    delete process.env.QUBIT_LLM_RESPONSES_NON_STREAM;
+    delete process.env.QUBIT_LLM_USE_RESPONSES_API;
     fetchSpy = spyOn(globalThis, "fetch");
   });
 
   afterEach(() => {
     fetchSpy.mockRestore();
-    if (origNonStream === undefined) delete process.env["QUBIT_LLM_RESPONSES_NON_STREAM"];
-    else process.env["QUBIT_LLM_RESPONSES_NON_STREAM"] = origNonStream;
+    if (origNonStream === undefined) delete process.env.QUBIT_LLM_RESPONSES_NON_STREAM;
+    else process.env.QUBIT_LLM_RESPONSES_NON_STREAM = origNonStream;
   });
 
   test("output_text.delta 累积 + response.completed 拿 usage / finishReason", async () => {
@@ -196,7 +196,7 @@ describe("Gateway P1 — OpenAI Responses streaming SSE", () => {
               },
             },
           },
-        ]),
+        ])
       );
     });
 
@@ -223,10 +223,13 @@ describe("Gateway P1 — OpenAI Responses streaming SSE", () => {
         sseStreamResponse([
           {
             event: "response.error",
-            data: { type: "response.error", error: { message: "rate limit", code: "rate_limit_exceeded" } },
+            data: {
+              type: "response.error",
+              error: { message: "rate limit", code: "rate_limit_exceeded" },
+            },
           },
-        ]),
-      ),
+        ])
+      )
     );
 
     let threw: Error | null = null;
@@ -245,7 +248,7 @@ describe("Gateway P1 — OpenAI Responses streaming SSE", () => {
   });
 
   test("ENV QUBIT_LLM_RESPONSES_NON_STREAM=1 → 回退非流式", async () => {
-    process.env["QUBIT_LLM_RESPONSES_NON_STREAM"] = "1";
+    process.env.QUBIT_LLM_RESPONSES_NON_STREAM = "1";
     fetchSpy.mockImplementation((_url: string | URL, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body ?? "{}"));
       expect(body.stream).toBe(false);
@@ -255,7 +258,7 @@ describe("Gateway P1 — OpenAI Responses streaming SSE", () => {
           status: "completed",
           output_text: "ok",
           usage: { input_tokens: 1, output_tokens: 1 },
-        }),
+        })
       );
     });
     const result = await runLlmGateway({

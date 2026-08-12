@@ -114,14 +114,14 @@ describe("AutoInstaller.runOnce", () => {
       .where(eq(autoInstallProposal.gapLogId, gapId))
       .all();
     expect(props.length).toBe(1);
-    expect(props[0]!.state).toBe("pending_review");
-    expect(props[0]!.proposalKind).toBe("install_mcp_catalog");
-    expect(props[0]!.targetSlug).toBe("slack");
-    expect(props[0]!.matchScore).toBeGreaterThanOrEqual(0.3);
+    expect(props[0]?.state).toBe("pending_review");
+    expect(props[0]?.proposalKind).toBe("install_mcp_catalog");
+    expect(props[0]?.targetSlug).toBe("slack");
+    expect(props[0]?.matchScore).toBeGreaterThanOrEqual(0.3);
 
     const gap = await db.select().from(toolGapLog).where(eq(toolGapLog.id, gapId)).all();
-    expect(gap[0]!.status).toBe("proposed");
-    expect(gap[0]!.statusBy).toBe("auto_installer");
+    expect(gap[0]?.status).toBe("proposed");
+    expect(gap[0]?.statusBy).toBe("auto_installer");
   });
 
   test("无候选 gap → proposal(no_candidate)，gap 维持 open", async () => {
@@ -138,10 +138,10 @@ describe("AutoInstaller.runOnce", () => {
       .where(eq(autoInstallProposal.gapLogId, gapId))
       .all();
     expect(props.length).toBe(1);
-    expect(props[0]!.state).toBe("no_candidate");
-    expect(props[0]!.proposalKind).toBe("no_candidate");
+    expect(props[0]?.state).toBe("no_candidate");
+    expect(props[0]?.proposalKind).toBe("no_candidate");
     const gap = await db.select().from(toolGapLog).where(eq(toolGapLog.id, gapId)).all();
-    expect(gap[0]!.status).toBe("open");
+    expect(gap[0]?.status).toBe("open");
   });
 
   test("已有 pending_review proposal → skipped_existing", async () => {
@@ -191,7 +191,7 @@ describe("AutoInstaller.runOnce", () => {
     }
     const ev = events.find((e) => e.type === "maintenance_run" && e.kind === "auto_installer");
     expect(ev).toBeDefined();
-    expect((ev as { summary: Record<string, unknown> }).summary["proposalsCreated"]).toBe(1);
+    expect((ev as { summary: Record<string, unknown> }).summary.proposalsCreated).toBe(1);
   });
 });
 
@@ -205,20 +205,20 @@ describe("lifecycle approve/reject", () => {
       .from(autoInstallProposal)
       .where(eq(autoInstallProposal.gapLogId, gapId))
       .all();
-    const r = await approveProposal({ proposalId: p!.id, actor: "tester" });
+    const r = await approveProposal({ proposalId: p?.id, actor: "tester" });
     expect(r.toState).toBe("approved");
     expect(r.gapStatusChanged).toBe(true);
 
     const [p2] = await db
       .select()
       .from(autoInstallProposal)
-      .where(eq(autoInstallProposal.id, p!.id))
+      .where(eq(autoInstallProposal.id, p?.id))
       .all();
-    expect(p2!.state).toBe("approved");
-    expect(p2!.stateBy).toBe("tester");
+    expect(p2?.state).toBe("approved");
+    expect(p2?.stateBy).toBe("tester");
 
     const [g2] = await db.select().from(toolGapLog).where(eq(toolGapLog.id, gapId)).all();
-    expect(g2!.status).toBe("installed");
+    expect(g2?.status).toBe("installed");
   });
 
   test("reject pending_review：proposal→rejected + gap→rejected", async () => {
@@ -230,12 +230,12 @@ describe("lifecycle approve/reject", () => {
       .from(autoInstallProposal)
       .where(eq(autoInstallProposal.gapLogId, gapId))
       .all();
-    const r = await rejectProposal({ proposalId: p!.id, actor: "tester", reason: "low value" });
+    const r = await rejectProposal({ proposalId: p?.id, actor: "tester", reason: "low value" });
     expect(r.toState).toBe("rejected");
     expect(r.gapStatusChanged).toBe(true);
 
     const [g] = await db.select().from(toolGapLog).where(eq(toolGapLog.id, gapId)).all();
-    expect(g!.status).toBe("rejected");
+    expect(g?.status).toBe("rejected");
   });
 
   test("reject no_candidate：proposal→rejected，gap 维持 open", async () => {
@@ -247,13 +247,13 @@ describe("lifecycle approve/reject", () => {
       .from(autoInstallProposal)
       .where(eq(autoInstallProposal.gapLogId, gapId))
       .all();
-    expect(p!.state).toBe("no_candidate");
-    const r = await rejectProposal({ proposalId: p!.id, actor: "tester" });
+    expect(p?.state).toBe("no_candidate");
+    const r = await rejectProposal({ proposalId: p?.id, actor: "tester" });
     expect(r.toState).toBe("rejected");
     expect(r.gapStatusChanged).toBe(false);
 
     const [g] = await db.select().from(toolGapLog).where(eq(toolGapLog.id, gapId)).all();
-    expect(g!.status).toBe("open");
+    expect(g?.status).toBe("open");
   });
 
   test("approve 已 approved → ProposalStateError", async () => {
@@ -265,8 +265,8 @@ describe("lifecycle approve/reject", () => {
       .from(autoInstallProposal)
       .where(eq(autoInstallProposal.gapLogId, gapId))
       .all();
-    await approveProposal({ proposalId: p!.id, actor: "tester" });
-    await expect(approveProposal({ proposalId: p!.id, actor: "tester" })).rejects.toThrow(
+    await approveProposal({ proposalId: p?.id, actor: "tester" });
+    await expect(approveProposal({ proposalId: p?.id, actor: "tester" })).rejects.toThrow(
       ProposalStateError
     );
   });

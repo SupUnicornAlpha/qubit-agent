@@ -24,11 +24,7 @@ import { getDb } from "../../db/sqlite/client";
 import { toolGapLog, toolGapRun } from "../../db/sqlite/schema";
 import type { ExperienceBus } from "../experience/experience-bus";
 import { getExperienceBus } from "../experience/experience-bus";
-import {
-  detectReflectiveMention,
-  detectRepeatedFail,
-  detectUnknownTool,
-} from "./detectors";
+import { detectReflectiveMention, detectRepeatedFail, detectUnknownTool } from "./detectors";
 import type { DetectionKind, GapSignal, WatcherRunSummary } from "./types";
 
 const KIND_PRIORITY: Record<DetectionKind, number> = {
@@ -118,7 +114,8 @@ export class ToolGapWatcher {
         fromTs,
         toTs,
       };
-      if (opts.maxSignalsPerDetector !== undefined) baseOpts.maxSignals = opts.maxSignalsPerDetector;
+      if (opts.maxSignalsPerDetector !== undefined)
+        baseOpts.maxSignals = opts.maxSignalsPerDetector;
       if (opts.repeatedFailThreshold !== undefined)
         baseOpts.repeatedFailThreshold = opts.repeatedFailThreshold;
       const [unk, rep, ref] = await Promise.all([
@@ -258,7 +255,7 @@ export class ToolGapWatcher {
         signature: sig.signature,
         detectionKind: sig.kind,
         action: "skipped",
-        skipReason: `existing ${existing[0]!.status}; user-decided gap not auto-reopened`,
+        skipReason: `existing ${existing[0]?.status}; user-decided gap not auto-reopened`,
       };
     }
     const id = `gap_${randomUUID()}`;
@@ -319,10 +316,11 @@ export async function reportExplicitGap(input: {
     occurredAt: new Date().toISOString(),
     metadata: input.metadata ?? {},
   });
-  const out: { action: "created" | "incremented" | "skipped"; gapId?: string; signature: string } = {
-    action: r.action,
-    signature: r.signature,
-  };
+  const out: { action: "created" | "incremented" | "skipped"; gapId?: string; signature: string } =
+    {
+      action: r.action,
+      signature: r.signature,
+    };
   if (r.gapId) out.gapId = r.gapId;
   return out;
 }

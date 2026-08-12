@@ -54,7 +54,9 @@ describe("extractFactorNamesFromDraft", () => {
      * T1.3 后收紧 length ≥ 3，原 fixture `F1..F15` 被 stop-word 长度过滤，
      * 改成 `FCT_1..FCT_15` 模拟真因子命名（更接近线上行为）。
      */
-    const items = Array.from({ length: 15 }, (_, i) => `${i + 1}. **FCT_${i + 1}**：desc`).join("\n");
+    const items = Array.from({ length: 15 }, (_, i) => `${i + 1}. **FCT_${i + 1}**：desc`).join(
+      "\n"
+    );
     const names = extractFactorNamesFromDraft(items);
     expect(names.length).toBe(8);
   });

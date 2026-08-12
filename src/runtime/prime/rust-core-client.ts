@@ -5,11 +5,11 @@
 import {
   type AgentSpec,
   type CoreRuntime,
+  PRIME_RPC,
   type PrimeRuntimeEvent,
   type RuntimeHealth,
   type SessionSnapshot,
   type SessionView,
-  PRIME_RPC,
 } from "./types";
 
 type JsonRpcOk = { jsonrpc: "2.0"; result: unknown; id: string | number | null };
@@ -102,9 +102,7 @@ export class RustCoreClient implements CoreRuntime {
     return this.rpc(PRIME_RPC.AGENT_INVOKE, req);
   }
 
-  async ingestTrigger(
-    req: Record<string, unknown>
-  ): Promise<{ turn_id?: string | null }> {
+  async ingestTrigger(req: Record<string, unknown>): Promise<{ turn_id?: string | null }> {
     return this.rpc(PRIME_RPC.TRIGGER_INGEST, req);
   }
 
@@ -118,11 +116,13 @@ export class RustCoreClient implements CoreRuntime {
     await this.rpc(PRIME_RPC.HITL_RESPOND, req);
   }
 
-  hitlInboxList(req: {
-    workspace_id?: string;
-    session_id?: string;
-    pending_only?: boolean;
-  } = {}): Promise<
+  hitlInboxList(
+    req: {
+      workspace_id?: string;
+      session_id?: string;
+      pending_only?: boolean;
+    } = {}
+  ): Promise<
     Array<{
       inbox_id: string;
       turn_id: string;
@@ -147,8 +147,7 @@ export class RustCoreClient implements CoreRuntime {
     onEvent?: (event: PrimeRuntimeEvent) => void | Promise<void>
   ): Promise<SessionSnapshot> {
     const deadline = Date.now() + Math.max(1_000, timeoutMs);
-    const timeoutErr = () =>
-      new Error(`timeout waiting for turn ${turnId}`);
+    const timeoutErr = () => new Error(`timeout waiting for turn ${turnId}`);
 
     const hardTimeout = new Promise<never>((_, reject) => {
       const left = Math.max(0, deadline - Date.now());
@@ -226,10 +225,7 @@ export class RustCoreClient implements CoreRuntime {
       Number(process.env.QUBIT_PRIME_ORPHAN_GRACE_MS ?? 25_000) || 25_000
     );
     /** Require sustained orphan signal (was 3s — false-killed turns mid-LLM/news). */
-    const streakNeed = Math.max(
-      5,
-      Number(process.env.QUBIT_PRIME_ORPHAN_STREAK_SECS ?? 15) || 15
-    );
+    const streakNeed = Math.max(5, Number(process.env.QUBIT_PRIME_ORPHAN_STREAK_SECS ?? 15) || 15);
     const watchStarted = Date.now();
     let streak = 0;
     while (Date.now() < deadline) {
@@ -237,10 +233,7 @@ export class RustCoreClient implements CoreRuntime {
       let health: RuntimeHealth;
       let snap: SessionSnapshot;
       try {
-        [health, snap] = await Promise.all([
-          this.health(),
-          this.sessionSnapshot(sessionId),
-        ]);
+        [health, snap] = await Promise.all([this.health(), this.sessionSnapshot(sessionId)]);
       } catch {
         continue;
       }
@@ -267,20 +260,11 @@ export class RustCoreClient implements CoreRuntime {
         continue;
       }
       const registered =
-        typeof health.registered_turns === "number"
-          ? health.registered_turns
-          : null;
+        typeof health.registered_turns === "number" ? health.registered_turns : null;
       // Prefer joint signal: semaphore empty AND cancel registry empty (when known).
       // Legacy cores omit registered_turns — fall back to active_turns alone.
-      const noLiveTask =
-        health.active_turns === 0 &&
-        (registered === null || registered === 0);
-      if (
-        turn &&
-        turn.turn_id === turnId &&
-        inflight.has(String(turn.state)) &&
-        noLiveTask
-      ) {
+      const noLiveTask = health.active_turns === 0 && (registered === null || registered === 0);
+      if (turn && turn.turn_id === turnId && inflight.has(String(turn.state)) && noLiveTask) {
         streak += 1;
         if (streak >= streakNeed) {
           console.warn(
@@ -368,9 +352,7 @@ export class RustCoreClient implements CoreRuntime {
         const parts = buf.split("\n\n");
         buf = parts.pop() ?? "";
         for (const chunk of parts) {
-          const dataLine = chunk
-            .split("\n")
-            .find((l) => l.startsWith("data:"));
+          const dataLine = chunk.split("\n").find((l) => l.startsWith("data:"));
           if (!dataLine) continue;
           const raw = dataLine.slice(5).trim();
           try {

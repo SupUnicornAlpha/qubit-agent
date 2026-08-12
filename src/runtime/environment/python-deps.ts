@@ -40,7 +40,10 @@ const SAFE_PACKAGE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const SAFE_SPEC_MAX = 256;
 
 export class PythonDepsError extends Error {
-  constructor(public readonly code: PythonDepsErrorCode, message?: string) {
+  constructor(
+    public readonly code: PythonDepsErrorCode,
+    message?: string
+  ) {
     super(message ?? code);
     this.name = "PythonDepsError";
   }
@@ -322,11 +325,8 @@ async function detectInstalledVersion(name: string): Promise<string | null> {
 }
 
 /** 给定 expected 列表 + (可选) 已装快照，构造 diff；不传 installed 则现采。 */
-export async function buildPythonDiff(
-  expectedOverride?: ExpectedPackage[]
-): Promise<PackageDiff> {
-  const expected =
-    expectedOverride ?? (await envRegistryService.list({ kind: "python" }));
+export async function buildPythonDiff(expectedOverride?: ExpectedPackage[]): Promise<PackageDiff> {
+  const expected = expectedOverride ?? (await envRegistryService.list({ kind: "python" }));
   const installed = await listInstalledPython();
   return diffPackages(expected, installed);
 }

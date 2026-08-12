@@ -14,12 +14,12 @@
  */
 import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { dispatchBuiltinTool } from "../builtin-tools";
-import { runMigrations } from "../../../db/sqlite/migrate";
 import { getDb } from "../../../db/sqlite/client";
+import { runMigrations } from "../../../db/sqlite/migrate";
 import * as schema from "../../../db/sqlite/schema";
-import { bootstrapProviders } from "../../provider/bootstrap";
 import { factorService } from "../../factor/factor-service";
+import { bootstrapProviders } from "../../provider/bootstrap";
+import { dispatchBuiltinTool } from "../builtin-tools";
 
 let workspaceId: string;
 let projectId: string;
@@ -72,10 +72,22 @@ describe("factor.autoEvaluate 一步式 register → compute → evaluate", () =
      */
     const callOrder: string[] = [];
 
-    const computeSpy = mock(async (input: { factorId: string; symbols?: string[]; startDate: string; endDate: string }) => {
-      callOrder.push(`compute(${input.factorId.slice(0, 8)}, symbols=${input.symbols?.join(",")})`);
-      return { rows: [], meta: { factorId: input.factorId, rowCount: 30, latencyMs: 1 } } as never;
-    });
+    const computeSpy = mock(
+      async (input: {
+        factorId: string;
+        symbols?: string[];
+        startDate: string;
+        endDate: string;
+      }) => {
+        callOrder.push(
+          `compute(${input.factorId.slice(0, 8)}, symbols=${input.symbols?.join(",")})`
+        );
+        return {
+          rows: [],
+          meta: { factorId: input.factorId, rowCount: 30, latencyMs: 1 },
+        } as never;
+      }
+    );
     const autoEvalSpy = mock(async (input: { factorId: string }) => {
       callOrder.push(`autoEvaluate(${input.factorId.slice(0, 8)})`);
       return {
@@ -127,7 +139,10 @@ describe("factor.autoEvaluate 一步式 register → compute → evaluate", () =
     const callOrder: string[] = [];
     factorService.compute = (async () => {
       callOrder.push("compute");
-      return { rows: [], meta: { factorId: crypto.randomUUID(), rowCount: 0, latencyMs: 1 } } as never;
+      return {
+        rows: [],
+        meta: { factorId: crypto.randomUUID(), rowCount: 0, latencyMs: 1 },
+      } as never;
     }) as typeof factorService.compute;
     factorService.autoEvaluate = (async () => {
       callOrder.push("autoEvaluate");
@@ -149,13 +164,16 @@ describe("factor.autoEvaluate 一步式 register → compute → evaluate", () =
 
   test("已传 factor_id（非一步式）→ 不应触发 compute（保持原有行为）", async () => {
     const computeSpy = mock(async () => ({}) as never);
-    const autoEvalSpy = mock(async (input: { factorId: string }) => ({
-      factorId: input.factorId,
-      evaluationId: randomUUID(),
-      rankIc: 0,
-      ir: 0,
-      meta: { horizonDays: 5, decayHorizons: [1, 3, 5, 10, 20] },
-    }) as never);
+    const autoEvalSpy = mock(
+      async (input: { factorId: string }) =>
+        ({
+          factorId: input.factorId,
+          evaluationId: randomUUID(),
+          rankIc: 0,
+          ir: 0,
+          meta: { horizonDays: 5, decayHorizons: [1, 3, 5, 10, 20] },
+        }) as never
+    );
 
     factorService.compute = computeSpy as unknown as typeof factorService.compute;
     factorService.autoEvaluate = autoEvalSpy as unknown as typeof factorService.autoEvaluate;

@@ -66,7 +66,9 @@ beforeAll(async () => {
   const workspaceId = randomUUID();
   projectId = randomUUID();
   workflowRunId = randomUUID();
-  await db.insert(schema.workspace).values({ id: workspaceId, name: "promotion-ws", owner: "test" });
+  await db
+    .insert(schema.workspace)
+    .values({ id: workspaceId, name: "promotion-ws", owner: "test" });
   await db.insert(schema.project).values({
     id: projectId,
     workspaceId,

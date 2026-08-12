@@ -80,21 +80,20 @@ export function parsePlanWithHitlHint(answer: string): OrchestratorPlanResult {
             description: typeof o.description === "string" ? o.description : undefined,
           }))
         : undefined;
-    const fields =
-      Array.isArray(raw.fields)
-        ? (raw.fields as Array<Record<string, unknown>>)
-            .filter(
-              (f) => f && typeof f === "object" && typeof f.key === "string" && String(f.key).trim()
-            )
-            .map((f) => ({
-              key: String(f.key).trim(),
-              label: String(f.label ?? f.key ?? "").trim(),
-              type: f.type === "number" ? ("number" as const) : ("text" as const),
-              required: f.required !== false,
-              placeholder:
-                typeof f.placeholder === "string" ? f.placeholder.slice(0, 200) : undefined,
-            }))
-        : undefined;
+    const fields = Array.isArray(raw.fields)
+      ? (raw.fields as Array<Record<string, unknown>>)
+          .filter(
+            (f) => f && typeof f === "object" && typeof f.key === "string" && String(f.key).trim()
+          )
+          .map((f) => ({
+            key: String(f.key).trim(),
+            label: String(f.label ?? f.key ?? "").trim(),
+            type: f.type === "number" ? ("number" as const) : ("text" as const),
+            required: f.required !== false,
+            placeholder:
+              typeof f.placeholder === "string" ? f.placeholder.slice(0, 200) : undefined,
+          }))
+      : undefined;
     return {
       brief,
       hitlHint: {
@@ -105,7 +104,8 @@ export function parsePlanWithHitlHint(answer: string): OrchestratorPlanResult {
         options,
         allowFreeText: raw.allowFreeText === true ? true : undefined,
         fields,
-        placeholder: typeof raw.placeholder === "string" ? raw.placeholder.slice(0, 300) : undefined,
+        placeholder:
+          typeof raw.placeholder === "string" ? raw.placeholder.slice(0, 300) : undefined,
       },
     };
   } catch {
@@ -113,7 +113,9 @@ export function parsePlanWithHitlHint(answer: string): OrchestratorPlanResult {
   }
 }
 
-export function extractHitlHintFromText(text: string | null | undefined): OrchestratorHitlHint | null {
+export function extractHitlHintFromText(
+  text: string | null | undefined
+): OrchestratorHitlHint | null {
   if (!text) return null;
   return parsePlanWithHitlHint(text).hitlHint;
 }

@@ -1,9 +1,9 @@
-import { Hono } from "hono";
 import { and, desc, eq, inArray } from "drizzle-orm";
+import { Hono } from "hono";
 import { getDb } from "../db/sqlite/client";
 import {
-  brokerOrder,
   brokerAccount,
+  brokerOrder,
   executionTask,
   executionTaskEvent,
   fill,
@@ -17,34 +17,37 @@ import {
   strategyVersion,
   workflowRun,
 } from "../db/sqlite/schema";
+import { verifyAuditLogChain } from "../runtime/audit/audit-chain-service";
+import { strategyPromotionService } from "../runtime/effect-validation/strategy-promotion-service";
 import {
+  type CreateBracketOrderInput,
+  createBracketOrder,
+} from "../runtime/execution/bracket-order-service";
+import { amendWaitingConditionalOrder } from "../runtime/execution/conditional-order-service";
+import {
+  type CreateOrderIntentInput,
   approveRiskReviewTicket,
   createOrderIntentWithExecution,
   rejectRiskReviewTicket,
-  type CreateOrderIntentInput,
 } from "../runtime/execution/order-intent-service";
-import { buildProjectTcaReport } from "../runtime/execution/tca-service";
 import {
-  buildPositionReconciliation,
-  scanPositionReconciliation,
-} from "../runtime/execution/position-reconciliation-service";
-import {
-  allocatePortfolio,
   type PortfolioAllocationConfig,
   type PortfolioAllocationRow,
   type PortfolioCandidate,
+  allocatePortfolio,
 } from "../runtime/execution/portfolio-allocation-service";
-import { buildHistoricalPortfolioRisk } from "../runtime/execution/portfolio-risk-service";
-import { verifyAuditLogChain } from "../runtime/audit/audit-chain-service";
-import { ensureStrategyVersionForScript } from "../runtime/strategy/strategy-version-resolver";
-import { amendWaitingConditionalOrder } from "../runtime/execution/conditional-order-service";
-import { strategyPromotionService } from "../runtime/effect-validation/strategy-promotion-service";
-import { createBracketOrder, type CreateBracketOrderInput } from "../runtime/execution/bracket-order-service";
 import {
   buildPortfolioRebalancePlan,
   executePortfolioRebalance,
 } from "../runtime/execution/portfolio-rebalance-service";
-import { isBrokerProvider, type BrokerProvider } from "../types/broker";
+import { buildHistoricalPortfolioRisk } from "../runtime/execution/portfolio-risk-service";
+import {
+  buildPositionReconciliation,
+  scanPositionReconciliation,
+} from "../runtime/execution/position-reconciliation-service";
+import { buildProjectTcaReport } from "../runtime/execution/tca-service";
+import { ensureStrategyVersionForScript } from "../runtime/strategy/strategy-version-resolver";
+import { type BrokerProvider, isBrokerProvider } from "../types/broker";
 
 export const executionRouter = new Hono();
 
@@ -75,13 +78,20 @@ executionRouter.post("/reconciliation/positions/remediate", async (c) => {
     brokerAccountId?: string;
   }>();
   if (
-    !body.projectId || !body.provider || !body.expectedPlanHash ||
-    (!body.strategyRuntimeId && (!body.workflowRunId || !body.strategyVersionId || !body.brokerAccountId))
+    !body.projectId ||
+    !body.provider ||
+    !body.expectedPlanHash ||
+    (!body.strategyRuntimeId &&
+      (!body.workflowRunId || !body.strategyVersionId || !body.brokerAccountId))
   ) {
-    return c.json({
-      ok: false,
-      error: "projectId, provider and expectedPlanHash plus strategyRuntimeId or explicit execution context are required",
-    }, 400);
+    return c.json(
+      {
+        ok: false,
+        error:
+          "projectId, provider and expectedPlanHash plus strategyRuntimeId or explicit execution context are required",
+      },
+      400
+    );
   }
   if (body.confirmation !== "CONFIRM_RECONCILIATION") {
     return c.json({ ok: false, error: "explicit confirmation is required" }, 409);
@@ -92,7 +102,10 @@ executionRouter.post("/reconciliation/positions/remediate", async (c) => {
     ...(body.accountRef ? { accountRef: body.accountRef } : {}),
   });
   if (current.remediation.planHash !== body.expectedPlanHash) {
-    return c.json({ ok: false, error: "reconciliation_plan_stale", data: current.remediation }, 409);
+    return c.json(
+      { ok: false, error: "reconciliation_plan_stale", data: current.remediation },
+      409
+    );
   }
   if (!current.remediation.actions.length) {
     return c.json({ ok: true, data: { planHash: current.remediation.planHash, orders: [] } });
@@ -114,10 +127,13 @@ executionRouter.post("/reconciliation/positions/remediate", async (c) => {
     try {
       await strategyPromotionService.assertRuntimeLiveEligible(runtime.id, db);
     } catch (error) {
-      return c.json({
-        ok: false,
-        error: error instanceof Error ? error.message : "live_promotion_gate_blocked",
-      }, 409);
+      return c.json(
+        {
+          ok: false,
+          error: error instanceof Error ? error.message : "live_promotion_gate_blocked",
+        },
+        409
+      );
     }
     const scripts = await db
       .select()
@@ -153,7 +169,8 @@ executionRouter.post("/reconciliation/positions/remediate", async (c) => {
     !executionContext ||
     executionContext.workflowProjectId !== body.projectId ||
     executionContext.strategyProjectId !== body.projectId ||
-    (executionContext.versionWorkflowRunId && executionContext.versionWorkflowRunId !== workflowRunId)
+    (executionContext.versionWorkflowRunId &&
+      executionContext.versionWorkflowRunId !== workflowRunId)
   ) {
     return c.json({ ok: false, error: "execution_context_project_mismatch" }, 409);
   }
@@ -173,11 +190,15 @@ executionRouter.post("/reconciliation/positions/remediate", async (c) => {
   }> = [];
   for (const action of current.remediation.actions) {
     const normalizedSymbol = action.symbol.trim().toUpperCase();
-    const symbolCandidates = Array.from(new Set([
-      action.symbol.trim(),
-      normalizedSymbol,
-      normalizedSymbol.split(".")[0] ?? normalizedSymbol,
-    ].filter(Boolean)));
+    const symbolCandidates = Array.from(
+      new Set(
+        [
+          action.symbol.trim(),
+          normalizedSymbol,
+          normalizedSymbol.split(".")[0] ?? normalizedSymbol,
+        ].filter(Boolean)
+      )
+    );
     const rows = await db
       .select({ id: instrument.id })
       .from(instrument)
@@ -188,27 +209,31 @@ executionRouter.post("/reconciliation/positions/remediate", async (c) => {
   }
   const orders = [];
   for (const item of resolved) {
-    const referencePrice = item.action.quantity > 0
-      ? item.action.estimatedNotional / item.action.quantity
-      : null;
+    const referencePrice =
+      item.action.quantity > 0 ? item.action.estimatedNotional / item.action.quantity : null;
     if (!referencePrice || !Number.isFinite(referencePrice) || referencePrice <= 0) {
-      return c.json({ ok: false, error: "invalid_reconciliation_reference_price:" + item.action.symbol }, 409);
+      return c.json(
+        { ok: false, error: "invalid_reconciliation_reference_price:" + item.action.symbol },
+        409
+      );
     }
-    orders.push(await createOrderIntentWithExecution(db, {
-      workflowRunId,
-      strategyVersionId,
-      instrumentId: item.instrumentId,
-      side: item.action.action,
-      qty: item.action.quantity,
-      orderType: "market",
-      price: referencePrice,
-      timeInForce: "day",
-      dispatchMode: "live",
-      brokerAccountId,
-      symbol: item.action.symbol,
-      clientOrderId: "reconcile:" + current.remediation.planHash + ":" + item.action.symbol,
-      traceId: "reconcile:" + current.remediation.planHash,
-    }));
+    orders.push(
+      await createOrderIntentWithExecution(db, {
+        workflowRunId,
+        strategyVersionId,
+        instrumentId: item.instrumentId,
+        side: item.action.action,
+        qty: item.action.quantity,
+        orderType: "market",
+        price: referencePrice,
+        timeInForce: "day",
+        dispatchMode: "live",
+        brokerAccountId,
+        symbol: item.action.symbol,
+        clientOrderId: "reconcile:" + current.remediation.planHash + ":" + item.action.symbol,
+        traceId: "reconcile:" + current.remediation.planHash,
+      })
+    );
   }
   return c.json({
     ok: true,
@@ -240,47 +265,58 @@ executionRouter.post("/portfolio/plan", async (c) => {
       .where(
         and(
           eq(recommendationSnapshot.projectId, body.projectId),
-          eq(recommendationSnapshot.status, "active"),
-        ),
+          eq(recommendationSnapshot.status, "active")
+        )
       )
       .orderBy(desc(recommendationSnapshot.asof));
     const seen = new Set<string>();
     candidates = recommendations.flatMap((recommendation) => {
       const symbol = recommendation.symbol.trim().toUpperCase();
       if (recommendation.side === "neutral" || seen.has(symbol)) return [];
-      const price = recommendation.entryLow != null && recommendation.entryHigh != null
-        ? (recommendation.entryLow + recommendation.entryHigh) / 2
-        : recommendation.entryLow ?? recommendation.entryHigh;
+      const price =
+        recommendation.entryLow != null && recommendation.entryHigh != null
+          ? (recommendation.entryLow + recommendation.entryHigh) / 2
+          : (recommendation.entryLow ?? recommendation.entryHigh);
       if (price == null || !Number.isFinite(price) || price <= 0) return [];
       seen.add(symbol);
       const override = body.overrides?.[symbol] ?? {};
-      return [{
-        symbol,
-        side: recommendation.side,
-        price,
-        stopLoss: recommendation.stopLoss,
-        confidence: recommendation.confidence,
-        score: recommendation.score,
-        proposedWeight: recommendation.positionSizePct == null
-          ? null
-          : recommendation.positionSizePct > 1
-            ? recommendation.positionSizePct / 100
-            : recommendation.positionSizePct,
-        ...override,
-      } satisfies PortfolioCandidate];
+      return [
+        {
+          symbol,
+          side: recommendation.side,
+          price,
+          stopLoss: recommendation.stopLoss,
+          confidence: recommendation.confidence,
+          score: recommendation.score,
+          proposedWeight:
+            recommendation.positionSizePct == null
+              ? null
+              : recommendation.positionSizePct > 1
+                ? recommendation.positionSizePct / 100
+                : recommendation.positionSizePct,
+          ...override,
+        } satisfies PortfolioCandidate,
+      ];
     });
   }
   if (!candidates.length) {
-    return c.json({ ok: false, error: "candidates are required or no allocatable active recommendations exist" }, 400);
+    return c.json(
+      {
+        ok: false,
+        error: "candidates are required or no allocatable active recommendations exist",
+      },
+      400
+    );
   }
   const data = allocatePortfolio(candidates, body.config);
-  const risk = body.includeHistoricalRisk === false
-    ? null
-    : await buildHistoricalPortfolioRisk({
-        capital: body.config.capital,
-        rows: data.rows,
-        candidates,
-      });
+  const risk =
+    body.includeHistoricalRisk === false
+      ? null
+      : await buildHistoricalPortfolioRisk({
+          capital: body.config.capital,
+          rows: data.rows,
+          candidates,
+        });
   if (risk?.weightedAverageCorrelation != null) {
     data.exposures.weightedAverageCorrelation = risk.weightedAverageCorrelation;
   }
@@ -302,10 +338,16 @@ executionRouter.post("/portfolio/rebalance/execute", async (c) => {
     confirmation?: string;
   }>();
   if (!body.workflowRunId || !body.market || !Array.isArray(body.rows) || !body.expectedPlanHash) {
-    return c.json({ ok: false, error: "workflowRunId, market, rows and expectedPlanHash are required" }, 400);
+    return c.json(
+      { ok: false, error: "workflowRunId, market, rows and expectedPlanHash are required" },
+      400
+    );
   }
   if (body.confirmation !== "CONFIRM_PORTFOLIO_REBALANCE") {
-    return c.json({ ok: false, error: "explicit portfolio rebalance confirmation is required" }, 409);
+    return c.json(
+      { ok: false, error: "explicit portfolio rebalance confirmation is required" },
+      409
+    );
   }
   try {
     const data = await executePortfolioRebalance(await getDb(), {
@@ -317,7 +359,10 @@ executionRouter.post("/portfolio/rebalance/execute", async (c) => {
     });
     return c.json({ ok: true, data });
   } catch (error) {
-    return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 409);
+    return c.json(
+      { ok: false, error: error instanceof Error ? error.message : String(error) },
+      409
+    );
   }
 });
 
@@ -412,7 +457,10 @@ executionRouter.post("/intents", async (c) => {
     });
     return c.json({ ok: true, data: result });
   } catch (error) {
-    return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 400);
+    return c.json(
+      { ok: false, error: error instanceof Error ? error.message : String(error) },
+      400
+    );
   }
 });
 
@@ -455,7 +503,10 @@ executionRouter.post("/intents/bracket", async (c) => {
     });
     return c.json({ ok: true, data });
   } catch (error) {
-    return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 400);
+    return c.json(
+      { ok: false, error: error instanceof Error ? error.message : String(error) },
+      400
+    );
   }
 });
 
@@ -503,9 +554,9 @@ executionRouter.get("/intents", async (c) => {
     lifecycleStatus
       ? eq(
           orderIntent.lifecycleStatus,
-          lifecycleStatus as typeof orderIntent.$inferSelect.lifecycleStatus,
+          lifecycleStatus as typeof orderIntent.$inferSelect.lifecycleStatus
         )
-      : undefined,
+      : undefined
   );
   const data = await db
     .select()

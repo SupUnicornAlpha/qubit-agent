@@ -3,11 +3,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import {
-  inferMemoryType,
-  summarizeAgentSteps,
-  type AgentStepRow,
-} from "../memory-consolidation";
+import { type AgentStepRow, inferMemoryType, summarizeAgentSteps } from "../memory-consolidation";
 
 function mkStep(overrides: Partial<AgentStepRow>): AgentStepRow {
   return {

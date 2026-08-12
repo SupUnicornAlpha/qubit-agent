@@ -72,7 +72,7 @@ describe("parseLlmConfigJson — 范围 / 类型校验", () => {
   test("temperature 越界 / 非数字 → drop", () => {
     expect(parseLlmConfigJson({ temperature: -0.5 }).temperature).toBeUndefined();
     expect(parseLlmConfigJson({ temperature: 3 }).temperature).toBeUndefined();
-    expect(parseLlmConfigJson({ temperature: NaN }).temperature).toBeUndefined();
+    expect(parseLlmConfigJson({ temperature: Number.NaN }).temperature).toBeUndefined();
     expect(parseLlmConfigJson({ temperature: "0.5" }).temperature).toBeUndefined();
   });
 

@@ -20,11 +20,11 @@
  * "后端代码可能未生效，请等 bun --watch 重启或手动 kill"。
  */
 
-import { Hono } from "hono";
 import { execSync } from "node:child_process";
 import { statSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { Hono } from "hono";
 
 export const metaRouter = new Hono();
 
@@ -82,8 +82,8 @@ metaRouter.get("/build-info", (c) => {
     dirty: GIT.dirty,
     indexMtime: safeMtime(indexPath),
     serverMtime: safeMtime(serverPath),
-    watchMode: process.env["QUBIT_BUN_WATCH"] === "1",
-    nodeEnv: process.env["NODE_ENV"] ?? "development",
+    watchMode: process.env.QUBIT_BUN_WATCH === "1",
+    nodeEnv: process.env.NODE_ENV ?? "development",
     /** mainModule 的 mtime —— bun --watch 重启后整个模块都会被重新 import，可作"代码生效"的间接信号 */
     bootMs: STARTED_AT_MS,
   });
@@ -97,12 +97,12 @@ metaRouter.get("/build-info", (c) => {
 export function formatStartupBanner(): string {
   const lines = [
     "============================================================",
-    `[QUBIT] backend started`,
+    "[QUBIT] backend started",
     `  pid          = ${process.pid}`,
     `  startedAt    = ${STARTED_AT_ISO}`,
     `  commit       = ${GIT.commit}${GIT.dirty ? " (dirty)" : ""} on ${GIT.branch}`,
-    `  watchMode    = ${process.env["QUBIT_BUN_WATCH"] === "1" ? "ON (bun --watch)" : "off"}`,
-    `  nodeEnv      = ${process.env["NODE_ENV"] ?? "development"}`,
+    `  watchMode    = ${process.env.QUBIT_BUN_WATCH === "1" ? "ON (bun --watch)" : "off"}`,
+    `  nodeEnv      = ${process.env.NODE_ENV ?? "development"}`,
     "============================================================",
   ];
   return lines.join("\n");

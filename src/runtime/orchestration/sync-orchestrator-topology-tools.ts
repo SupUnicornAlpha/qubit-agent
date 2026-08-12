@@ -1,7 +1,10 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { agentDefinition } from "../../db/sqlite/schema";
-import { loadOrchestratorTopologyForWorkflow, mergeOrchestratorToolsJson } from "./topology-dispatch";
+import {
+  loadOrchestratorTopologyForWorkflow,
+  mergeOrchestratorToolsJson,
+} from "./topology-dispatch";
 
 const ORCHESTRATOR_DEFINITION_ID = "def-orchestrator";
 

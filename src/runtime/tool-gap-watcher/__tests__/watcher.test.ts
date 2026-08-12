@@ -33,7 +33,7 @@ import {
   workspace,
 } from "../../../db/sqlite/schema";
 import type { ExperienceBus } from "../../experience/experience-bus";
-import { reportExplicitGap, ToolGapWatcher } from "../watcher";
+import { ToolGapWatcher, reportExplicitGap } from "../watcher";
 
 interface Fixture {
   workspaceId: string;
@@ -66,10 +66,7 @@ beforeAll(async () => {
     .insert(project)
     .values({ id: f.projectId, workspaceId: f.workspaceId, name: "p", marketScope: "US" })
     .run();
-  await db
-    .insert(sandboxPolicy)
-    .values({ id: f.sandboxPolicyId, name: "permissive" })
-    .run();
+  await db.insert(sandboxPolicy).values({ id: f.sandboxPolicyId, name: "permissive" }).run();
   await db
     .insert(agentDefinition)
     .values({
@@ -189,14 +186,14 @@ describe("ToolGapWatcher.runOnce", () => {
         and(eq(toolGapLog.projectId, fx.projectId), eq(toolGapLog.gapSignature, "tool:get_weather"))
       );
     expect(rows.length).toBe(1);
-    expect(rows[0]!.occurrenceCount).toBeGreaterThanOrEqual(2);
+    expect(rows[0]?.occurrenceCount).toBeGreaterThanOrEqual(2);
   });
 
   test("3) 同 signature 已 wont_fix → 不被 watcher 重开", async () => {
     await seedToolCall("get_weather", "unknown tool: get_weather");
     const watcher = new ToolGapWatcher();
     const r1 = await watcher.runOnce({ projectId: fx.projectId, emitMetrics: false });
-    const gapId = r1.actions[0]!.gapId!;
+    const gapId = r1.actions[0]?.gapId!;
     const db = await getDb();
     await db
       .update(toolGapLog)
@@ -214,7 +211,7 @@ describe("ToolGapWatcher.runOnce", () => {
         and(eq(toolGapLog.projectId, fx.projectId), eq(toolGapLog.gapSignature, "tool:get_weather"))
       );
     expect(rows.length).toBe(1);
-    expect(rows[0]!.status).toBe("wont_fix");
+    expect(rows[0]?.status).toBe("wont_fix");
     expect(r2.gapsSkipped).toBeGreaterThanOrEqual(1);
   });
 
@@ -284,13 +281,18 @@ describe("ToolGapWatcher.runOnce", () => {
   test("7) emitMetrics=true → 触发 maintenance_run/tool_gap_watcher event", async () => {
     await seedToolCall("get_weather", "unknown tool: get_weather");
     const captured: Array<{ kind: string; summary: Record<string, unknown> }> = [];
-    const handlers = new Set<(ev: { kind: string; summary: Record<string, number | string> }) => void>();
+    const handlers = new Set<
+      (ev: { kind: string; summary: Record<string, number | string> }) => void
+    >();
     const bus: ExperienceBus = {
       emit: (ev) => {
         if (ev.type === "maintenance_run") for (const h of handlers) h(ev);
       },
       subscribe: (_t, handler) => {
-        const h = handler as unknown as (ev: { kind: string; summary: Record<string, number | string> }) => void;
+        const h = handler as unknown as (ev: {
+          kind: string;
+          summary: Record<string, number | string>;
+        }) => void;
         handlers.add(h);
         return () => handlers.delete(h);
       },

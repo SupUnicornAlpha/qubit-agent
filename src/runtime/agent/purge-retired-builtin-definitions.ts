@@ -34,7 +34,9 @@ export async function purgeRetiredBuiltinDefinitions(db: DbClient): Promise<numb
     await db
       .delete(agentDefinitionRelease)
       .where(eq(agentDefinitionRelease.definitionId, definitionId));
-    await db.delete(agentDefinitionDraft).where(eq(agentDefinitionDraft.definitionId, definitionId));
+    await db
+      .delete(agentDefinitionDraft)
+      .where(eq(agentDefinitionDraft.definitionId, definitionId));
     await db.delete(analystAccuracyLog).where(eq(analystAccuracyLog.definitionId, definitionId));
     await db.delete(agentRuntimeMetric).where(eq(agentRuntimeMetric.definitionId, definitionId));
     await db.delete(agentProfile).where(eq(agentProfile.definitionId, definitionId));

@@ -56,13 +56,13 @@ export const SCENARIO_EXPECTATIONS: Record<ScenarioRecipe["key"], ScenarioExpect
     requiredArtifacts: [
       {
         table: "analyst_signal",
-        countSql: `SELECT COUNT(*) AS c FROM analyst_signal WHERE workflow_run_id = ?`,
+        countSql: "SELECT COUNT(*) AS c FROM analyst_signal WHERE workflow_run_id = ?",
         minRows: 2,
         nonNullColumns: ["reasoning", "ticker"],
       },
       {
         table: "signal_fusion_result",
-        countSql: `SELECT COUNT(*) AS c FROM signal_fusion_result WHERE workflow_run_id = ?`,
+        countSql: "SELECT COUNT(*) AS c FROM signal_fusion_result WHERE workflow_run_id = ?",
         minRows: 1,
       },
     ],
@@ -88,18 +88,19 @@ export const SCENARIO_EXPECTATIONS: Record<ScenarioRecipe["key"], ScenarioExpect
       {
         table: "analyst_signal",
         // 多标的对比要求 ≥3 条 signal 且至少覆盖 2 个不同 ticker
-        countSql: `SELECT COUNT(*) AS c FROM analyst_signal WHERE workflow_run_id = ?`,
+        countSql: "SELECT COUNT(*) AS c FROM analyst_signal WHERE workflow_run_id = ?",
         minRows: 3,
         nonNullColumns: ["reasoning", "ticker"],
       },
       {
         table: "analyst_signal_distinct_tickers",
-        countSql: `SELECT COUNT(DISTINCT ticker) AS c FROM analyst_signal WHERE workflow_run_id = ?`,
+        countSql:
+          "SELECT COUNT(DISTINCT ticker) AS c FROM analyst_signal WHERE workflow_run_id = ?",
         minRows: 2,
       },
       {
         table: "signal_fusion_result",
-        countSql: `SELECT COUNT(*) AS c FROM signal_fusion_result WHERE workflow_run_id = ?`,
+        countSql: "SELECT COUNT(*) AS c FROM signal_fusion_result WHERE workflow_run_id = ?",
         minRows: 1,
       },
     ],
@@ -244,7 +245,7 @@ export const SCENARIO_EXPECTATIONS: Record<ScenarioRecipe["key"], ScenarioExpect
     requiredArtifacts: [
       {
         table: "factor_definition",
-        countSql: `SELECT COUNT(*) AS c FROM factor_definition WHERE workflow_run_id = ?`,
+        countSql: "SELECT COUNT(*) AS c FROM factor_definition WHERE workflow_run_id = ?",
         minRows: 1,
         nonNullColumns: ["expr"],
       },
@@ -284,7 +285,7 @@ export const SCENARIO_EXPECTATIONS: Record<ScenarioRecipe["key"], ScenarioExpect
     requiredArtifacts: [
       {
         table: "strategy_version",
-        countSql: `SELECT COUNT(*) AS c FROM strategy_version WHERE workflow_run_id = ?`,
+        countSql: "SELECT COUNT(*) AS c FROM strategy_version WHERE workflow_run_id = ?",
         minRows: 1,
       },
       {
@@ -328,7 +329,7 @@ export const SCENARIO_EXPECTATIONS: Record<ScenarioRecipe["key"], ScenarioExpect
     requiredArtifacts: [
       {
         table: "strategy_version",
-        countSql: `SELECT COUNT(*) AS c FROM strategy_version WHERE workflow_run_id = ?`,
+        countSql: "SELECT COUNT(*) AS c FROM strategy_version WHERE workflow_run_id = ?",
         minRows: 1,
       },
       {

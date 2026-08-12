@@ -71,13 +71,13 @@ describe("scheduled job actions", () => {
         kind: "position_reconciliation",
         provider: "ib",
         accountRef: " DU123 ",
-      }),
+      })
     ).toEqual({ kind: "position_reconciliation", provider: "ib", accountRef: "DU123" });
     expect(
       parsePositionReconciliationJobPayload({
         kind: "position_reconciliation",
         provider: "invalid",
-      }),
+      })
     ).toBeNull();
   });
 
@@ -103,7 +103,11 @@ describe("scheduled job actions", () => {
     const result = await executeScheduledJobAction(job, "2026-07-13T00:05:00.000Z", {
       scanPositions: async (input) => {
         calls.push(input);
-        return {} as Awaited<ReturnType<typeof import("../execution/position-reconciliation-service").scanPositionReconciliation>>;
+        return {} as Awaited<
+          ReturnType<
+            typeof import("../execution/position-reconciliation-service").scanPositionReconciliation
+          >
+        >;
       },
       dispatchWorkflow: async () => {
         throw new Error("workflow should not be created");

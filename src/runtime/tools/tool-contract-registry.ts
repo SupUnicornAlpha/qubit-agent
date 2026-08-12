@@ -26,7 +26,7 @@ const MARKET_SYMBOL_ERRORS = {
 function marketSymbolContract(
   name: string,
   kind: ToolContract["kind"],
-  arity: ToolContract["arity"] = "either",
+  arity: ToolContract["arity"] = "either"
 ): ToolContract {
   return {
     name,
@@ -34,8 +34,7 @@ function marketSymbolContract(
     category: "market",
     arity,
     requiredAfterNormalize: ["symbols"],
-    normalize: (raw) =>
-      normalizeMarketSymbolParams(raw, { arity, toolName: name }),
+    normalize: (raw) => normalizeMarketSymbolParams(raw, { arity, toolName: name }),
     errorCodes: { ...MARKET_SYMBOL_ERRORS },
     timeoutClass: name === "market.resolve_symbol" ? "light" : "market",
     sideEffects: "none",
@@ -121,10 +120,7 @@ const MARKET_CONTRACTS: ToolContract[] = [
     requiredAfterNormalize: ["factor_ids", "start_date", "end_date"],
     normalize: (raw) => ({
       ...raw,
-      factor_ids:
-        raw.factor_ids ??
-        raw.factorIds ??
-        (raw.factor_id ? [raw.factor_id] : undefined),
+      factor_ids: raw.factor_ids ?? raw.factorIds ?? (raw.factor_id ? [raw.factor_id] : undefined),
       start_date: raw.start_date ?? raw.startDate ?? raw.from,
       end_date: raw.end_date ?? raw.endDate ?? raw.to ?? raw.asOf,
     }),
@@ -214,33 +210,25 @@ const MARKET_CONTRACTS: ToolContract[] = [
     kind: "builtin",
     category: "research",
     arity: "many",
-    requiredAfterNormalize: [
-      "expressions",
-      "symbols",
-      "start_date",
-      "end_date",
-    ],
+    requiredAfterNormalize: ["expressions", "symbols", "start_date", "end_date"],
     normalize: (raw) => ({
       ...normalizeMarketSymbolParams(raw, {
         arity: "many",
         toolName: "factor.mine.llm",
       }),
-      expressions:
-        raw.expressions ?? raw.factorExpressions ?? raw.factor_expressions,
+      expressions: raw.expressions ?? raw.factorExpressions ?? raw.factor_expressions,
       start_date: raw.start_date ?? raw.startDate ?? raw.from,
       end_date: raw.end_date ?? raw.endDate ?? raw.to,
       min_count: Math.max(1, Number(raw.min_count ?? raw.minCount ?? 5)),
     }),
     validate: (canonical) => {
       const expressions = Array.isArray(canonical.expressions)
-        ? canonical.expressions.filter(
-            (item) => typeof item === "string" && item.trim(),
-          )
+        ? canonical.expressions.filter((item) => typeof item === "string" && item.trim())
         : [];
       const minCount = Number(canonical.min_count ?? 5);
       if (expressions.length < minCount) {
         throw new Error(
-          `factor_expression_batch_too_small: factor.mine.llm requires at least ${minCount} expressions`,
+          `factor_expression_batch_too_small: factor.mine.llm requires at least ${minCount} expressions`
         );
       }
     },
@@ -275,9 +263,7 @@ const MARKET_CONTRACTS: ToolContract[] = [
     validate: (canonical) => {
       const qty = Number(canonical.qty);
       if (!Number.isFinite(qty) || qty <= 0) {
-        throw new Error(
-          "invalid_qty: order.create_intent qty must be a positive number",
-        );
+        throw new Error("invalid_qty: order.create_intent qty must be a positive number");
       }
     },
     errorCodes: {
@@ -309,8 +295,7 @@ const MARKET_CONTRACTS: ToolContract[] = [
     category: "market",
     arity: "either",
     normalize: (raw) => {
-      const snapshotId =
-        typeof raw.snapshotId === "string" ? raw.snapshotId.trim() : "";
+      const snapshotId = typeof raw.snapshotId === "string" ? raw.snapshotId.trim() : "";
       if (snapshotId) return { ...raw, snapshotId };
       return normalizeMarketSymbolParams(raw, {
         arity: "either",
@@ -335,8 +320,7 @@ const MARKET_CONTRACTS: ToolContract[] = [
     arity: "either",
     normalize: (raw) => {
       const snapshotId =
-        String(raw.snapshotId ?? raw.snapshot_id ?? "").trim() ||
-        extractSnapshotId(raw);
+        String(raw.snapshotId ?? raw.snapshot_id ?? "").trim() || extractSnapshotId(raw);
       const scope = resolveInstrumentScope(raw);
       const direction = resolveThesisDirection(raw);
       const confidence = coerceConfidence01(raw.confidence, 0.5);

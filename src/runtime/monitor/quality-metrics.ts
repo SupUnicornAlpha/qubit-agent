@@ -77,9 +77,11 @@ export async function createWorkflowQualitySnapshot(workflowId: string) {
   const instanceErrorCount = instances.filter((i) => i.status === "error").length;
   const errorCount = violations.length + toolErrorCount + timeoutCount + instanceErrorCount;
 
-  const startedAtMs = workflow.startedAt ? Date.parse(workflow.startedAt) : NaN;
+  const startedAtMs = workflow.startedAt ? Date.parse(workflow.startedAt) : Number.NaN;
   const endedAtMs = workflow.endedAt ? Date.parse(workflow.endedAt) : Date.now();
-  const totalDurationMs = Number.isFinite(startedAtMs) ? Math.max(0, endedAtMs - startedAtMs) : null;
+  const totalDurationMs = Number.isFinite(startedAtMs)
+    ? Math.max(0, endedAtMs - startedAtMs)
+    : null;
 
   const qualityScore = calcQualityScore({
     totalToolCalls: toolCalls.length,
@@ -97,7 +99,11 @@ export async function createWorkflowQualitySnapshot(workflowId: string) {
     errorCount,
     qualityScore,
   });
-  const row = await db.select().from(workflowQualitySnapshot).where(eq(workflowQualitySnapshot.id, id)).limit(1);
+  const row = await db
+    .select()
+    .from(workflowQualitySnapshot)
+    .where(eq(workflowQualitySnapshot.id, id))
+    .limit(1);
   return row[0];
 }
 
@@ -132,7 +138,9 @@ export async function aggregateAgentRuntimeMetrics(input?: {
     db
       .select()
       .from(agentInstance)
-      .where(and(gte(agentInstance.startedAt, windowStart), lte(agentInstance.startedAt, windowEnd))),
+      .where(
+        and(gte(agentInstance.startedAt, windowStart), lte(agentInstance.startedAt, windowEnd))
+      ),
     db
       .select()
       .from(agentStep)
@@ -148,7 +156,9 @@ export async function aggregateAgentRuntimeMetrics(input?: {
     db
       .select()
       .from(agentSkillRun)
-      .where(and(gte(agentSkillRun.startedAt, windowStart), lte(agentSkillRun.startedAt, windowEnd))),
+      .where(
+        and(gte(agentSkillRun.startedAt, windowStart), lte(agentSkillRun.startedAt, windowEnd))
+      ),
     db.select().from(agentSkill),
     db.select().from(agentDefinition),
   ]);
@@ -313,7 +323,12 @@ export async function aggregateAgentRuntimeMetrics(input?: {
     ? await db
         .select()
         .from(agentRuntimeMetric)
-        .where(and(gte(agentRuntimeMetric.windowStart, windowStart), lte(agentRuntimeMetric.windowEnd, windowEnd)))
+        .where(
+          and(
+            gte(agentRuntimeMetric.windowStart, windowStart),
+            lte(agentRuntimeMetric.windowEnd, windowEnd)
+          )
+        )
         .orderBy(desc(agentRuntimeMetric.createdAt))
     : [];
   return rows.map((row) => ({
@@ -415,10 +430,7 @@ export async function getAgentRuntimeDetail(
       .select()
       .from(agentInstance)
       .where(
-        and(
-          eq(agentInstance.definitionId, definitionId),
-          gte(agentInstance.startedAt, windowStart)
-        )
+        and(eq(agentInstance.definitionId, definitionId), gte(agentInstance.startedAt, windowStart))
       )
       .orderBy(desc(agentInstance.startedAt))
       .limit(10),
@@ -480,7 +492,12 @@ export async function listAgentRuntimeMetrics(input?: {
   const rows = await db
     .select()
     .from(agentRuntimeMetric)
-    .where(and(gte(agentRuntimeMetric.windowStart, windowStart), lte(agentRuntimeMetric.windowEnd, windowEnd)))
+    .where(
+      and(
+        gte(agentRuntimeMetric.windowStart, windowStart),
+        lte(agentRuntimeMetric.windowEnd, windowEnd)
+      )
+    )
     .orderBy(desc(agentRuntimeMetric.createdAt));
   return rows.map((row) => ({
     ...row,

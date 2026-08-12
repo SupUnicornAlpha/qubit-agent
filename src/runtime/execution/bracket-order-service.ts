@@ -3,9 +3,9 @@ import type { DbClient } from "../../db/sqlite/client";
 import { runInTransaction } from "../../db/sqlite/client";
 import type { OrderSide, TimeInForce } from "../../types/entities";
 import {
-  createOrderIntentWithExecution,
   type CreateOrderIntentResult,
   type DispatchMode,
+  createOrderIntentWithExecution,
 } from "./order-intent-service";
 
 export interface CreateBracketOrderInput {
@@ -41,22 +41,33 @@ function validateBracket(input: CreateBracketOrderInput): void {
   if (prices.some((price) => !Number.isFinite(price) || price <= 0)) {
     throw new Error("bracket_prices_must_be_positive");
   }
-  if (!Number.isFinite(input.qty) || input.qty <= 0) throw new Error("bracket_quantity_must_be_positive");
+  if (!Number.isFinite(input.qty) || input.qty <= 0)
+    throw new Error("bracket_quantity_must_be_positive");
   if (input.entryOrderType === "limit" && (!input.entryLimitPrice || input.entryLimitPrice <= 0)) {
     throw new Error("bracket_limit_entry_requires_price");
   }
   if (input.side === "buy") {
-    if (!(input.stopLossPrice < input.entryReferencePrice && input.entryReferencePrice < input.takeProfitPrice)) {
+    if (
+      !(
+        input.stopLossPrice < input.entryReferencePrice &&
+        input.entryReferencePrice < input.takeProfitPrice
+      )
+    ) {
       throw new Error("long_bracket_requires_stop_below_entry_and_target_above_entry");
     }
-  } else if (!(input.takeProfitPrice < input.entryReferencePrice && input.entryReferencePrice < input.stopLossPrice)) {
+  } else if (
+    !(
+      input.takeProfitPrice < input.entryReferencePrice &&
+      input.entryReferencePrice < input.stopLossPrice
+    )
+  ) {
     throw new Error("short_bracket_requires_target_below_entry_and_stop_above_entry");
   }
 }
 
 export async function createBracketOrder(
   db: DbClient,
-  input: CreateBracketOrderInput,
+  input: CreateBracketOrderInput
 ): Promise<CreateBracketOrderResult> {
   validateBracket(input);
   const bracketId = randomUUID();
@@ -81,12 +92,14 @@ export async function createBracketOrder(
       ...common,
       side: input.side,
       orderType: input.entryOrderType,
-      price: input.entryOrderType === "limit"
-        ? input.entryLimitPrice ?? input.entryReferencePrice
-        : input.entryReferencePrice,
+      price:
+        input.entryOrderType === "limit"
+          ? (input.entryLimitPrice ?? input.entryReferencePrice)
+          : input.entryReferencePrice,
       clientOrderId: `${baseClientOrderId}:entry`,
     });
-    if (entry.riskOutcome === "block") throw new Error(`bracket_entry_risk_blocked:${entry.riskReason}`);
+    if (entry.riskOutcome === "block")
+      throw new Error(`bracket_entry_risk_blocked:${entry.riskReason}`);
 
     const takeProfit = await createOrderIntentWithExecution(db, {
       ...common,

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, isNull } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { agentDefinition, mcpServerConfig, sandboxPolicy } from "../../db/sqlite/schema";
+import { syncDefinitionSkillsForAllProjects } from "../skills/sync-definition-skills";
 import type { RuntimeAgentDefinition } from "../types";
 import {
   getFsiConfigSnapshot,
@@ -11,7 +12,6 @@ import {
   shouldSeedFsiMcpCatalog,
 } from "./fsi-config";
 import { loadFsiManifest } from "./fsi-manifest-loader";
-import { syncDefinitionSkillsForAllProjects } from "../skills/sync-definition-skills";
 import { mergeFsiSkillsForRole } from "./fsi-prompt-enricher";
 
 export async function seedFsiSandboxPresets(): Promise<number> {
@@ -57,8 +57,7 @@ export async function seedFsiMcpCatalog(): Promise<number> {
   const db = await getDb();
   let n = 0;
   for (const entry of manifest.mcpCatalog) {
-    const url =
-      (entry.envVar ? process.env[entry.envVar]?.trim() : undefined) || entry.url || null;
+    const url = (entry.envVar ? process.env[entry.envVar]?.trim() : undefined) || entry.url || null;
     const existing = await db
       .select()
       .from(mcpServerConfig)
@@ -135,9 +134,7 @@ export async function applyFsiAgentSkillMappings(
   }
 }
 
-export async function runFsiSeedIntegration(
-  definitions: RuntimeAgentDefinition[]
-): Promise<void> {
+export async function runFsiSeedIntegration(definitions: RuntimeAgentDefinition[]): Promise<void> {
   const presets = await seedFsiSandboxPresets();
   const mcps = await seedFsiMcpCatalog();
   const mirrored = await syncDefinitionSkillsForAllProjects();
@@ -153,7 +150,7 @@ export async function runFsiSeedIntegration(
     );
   } else {
     console.log(
-      `[Seed][FSI] Disabled (edit content-packs/anthropic-fsi/settings.json or set QUBIT_FSI_DISABLED=true). ` +
+      "[Seed][FSI] Disabled (edit content-packs/anthropic-fsi/settings.json or set QUBIT_FSI_DISABLED=true). " +
         `Registered ${presets} sandbox preset(s), ${mcps} MCP catalog row(s); ` +
         `agent_skill mirrored: ${mirrored}.`
     );

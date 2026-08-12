@@ -27,11 +27,7 @@ import type { ExperienceStore } from "../experience/experience-store";
 import { getExperienceStore } from "../experience/experience-store";
 import { SkillEvolver } from "../skills/skill-evolve";
 import { SKILL_REVISION_SUBKIND } from "./request-skill-revision";
-import type {
-  SkillRevisionRequestMeta,
-  WatcherProcessResult,
-  WatcherTickSummary,
-} from "./types";
+import type { SkillRevisionRequestMeta, WatcherTickSummary } from "./types";
 
 const DEFAULT_LIMIT = 50;
 
@@ -112,7 +108,12 @@ export class SkillEvolverWatcher {
       const baseRows = await db
         .select({ id: agentSkillTable.id, state: agentSkillTable.state })
         .from(agentSkillTable)
-        .where(and(eq(agentSkillTable.id, meta.baseSkillId), eq(agentSkillTable.projectId, opts.projectId)))
+        .where(
+          and(
+            eq(agentSkillTable.id, meta.baseSkillId),
+            eq(agentSkillTable.projectId, opts.projectId)
+          )
+        )
         .limit(1);
       const baseRow = baseRows[0];
       if (!baseRow) {

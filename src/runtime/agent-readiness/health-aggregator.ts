@@ -204,7 +204,10 @@ function avg(values: number[]): number | null {
  */
 export function normalizeErrorMessage(msg: string): string {
   return msg
-    .replace(/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/g, "<UUID>")
+    .replace(
+      /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/g,
+      "<UUID>"
+    )
     .replace(/\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?/g, "<TS>")
     .replace(/\b[0-9a-f]{32,}\b/g, "<HASH>")
     .replace(/\b\d{4,}\b/g, "<N>")
@@ -222,10 +225,7 @@ function placeholders(n: number): string {
  * 主聚合入口：传入一组 workflow_run_id，对 4 张日志表做 SQL 汇总。
  * 不传或空数组 → 抛错（防御性，避免误把"全库扫"当成"评测范围"）。
  */
-export function aggregateHealth(
-  sqlite: SqliteLike,
-  workflowRunIds: string[]
-): HealthReport {
+export function aggregateHealth(sqlite: SqliteLike, workflowRunIds: string[]): HealthReport {
   if (!Array.isArray(workflowRunIds) || workflowRunIds.length === 0) {
     throw new Error(
       "[health-aggregator] workflowRunIds must be non-empty (refuse to scan full DB)"
@@ -257,9 +257,7 @@ export function aggregateHealth(
     const errorCount = rows.filter((r) => r.status === "error").length;
     const timeoutCount = rows.filter((r) => r.status === "timeout").length;
     const sandboxBlockedCount = rows.filter((r) => r.status === "sandbox_blocked").length;
-    const lat = rows
-      .map((r) => r.latency_ms)
-      .filter((v): v is number => typeof v === "number");
+    const lat = rows.map((r) => r.latency_ms).filter((v): v is number => typeof v === "number");
 
     const errMap = new Map<string, number>();
     for (const r of rows) {
@@ -313,9 +311,7 @@ export function aggregateHealth(
     const failedCount = rows.filter((r) => r.status === "failed").length;
     const sandboxBlockedCount = rows.filter((r) => r.status === "sandbox_blocked").length;
     const circuitOpenCount = rows.filter((r) => r.circuit_state === "open").length;
-    const lat = rows
-      .map((r) => r.latency_ms)
-      .filter((v): v is number => typeof v === "number");
+    const lat = rows.map((r) => r.latency_ms).filter((v): v is number => typeof v === "number");
     const transports = Array.from(
       new Set(rows.map((r) => r.transport).filter((v): v is string => !!v))
     );
@@ -404,9 +400,7 @@ export function aggregateHealth(
   for (const [skillId, rows] of skillGroups) {
     const recallCount = rows.length;
     const executedCount = rows.filter((r) => r.executed === 1).length;
-    const scores = rows
-      .map((r) => r.score)
-      .filter((v): v is number => typeof v === "number");
+    const scores = rows.map((r) => r.score).filter((v): v is number => typeof v === "number");
     skills.push({
       skillId,
       recallCount,
@@ -418,11 +412,11 @@ export function aggregateHealth(
   skills.sort((a, b) => b.recallCount - a.recallCount);
 
   // ── Errors（聚合所有 error 来源的 top patterns）─────────────────────
-  const errMap = new Map<string, { count: number; examples: string[]; source: "tool" | "mcp" | "llm" }>();
-  const bumpErr = (
-    raw: string | null | undefined,
-    source: "tool" | "mcp" | "llm"
-  ) => {
+  const errMap = new Map<
+    string,
+    { count: number; examples: string[]; source: "tool" | "mcp" | "llm" }
+  >();
+  const bumpErr = (raw: string | null | undefined, source: "tool" | "mcp" | "llm") => {
     if (!raw) return;
     const norm = normalizeErrorMessage(raw);
     if (!norm) return;
@@ -462,9 +456,7 @@ export function aggregateHealth(
   let configuredServers: string[] = [];
   try {
     const cfgRows = sqlite
-      .prepare(
-        `SELECT name FROM mcp_server_config WHERE enabled = 1 AND project_id IS NULL`
-      )
+      .prepare("SELECT name FROM mcp_server_config WHERE enabled = 1 AND project_id IS NULL")
       .all() as Array<{ name: string }>;
     configuredServers = cfgRows.map((r) => r.name).filter((n): n is string => !!n);
   } catch {
@@ -515,14 +507,14 @@ export function renderHealthMarkdown(report: HealthReport, opts?: { roundLabel?:
   lines.push(
     `- 总览：tool ${report.summary.totalToolCalls} · mcp ${report.summary.totalMcpCalls} · llm ${report.summary.totalLlmCalls} · token ${(report.summary.totalTokens / 1000).toFixed(0)}k · $${report.summary.totalCostUsd.toFixed(4)}`
   );
-  lines.push(
-    `- 红灯：tool=${report.summary.redToolCount} · mcp=${report.summary.redMcpCount}`
-  );
+  lines.push(`- 红灯：tool=${report.summary.redToolCount} · mcp=${report.summary.redMcpCount}`);
   lines.push("");
 
   lines.push("## H-Tools · 工具调用矩阵（按调用次数倒序）");
   lines.push("");
-  lines.push("| 健康 | 工具 | kind | 调用 | 成功率 | avg lat | p95 lat | sandbox_blocked | top error |");
+  lines.push(
+    "| 健康 | 工具 | kind | 调用 | 成功率 | avg lat | p95 lat | sandbox_blocked | top error |"
+  );
   lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- |");
   for (const t of report.tools) {
     lines.push(
@@ -533,9 +525,7 @@ export function renderHealthMarkdown(report: HealthReport, opts?: { roundLabel?:
 
   lines.push("## H-MCP · MCP server 健康度");
   lines.push("");
-  lines.push(
-    "| 健康 | server | 调用 | 成功 | 失败 | 超时 | sandbox | circuit_open | avg lat |"
-  );
+  lines.push("| 健康 | server | 调用 | 成功 | 失败 | 超时 | sandbox | circuit_open | avg lat |");
   lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- |");
   for (const m of report.mcp) {
     lines.push(

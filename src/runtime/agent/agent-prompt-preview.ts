@@ -104,7 +104,9 @@ export async function buildAgentPromptPreview(
     "db_primary";
   const dbPrompt = ov?.systemPrompt ?? draft?.systemPrompt ?? def.systemPrompt;
   const tools = asStringArray(ov?.toolsJson ?? draft?.toolsJson ?? def.toolsJson);
-  const mcpServers = asStringArray(ov?.mcpServersJson ?? draft?.mcpServersJson ?? def.mcpServersJson);
+  const mcpServers = asStringArray(
+    ov?.mcpServersJson ?? draft?.mcpServersJson ?? def.mcpServersJson
+  );
   const skills = asStringArray(ov?.skillsJson ?? draft?.skillsJson ?? def.skillsJson);
   const subscriptions = asStringArray(
     ov?.subscriptionsJson ?? draft?.subscriptionsJson ?? def.subscriptionsJson

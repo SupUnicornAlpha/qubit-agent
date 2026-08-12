@@ -6,17 +6,14 @@ import {
   strategyRuntime,
 } from "../../db/sqlite/schema";
 import { processExecutionTasks } from "../execution/execution-worker";
-import {
-  computeDateRangeForLimit,
-  queryBarsRange,
-} from "../market/klines-query";
+import { computeDateRangeForLimit, queryBarsRange } from "../market/klines-query";
 import { isWithinTradingSession } from "../market/trading-calendar";
 import { evaluateSignalCode } from "./signal-evaluator";
 import { appendStrategyRuntimeLog } from "./strategy-runtime-log";
 import {
+  type StrategyRuntimeParams,
   recordSignalDedup,
   submitRuntimeOrder,
-  type StrategyRuntimeParams,
 } from "./strategy-runtime-service";
 
 const DEFAULT_TICK_MS = 30_000;
@@ -26,9 +23,7 @@ function parseParams(raw: unknown): StrategyRuntimeParams {
   return raw as StrategyRuntimeParams;
 }
 
-function isStrategyApiV2Script(
-  script: typeof indicatorStrategyScript.$inferSelect,
-): boolean {
+function isStrategyApiV2Script(script: typeof indicatorStrategyScript.$inferSelect): boolean {
   try {
     const snapshot = JSON.parse(String(script.chartSnapshotJson ?? "{}")) as {
       strategyApiV2?: boolean;
@@ -79,13 +74,11 @@ async function resolveContractTargetQty(input: {
     );
   });
   const latest = pending[pending.length - 1];
-  if (!latest)
-    return { targetQty: input.currentQty, reason: "no_latest_contract_intent" };
+  if (!latest) return { targetQty: input.currentQty, reason: "no_latest_contract_intent" };
 
   const kind = String(latest.kind ?? "").trim();
   const value = Number(latest.value);
-  if (!Number.isFinite(value))
-    return { error: "invalid_contract_intent_value" };
+  if (!Number.isFinite(value)) return { error: "invalid_contract_intent_value" };
   const price = input.price;
   let targetQty: number;
   switch (kind) {
@@ -115,21 +108,15 @@ async function resolveContractTargetQty(input: {
 
 async function tickOneRuntime(
   runtime: typeof strategyRuntime.$inferSelect,
-  now: Date,
+  now: Date
 ): Promise<void> {
   const db = await getDb();
   const params = parseParams(runtime.paramsJson);
 
   const sessionOverrides = {
-    ...(params.tradingDays !== undefined
-      ? { tradingDays: params.tradingDays }
-      : {}),
-    ...(params.tradingStart !== undefined
-      ? { tradingStart: params.tradingStart }
-      : {}),
-    ...(params.tradingEnd !== undefined
-      ? { tradingEnd: params.tradingEnd }
-      : {}),
+    ...(params.tradingDays !== undefined ? { tradingDays: params.tradingDays } : {}),
+    ...(params.tradingStart !== undefined ? { tradingStart: params.tradingStart } : {}),
+    ...(params.tradingEnd !== undefined ? { tradingEnd: params.tradingEnd } : {}),
     ...(params.timezone !== undefined ? { timezone: params.timezone } : {}),
   };
   if (!isWithinTradingSession(now, runtime.market, sessionOverrides)) {
@@ -152,10 +139,7 @@ async function tickOneRuntime(
   }
 
   const barLimit = Math.max(20, Math.min(params.barLimit ?? 120, 500));
-  const { startDate, endDate, period } = computeDateRangeForLimit(
-    runtime.timeframe,
-    barLimit,
-  );
+  const { startDate, endDate, period } = computeDateRangeForLimit(runtime.timeframe, barLimit);
 
   let bars;
   try {
@@ -195,8 +179,7 @@ async function tickOneRuntime(
       .set({ lastBarTime: lastBar.timestamp, updatedAt: now.toISOString() })
       .where(eq(strategyRuntime.id, runtime.id));
   };
-  const contractMode =
-    params.strategyMode === "contract" || isStrategyApiV2Script(script);
+  const contractMode = params.strategyMode === "contract" || isStrategyApiV2Script(script);
   if (contractMode) {
     const existing = await db
       .select()
@@ -204,8 +187,8 @@ async function tickOneRuntime(
       .where(
         and(
           eq(strategyPositionSnapshot.strategyRuntimeId, runtime.id),
-          eq(strategyPositionSnapshot.symbol, runtime.symbol),
-        ),
+          eq(strategyPositionSnapshot.symbol, runtime.symbol)
+        )
       )
       .limit(1);
     const currentQty = existing[0]?.qty ?? 0;
@@ -302,8 +285,7 @@ async function tickOneRuntime(
   }
   const evalMode =
     params.strategyMode === "script" ||
-    (script.signalCode.includes("def on_bar") &&
-      !script.signalCode.includes("buy"))
+    (script.signalCode.includes("def on_bar") && !script.signalCode.includes("buy"))
       ? "script"
       : "indicator";
   const signal = await evaluateSignalCode(script.signalCode, bars, evalMode);
@@ -451,7 +433,7 @@ export async function processStrategyRuntimes(now = new Date()): Promise<void> {
  */
 export async function processStrategyRuntimesForSymbol(
   symbol: string,
-  now = new Date(),
+  now = new Date()
 ): Promise<{ matched: number }> {
   const db = await getDb();
   const sym = symbol.trim().toUpperCase();
@@ -460,9 +442,7 @@ export async function processStrategyRuntimesForSymbol(
     .from(strategyRuntime)
     .where(eq(strategyRuntime.status, "running"));
   const matched = runtimes.filter(
-    (r) =>
-      r.symbol.trim().toUpperCase() === sym ||
-      r.symbol.trim().toUpperCase().includes(sym),
+    (r) => r.symbol.trim().toUpperCase() === sym || r.symbol.trim().toUpperCase().includes(sym)
   );
   for (const runtime of matched) {
     try {
@@ -499,9 +479,7 @@ export class StrategyRuntimeWorker {
 
   start(): void {
     if (this.timer) return;
-    const ms = Number(
-      process.env["QUBIT_STRATEGY_RUNTIME_TICK_MS"] ?? DEFAULT_TICK_MS,
-    );
+    const ms = Number(process.env.QUBIT_STRATEGY_RUNTIME_TICK_MS ?? DEFAULT_TICK_MS);
     this.timer = setInterval(() => {
       void this.tick();
     }, ms);

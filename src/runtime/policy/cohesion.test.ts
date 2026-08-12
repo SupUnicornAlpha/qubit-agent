@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import { assertAnswerSchema } from "./answer-schema";
 import {
+  formatUnsupportedExpressionError,
   inferFactorLang,
   normalizeFactorExpression,
-  formatUnsupportedExpressionError,
 } from "./factor-expression-contract";
-import { assertAnswerSchema } from "./answer-schema";
 import { resolveScenarioRecipe } from "./scenario-recipe";
-import { applyToolSurface } from "./tool-surface";
 import type { ScenarioRuntimeSnapshot } from "./scenario-snapshot";
+import { applyToolSurface } from "./tool-surface";
 
 describe("factor expression contract", () => {
   test("rewrites shift/delay to Ref and defaults to qlib_expr", () => {
@@ -177,13 +177,7 @@ describe("tool surface second hop", () => {
     } satisfies ScenarioRuntimeSnapshot;
 
     const tools = applyToolSurface({
-      tools: [
-        "fetch_klines",
-        "fetch_news",
-        "run_analyst_team",
-        "update_plan",
-        "market.readiness",
-      ],
+      tools: ["fetch_klines", "fetch_news", "run_analyst_team", "update_plan", "market.readiness"],
       snapshot,
       role: "research",
     });

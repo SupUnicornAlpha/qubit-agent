@@ -16,11 +16,11 @@ describe("injectContextParams", () => {
       },
       { workflowRunId: "wf-real-001", projectId: "proj-real-001" }
     );
-    expect(out["workflowRunId"]).toBe("wf-real-001");
-    expect(out["projectId"]).toBe("proj-real-001");
-    expect(out["project_id"]).toBe("proj-real-001");
+    expect(out.workflowRunId).toBe("wf-real-001");
+    expect(out.projectId).toBe("proj-real-001");
+    expect(out.project_id).toBe("proj-real-001");
     // 业务参数保留
-    expect(out["symbol"]).toBe("NVDA");
+    expect(out.symbol).toBe("NVDA");
   });
 
   test("LLM 没填这些参数时也注入", () => {
@@ -28,22 +28,25 @@ describe("injectContextParams", () => {
       { name: "factor_a" },
       { workflowRunId: "wf-2", projectId: "proj-2" }
     );
-    expect(out["workflowRunId"]).toBe("wf-2");
-    expect(out["projectId"]).toBe("proj-2");
-    expect(out["project_id"]).toBe("proj-2");
+    expect(out.workflowRunId).toBe("wf-2");
+    expect(out.projectId).toBe("proj-2");
+    expect(out.project_id).toBe("proj-2");
   });
 
   test("projectId 为空/缺失时不写 projectId（让下游报清晰缺失错误，不污染空串）", () => {
-    const outNull = injectContextParams({ projectId: "x" }, { workflowRunId: "wf-3", projectId: null });
-    expect(outNull["workflowRunId"]).toBe("wf-3");
+    const outNull = injectContextParams(
+      { projectId: "x" },
+      { workflowRunId: "wf-3", projectId: null }
+    );
+    expect(outNull.workflowRunId).toBe("wf-3");
     // 权威值缺失 → 不覆盖也不保留 LLM 值？规则是不写 → 保留原 LLM 值
     // 但下游 builtin handler 优先 ctx.projectId，正常链路不依赖该值
-    expect(outNull["projectId"]).toBe("x");
+    expect(outNull.projectId).toBe("x");
 
     const outMissing = injectContextParams({}, { workflowRunId: "wf-4" });
-    expect(outMissing["workflowRunId"]).toBe("wf-4");
-    expect(outMissing["projectId"]).toBeUndefined();
-    expect(outMissing["project_id"]).toBeUndefined();
+    expect(outMissing.workflowRunId).toBe("wf-4");
+    expect(outMissing.projectId).toBeUndefined();
+    expect(outMissing.project_id).toBeUndefined();
   });
 
   test("不原地修改入参对象", () => {

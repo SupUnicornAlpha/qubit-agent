@@ -38,9 +38,7 @@ export function compactHeavyJson(value: unknown, depth = 0): unknown {
     return {
       __compact: true,
       length: value.length,
-      preview: value
-        .slice(0, MAX_ARRAY_PREVIEW)
-        .map((item) => compactHeavyJson(item, depth + 1)),
+      preview: value.slice(0, MAX_ARRAY_PREVIEW).map((item) => compactHeavyJson(item, depth + 1)),
     };
   }
 
@@ -73,9 +71,7 @@ export function compactBacktestResult(result: unknown): unknown {
   const trades = r.trades;
   return {
     ...r,
-    ...(Array.isArray(equity)
-      ? { equityCurve: { __compact: true, length: equity.length } }
-      : {}),
+    ...(Array.isArray(equity) ? { equityCurve: { __compact: true, length: equity.length } } : {}),
     ...(Array.isArray(trades) ? { trades: { __compact: true, length: trades.length } } : {}),
     metrics: r.metrics ?? null,
     meta: r.meta ?? null,

@@ -1,5 +1,5 @@
-import { readFile } from "node:fs/promises";
 import { describe, expect, test } from "bun:test";
+import { readFile } from "node:fs/promises";
 import { renderWorkflowPlanMarkdown, writeWorkflowPlanArtifacts } from "./plan-artifact";
 
 const plan = {

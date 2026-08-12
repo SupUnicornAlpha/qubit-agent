@@ -12,8 +12,8 @@
 import { createHmac, randomUUID } from "node:crypto";
 import type { OrderIntentPayload } from "../../types/a2a";
 import type { AgentRole } from "../../types/entities";
-import { buildTaskResult } from "../a2a/task-result";
 import { getA2APool } from "../a2a/a2a-pool";
+import { buildTaskResult } from "../a2a/task-result";
 import type { RuntimeRoleHandler } from "../types";
 
 function receiverForRole(role: AgentRole, fallback: string): string {
@@ -25,7 +25,7 @@ function receiverForRole(role: AgentRole, fallback: string): string {
 }
 
 function signOrderIntent(orderIntentId: string): string {
-  const signingKey = process.env["QUBIT_RISK_SIGNING_KEY"] ?? "dev-secret";
+  const signingKey = process.env.QUBIT_RISK_SIGNING_KEY ?? "dev-secret";
   return createHmac("sha256", signingKey).update(orderIntentId).digest("hex");
 }
 
@@ -35,7 +35,7 @@ function signOrderIntent(orderIntentId: string): string {
  */
 export function createRiskSigningHandler(
   role: AgentRole,
-  forwardExecutionRole: AgentRole,
+  forwardExecutionRole: AgentRole
 ): RuntimeRoleHandler {
   return {
     onInit: async (ctx) => {
@@ -54,7 +54,7 @@ export function createRiskSigningHandler(
         traceId: msg.traceId,
         receiverAgent: receiverForRole(
           forwardExecutionRole,
-          receiverForRole("execution", msg.senderAgent),
+          receiverForRole("execution", msg.senderAgent)
         ),
         messageType: "ORDER_INTENT",
         payload: { ...intent, riskSignature: signature },

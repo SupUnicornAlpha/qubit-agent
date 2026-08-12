@@ -9,11 +9,8 @@ import {
   mcpToolBinding,
   project,
 } from "../../db/sqlite/schema";
+import { MCP_WILDCARD_TOOL, syncServerDefaultStarBinding } from "./default-star-binding";
 import { dispatchMcpToolCall } from "./dispatcher";
-import {
-  MCP_WILDCARD_TOOL,
-  syncServerDefaultStarBinding,
-} from "./default-star-binding";
 import {
   ensureDefaultRegistrySource,
   listRegistrySources,

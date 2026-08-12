@@ -1,21 +1,21 @@
 import { describe, expect, test } from "bun:test";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
-  createFsWorkspace,
-  discoverWorkspaces,
-  openWorkspaceById,
-  resolveInsideRoot,
-  resolveProviders,
-  registerMemoryProvider,
-  listRegisteredProviderKinds,
-  buildWorkspaceBootstrapPack,
-  slugifyWorkspaceName,
   WorkspacePathError,
   WorkspaceProviderError,
-  writeRunRecord,
+  buildWorkspaceBootstrapPack,
   createBuiltinFsMemoryProvider,
+  createFsWorkspace,
+  discoverWorkspaces,
+  listRegisteredProviderKinds,
+  openWorkspaceById,
+  registerMemoryProvider,
+  resolveInsideRoot,
+  resolveProviders,
+  slugifyWorkspaceName,
+  writeRunRecord,
 } from "../index";
 
 describe("workspace path safety", () => {

@@ -154,8 +154,7 @@ export class AgentRuntime {
 
     if (msg.receiverAgent) {
       const forInstance = msg.receiverAgent === this.instance.instanceId;
-      const forRole =
-        !this.instanceOnlyRouting && msg.receiverAgent === this.definition.role;
+      const forRole = !this.instanceOnlyRouting && msg.receiverAgent === this.definition.role;
       if (!forInstance && !forRole) return;
     }
 

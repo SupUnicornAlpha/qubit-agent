@@ -11,9 +11,9 @@ import type { Database } from "bun:sqlite";
 import { getScenarioExpectation } from "../agent-readiness/quality/scenario-expectations";
 import { toolMatchesRequiredCapability } from "../tools/data-gap";
 import { assertAnswerSchema } from "./answer-schema";
-import { EVALUATOR_VERSION, type DeliveryVerdict, type ScenarioRecipe } from "./types";
-import type { ScenarioRuntimeSnapshot } from "./scenario-snapshot";
 import { resolveScenarioRecipe } from "./scenario-recipe";
+import type { ScenarioRuntimeSnapshot } from "./scenario-snapshot";
+import { type DeliveryVerdict, EVALUATOR_VERSION, type ScenarioRecipe } from "./types";
 
 export function evaluateDeliveryVerdict(input: {
   sqlite: Database;
@@ -22,10 +22,7 @@ export function evaluateDeliveryVerdict(input: {
   /** When true, mustIncludeTerms from recipe answerSchema are enforced (bench). */
   enforceBenchmarkTerms?: boolean;
 }): DeliveryVerdict {
-  const recipe =
-    input.snapshot.recipe ??
-    resolveScenarioRecipe(input.snapshot.scenarioKey) ??
-    null;
+  const recipe = input.snapshot.recipe ?? resolveScenarioRecipe(input.snapshot.scenarioKey) ?? null;
   const reasonCodes: string[] = [];
   const softReasonCodes: string[] = [];
   const missingArtifacts: string[] = [];
@@ -115,10 +112,7 @@ export function evaluateDeliveryVerdict(input: {
     !dataGaps.some((gap) => gap.class === "infra_error");
 
   const upgradeOk =
-    researchOk &&
-    softReasonCodes.length === 0 &&
-    answer.schemaOk &&
-    dataGaps.length === 0;
+    researchOk && softReasonCodes.length === 0 && answer.schemaOk && dataGaps.length === 0;
 
   let state: DeliveryVerdict["state"];
   if (upgradeOk) {
@@ -169,15 +163,18 @@ function countArtifact(
     /* fall through */
   }
   const fallbackSql: Record<string, string> = {
-    order_intent: `SELECT COUNT(*) AS c FROM order_intent WHERE workflow_run_id = ?`,
-    risk_decision: `SELECT COUNT(*) AS c FROM risk_decision WHERE workflow_run_id = ?`,
-    strategy_version: `SELECT COUNT(*) AS c FROM strategy_version WHERE workflow_run_id = ?`,
-    strategy_composition: `SELECT COUNT(*) AS c FROM strategy_composition WHERE workflow_run_id = ?`,
-    factor_definition: `SELECT COUNT(*) AS c FROM factor_definition WHERE workflow_run_id = ?`,
-    factor_evaluation: `SELECT COUNT(*) AS c FROM factor_evaluation WHERE workflow_run_id = ?`,
-    recommendation_snapshot: `SELECT COUNT(*) AS c FROM recommendation_snapshot WHERE workflow_run_id = ?`,
-    analyst_signal: `SELECT COUNT(*) AS c FROM analyst_signal WHERE workflow_run_id = ?`,
-    signal_fusion_result: `SELECT COUNT(*) AS c FROM signal_fusion_result WHERE workflow_run_id = ?`,
+    order_intent: "SELECT COUNT(*) AS c FROM order_intent WHERE workflow_run_id = ?",
+    risk_decision: "SELECT COUNT(*) AS c FROM risk_decision WHERE workflow_run_id = ?",
+    strategy_version: "SELECT COUNT(*) AS c FROM strategy_version WHERE workflow_run_id = ?",
+    strategy_composition:
+      "SELECT COUNT(*) AS c FROM strategy_composition WHERE workflow_run_id = ?",
+    factor_definition: "SELECT COUNT(*) AS c FROM factor_definition WHERE workflow_run_id = ?",
+    factor_evaluation: "SELECT COUNT(*) AS c FROM factor_evaluation WHERE workflow_run_id = ?",
+    recommendation_snapshot:
+      "SELECT COUNT(*) AS c FROM recommendation_snapshot WHERE workflow_run_id = ?",
+    analyst_signal: "SELECT COUNT(*) AS c FROM analyst_signal WHERE workflow_run_id = ?",
+    signal_fusion_result:
+      "SELECT COUNT(*) AS c FROM signal_fusion_result WHERE workflow_run_id = ?",
   };
   const sql = fallbackSql[table];
   if (!sql) {
@@ -200,11 +197,11 @@ function checkRequiredFields(
 ): boolean {
   const columnSql: Record<string, { sql: string; columns: string[] }> = {
     recommendation_snapshot: {
-      sql: `SELECT symbol AS symbol, rationale AS rationale FROM recommendation_snapshot WHERE workflow_run_id = ? LIMIT 20`,
+      sql: "SELECT symbol AS symbol, rationale AS rationale FROM recommendation_snapshot WHERE workflow_run_id = ? LIMIT 20",
       columns: ["symbol", "rationale"],
     },
     factor_definition: {
-      sql: `SELECT name AS name, expr AS expression FROM factor_definition WHERE workflow_run_id = ? LIMIT 5`,
+      sql: "SELECT name AS name, expr AS expression FROM factor_definition WHERE workflow_run_id = ? LIMIT 5",
       columns: ["name", "expression"],
     },
     order_intent: {
@@ -213,11 +210,11 @@ function checkRequiredFields(
       columns: ["symbol", "side", "qty", "strategy_version_id"],
     },
     risk_decision: {
-      sql: `SELECT decision AS decision FROM risk_decision WHERE workflow_run_id = ? LIMIT 5`,
+      sql: "SELECT decision AS decision FROM risk_decision WHERE workflow_run_id = ? LIMIT 5",
       columns: ["decision"],
     },
     strategy_version: {
-      sql: `SELECT version_tag AS name FROM strategy_version WHERE workflow_run_id = ? LIMIT 5`,
+      sql: "SELECT version_tag AS name FROM strategy_version WHERE workflow_run_id = ? LIMIT 5",
       columns: ["name"],
     },
     screener_candidate: {
@@ -229,7 +226,7 @@ function checkRequiredFields(
       columns: ["ticker", "score"],
     },
     analyst_signal: {
-      sql: `SELECT ticker AS ticker, reasoning AS reasoning FROM analyst_signal WHERE workflow_run_id = ? LIMIT 10`,
+      sql: "SELECT ticker AS ticker, reasoning AS reasoning FROM analyst_signal WHERE workflow_run_id = ? LIMIT 10",
       columns: ["ticker", "reasoning"],
     },
   };

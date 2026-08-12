@@ -1,9 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  createBrokerConnector,
-  getBrokerConnector,
-  type BrokerProvider,
-} from "./broker-connector";
+import { type BrokerProvider, createBrokerConnector, getBrokerConnector } from "./broker-connector";
 
 /**
  * MockAlpacaConnector 行为契约测试。

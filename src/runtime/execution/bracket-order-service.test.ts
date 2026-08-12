@@ -16,7 +16,10 @@ describe("bracket order service", () => {
     const sqlite = new Database(":memory:");
     sqlite.exec("PRAGMA foreign_keys=ON;");
     const db = drizzle(sqlite, { schema });
-    const migrationsFolder = join(dirname(fileURLToPath(import.meta.url)), "../../db/sqlite/migrations");
+    const migrationsFolder = join(
+      dirname(fileURLToPath(import.meta.url)),
+      "../../db/sqlite/migrations"
+    );
     await migrate(db, { migrationsFolder });
 
     const workspaceId = randomUUID();
@@ -89,8 +92,12 @@ describe("bracket order service", () => {
 
     const childTasksBefore = await db.select().from(schema.executionTask);
     expect(childTasksBefore.filter((task) => task.status === "held")).toHaveLength(2);
-    const stopBefore = (await db.select().from(schema.orderIntent)
-      .where(eq(schema.orderIntent.id, bracket.stopLoss.orderIntentId)))[0];
+    const stopBefore = (
+      await db
+        .select()
+        .from(schema.orderIntent)
+        .where(eq(schema.orderIntent.id, bracket.stopLoss.orderIntentId))
+    )[0];
     const amendedStop = await amendWaitingConditionalOrder(db, {
       orderIntentId: bracket.stopLoss.orderIntentId,
       expectedLifecycleUpdatedAt: stopBefore?.lifecycleUpdatedAt ?? "",
@@ -100,7 +107,9 @@ describe("bracket order service", () => {
     expect(amendedStop.stopPrice).toBe(96);
     await processExecutionTasks(db, new Date("2026-07-10T20:00:00Z"));
     const childTasksActivated = await db.select().from(schema.executionTask);
-    expect(childTasksActivated.filter((task) => task.status === "conditional_wait")).toHaveLength(2);
+    expect(childTasksActivated.filter((task) => task.status === "conditional_wait")).toHaveLength(
+      2
+    );
 
     await db.insert(schema.dailyMarkPrice).values({
       id: randomUUID(),
@@ -112,27 +121,37 @@ describe("bracket order service", () => {
     });
     await processExecutionTasks(db, new Date("2026-07-11T20:00:00Z"));
 
-    const takeProfit = (await db.select().from(schema.orderIntent)
-      .where(eq(schema.orderIntent.id, bracket.takeProfit.orderIntentId)))[0];
-    const stopLoss = (await db.select().from(schema.orderIntent)
-      .where(eq(schema.orderIntent.id, bracket.stopLoss.orderIntentId)))[0];
+    const takeProfit = (
+      await db
+        .select()
+        .from(schema.orderIntent)
+        .where(eq(schema.orderIntent.id, bracket.takeProfit.orderIntentId))
+    )[0];
+    const stopLoss = (
+      await db
+        .select()
+        .from(schema.orderIntent)
+        .where(eq(schema.orderIntent.id, bracket.stopLoss.orderIntentId))
+    )[0];
     expect(takeProfit?.lifecycleStatus).toBe("filled");
     expect(takeProfit?.triggerDirection).toBe("above");
     expect(stopLoss?.lifecycleStatus).toBe("cancelled");
   });
 
   test("rejects an inverted long bracket before writing", async () => {
-    await expect(createBracketOrder({} as never, {
-      workflowRunId: "w",
-      strategyVersionId: "v",
-      instrumentId: "i",
-      side: "buy",
-      qty: 1,
-      entryOrderType: "market",
-      entryReferencePrice: 100,
-      takeProfitPrice: 90,
-      stopLossPrice: 110,
-      timeInForce: "gtc",
-    })).rejects.toThrow("long_bracket_requires_stop_below_entry_and_target_above_entry");
+    await expect(
+      createBracketOrder({} as never, {
+        workflowRunId: "w",
+        strategyVersionId: "v",
+        instrumentId: "i",
+        side: "buy",
+        qty: 1,
+        entryOrderType: "market",
+        entryReferencePrice: 100,
+        takeProfitPrice: 90,
+        stopLossPrice: 110,
+        timeInForce: "gtc",
+      })
+    ).rejects.toThrow("long_bracket_requires_stop_below_entry_and_target_above_entry");
   });
 });

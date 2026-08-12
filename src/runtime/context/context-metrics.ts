@@ -37,7 +37,7 @@ function buildKey(name: string, tags?: Record<string, string>): string {
   return `${name}|${sorted}`;
 }
 
-let _collector: ContextMetricsCollector = new InMemoryContextMetrics();
+const _collector: ContextMetricsCollector = new InMemoryContextMetrics();
 
 export function getContextMetricsCollector(): ContextMetricsCollector {
   return _collector;
@@ -51,11 +51,7 @@ export function getContextMetricsSnapshot(): Record<string, number> {
   return _collector.snapshot();
 }
 
-export function incContextMetric(
-  name: string,
-  by = 1,
-  tags?: Record<string, string>
-): void {
+export function incContextMetric(name: string, by = 1, tags?: Record<string, string>): void {
   try {
     _collector.inc(name, by, tags);
   } catch {

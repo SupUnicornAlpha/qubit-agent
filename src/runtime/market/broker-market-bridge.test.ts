@@ -43,7 +43,9 @@ afterEach(() => {
 
 describe("broker-market-bridge", () => {
   test("lists builtin futu / ib / supermind bridges", () => {
-    const ids = listBrokerMarketBridges().map((d) => d.id).sort();
+    const ids = listBrokerMarketBridges()
+      .map((d) => d.id)
+      .sort();
     expect(ids).toEqual(["futu", "ib", "supermind"]);
     expect(isBrokerMarketBridgeSourceId("futu_bridge")).toBe(true);
     expect(isBrokerMarketBridgeSourceId("eastmoney")).toBe(false);

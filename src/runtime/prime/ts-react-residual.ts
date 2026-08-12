@@ -61,6 +61,6 @@ export function assertTsReactAllowed(callerHint: string): void {
   }
   throw new Error(
     `TS ReAct blocked under QUBIT_CORE_BACKEND=rust (${callerHint}). ` +
-      `Expected valve via Core turn/invoke. Set QUBIT_ALLOW_TS_REACT_UNDER_RUST=1 to override.`
+      "Expected valve via Core turn/invoke. Set QUBIT_ALLOW_TS_REACT_UNDER_RUST=1 to override."
   );
 }

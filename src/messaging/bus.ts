@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
-import type { A2AMessageType } from "../types/entities";
 import type { A2AMessageEnvelope } from "../types/a2a";
+import type { A2AMessageType } from "../types/entities";
 
 type BusEventMap = {
   [K in A2AMessageType]: [A2AMessageEnvelope];

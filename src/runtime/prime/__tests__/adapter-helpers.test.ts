@@ -102,12 +102,8 @@ describe("prime core adapter helpers", () => {
 
   test("resolveCalleeSpecId maps role and definitionId", async () => {
     const { resolveCalleeSpecId } = await import("../run-specialist-via-core");
-    expect(resolveCalleeSpecId({ definitionId: "def-research" })).toBe(
-      "def-research"
-    );
+    expect(resolveCalleeSpecId({ definitionId: "def-research" })).toBe("def-research");
     expect(resolveCalleeSpecId({ role: "market_data" })).toBe("def-market-data");
-    expect(resolveCalleeSpecId({ role: "analyst_technical" })).toBe(
-      "def-analyst-technical"
-    );
+    expect(resolveCalleeSpecId({ role: "analyst_technical" })).toBe("def-analyst-technical");
   });
 });

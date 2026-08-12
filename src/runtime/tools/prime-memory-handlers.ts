@@ -8,9 +8,9 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { workflowRun } from "../../db/sqlite/schema";
 import { FinanceRecall } from "../context/finance-recall";
+import { isDeliveryNarrative } from "../conversation/turn-packet";
 import { getExperienceBus, getExperienceStore } from "../experience";
 import { ExperienceRecall } from "../experience/pipes/recall";
-import { isDeliveryNarrative } from "../conversation/turn-packet";
 import {
   resolveActiveFsWorkspaceId,
   resolveFsWorkspaceIdFromParams,
@@ -61,7 +61,9 @@ export const PRIME_MEMORY_HANDLERS: Record<string, BuiltinToolHandler> = {
     const query = String(params.query ?? params.q ?? "").trim();
     if (!query) throw new Error("memory.recall: query is required");
     const topK = Math.max(1, Math.min(20, Number(params.topK ?? params.top_k ?? 8) || 8));
-    const mode = String(params.mode ?? "").trim().toLowerCase();
+    const mode = String(params.mode ?? "")
+      .trim()
+      .toLowerCase();
     const projectId = await resolveProjectId(ctx, params);
     if (!projectId) {
       throw new Error("memory.recall: project_id required (or workflow must bind a project)");
@@ -74,16 +76,13 @@ export const PRIME_MEMORY_HANDLERS: Record<string, BuiltinToolHandler> = {
     const includeFs =
       params.include_fs === true ||
       params.includeFs === true ||
-      (params.include_fs !== false &&
-        params.includeFs !== false &&
-        Boolean(fsWorkspaceId));
+      (params.include_fs !== false && params.includeFs !== false && Boolean(fsWorkspaceId));
 
     const bundle = mode === "bundle" || params.bundle === true;
 
     // Default / finance-adjacent paths use unified multi-path recall.
     if (!bundle && mode !== "finance") {
-      const wantProcedural =
-        Array.isArray(params.kinds) && params.kinds.includes("procedural");
+      const wantProcedural = Array.isArray(params.kinds) && params.kinds.includes("procedural");
       const hits = await recallLongTermMemory({
         projectId,
         query,
@@ -113,9 +112,7 @@ export const PRIME_MEMORY_HANDLERS: Record<string, BuiltinToolHandler> = {
     const recallOpts = {
       store: getExperienceStore(),
       bus: getExperienceBus(),
-      ...(embeddingClient
-        ? { embeddingClient, vectorStore: getExperienceVectorStore() }
-        : {}),
+      ...(embeddingClient ? { embeddingClient, vectorStore: getExperienceVectorStore() } : {}),
     };
 
     const recallCtx = {

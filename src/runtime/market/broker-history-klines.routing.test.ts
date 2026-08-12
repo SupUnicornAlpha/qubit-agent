@@ -1,8 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  parseKlinesDataSourceSetting,
-  resolveEffectiveKlinesSource,
-} from "./klines-data-source";
+import { parseKlinesDataSourceSetting, resolveEffectiveKlinesSource } from "./klines-data-source";
 
 describe("ib / ifind (supermind) klines routing", () => {
   test("parses ib and ifind aliases", () => {

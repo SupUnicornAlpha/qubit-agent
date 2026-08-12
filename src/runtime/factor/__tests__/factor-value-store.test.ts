@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
 import { describe, expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { factorValueStore } from "../factor-value-store";
 
 describe("FactorValueStore (DuckDB)", () => {

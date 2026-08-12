@@ -49,8 +49,7 @@ function parseArgs(argv: string[]): CliArgs {
     else if (key === "minSuccessRate") {
       const n = Number(val);
       out.minSuccessRate = Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0.6;
-    } else if (key === "maxApprovesPerRun")
-      out.maxApprovesPerRun = Math.max(1, Number(val) || 20);
+    } else if (key === "maxApprovesPerRun") out.maxApprovesPerRun = Math.max(1, Number(val) || 20);
     else if (key === "json") out.json = val !== "false";
   }
   return out;

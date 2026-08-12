@@ -3,10 +3,7 @@
  */
 import { resolve } from "node:path";
 import type { BarData } from "../../../connectors/data/data.connector";
-import {
-  PythonOneShotError,
-  runPythonOneShot,
-} from "../../../util/python-oneshot";
+import { PythonOneShotError, runPythonOneShot } from "../../../util/python-oneshot";
 import { getPythonBin } from "../../sandbox/python-runtime";
 
 export type StrategyManifestV2 = {
@@ -40,7 +37,8 @@ export type StrategyManifestV2 = {
 };
 
 export type ContractCompileResult =
-  { ok: true; manifest: StrategyManifestV2 } | { ok: false; error: string };
+  | { ok: true; manifest: StrategyManifestV2 }
+  | { ok: false; error: string };
 
 export type ContractBacktestResult =
   | {
@@ -68,7 +66,7 @@ export type ContractBacktestResult =
   | { ok: false; error: string };
 
 async function runContract<T extends { ok: boolean }>(
-  payload: Record<string, unknown>,
+  payload: Record<string, unknown>
 ): Promise<T> {
   const bin = await getPythonBin();
   const scriptPath = resolve(import.meta.dir, "strategy_contract_runner.py");
@@ -94,7 +92,7 @@ async function runContract<T extends { ok: boolean }>(
 }
 
 export async function compileStrategyContract(
-  strategyCode: string,
+  strategyCode: string
 ): Promise<ContractCompileResult> {
   return runContract<ContractCompileResult>({
     action: "compile",

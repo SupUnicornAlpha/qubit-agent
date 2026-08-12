@@ -232,7 +232,9 @@ const handleResearchTeamExecute: OrchestratorTaskHandler = async (ctx, msg, payl
         fusionId: outcome.teamResult.fusionId,
         fusedSignal: outcome.teamResult.fusedSignal,
         fusedConfidence: outcome.teamResult.fusedConfidence,
-        ...(resolveCoreBackend() === "rust" ? { backend: "rust", phase: "prime_team_msa_bridge" } : {}),
+        ...(resolveCoreBackend() === "rust"
+          ? { backend: "rust", phase: "prime_team_msa_bridge" }
+          : {}),
       },
     });
     await completeAndSend(

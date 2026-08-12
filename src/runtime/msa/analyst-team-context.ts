@@ -1,10 +1,10 @@
 import type { NormalizedResearchScope } from "../../types/research-scope";
-import { formatResearchScopePreamble } from "./analyst-team-scope";
 import { isCryptoMarket } from "../market/crypto-market";
 import { queryKlines } from "../market/klines-query";
 import { queryMarketNewsBrief } from "../market/news-brief-query";
 import { resolveTickerMarket } from "../market/resolve-ticker-market";
 import { snapshotIndicators } from "../market/technical-indicators";
+import { formatResearchScopePreamble } from "./analyst-team-scope";
 
 /**
  * 用 deterministic resolver 渲染一段"系统市场识别"块塞进 prompt。
@@ -26,12 +26,12 @@ export function buildMarketIdentificationBlock(
 ): string {
   if (!primary) return "";
   const r = resolveTickerMarket(primary, { hintExchange });
-  const head = `### 系统市场识别`;
+  const head = "### 系统市场识别";
   if (r.market === "UNKNOWN") {
     return [
       head,
       `- 主标的：${primary}`,
-      `- market 推断失败（fallback）；**请先调 fetch_klines + 候选 exchange (US/CN/HK/CRYPTO) 探测**，或向用户澄清。`,
+      "- market 推断失败（fallback）；**请先调 fetch_klines + 候选 exchange (US/CN/HK/CRYPTO) 探测**，或向用户澄清。",
     ].join("\n");
   }
   return [
@@ -39,7 +39,7 @@ export function buildMarketIdentificationBlock(
     `- 主标的：${primary}`,
     `- market=**${r.market}** / exchange=**${r.exchange}**（confidence=${r.confidence}）`,
     `- 推断依据：${r.reason}`,
-    `- 工具调用时请优先使用上述 exchange；如需覆盖，请在 reasoning 中显式说明理由。`,
+    "- 工具调用时请优先使用上述 exchange；如需覆盖，请在 reasoning 中显式说明理由。",
   ].join("\n");
 }
 
@@ -58,10 +58,10 @@ async function buildSingleSymbolSnapshot(symbol: string, exchange?: string): Pro
    * explore 模式的 prompt 保持一致。
    */
   const fallbackHint =
-    `[!important] 当前失败仅说明行情证据不可用，不等于 ticker 不存在。` +
-    `这是用户指定标的，禁止擅自替换成同板块股票，也不要换工具名重复撞同一行情失败域。` +
-    `请保留该标的，基于仍可验证的公告/新闻/基本面完成有限分析；价格、涨跌幅、技术指标必须标为` +
-    `“待行情源恢复后验证”，最终只给条件式结论与明确的数据截止时间。`;
+    "[!important] 当前失败仅说明行情证据不可用，不等于 ticker 不存在。" +
+    "这是用户指定标的，禁止擅自替换成同板块股票，也不要换工具名重复撞同一行情失败域。" +
+    "请保留该标的，基于仍可验证的公告/新闻/基本面完成有限分析；价格、涨跌幅、技术指标必须标为" +
+    "“待行情源恢复后验证”，最终只给条件式结论与明确的数据截止时间。";
   try {
     const { bars, meta, error } = await queryKlines({
       symbol,
@@ -106,7 +106,7 @@ async function buildSingleSymbolSnapshot(symbol: string, exchange?: string): Pro
           `拒绝 synthetic=${brief.evidence.rejected.synthetic}、` +
           `stale=${brief.evidence.rejected.stale}、` +
           `irrelevant=${brief.evidence.rejected.irrelevant}）。` +
-          `禁止用历史新闻冒充近期催化；如任务明确是历史验证，才可切换 historical_validation 模式。`
+          "禁止用历史新闻冒充近期催化；如任务明确是历史验证，才可切换 historical_validation 模式。"
       );
     } else {
       const sectorHint = brief.sectorLabel != null ? `，板块 ${brief.sectorLabel}` : "";

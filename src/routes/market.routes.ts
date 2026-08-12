@@ -1,53 +1,50 @@
-import { Hono } from "hono";
 import { eq } from "drizzle-orm";
+import { Hono } from "hono";
 import { getDb } from "../db/sqlite/client";
 import { backtestJob } from "../db/sqlite/schema";
-import {
-  runPythonStrategyBacktestJob,
-  runSmaCrossoverBacktestJob,
-} from "../runtime/market/backtest-job-runner";
-import {
-  computeDateRangeForLimit,
-  queryBarsRange,
-  queryKlines,
-  timeframeToPeriod,
-} from "../runtime/market/klines-query";
-import { detectRegimeFromBars } from "../runtime/market/regime";
-import { runStructuredTune } from "../runtime/market/structured-tune";
-import { wrapKlinesThrownError } from "../runtime/market/klines-error";
-import { queryMarketNewsBrief } from "../runtime/market/news-brief-query";
-import {
-  getWindSessionStatus,
-  invalidateWindBridge,
-  loginWindSession,
-  reconnectWindSession,
-} from "../runtime/market/wind-klines";
 import { loadBuiltinConnectorSettings } from "../runtime/config/builtin-connector-settings";
 import {
   normalizeExecutionMarket,
   recordExecutionMark,
 } from "../runtime/execution/execution-mark-service";
 import {
-  listMarketDataSources,
-  patchMarketDataSource,
-} from "../runtime/market/market-data-source-control";
+  runPythonStrategyBacktestJob,
+  runSmaCrossoverBacktestJob,
+} from "../runtime/market/backtest-job-runner";
 import { brokerBridgeStatusSnapshot } from "../runtime/market/broker-market-bridge";
+import { ensureFutuRuntime, getFutuRuntimeStatus } from "../runtime/market/futu-runtime";
+import { wrapKlinesThrownError } from "../runtime/market/klines-error";
 import {
-  ensureFutuRuntime,
-  getFutuRuntimeStatus,
-} from "../runtime/market/futu-runtime";
+  computeDateRangeForLimit,
+  queryBarsRange,
+  queryKlines,
+  timeframeToPeriod,
+} from "../runtime/market/klines-query";
 import {
   getMarketDataReadiness,
   runMarketDataHealthChecks,
 } from "../runtime/market/market-data-health";
+import {
+  listMarketDataSources,
+  patchMarketDataSource,
+} from "../runtime/market/market-data-source-control";
+import { marketStreamGateway } from "../runtime/market/market-stream-gateway";
 import {
   queryChipDistribution,
   queryMarketOrderBook,
   queryMarketQuote,
   queryMarketTrades,
 } from "../runtime/market/microstructure-query";
-import { marketStreamGateway } from "../runtime/market/market-stream-gateway";
+import { queryMarketNewsBrief } from "../runtime/market/news-brief-query";
 import { fetchYahooOptionChain } from "../runtime/market/options-chain";
+import { detectRegimeFromBars } from "../runtime/market/regime";
+import { runStructuredTune } from "../runtime/market/structured-tune";
+import {
+  getWindSessionStatus,
+  invalidateWindBridge,
+  loginWindSession,
+  reconnectWindSession,
+} from "../runtime/market/wind-klines";
 
 export const marketRouter = new Hono();
 
@@ -67,7 +64,7 @@ marketRouter.patch("/data-sources/:id", async (c) => {
 });
 
 marketRouter.post("/data-sources/health", async (c) => {
-  const body = await c.req.json<{ sourceId?: string }>().catch(() => ({} as { sourceId?: string }));
+  const body = await c.req.json<{ sourceId?: string }>().catch(() => ({}) as { sourceId?: string });
   const readiness = await runMarketDataHealthChecks(body.sourceId);
   return c.json({ ok: true, data: await listMarketDataSources(), readiness });
 });
@@ -94,10 +91,11 @@ marketRouter.post("/stream/bridges/futu/ensure", async (c) => {
 marketRouter.get("/quote", async (c) => {
   try {
     const symbol = c.req.query("symbol")?.trim() ?? "";
+    const exchange = c.req.query("exchange");
     if (!symbol) return c.json({ ok: false, error: "symbol is required" }, 400);
     const data = await queryMarketQuote({
       symbol,
-      ...(c.req.query("exchange") ? { exchange: c.req.query("exchange")! } : {}),
+      ...(exchange ? { exchange } : {}),
     });
     return c.json({ ok: true, data });
   } catch (error) {
@@ -112,11 +110,12 @@ marketRouter.get("/quote", async (c) => {
 marketRouter.get("/options/chain", async (c) => {
   try {
     const symbol = c.req.query("symbol")?.trim() ?? c.req.query("underlying")?.trim() ?? "";
+    const expiry = c.req.query("expiry");
     if (!symbol) return c.json({ ok: false, error: "symbol is required" }, 400);
     const settings = await loadBuiltinConnectorSettings();
     const data = await fetchYahooOptionChain({
       symbol,
-      ...(c.req.query("expiry") ? { expiry: c.req.query("expiry")! } : {}),
+      ...(expiry ? { expiry } : {}),
       settings,
     });
     return c.json({ ok: true, data });
@@ -131,11 +130,12 @@ marketRouter.get("/options/chain", async (c) => {
 marketRouter.get("/order-book", async (c) => {
   try {
     const symbol = c.req.query("symbol")?.trim() ?? "";
+    const exchange = c.req.query("exchange");
     if (!symbol) return c.json({ ok: false, error: "symbol is required" }, 400);
     const depth = Number(c.req.query("depth") ?? 5);
     const data = await queryMarketOrderBook({
       symbol,
-      ...(c.req.query("exchange") ? { exchange: c.req.query("exchange")! } : {}),
+      ...(exchange ? { exchange } : {}),
       depth: Number.isFinite(depth) ? depth : 5,
     });
     return c.json({ ok: true, data });
@@ -150,11 +150,12 @@ marketRouter.get("/order-book", async (c) => {
 marketRouter.get("/trades", async (c) => {
   try {
     const symbol = c.req.query("symbol")?.trim() ?? "";
+    const exchange = c.req.query("exchange");
     if (!symbol) return c.json({ ok: false, error: "symbol is required" }, 400);
     const limit = Number(c.req.query("limit") ?? 50);
     const data = await queryMarketTrades({
       symbol,
-      ...(c.req.query("exchange") ? { exchange: c.req.query("exchange")! } : {}),
+      ...(exchange ? { exchange } : {}),
       limit: Number.isFinite(limit) ? limit : 50,
     });
     return c.json({ ok: true, data });
@@ -169,12 +170,13 @@ marketRouter.get("/trades", async (c) => {
 marketRouter.get("/chip-distribution", async (c) => {
   try {
     const symbol = c.req.query("symbol")?.trim() ?? "";
+    const exchange = c.req.query("exchange");
     if (!symbol) return c.json({ ok: false, error: "symbol is required" }, 400);
     const adjust = c.req.query("adjust");
     const adjustType = adjust === "pre" || adjust === "post" ? adjust : "none";
     const data = await queryChipDistribution({
       symbol,
-      ...(c.req.query("exchange") ? { exchange: c.req.query("exchange")! } : {}),
+      ...(exchange ? { exchange } : {}),
       adjustType,
     });
     return c.json({ ok: true, data });
@@ -240,7 +242,10 @@ marketRouter.get("/klines", async (c) => {
     const limitRaw = c.req.query("limit");
     const limit = limitRaw !== undefined && limitRaw !== "" ? Number(limitRaw) : undefined;
     if (!symbol.trim()) {
-      return c.json({ ok: false, error: { type: "klines_invalid_request", message: "symbol is required" } }, 400);
+      return c.json(
+        { ok: false, error: { type: "klines_invalid_request", message: "symbol is required" } },
+        400
+      );
     }
 
     const { bars, meta, error } = await queryKlines({

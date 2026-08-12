@@ -6,9 +6,6 @@ import type { AgentLoopKind, LoopOptionsJson } from "../../types/loop";
 import { parseLoopOptionsJson } from "../../types/loop";
 import { stepStreamBus } from "../react/event-stream";
 import type { StepStreamEvent } from "../react/state";
-import type { DispatchToLoopParams, LoopDriver } from "./loop-driver";
-import { parseCliLoopLine, sniffNativeSessionId } from "./loop-protocol";
-import { writeLoopRunArtifacts } from "./run-artifacts";
 import { setWorkflowState } from "../workflow/workflow-state-machine";
 /**
  * P2-B：cli-loop-driver 不再直接 `db.insert(agentStep) / .insert(agentInstance) /
@@ -23,6 +20,9 @@ import {
   recordExternalLoopToolCall,
   startExternalLoopInstance,
 } from "./external-loop-state";
+import type { DispatchToLoopParams, LoopDriver } from "./loop-driver";
+import { parseCliLoopLine, sniffNativeSessionId } from "./loop-protocol";
+import { writeLoopRunArtifacts } from "./run-artifacts";
 
 const DEFAULT_TIMEOUT_MS = 900_000;
 const DEFAULT_MAX_OUTPUT = 8 * 1024 * 1024;

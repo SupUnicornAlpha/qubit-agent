@@ -13,25 +13,25 @@
  * 详见 docs/FACTOR_RULE_STRATEGY_DESIGN.md §6 + migration 0080。
  */
 
-import { Hono } from "hono";
 import { and, desc, eq, inArray } from "drizzle-orm";
+import { Hono } from "hono";
 import { getDb } from "../db/sqlite/client";
 import {
-  factorBacktestPromotionService,
-  FactorBacktestPromotionError,
-} from "../runtime/quant/factor-backtest-promotion-service";
-import {
-  factorDefinition as factorTable,
-  ruleDefinition as ruleTable,
+  agentDefinition as agentDefinitionTable,
+  agentInstance as agentInstanceTable,
+  backtestRun as backtestRunTable,
+  chatSession as chatSessionTable,
   strategyComposition as compositionTable,
   discoveryJob as discoveryJobTable,
-  backtestRun as backtestRunTable,
-  agentInstance as agentInstanceTable,
-  agentDefinition as agentDefinitionTable,
-  workflowRun as workflowRunTable,
+  factorDefinition as factorTable,
+  ruleDefinition as ruleTable,
   indicatorStrategyScript as scriptTable,
-  chatSession as chatSessionTable,
+  workflowRun as workflowRunTable,
 } from "../db/sqlite/schema";
+import {
+  FactorBacktestPromotionError,
+  factorBacktestPromotionService,
+} from "../runtime/quant/factor-backtest-promotion-service";
 
 export const quantRouter = new Hono();
 
@@ -84,18 +84,17 @@ quantRouter.post("/factor-backtest-promotions/run-now", async (c) => {
       created_by?: string;
       createdBy?: string;
     }>();
+    const projectId = body.project_id ?? body.projectId;
+    const strategyName = body.strategy_name ?? body.strategyName;
+    const versionTag = body.version_tag ?? body.versionTag;
+    const compositionName = body.composition_name ?? body.compositionName;
+    const providerKey = body.provider_key ?? body.providerKey;
     const data = await factorBacktestPromotionService.promoteAndBacktest({
-      ...(body.project_id ?? body.projectId ? { projectId: (body.project_id ?? body.projectId)! } : {}),
+      ...(projectId ? { projectId } : {}),
       factorIds: body.factor_ids ?? body.factorIds ?? [],
-      ...(body.strategy_name ?? body.strategyName
-        ? { strategyName: (body.strategy_name ?? body.strategyName)! }
-        : {}),
-      ...(body.version_tag ?? body.versionTag
-        ? { versionTag: (body.version_tag ?? body.versionTag)! }
-        : {}),
-      ...(body.composition_name ?? body.compositionName
-        ? { compositionName: (body.composition_name ?? body.compositionName)! }
-        : {}),
+      ...(strategyName ? { strategyName } : {}),
+      ...(versionTag ? { versionTag } : {}),
+      ...(compositionName ? { compositionName } : {}),
       ...(body.description ? { description: body.description } : {}),
       ...(body.symbols ? { symbols: body.symbols } : {}),
       ...(body.universe ? { universe: body.universe } : {}),
@@ -109,9 +108,7 @@ quantRouter.post("/factor-backtest-promotions/run-now", async (c) => {
         : {}),
       ...(body.longShort !== undefined ? { longShort: body.longShort } : {}),
       ...(body.benchmark ? { benchmark: body.benchmark } : {}),
-      ...(body.provider_key ?? body.providerKey
-        ? { providerKey: (body.provider_key ?? body.providerKey)! }
-        : {}),
+      ...(providerKey ? { providerKey } : {}),
       workflowRunId: body.workflow_run_id ?? body.workflowRunId ?? null,
       agentInstanceId: body.agent_instance_id ?? body.agentInstanceId ?? null,
       createdBy: body.created_by ?? body.createdBy ?? "user",
@@ -122,12 +119,7 @@ quantRouter.post("/factor-backtest-promotions/run-now", async (c) => {
   }
 });
 
-export type LineageKind =
-  | "factor"
-  | "rule"
-  | "composition"
-  | "discovery_job"
-  | "backtest_run";
+export type LineageKind = "factor" | "rule" | "composition" | "discovery_job" | "backtest_run";
 
 interface AgentSummary {
   instanceId: string;
@@ -160,9 +152,7 @@ interface LineageNode {
   meta: Record<string, unknown>;
 }
 
-async function fetchAgentSummary(
-  instanceId: string | null
-): Promise<AgentSummary | null> {
+async function fetchAgentSummary(instanceId: string | null): Promise<AgentSummary | null> {
   if (!instanceId) return null;
   const db = await getDb();
   const rows = await db
@@ -173,10 +163,7 @@ async function fetchAgentSummary(
       name: agentDefinitionTable.name,
     })
     .from(agentInstanceTable)
-    .leftJoin(
-      agentDefinitionTable,
-      eq(agentInstanceTable.definitionId, agentDefinitionTable.id)
-    )
+    .leftJoin(agentDefinitionTable, eq(agentInstanceTable.definitionId, agentDefinitionTable.id))
     .where(eq(agentInstanceTable.id, instanceId))
     .limit(1);
   const r = rows[0];
@@ -189,9 +176,7 @@ async function fetchAgentSummary(
   };
 }
 
-async function fetchWorkflowSummary(
-  workflowRunId: string | null
-): Promise<WorkflowSummary | null> {
+async function fetchWorkflowSummary(workflowRunId: string | null): Promise<WorkflowSummary | null> {
   if (!workflowRunId) return null;
   const db = await getDb();
   const rows = await db
@@ -210,11 +195,7 @@ async function fetchWorkflowSummary(
 
 async function buildFactorNode(id: string): Promise<LineageNode | null> {
   const db = await getDb();
-  const rows = await db
-    .select()
-    .from(factorTable)
-    .where(eq(factorTable.id, id))
-    .limit(1);
+  const rows = await db.select().from(factorTable).where(eq(factorTable.id, id)).limit(1);
   const r = rows[0];
   if (!r) return null;
   const [agent, workflow] = await Promise.all([
@@ -309,11 +290,7 @@ async function buildCompositionNode(
   opts: { withChildren?: boolean } = {}
 ): Promise<LineageNode | null> {
   const db = await getDb();
-  const rows = await db
-    .select()
-    .from(compositionTable)
-    .where(eq(compositionTable.id, id))
-    .limit(1);
+  const rows = await db.select().from(compositionTable).where(eq(compositionTable.id, id)).limit(1);
   const r = rows[0];
   if (!r) return null;
   const [agent, workflow] = await Promise.all([
@@ -358,11 +335,7 @@ async function buildCompositionNode(
 
 async function buildBacktestNode(id: string): Promise<LineageNode | null> {
   const db = await getDb();
-  const rows = await db
-    .select()
-    .from(backtestRunTable)
-    .where(eq(backtestRunTable.id, id))
-    .limit(1);
+  const rows = await db.select().from(backtestRunTable).where(eq(backtestRunTable.id, id)).limit(1);
   const r = rows[0];
   if (!r) return null;
   const [agent, workflow] = await Promise.all([
@@ -407,8 +380,7 @@ quantRouter.get("/lineage", async (c) => {
     let node: LineageNode | null = null;
     if (kind === "factor") node = await buildFactorNode(id);
     else if (kind === "rule") node = await buildRuleNode(id);
-    else if (kind === "composition")
-      node = await buildCompositionNode(id, { withChildren: true });
+    else if (kind === "composition") node = await buildCompositionNode(id, { withChildren: true });
     else if (kind === "discovery_job") node = await buildDiscoveryNode(id);
     else if (kind === "backtest_run") node = await buildBacktestNode(id);
     else return c.json({ ok: false, error: `unknown_kind:${kind}` }, 400);
@@ -456,7 +428,10 @@ quantRouter.post("/lineage/batch", async (c) => {
  */
 quantRouter.get("/agents", async (c) => {
   const raw = c.req.query("ids") ?? "";
-  const ids = raw.split(",").map((s) => s.trim()).filter(Boolean);
+  const ids = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
   if (ids.length === 0) return c.json({ ok: true, data: [] });
   try {
     const db = await getDb();
@@ -468,10 +443,7 @@ quantRouter.get("/agents", async (c) => {
         name: agentDefinitionTable.name,
       })
       .from(agentInstanceTable)
-      .leftJoin(
-        agentDefinitionTable,
-        eq(agentInstanceTable.definitionId, agentDefinitionTable.id)
-      )
+      .leftJoin(agentDefinitionTable, eq(agentInstanceTable.definitionId, agentDefinitionTable.id))
       .where(inArray(agentInstanceTable.id, ids));
     return c.json({ ok: true, data: rows });
   } catch (e) {
@@ -486,7 +458,10 @@ quantRouter.get("/agents", async (c) => {
  */
 quantRouter.get("/workflows", async (c) => {
   const raw = c.req.query("ids") ?? "";
-  const ids = raw.split(",").map((s) => s.trim()).filter(Boolean);
+  const ids = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
   if (ids.length === 0) return c.json({ ok: true, data: [] });
   try {
     const db = await getDb();
@@ -522,11 +497,7 @@ quantRouter.get("/strategy-scripts", async (c) => {
   try {
     const db = await getDb();
     const projectId = c.req.query("project_id");
-    const purpose = c.req.query("purpose") as
-      | "research"
-      | "live_trading"
-      | "both"
-      | undefined;
+    const purpose = c.req.query("purpose") as "research" | "live_trading" | "both" | undefined;
     const workflowRunId = c.req.query("workflow_run_id");
     const sessionId = c.req.query("session_id");
 
@@ -638,9 +609,7 @@ quantRouter.post("/strategy-contract/compile", async (c) => {
     }>();
     const code = String(body.code ?? body.strategyCode ?? "").trim();
     if (!code) return c.json({ ok: false, error: "code_required" }, 400);
-    const { compileStrategyContract } = await import(
-      "../runtime/strategy/v2/contract-service"
-    );
+    const { compileStrategyContract } = await import("../runtime/strategy/v2/contract-service");
     const result = await compileStrategyContract(code);
     if (!result.ok) return c.json({ ok: false, error: result.error }, 422);
     let persistMeta: Record<string, unknown> | undefined;
@@ -704,15 +673,9 @@ quantRouter.post("/strategy-contract/backtest", async (c) => {
     if (!compiled.ok) {
       return c.json({ ok: false, stage: "compile", error: compiled.error }, 422);
     }
-    const instrumentId =
-      String(body.symbol ?? "").trim() || primaryInstrumentId(compiled.manifest);
-    const timeframe = String(
-      body.timeframe ?? compiled.manifest.primaryFrequency ?? "1d"
-    ).trim();
-    const limit = Math.max(
-      30,
-      Math.min(Number(body.limit ?? 180) || 180, 2000)
-    );
+    const instrumentId = String(body.symbol ?? "").trim() || primaryInstrumentId(compiled.manifest);
+    const timeframe = String(body.timeframe ?? compiled.manifest.primaryFrequency ?? "1d").trim();
+    const limit = Math.max(30, Math.min(Number(body.limit ?? 180) || 180, 2000));
     let bars = Array.isArray(body.bars) ? body.bars : null;
     if (!bars) {
       const { queryKlines } = await import("../runtime/market/klines-query");
@@ -772,14 +735,9 @@ quantRouter.post("/strategy-contract/paper-deploy", async (c) => {
     const body = await c.req.json<Record<string, unknown>>();
     const code = String(body.code ?? body.strategyCode ?? "").trim();
     if (!code) return c.json({ ok: false, error: "code_required" }, 400);
-    const {
-      compileStrategyContract,
-      primaryInstrumentId,
-      instrumentIdToKlinesSymbol,
-    } = await import("../runtime/strategy/v2/contract-service");
-    const { createPaperSession } = await import(
-      "../runtime/strategy/v2/paper-session-service"
-    );
+    const { compileStrategyContract, primaryInstrumentId, instrumentIdToKlinesSymbol } =
+      await import("../runtime/strategy/v2/contract-service");
+    const { createPaperSession } = await import("../runtime/strategy/v2/paper-session-service");
     const compiled = await compileStrategyContract(code);
     if (!compiled.ok) {
       return c.json({ ok: false, stage: "compile", error: compiled.error }, 422);
@@ -787,7 +745,7 @@ quantRouter.post("/strategy-contract/paper-deploy", async (c) => {
     const instrumentId = primaryInstrumentId(compiled.manifest);
     const market =
       String(body.market ?? "").trim() ||
-      (instrumentId.includes(":") ? instrumentId.split(":")[0]! : "US");
+      (instrumentId.includes(":") ? (instrumentId.split(":")[0] ?? "US") : "US");
     const paperCapital = Number(body.paperCapital ?? body.paper_capital ?? 100_000);
     const session = createPaperSession({
       strategyCode: code,
@@ -795,17 +753,13 @@ quantRouter.post("/strategy-contract/paper-deploy", async (c) => {
       paperCapital: Number.isFinite(paperCapital) && paperCapital > 0 ? paperCapital : 100_000,
       primarySymbol: instrumentId,
       market,
-      timeframe: String(
-        body.timeframe ?? compiled.manifest.primaryFrequency ?? "1d"
-      ).trim(),
+      timeframe: String(body.timeframe ?? compiled.manifest.primaryFrequency ?? "1d").trim(),
       ...(body.params && typeof body.params === "object" && !Array.isArray(body.params)
         ? { params: body.params as Record<string, unknown> }
         : {}),
       projectId: typeof body.projectId === "string" ? body.projectId : null,
-      workflowRunId:
-        typeof body.workflowRunId === "string" ? body.workflowRunId : null,
-      strategyVersionId:
-        typeof body.strategyVersionId === "string" ? body.strategyVersionId : null,
+      workflowRunId: typeof body.workflowRunId === "string" ? body.workflowRunId : null,
+      strategyVersionId: typeof body.strategyVersionId === "string" ? body.strategyVersionId : null,
     });
     return c.json({
       ok: true,
@@ -832,12 +786,8 @@ quantRouter.post("/strategy-contract/paper-deploy", async (c) => {
 quantRouter.post("/strategy-contract/paper-run", async (c) => {
   try {
     const body = await c.req.json<Record<string, unknown>>();
-    const {
-      getPaperSession,
-      updatePaperSession,
-      createPaperSession,
-      tradesToPaperOrderDrafts,
-    } = await import("../runtime/strategy/v2/paper-session-service");
+    const { getPaperSession, updatePaperSession, createPaperSession, tradesToPaperOrderDrafts } =
+      await import("../runtime/strategy/v2/paper-session-service");
     const {
       backtestStrategyContract,
       compileStrategyContract,
@@ -861,7 +811,7 @@ quantRouter.post("/strategy-contract/paper-run", async (c) => {
         primarySymbol: instrumentId,
         market:
           String(body.market ?? "").trim() ||
-          (instrumentId.includes(":") ? instrumentId.split(":")[0]! : "US"),
+          (instrumentId.includes(":") ? (instrumentId.split(":")[0] ?? "US") : "US"),
       });
       sessionId = session.id;
     }
@@ -921,9 +871,7 @@ quantRouter.post("/strategy-contract/paper-run", async (c) => {
     const workflowRunId = String(
       body.workflowRunId ?? body.workflow_run_id ?? session.workflowRunId ?? ""
     ).trim();
-    const projectId = String(
-      body.projectId ?? body.project_id ?? session.projectId ?? ""
-    ).trim();
+    const projectId = String(body.projectId ?? body.project_id ?? session.projectId ?? "").trim();
 
     if (!dryRun) {
       if (!workflowRunId) {
@@ -952,9 +900,7 @@ quantRouter.post("/strategy-contract/paper-run", async (c) => {
       );
 
       if (!strategyVersionId && projectId) {
-        const name =
-          String(body.name ?? "").trim() ||
-          `contract_${session.codeHash.slice(0, 8)}`;
+        const name = String(body.name ?? "").trim() || `contract_${session.codeHash.slice(0, 8)}`;
         const existing = await db
           .select()
           .from(strategyTable)

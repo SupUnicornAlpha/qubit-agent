@@ -236,12 +236,14 @@ export class BacktestJobService {
     return record;
   }
 
-  async list(filter: {
-    strategyVersionId?: string;
-    status?: BacktestJobRecord["status"];
-    projectId?: string;
-    workflowRunId?: string;
-  } = {}) {
+  async list(
+    filter: {
+      strategyVersionId?: string;
+      status?: BacktestJobRecord["status"];
+      projectId?: string;
+      workflowRunId?: string;
+    } = {}
+  ) {
     const db = await getDb();
     const conds = [];
     if (filter.strategyVersionId)
@@ -260,10 +262,7 @@ export class BacktestJobService {
           )
           .innerJoin(strategyTable, eq(strategyTable.id, strategyVersionTable.strategyId))
           .where(
-            and(
-              eq(strategyTable.projectId, filter.projectId!),
-              ...(conds.length > 0 ? conds : [])
-            )
+            and(eq(strategyTable.projectId, filter.projectId!), ...(conds.length > 0 ? conds : []))
           )
           .orderBy(desc(backtestRunTable.startedAt))
           .then((items) => items.map((item) => item.run))

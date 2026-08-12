@@ -3,16 +3,16 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { assembleContextEnvelope } from "../assemble-context-prompt";
-import { brierContribution, applyDecisionOutcome } from "../decision-outcome";
-import { InMemoryExperienceStore } from "../../experience/experience-store";
 import {
   projectStepStreamToClientEvent,
   publishTurnStarted,
 } from "../../conversation/client-event-bus";
+import { getTurnBindingByWorkflow, registerTurnRunBinding } from "../../conversation/turn-binding";
 import { resolveTurnMode } from "../../conversation/turn-mode";
-import { registerTurnRunBinding, getTurnBindingByWorkflow } from "../../conversation/turn-binding";
+import { InMemoryExperienceStore } from "../../experience/experience-store";
 import type { StepStreamEvent } from "../../react/state";
+import { assembleContextEnvelope } from "../assemble-context-prompt";
+import { applyDecisionOutcome, brierContribution } from "../decision-outcome";
 
 describe("resolveTurnMode", () => {
   test("显式 turnMode 优先", () => {
@@ -295,9 +295,7 @@ describe("P2 finance writers + working fold", () => {
   });
 
   test("maybeFoldWorkingMemory 默认关；force 可折叠", async () => {
-    const { maybeFoldWorkingMemory, createEmptyWorkingMemory } = await import(
-      "../working-memory"
-    );
+    const { maybeFoldWorkingMemory, createEmptyWorkingMemory } = await import("../working-memory");
     const wm = createEmptyWorkingMemory();
     wm.trailStub = Array.from({ length: 20 }, (_, i) => ({
       step: i,

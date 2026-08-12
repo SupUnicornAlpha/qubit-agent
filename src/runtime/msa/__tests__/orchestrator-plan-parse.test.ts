@@ -32,14 +32,14 @@ describe("parsePlanWithHitlHint", () => {
   });
 
   test("缺少分隔符 → hitlHint=null，brief 保留全文", () => {
-    const raw = `## 开篇\n常规多头。\n\n## analyst_fundamental\n看财报。`;
+    const raw = "## 开篇\n常规多头。\n\n## analyst_fundamental\n看财报。";
     const r = parsePlanWithHitlHint(raw);
     expect(r.brief).toBe(raw);
     expect(r.hitlHint).toBeNull();
   });
 
   test("有分隔符但 JSON 无效 → hitlHint=null，brief 仍正常", () => {
-    const raw = `# brief\n...\n---HITL_HINT_JSON---\n这不是 JSON`;
+    const raw = "# brief\n...\n---HITL_HINT_JSON---\n这不是 JSON";
     const r = parsePlanWithHitlHint(raw);
     expect(r.brief).toContain("# brief");
     expect(r.hitlHint).toBeNull();

@@ -51,7 +51,7 @@ export function buildRecommendedMcpPresets(): RecommendedMcpPreset[] {
         tools: [
           {
             name: "evaluate",
-            desc: "求值数学表达式。必填 arguments.expression（如 \"1+1\" 或 \"sqrt(16)\"），不要用 expr。",
+            desc: '求值数学表达式。必填 arguments.expression（如 "1+1" 或 "sqrt(16)"），不要用 expr。',
           },
         ],
       },
@@ -257,7 +257,7 @@ export function buildRecommendedMcpPresets(): RecommendedMcpPreset[] {
       tools: [
         {
           name: "get_stock_info",
-          desc: "股票基本面。必填 symbol（如 AAPL）+ modules 数组（如 [\"price\",\"summaryDetail\"]）",
+          desc: '股票基本面。必填 symbol（如 AAPL）+ modules 数组（如 ["price","summaryDetail"]）',
         },
         { name: "historical_prices", desc: "OHLCV 价格历史（默认 1y weekly，limit 100）" },
         { name: "get_options", desc: "期权合约（按 open interest 排序，默认 top 25/类）" },
@@ -332,7 +332,9 @@ export async function seedRecommendedMcpServers(): Promise<void> {
       const nextCommand =
         preset.transport === "stdio" ? (preset.command ?? existing[0].command) : null;
       const nextUrl =
-        preset.transport === "stdio" ? (preset.url ?? existing[0].url) : (preset.url ?? existing[0].url);
+        preset.transport === "stdio"
+          ? (preset.url ?? existing[0].url)
+          : (preset.url ?? existing[0].url);
       await db
         .update(mcpServerConfig)
         .set({

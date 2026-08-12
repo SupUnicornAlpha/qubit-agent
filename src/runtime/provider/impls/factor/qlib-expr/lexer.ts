@@ -11,14 +11,7 @@
  * 不支持：字符串字面量、变量、控制流、属性访问（保持表达式纯净）
  */
 
-export type TokenType =
-  | "number"
-  | "ident"
-  | "lparen"
-  | "rparen"
-  | "comma"
-  | "op"
-  | "eof";
+export type TokenType = "number" | "ident" | "lparen" | "rparen" | "comma" | "op" | "eof";
 
 export interface Token {
   type: TokenType;
@@ -124,10 +117,5 @@ function isIdentStart(c: string): boolean {
   return (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c === "_" || c === "$";
 }
 function isIdentCont(c: string): boolean {
-  return (
-    (c >= "a" && c <= "z") ||
-    (c >= "A" && c <= "Z") ||
-    c === "_" ||
-    isDigit(c)
-  );
+  return (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c === "_" || isDigit(c);
 }

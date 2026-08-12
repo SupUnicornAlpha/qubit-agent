@@ -87,9 +87,7 @@ function hasCoreSessionForWorkflow(workflowId: string): boolean {
     const sqlite = getSqliteForTesting();
     if (!tableExists("research_team_interaction")) return false;
     const row = sqlite
-      .prepare(
-        `SELECT COUNT(*) AS c FROM research_team_interaction WHERE workflow_run_id = ?`
-      )
+      .prepare("SELECT COUNT(*) AS c FROM research_team_interaction WHERE workflow_run_id = ?")
       .get(workflowId) as { c: number };
     return Number(row?.c ?? 0) > 0;
   } catch {
@@ -122,9 +120,7 @@ function interruptionHintFromDelivery(workflowId: string): string | null {
   }
 }
 
-export async function getWorkflowResumeStatus(
-  workflowId: string
-): Promise<WorkflowResumeStatus> {
+export async function getWorkflowResumeStatus(workflowId: string): Promise<WorkflowResumeStatus> {
   const db = await getDb();
   const rows = await db
     .select({
@@ -151,13 +147,10 @@ export async function getWorkflowResumeStatus(
 
   const snapshot = await loadLatestBunSnapshot(workflowId);
   const hasBunSnapshot = Boolean(snapshot);
-  const hasCoreSession =
-    resolveCoreBackend() === "rust" && hasCoreSessionForWorkflow(workflowId);
+  const hasCoreSession = resolveCoreBackend() === "rust" && hasCoreSessionForWorkflow(workflowId);
   const status = wf.status;
   const terminalResumable =
-    status === "partial" ||
-    status === "failed" ||
-    status === "awaiting_approval";
+    status === "partial" || status === "failed" || status === "awaiting_approval";
   const canCheckpoint = hasBunSnapshot || hasCoreSession;
   // Only terminal interrupted states are resumable. pending/running must NOT
   // stay "resumable" — otherwise clicking Resume leaves the banner forever
@@ -166,8 +159,7 @@ export async function getWorkflowResumeStatus(
   const orphanRunning =
     (status === "running" || status === "pending") &&
     Boolean(deliveryHint && /超时|中断|timeout/i.test(deliveryHint));
-  const resumable =
-    (terminalResumable || orphanRunning) && (canCheckpoint || terminalResumable);
+  const resumable = (terminalResumable || orphanRunning) && (canCheckpoint || terminalResumable);
   const hint =
     deliveryHint ??
     (status === "partial"
@@ -225,16 +217,13 @@ export async function resumeWorkflow(input: {
   const wf = rows[0];
   if (!wf) throw new Error("workflow_not_found");
 
-  const mode: WorkflowResumeMode =
-    input.mode ?? status.suggestedMode;
+  const mode: WorkflowResumeMode = input.mode ?? status.suggestedMode;
   const useCheckpoint = mode === "checkpoint" && (status.hasBunSnapshot || status.hasCoreSession);
   const taskId = randomUUID();
 
   const handoff = await loadWorkflowResumeHandoff(input.workflowId);
   const resumeGoal =
-    handoff.lastUserPrompt?.trim() ||
-    wf.goal?.trim() ||
-    "请从检查点继续完成未竟步骤。";
+    handoff.lastUserPrompt?.trim() || wf.goal?.trim() || "请从检查点继续完成未竟步骤。";
   const note = input.note?.trim() ?? "";
   const contextParts: string[] = [];
   if (handoff.sessionChronicle) {
@@ -275,9 +264,7 @@ export async function resumeWorkflow(input: {
             }
           : {}),
         resumeSource: "ui_resume_button",
-        ...(handoff.lastUserPrompt
-          ? { pendingUserPrompt: handoff.lastUserPrompt }
-          : {}),
+        ...(handoff.lastUserPrompt ? { pendingUserPrompt: handoff.lastUserPrompt } : {}),
       },
     },
   });

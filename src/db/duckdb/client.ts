@@ -1,6 +1,6 @@
-import { DuckDBInstance } from "@duckdb/node-api";
 import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { DuckDBInstance } from "@duckdb/node-api";
 import { config } from "../../config";
 
 let _instance: DuckDBInstance | null = null;

@@ -3,10 +3,7 @@ import { describe, expect, test } from "bun:test";
 // Lightweight unit tests for Futu symbol / period mapping live in Python.
 // Here we cover TS routing helpers that decide when futu_bridge is selected.
 
-import {
-  parseKlinesDataSourceSetting,
-  resolveEffectiveKlinesSource,
-} from "./klines-data-source";
+import { parseKlinesDataSourceSetting, resolveEffectiveKlinesSource } from "./klines-data-source";
 
 describe("futu klines routing", () => {
   test("parses futu aliases to futu_bridge", () => {

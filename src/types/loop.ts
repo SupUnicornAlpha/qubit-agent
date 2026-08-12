@@ -10,13 +10,7 @@ export type AgentLoopKind = z.infer<typeof AgentLoopKindSchema>;
  *
  * 与 Core `InteractionMode` 对齐：agent | plan | goal | ask | diagnose。
  */
-export const AgentControlModeSchema = z.enum([
-  "agent",
-  "plan",
-  "goal",
-  "ask",
-  "diagnose",
-]);
+export const AgentControlModeSchema = z.enum(["agent", "plan", "goal", "ask", "diagnose"]);
 export type AgentControlMode = z.infer<typeof AgentControlModeSchema>;
 
 export const WorkflowSopStepSchema = z.object({

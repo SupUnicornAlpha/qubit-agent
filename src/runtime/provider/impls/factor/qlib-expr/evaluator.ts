@@ -26,7 +26,7 @@
  * 长度不足或类型错误 → 该位置返回 NaN（不抛错，向下游传递）。
  */
 
-import { type Ast } from "./parser";
+import type { Ast } from "./parser";
 
 export interface PriceSeries {
   /** symbol 到 时序数组 的映射；每个数组以"日期升序"对齐，缺值填 null */
@@ -36,7 +36,10 @@ export interface PriceSeries {
 }
 
 export class ExprEvalError extends Error {
-  constructor(public code: string, message: string) {
+  constructor(
+    public code: string,
+    message: string
+  ) {
     super(message);
     this.name = "ExprEvalError";
   }
@@ -97,10 +100,7 @@ function getIntArg(arg: Series | number, name: string): number {
 
 // ─── 算子实现 ───────────────────────────────────────────────────────────────
 
-const OPS: Record<
-  string,
-  (args: Array<Series | number>, n: number) => Series | number
-> = {
+const OPS: Record<string, (args: Array<Series | number>, n: number) => Series | number> = {
   Ref(args, n) {
     const x = args[0] as Series;
     const k = getIntArg(args[1]!, "Ref");

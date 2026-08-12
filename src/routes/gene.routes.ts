@@ -11,7 +11,11 @@ import {
 export const geneRouter = new Hono();
 
 geneRouter.post("/init", async (c) => {
-  const body = await c.req.json<{ projectId: string; populationSize?: number; mutationRate?: number }>();
+  const body = await c.req.json<{
+    projectId: string;
+    populationSize?: number;
+    mutationRate?: number;
+  }>();
   if (!body.projectId) return c.json({ error: "projectId is required" }, 400);
   const data = await initGenePool(body);
   return c.json({ ok: true, data });

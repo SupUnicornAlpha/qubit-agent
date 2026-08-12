@@ -1,9 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  extractSymbolArgs,
-  requireSymbols,
-  ToolContractParamError,
-} from "./normalize-symbol-args";
+import { ToolContractParamError, extractSymbolArgs, requireSymbols } from "./normalize-symbol-args";
 
 describe("extractSymbolArgs / requireSymbols", () => {
   test("accepts symbol / ticker / symbols / tickers aliases", () => {

@@ -39,8 +39,7 @@ export async function resolveIbGatewayConfig(): Promise<IbGatewayConfig | null> 
     host: (cfg.host ?? envHost ?? "127.0.0.1").trim() || "127.0.0.1",
     port: Number(cfg.port) || (Number.isFinite(envPort) ? envPort : 7497) || 7497,
     clientId,
-    historyClientId:
-      (Number.isFinite(envHistoryClient) ? envHistoryClient : 0) || clientId + 50,
+    historyClientId: (Number.isFinite(envHistoryClient) ? envHistoryClient : 0) || clientId + 50,
     accountId: cfg.accountId,
     accountRef: row?.accountRef ?? "env",
   };

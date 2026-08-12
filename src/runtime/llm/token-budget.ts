@@ -243,8 +243,7 @@ export function resolveRolePromptBudget(
   const base = (role && ROLE_PROMPT_BUDGETS[role]) || DEFAULT_ROLE_BUDGET;
   return {
     maxPromptTokens: overrides?.maxPromptTokens ?? base.maxPromptTokens,
-    maxCharsPerObservation:
-      overrides?.maxCharsPerObservation ?? base.maxCharsPerObservation,
+    maxCharsPerObservation: overrides?.maxCharsPerObservation ?? base.maxCharsPerObservation,
     keepRecent: overrides?.keepRecent ?? base.keepRecent,
     safetyRatio: overrides?.safetyRatio ?? base.safetyRatio,
   };
@@ -342,8 +341,7 @@ export function compactObservations<T>(
     if (json.length > maxCharsPerObs) {
       truncatedPerItem += 1;
       const truncatedJson =
-        json.slice(0, maxCharsPerObs) +
-        `…[truncated ${json.length - maxCharsPerObs} chars]`;
+        json.slice(0, maxCharsPerObs) + `…[truncated ${json.length - maxCharsPerObs} chars]`;
       /**
        * 我们不真正修改 T 的内部结构（避免破坏 caller 期望的字段），而是替换成"已压缩" stub。
        * caller 想要更精细的 per-field 截断，应该在自己的 observation builder 里做。
@@ -362,7 +360,7 @@ export function compactObservations<T>(
   const total = entries.length;
   const recentStart = Math.max(0, total - keepRecent);
   let runningTokens = 0;
-  for (let i = recentStart; i < total; i++) runningTokens += entries[i]!.tokens;
+  for (let i = recentStart; i < total; i++) runningTokens += entries[i]?.tokens;
 
   let droppedEarly = 0;
   /** 从最老的开始往后看，能塞就塞，塞不下就改成 stub */
@@ -389,7 +387,7 @@ export function compactObservations<T>(
         summary: stub,
         tokens: estimateTokens(stub),
       };
-      runningTokens += entries[i]!.tokens;
+      runningTokens += entries[i]?.tokens;
       droppedEarly += 1;
     }
   }

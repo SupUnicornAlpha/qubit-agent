@@ -16,12 +16,8 @@ import {
   toolCallLog,
   workflowRun,
 } from "../../db/sqlite/schema";
-import {
-  makeConceptSignature,
-  makeMcpSignature,
-  makeToolSignature,
-} from "./signature";
-import type { GapSignal, DetectorResult } from "./types";
+import { makeConceptSignature, makeMcpSignature, makeToolSignature } from "./signature";
+import type { DetectorResult, GapSignal } from "./types";
 
 // ─────────── 命中模式（unknown_tool） ───────────
 // errorMessage / errorSource 中出现以下文字片段 → unknown_tool。
@@ -53,8 +49,30 @@ const MENTION_REGEXES = [
 ];
 
 const STOP_KEYWORDS = new Set([
-  "the","a","an","of","to","for","is","are","was","were","be","been","with","that","this",
-  "工具","能力","api","need","want","missing","tool","integration","capability",
+  "the",
+  "a",
+  "an",
+  "of",
+  "to",
+  "for",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "with",
+  "that",
+  "this",
+  "工具",
+  "能力",
+  "api",
+  "need",
+  "want",
+  "missing",
+  "tool",
+  "integration",
+  "capability",
 ]);
 
 interface DetectorOptions {
@@ -312,7 +330,9 @@ function pickConceptKeyword(excerpt: string): string | null {
 }
 
 /** agentStepId → definitionId（一次性 join，避免 N+1） */
-async function loadDefinitionMap(stepIds: Array<string | null | undefined>): Promise<Map<string, string>> {
+async function loadDefinitionMap(
+  stepIds: Array<string | null | undefined>
+): Promise<Map<string, string>> {
   const cleaned = [...new Set(stepIds.filter((s): s is string => Boolean(s)))];
   if (cleaned.length === 0) return new Map();
   const db = await getDb();

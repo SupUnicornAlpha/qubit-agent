@@ -17,7 +17,9 @@ export abstract class ResearchConnector extends BaseConnector {
       case "compute_factors":
         return this.computeFactors(payload as ComputeFactorsParams) as unknown as TOutput;
       case "feature_engineering":
-        return this.runFeatureEngineering(payload as FeatureEngineeringParams) as unknown as TOutput;
+        return this.runFeatureEngineering(
+          payload as FeatureEngineeringParams
+        ) as unknown as TOutput;
       case "train_model":
         return this.trainModel(payload as TrainModelParams) as unknown as TOutput;
       default:

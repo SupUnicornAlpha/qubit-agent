@@ -67,9 +67,7 @@ describe("estimateLlmCostUsd · Core openai_compatible / deepseek-v4", () => {
 
 describe("resolveLlmProviderForPricing", () => {
   test("maps openai_compatible + deepseek model → deepseek", () => {
-    expect(resolveLlmProviderForPricing("openai_compatible", "deepseek-v4-flash")).toBe(
-      "deepseek"
-    );
+    expect(resolveLlmProviderForPricing("openai_compatible", "deepseek-v4-flash")).toBe("deepseek");
   });
 });
 
@@ -223,13 +221,28 @@ describe("estimateLlmCostUsd · P2 cached input 折扣", () => {
 describe("estimateLlmCostUsd · P2 价表升级", () => {
   test("gpt-5 / gpt-5-mini / gpt-5-nano 命中精确单价", () => {
     expect(
-      estimateLlmCostUsd({ provider: "openai", model: "gpt-5", promptTokens: 1_000_000, completionTokens: 0 }),
+      estimateLlmCostUsd({
+        provider: "openai",
+        model: "gpt-5",
+        promptTokens: 1_000_000,
+        completionTokens: 0,
+      })
     ).toBe(1.25);
     expect(
-      estimateLlmCostUsd({ provider: "openai", model: "gpt-5-mini", promptTokens: 0, completionTokens: 1_000_000 }),
+      estimateLlmCostUsd({
+        provider: "openai",
+        model: "gpt-5-mini",
+        promptTokens: 0,
+        completionTokens: 1_000_000,
+      })
     ).toBe(2);
     expect(
-      estimateLlmCostUsd({ provider: "openai", model: "gpt-5-nano", promptTokens: 0, completionTokens: 1_000_000 }),
+      estimateLlmCostUsd({
+        provider: "openai",
+        model: "gpt-5-nano",
+        promptTokens: 0,
+        completionTokens: 1_000_000,
+      })
     ).toBe(0.4);
   });
 
@@ -240,7 +253,7 @@ describe("estimateLlmCostUsd · P2 价表升级", () => {
         model: "deepseek-r1",
         promptTokens: 1_000_000,
         completionTokens: 1_000_000,
-      }),
+      })
     ).toBe(2.74);
   });
 
@@ -252,7 +265,7 @@ describe("estimateLlmCostUsd · P2 价表升级", () => {
         promptTokens: 1_000_000,
         completionTokens: 0,
         cachedPromptTokens: 1_000_000,
-      }),
+      })
     ).toBe(0.3);
   });
 });

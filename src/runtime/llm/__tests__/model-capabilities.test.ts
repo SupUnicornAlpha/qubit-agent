@@ -23,7 +23,14 @@ describe("modelCapability", () => {
   });
 
   test("gpt-4o / gpt-4o-mini / gpt-3.5 / deepseek-chat → FULL", () => {
-    for (const m of ["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo", "deepseek-chat", "qwen-plus", "claude-3-5-sonnet"]) {
+    for (const m of [
+      "gpt-4o",
+      "gpt-4o-mini",
+      "gpt-3.5-turbo",
+      "deepseek-chat",
+      "qwen-plus",
+      "claude-3-5-sonnet",
+    ]) {
       expect(modelCapability(m).customTemperature).toBe(true);
     }
   });

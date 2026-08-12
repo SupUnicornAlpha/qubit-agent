@@ -78,9 +78,19 @@ function stopDistancePct(candidate: PortfolioCandidate, fallback: number): numbe
   return fallback;
 }
 
-function scaleDominantSide(weights: number[], sides: Array<"long" | "short">, netLimit: number): void {
-  const longGross = weights.reduce((sum, weight, index) => sum + (sides[index] === "long" ? weight : 0), 0);
-  const shortGross = weights.reduce((sum, weight, index) => sum + (sides[index] === "short" ? weight : 0), 0);
+function scaleDominantSide(
+  weights: number[],
+  sides: Array<"long" | "short">,
+  netLimit: number
+): void {
+  const longGross = weights.reduce(
+    (sum, weight, index) => sum + (sides[index] === "long" ? weight : 0),
+    0
+  );
+  const shortGross = weights.reduce(
+    (sum, weight, index) => sum + (sides[index] === "short" ? weight : 0),
+    0
+  );
   const net = longGross - shortGross;
   if (Math.abs(net) <= netLimit) return;
   if (net > netLimit && longGross > 0) {
@@ -100,7 +110,7 @@ function scaleDominantSide(weights: number[], sides: Array<"long" | "short">, ne
 
 export function allocatePortfolio(
   rawCandidates: PortfolioCandidate[],
-  config: PortfolioAllocationConfig,
+  config: PortfolioAllocationConfig
 ): {
   asof: string;
   config: Required<Omit<PortfolioAllocationConfig, "correlationMatrix">>;
@@ -143,17 +153,19 @@ export function allocatePortfolio(
 
   const convictions = candidates.map((candidate) => {
     const confidence = clamp(candidate.confidence, 0, 1);
-    const signal = candidate.score == null || !Number.isFinite(candidate.score)
-      ? 1
-      : Math.max(0.01, Math.abs(candidate.score));
+    const signal =
+      candidate.score == null || !Number.isFinite(candidate.score)
+        ? 1
+        : Math.max(0.01, Math.abs(candidate.score));
     return Math.max(0.0001, confidence * signal);
   });
   const convictionTotal = convictions.reduce((sum, value) => sum + value, 0);
   const weights = candidates.map((candidate, index) => {
     const unconstrained = resolved.grossLimit * (convictions[index]! / convictionTotal);
-    const candidateCap = candidate.proposedWeight == null || !Number.isFinite(candidate.proposedWeight)
-      ? resolved.perPositionMax
-      : Math.min(resolved.perPositionMax, Math.max(0, Math.abs(candidate.proposedWeight)));
+    const candidateCap =
+      candidate.proposedWeight == null || !Number.isFinite(candidate.proposedWeight)
+        ? resolved.perPositionMax
+        : Math.min(resolved.perPositionMax, Math.max(0, Math.abs(candidate.proposedWeight)));
     return Math.min(unconstrained, candidateCap);
   });
 
@@ -168,18 +180,31 @@ export function allocatePortfolio(
     const gross = indexes.reduce((sum, index) => sum + weights[index]!, 0);
     if (gross <= resolved.maxSectorGross) continue;
     const scale = resolved.maxSectorGross / gross;
-    indexes.forEach((index) => { weights[index] = weights[index]! * scale; });
+    indexes.forEach((index) => {
+      weights[index] = weights[index]! * scale;
+    });
     warnings.push(`sector cap applied: ${sector}`);
   }
 
-  const riskDistances = candidates.map((candidate) => stopDistancePct(candidate, resolved.defaultStopDistancePct));
-  const estimatedRisk = weights.reduce((sum, weight, index) => sum + weight * riskDistances[index]!, 0);
+  const riskDistances = candidates.map((candidate) =>
+    stopDistancePct(candidate, resolved.defaultStopDistancePct)
+  );
+  const estimatedRisk = weights.reduce(
+    (sum, weight, index) => sum + weight * riskDistances[index]!,
+    0
+  );
   if (estimatedRisk > resolved.totalRiskBudget) {
     const scale = resolved.totalRiskBudget / estimatedRisk;
-    weights.forEach((weight, index) => { weights[index] = weight * scale; });
+    weights.forEach((weight, index) => {
+      weights[index] = weight * scale;
+    });
     warnings.push("portfolio risk budget scaled target weights");
   }
-  scaleDominantSide(weights, candidates.map((candidate) => candidate.side), resolved.netLimit);
+  scaleDominantSide(
+    weights,
+    candidates.map((candidate) => candidate.side),
+    resolved.netLimit
+  );
 
   const rows = candidates.map((candidate, index): PortfolioAllocationRow => {
     const signedWeight = weights[index]! * (candidate.side === "short" ? -1 : 1);
@@ -202,7 +227,7 @@ export function allocatePortfolio(
   });
   const exposures = buildExposureReport(rows, candidates, config.correlationMatrix);
   exposures.estimatedLossAtStopsPct = round(
-    weights.reduce((sum, weight, index) => sum + weight * riskDistances[index]!, 0),
+    weights.reduce((sum, weight, index) => sum + weight * riskDistances[index]!, 0)
   );
   return { asof: new Date().toISOString(), config: resolved, rows, exposures, warnings };
 }
@@ -227,7 +252,7 @@ function emptyExposure(): PortfolioExposureReport {
 function buildExposureReport(
   rows: PortfolioAllocationRow[],
   candidates: PortfolioCandidate[],
-  correlationMatrix?: Record<string, Record<string, number>>,
+  correlationMatrix?: Record<string, Record<string, number>>
 ): PortfolioExposureReport {
   const exposure = emptyExposure();
   let correlationSum = 0;
@@ -248,19 +273,28 @@ function buildExposureReport(
       exposure.factor[name] = (exposure.factor[name] ?? 0) + row.targetWeight * loading;
     }
     for (let right = index + 1; right < rows.length; right += 1) {
-      const correlation = correlationMatrix?.[row.symbol]?.[rows[right]!.symbol]
-        ?? correlationMatrix?.[rows[right]!.symbol]?.[row.symbol];
+      const correlation =
+        correlationMatrix?.[row.symbol]?.[rows[right]?.symbol] ??
+        correlationMatrix?.[rows[right]?.symbol]?.[row.symbol];
       if (!Number.isFinite(correlation)) continue;
-      const pairWeight = grossWeight * Math.abs(rows[right]!.targetWeight);
+      const pairWeight = grossWeight * Math.abs(rows[right]?.targetWeight);
       correlationSum += Number(correlation) * pairWeight;
       correlationWeight += pairWeight;
     }
   });
   exposure.grossExposure = exposure.longGross + exposure.shortGross;
   exposure.netExposure = exposure.longGross - exposure.shortGross;
-  exposure.weightedAverageCorrelation = correlationWeight > 0 ? correlationSum / correlationWeight : null;
-  for (const record of [exposure.sectorGross, exposure.sectorNet, exposure.style, exposure.factor]) {
-    Object.keys(record).forEach((key) => { record[key] = round(record[key]!); });
+  exposure.weightedAverageCorrelation =
+    correlationWeight > 0 ? correlationSum / correlationWeight : null;
+  for (const record of [
+    exposure.sectorGross,
+    exposure.sectorNet,
+    exposure.style,
+    exposure.factor,
+  ]) {
+    Object.keys(record).forEach((key) => {
+      record[key] = round(record[key]!);
+    });
   }
   exposure.longGross = round(exposure.longGross);
   exposure.shortGross = round(exposure.shortGross);
@@ -269,8 +303,7 @@ function buildExposureReport(
   exposure.estimatedLossAtStopsPct = round(exposure.estimatedLossAtStopsPct);
   exposure.concentrationHhi = round(exposure.concentrationHhi);
   exposure.portfolioBeta = round(exposure.portfolioBeta);
-  exposure.weightedAverageCorrelation = exposure.weightedAverageCorrelation == null
-    ? null
-    : round(exposure.weightedAverageCorrelation);
+  exposure.weightedAverageCorrelation =
+    exposure.weightedAverageCorrelation == null ? null : round(exposure.weightedAverageCorrelation);
   return exposure;
 }

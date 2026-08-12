@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { IM_WEBHOOK_TIMEOUT_MS, fetchWithTimeout } from "../../util/fetch-with-timeout";
 import type {
   IIntegrationAdapter,
   ParsedInboundMessage,
@@ -7,7 +8,6 @@ import type {
   WebhookVerifyContext,
   WebhookVerifyResult,
 } from "./types";
-import { fetchWithTimeout, IM_WEBHOOK_TIMEOUT_MS } from "../../util/fetch-with-timeout";
 
 /**
  * WhatsApp Cloud API (Meta Graph)：
@@ -69,7 +69,7 @@ export const whatsappAdapter: IIntegrationAdapter = {
           text: { body: text, preview_url: false },
         }),
       },
-      IM_WEBHOOK_TIMEOUT_MS,
+      IM_WEBHOOK_TIMEOUT_MS
     );
     const payload = (await res.json().catch(() => ({}))) as Record<string, any>;
     const result: SendResult = { ok: res.ok, payload };

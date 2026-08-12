@@ -20,10 +20,7 @@ export function resolveCoreBackend(): CoreBackend {
 }
 
 export function rustCoreBaseUrl(): string {
-  return (
-    process.env.QUBIT_RUST_CORE_URL?.trim() ||
-    "http://127.0.0.1:8787"
-  );
+  return process.env.QUBIT_RUST_CORE_URL?.trim() || "http://127.0.0.1:8787";
 }
 
 /**
@@ -49,9 +46,7 @@ class TsCoreStub implements CoreRuntime {
     /* no-op stub */
   }
   async createSession(): Promise<never> {
-    throw new Error(
-      "TsCoreRuntime stub: set QUBIT_CORE_BACKEND=rust to use Prime Core"
-    );
+    throw new Error("TsCoreRuntime stub: set QUBIT_CORE_BACKEND=rust to use Prime Core");
   }
   async getSession(): Promise<never> {
     throw new Error("TsCoreRuntime stub");
@@ -83,10 +78,7 @@ export function getCoreRuntime(): CoreRuntime {
   const backend = resolveCoreBackend();
   if (cached && cachedBackend === backend) return cached;
   cachedBackend = backend;
-  cached =
-    backend === "rust"
-      ? new RustCoreClient(rustCoreBaseUrl())
-      : new TsCoreStub();
+  cached = backend === "rust" ? new RustCoreClient(rustCoreBaseUrl()) : new TsCoreStub();
   return cached;
 }
 

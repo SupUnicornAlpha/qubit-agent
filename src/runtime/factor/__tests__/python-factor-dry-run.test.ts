@@ -70,9 +70,9 @@ describe("runPythonExprDryRun — P3-1 闭环", () => {
     /** 第一次 sandbox 失败就返回 skip，不再连跑 3 个 symbol */
     expect(sandboxCallCount).toBe(1);
     if (r.ok) {
-      expect(r.detail["skipped"]).toBe(true);
-      expect(String(r.detail["reason"])).toContain("sandbox_unavailable");
-      expect(String(r.detail["reason"])).toContain("python_unavailable");
+      expect(r.detail.skipped).toBe(true);
+      expect(String(r.detail.reason)).toContain("sandbox_unavailable");
+      expect(String(r.detail.reason)).toContain("python_unavailable");
     }
   });
 
@@ -89,9 +89,9 @@ describe("runPythonExprDryRun — P3-1 闭环", () => {
     const r = await __testRunPythonExprDryRun("close[-1] - close[-21]");
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.detail["skipped"]).toBe(true);
-      expect(String(r.detail["hint"])).toContain("pandas");
-      expect(String(r.detail["hint"])).toContain("bootstrap");
+      expect(r.detail.skipped).toBe(true);
+      expect(String(r.detail.hint)).toContain("pandas");
+      expect(String(r.detail.hint)).toContain("bootstrap");
     }
   });
 
@@ -109,7 +109,7 @@ describe("runPythonExprDryRun — P3-1 闭环", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.reason).toMatch(/eval_error/);
-      expect(String(r.detail?.["trace"])).toContain("NameError");
+      expect(String(r.detail?.trace)).toContain("NameError");
     }
   });
 
@@ -126,10 +126,10 @@ describe("runPythonExprDryRun — P3-1 闭环", () => {
     expect(r.ok).toBe(true);
     expect(sandboxCallCount).toBe(3);
     if (r.ok) {
-      expect(r.detail["pythonSandbox"]).toBe(true);
-      expect(Number(r.detail["sampleSize"])).toBe(270);
-      expect(Number(r.detail["variance"])).toBeGreaterThan(1e-12);
-      expect((r.detail["perSymbolFiniteCounts"] as number[])[0]).toBe(90);
+      expect(r.detail.pythonSandbox).toBe(true);
+      expect(Number(r.detail.sampleSize)).toBe(270);
+      expect(Number(r.detail.variance)).toBeGreaterThan(1e-12);
+      expect((r.detail.perSymbolFiniteCounts as number[])[0]).toBe(90);
     }
   });
 
@@ -145,7 +145,7 @@ describe("runPythonExprDryRun — P3-1 闭环", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.reason).toBe("degenerate_constant");
-      expect(Number(r.detail?.["variance"])).toBeLessThan(1e-12);
+      expect(Number(r.detail?.variance)).toBeLessThan(1e-12);
     }
   });
 
@@ -162,8 +162,8 @@ describe("runPythonExprDryRun — P3-1 闭环", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.reason).toBe("insufficient_values");
-      expect(Number(r.detail?.["finiteValues"])).toBe(6);
-      expect(Number(r.detail?.["minRows"])).toBe(10);
+      expect(Number(r.detail?.finiteValues)).toBe(6);
+      expect(Number(r.detail?.minRows)).toBe(10);
     }
   });
 
@@ -179,7 +179,7 @@ describe("runPythonExprDryRun — P3-1 闭环", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.reason).toMatch(/eval_error.*factor_values_invalid/);
-      expect(typeof r.detail?.["errorsBySymbol"]).toBe("object");
+      expect(typeof r.detail?.errorsBySymbol).toBe("object");
     }
   });
 

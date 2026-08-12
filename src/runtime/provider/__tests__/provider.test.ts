@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import { BuiltinFactorEvalProvider } from "../impls/factor/builtin-factor-eval-provider";
+import { PythonInlineFactorProvider } from "../impls/factor/python-inline-factor-provider";
+import { JsonLogicRuleProvider } from "../impls/rule/jsonlogic-rule-provider";
 import { providerRegistry } from "../registry";
 import { providerResolver } from "../resolver";
-import { PythonInlineFactorProvider } from "../impls/factor/python-inline-factor-provider";
-import { BuiltinFactorEvalProvider } from "../impls/factor/builtin-factor-eval-provider";
-import { JsonLogicRuleProvider } from "../impls/rule/jsonlogic-rule-provider";
 import { ProviderError } from "../types";
 
 describe("ProviderRegistry / Resolver", () => {
@@ -30,9 +30,9 @@ describe("ProviderRegistry / Resolver", () => {
   });
 
   test("resolve 无任何 provider 时抛 no_fallback", async () => {
-    await expect(providerResolver.resolve("backtest", {}, { skipFallback: true })).rejects.toBeInstanceOf(
-      ProviderError
-    );
+    await expect(
+      providerResolver.resolve("backtest", {}, { skipFallback: true })
+    ).rejects.toBeInstanceOf(ProviderError);
   });
 
   test("显式 providerKey 优先于默认链路", async () => {
@@ -79,7 +79,12 @@ describe("ProviderRegistry / Resolver", () => {
     const parsed = await rule.parse(
       {
         when: { and: [{ ">": [{ factor: "mom" }, 0] }, { "<": [{ factor: "pe" }, 30] }] },
-        score: { weighted_sum: [{ factor: "mom", w: 0.7 }, { factor: "quality", w: 0.3 }] },
+        score: {
+          weighted_sum: [
+            { factor: "mom", w: 0.7 },
+            { factor: "quality", w: 0.3 },
+          ],
+        },
       },
       "jsonlogic"
     );

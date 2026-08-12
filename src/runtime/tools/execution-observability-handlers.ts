@@ -3,8 +3,8 @@ import {
   brokerGetBalances,
   brokerGetCapabilities,
   brokerGetFills,
-  brokerGetOpenOrders,
   brokerGetMargin,
+  brokerGetOpenOrders,
   brokerGetOrder,
   brokerGetPositions,
 } from "../execution/broker/broker-service";
@@ -90,7 +90,10 @@ export const EXECUTION_OBSERVABILITY_HANDLERS: Record<string, BuiltinToolHandler
     return {
       provider,
       accountRef: accountRef ?? null,
-      capabilities: await brokerGetCapabilities({ provider, ...(accountRef ? { accountRef } : {}) }),
+      capabilities: await brokerGetCapabilities({
+        provider,
+        ...(accountRef ? { accountRef } : {}),
+      }),
     };
   },
 

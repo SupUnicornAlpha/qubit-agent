@@ -6,11 +6,11 @@
  * 进入 P1 后会增加 qlib FactorComputeProvider 作为主 Provider，本 Provider 仅作降级使用。
  */
 
-import {
-  type FactorComputeProvider,
-  type FactorComputeRequest,
-  type FactorComputeResult,
-  type ProviderMeta,
+import type {
+  FactorComputeProvider,
+  FactorComputeRequest,
+  FactorComputeResult,
+  ProviderMeta,
 } from "../../types";
 
 const META: ProviderMeta = {

@@ -126,7 +126,7 @@ function pickBestBindingRow(
     if (a.row.enabled !== b.row.enabled) return a.row.enabled ? -1 : 1;
     return 0;
   });
-  return candidates[0]!.row;
+  return candidates[0]?.row;
 }
 
 /**
@@ -146,9 +146,9 @@ const DEFAULT_MCP_POLICY: ResolvedMcpPolicy = {
 function parseRetryPolicy(raw: unknown): ResolvedMcpPolicy["retry"] {
   if (!raw || typeof raw !== "object") return DEFAULT_MCP_POLICY.retry;
   const o = raw as Record<string, unknown>;
-  const max = Number(o["maxAttempts"]);
-  const backoff = Number(o["backoffMs"]);
-  const mult = Number(o["backoffMultiplier"]);
+  const max = Number(o.maxAttempts);
+  const backoff = Number(o.backoffMs);
+  const mult = Number(o.backoffMultiplier);
   return {
     maxAttempts:
       Number.isFinite(max) && max >= 1
@@ -223,14 +223,14 @@ export async function dispatchMcpToolCall(input: McpDispatchInput): Promise<McpD
     if (connectorAlias === "qubit-news") {
       throw new Error(
         `call_mcp: "${input.serverName}" 是内置新闻 connector，不是 MCP server。` +
-          `请派 call_team_news_event / agent.invoke(callee_spec_id=def-news-event)，由新闻 Agent 调 fetch_news*；` +
-          `Orchestrator 不要直接 call_mcp(qubit-news)。`
+          "请派 call_team_news_event / agent.invoke(callee_spec_id=def-news-event)，由新闻 Agent 调 fetch_news*；" +
+          "Orchestrator 不要直接 call_mcp(qubit-news)。"
       );
     }
     throw new Error(
       `call_mcp: "${input.serverName}" 是内置 connector，不是 MCP server。` +
-        `行情请用 market.snapshot.get / market.resolve_symbol，或已启用的 mcp:investor-agent:*；` +
-        `不要把 qubit-data / qubit-backtest 等 connector 名当作 serverName。` +
+        "行情请用 market.snapshot.get / market.resolve_symbol，或已启用的 mcp:investor-agent:*；" +
+        "不要把 qubit-data / qubit-backtest 等 connector 名当作 serverName。" +
         (input.toolName ? `（你想调的是 ${input.toolName}）` : "")
     );
   }
@@ -497,12 +497,12 @@ async function tryEnrichUnknownToolError(err: unknown, serverName: string): Prom
       .limit(1);
     const caps = rows[0]?.capabilitiesJson;
     if (!caps || typeof caps !== "object" || Array.isArray(caps)) return null;
-    const toolsRaw = (caps as Record<string, unknown>)["tools"];
+    const toolsRaw = (caps as Record<string, unknown>).tools;
     if (!Array.isArray(toolsRaw) || toolsRaw.length === 0) return null;
     const names: string[] = [];
     for (const item of toolsRaw) {
       if (item && typeof item === "object") {
-        const name = (item as Record<string, unknown>)["name"];
+        const name = (item as Record<string, unknown>).name;
         if (typeof name === "string" && name.trim()) names.push(name.trim());
       }
     }

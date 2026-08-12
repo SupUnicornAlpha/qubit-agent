@@ -164,14 +164,8 @@ export async function linkForecastBookEntry(
   const entry = ForecastBookEntrySchema.parse({
     ...base,
     recommendationId: patch.recommendationId ?? base.recommendationId,
-    riskDecisionIds: uniq([
-      ...base.riskDecisionIds,
-      ...(patch.riskDecisionIds ?? []),
-    ]),
-    orderIntentIds: uniq([
-      ...base.orderIntentIds,
-      ...(patch.orderIntentIds ?? []),
-    ]),
+    riskDecisionIds: uniq([...base.riskDecisionIds, ...(patch.riskDecisionIds ?? [])]),
+    orderIntentIds: uniq([...base.orderIntentIds, ...(patch.orderIntentIds ?? [])]),
     fillIds: uniq([...base.fillIds, ...(patch.fillIds ?? [])]),
     holdingPeriodResult: patch.holdingPeriodResult
       ? ForecastHoldingResultSchema.parse({
@@ -185,10 +179,7 @@ export async function linkForecastBookEntry(
         ...(base.attribution.sourceProviders ?? []),
         ...(patch.sourceProviders ?? []),
       ]),
-      notes: uniq([
-        ...(base.attribution.notes ?? []),
-        ...(patch.attributionNotes ?? []),
-      ]),
+      notes: uniq([...(base.attribution.notes ?? []), ...(patch.attributionNotes ?? [])]),
     },
     updatedAt: now,
   });

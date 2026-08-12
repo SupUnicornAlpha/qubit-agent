@@ -5,7 +5,7 @@ export function formatResearchScopePreamble(scope: NormalizedResearchScope): str
   const lines: string[] = ["## 研究范围（请务必遵守）"];
 
   if (scope.kind === "explore") {
-    lines.push(`- **类型**：自由探索（无固定标的）`);
+    lines.push("- **类型**：自由探索（无固定标的）");
     lines.push(
       `- **研究主题**：${scope.theme || "（未明确，请按 Orchestrator 简报与已有数据自行收敛）"}`
     );
@@ -96,7 +96,7 @@ export function defaultResearchUserContext(scope: NormalizedResearchScope): stri
         : scope.instrument === "crypto"
           ? "加密资产"
           : scope.positionSide === "short"
-        ? "做空标的"
-        : "标的";
+            ? "做空标的"
+            : "标的";
   return `请对 ${scope.primarySymbol}（${inst}）进行全面分析。`;
 }

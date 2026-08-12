@@ -18,67 +18,63 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { eq, asc, inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { agentDefinition, agentInstance, agentProfile, workflowRun } from "../../db/sqlite/schema";
-import type { AgentOutput } from "../types";
-import type { AgentGroupPipelineKind } from "../seed-agent-catalog";
-import { loadDebateConfig } from "../config/debate-config";
-import { fuseSignals, type RawAnalystSignal } from "./signal-fusion";
-import {
-  resolveResearchScope,
-  type NormalizedResearchScope,
-  type ResearchScopeInput,
-} from "../../types/research-scope";
-import { defaultResearchUserContext } from "./analyst-team-scope";
-import { type DebateInput, runDebateSession } from "../debate/debate-engine";
-import { type DebateA2ASetup, setupDebateA2A } from "../debate/debate-a2a";
-import { evaluateRiskAndVeto } from "../risk/veto-engine";
-import { parseHandoffEnvelope } from "../research-team/handoff-envelope";
-import { logResearchTeamInteraction } from "../research-team/interaction-log";
 import type { AgentRole, AnalystSignalValue } from "../../types/entities";
 import {
-  parseTeamRelations,
-  partitionSlotsIntoWaves,
-  type TeamRelationEdge,
-} from "./analyst-team-topology";
+  type NormalizedResearchScope,
+  type ResearchScopeInput,
+  resolveResearchScope,
+} from "../../types/research-scope";
 import {
   type PromptMode,
   getDataDir,
   mergeSystemPrompt,
   readPackFiles,
 } from "../agent/agent-pack-service";
-import { buildAnalystTeamDataContext } from "./analyst-team-context";
 import { isBenchmarkNamespace } from "../benchmark/benchmark-namespace";
+import { loadDebateConfig } from "../config/debate-config";
+import { type DebateA2ASetup, setupDebateA2A } from "../debate/debate-a2a";
+import { type DebateInput, runDebateSession } from "../debate/debate-engine";
 import { enrichSystemPromptWithFsi } from "../fsi/fsi-prompt-enricher";
+import { parseHandoffEnvelope } from "../research-team/handoff-envelope";
+import { logResearchTeamInteraction } from "../research-team/interaction-log";
+import { evaluateRiskAndVeto } from "../risk/veto-engine";
+import type { AgentGroupPipelineKind } from "../seed-agent-catalog";
+import type { AgentOutput } from "../types";
 import {
+  type HitlApprovalPayload,
+  pauseForTeamOrchestratorHitl,
+  pauseForUserInterrupt,
+} from "../workflow/hitl-service";
+import { consumeInterrupt } from "../workflow/workflow-interrupt";
+import { buildAnalystTeamDataContext } from "./analyst-team-context";
+import {
+  POST_FUSION_AUX_ROLES,
   decideShouldDebate,
   logOrchestratorKickoff,
-  POST_FUSION_AUX_ROLES,
   resolveOrchestratorSlot,
   runOrchestratorPlanning,
   runPostFusionPipeline,
   slotOnlyRelationEdges,
   summarizeTeamDecision,
 } from "./analyst-team-pipeline";
-import {
-  pauseForTeamOrchestratorHitl,
-  pauseForUserInterrupt,
-  type HitlApprovalPayload,
-} from "../workflow/hitl-service";
-import { consumeInterrupt } from "../workflow/workflow-interrupt";
+import { defaultResearchUserContext } from "./analyst-team-scope";
 import { pickAnalystReactDepth } from "./analyst-team-slot-react";
+import { type TeamRelationEdge, partitionSlotsIntoWaves } from "./analyst-team-topology";
 import { buildGroupRoleConstraintHint } from "./group-constraint-hint";
+import { type RawAnalystSignal, fuseSignals } from "./signal-fusion";
+import { type TeamSlotScope, spawnTeamSlotRuntimes } from "./team-slot-a2a";
 import {
+  DEFAULT_TEAM_SLOT_TIMEOUT_MS,
   buildAuxSlotDispatchSpec,
   buildTeamSlotDispatchSpecs,
   createTeamSlotExecutor,
-  DEFAULT_TEAM_SLOT_TIMEOUT_MS,
   dispatchAuxSlotMarkdown,
   mapDispatchResultsToWaveResults,
   resolveTeamSlotTransport,
 } from "./team-slot-executor";
-import { spawnTeamSlotRuntimes, type TeamSlotScope } from "./team-slot-a2a";
 
 /**
  * A2A 团队 slot 派单的 gather 超时兜底（仅防「某 slot 彻底卡死」；正常 deep ReAct
@@ -458,7 +454,7 @@ export async function executeDebateSafely(input: {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(
       `[analyst-team] debate session failed for ${input.ticker} (workflow=${input.workflowRunId}): ${msg}; ` +
-        `continuing without consensus (risk evaluation will fall back to confidence-only).`
+        "continuing without consensus (risk evaluation will fall back to confidence-only)."
     );
     await input.logFailure({
       workflowRunId: input.workflowRunId,
@@ -505,12 +501,12 @@ function mergeMultiSymbolAnalystResults(
     Math.round((results.reduce((a, r) => a + r.fusedConfidence, 0) / results.length) * 100) / 100;
 
   const report = [
-    `# 多标的研究报告`,
-    ``,
+    "# 多标的研究报告",
+    "",
     `**范围**：${scope.displayLabel}`,
     `**标的数**：${results.length}`,
     `**组合倾向**：${fusedSignal.toUpperCase()}（各标的信号均值置信度 ${(fusedConfidence * 100).toFixed(0)}%）`,
-    ``,
+    "",
     ...results.map(
       (r) =>
         `### ${r.ticker}\n\n**${r.fusedSignal.toUpperCase()}**（${(r.fusedConfidence * 100).toFixed(0)}%）\n\n${r.report.split("\n").slice(2).join("\n").slice(0, 4000)}`
@@ -657,8 +653,8 @@ async function runAnalystTeamCore(params: {
    * 显式标记 strategyPipelineMode"——这决定了 fusion 是否写 placeholder /
    * 报告头是否显示"未运行 MSA"。
    */
-  let relationEdges: TeamRelationEdge[] = [];
-  let pipelineKind: AgentGroupPipelineKind = "msa_fusion";
+  const relationEdges: TeamRelationEdge[] = [];
+  const pipelineKind: AgentGroupPipelineKind = "msa_fusion";
   const groupDescription: string | null = null;
 
   let analystSlots = slots.filter((s) => slotProducesSignal(s));
@@ -666,7 +662,7 @@ async function runAnalystTeamCore(params: {
     (params.analystDefinitionIds?.length ?? 0) > 0 || (params.analystRoles?.length ?? 0) > 0;
   if (
     !explicitAnalystSelection &&
-    process.env["QUBIT_ADAPTIVE_TEAM_FANOUT_DISABLED"] !== "1" &&
+    process.env.QUBIT_ADAPTIVE_TEAM_FANOUT_DISABLED !== "1" &&
     analystSlots.length > 2
   ) {
     const query = `${scope.displayLabel} ${userContext}`.toLowerCase();
@@ -1510,24 +1506,24 @@ function buildTeamReport(
   if (noAnalystSignals) {
     return [
       `## ${ticker} 策略 pipeline 调度报告`,
-      ``,
-      `**MSA 共识评估**：⏭️ **未运行**（当前 agent group 未配置 analyst_* 角色）`,
-      `> 直接进入 research → backtest → risk 串行 pipeline，跳过 Bull/Bear 辩论。`,
-      ``,
-      `### 各分析师信号`,
-      `- _无_（请由 research 角色基于行情数据自主形成假设）`,
+      "",
+      "**MSA 共识评估**：⏭️ **未运行**（当前 agent group 未配置 analyst_* 角色）",
+      "> 直接进入 research → backtest → risk 串行 pipeline，跳过 Bull/Bear 辩论。",
+      "",
+      "### 各分析师信号",
+      "- _无_（请由 research 角色基于行情数据自主形成假设）",
     ].join("\n");
   }
 
   const lines = [
     `## ${ticker} 分析师团队研究报告`,
-    ``,
+    "",
     `**综合结论**：${signalEmoji[fusedSignal]} **${fusedSignal.toUpperCase()}**（置信度：${(fusedConfidence * 100).toFixed(0)}%）`,
     fusedConfidence < 0.55
-      ? `⚠️ 置信度不足，建议触发辩论协议（SDP）`
-      : `✅ 置信度充分，可进入风控审核`,
-    ``,
-    `### 各分析师信号`,
+      ? "⚠️ 置信度不足，建议触发辩论协议（SDP）"
+      : "✅ 置信度充分，可进入风控审核",
+    "",
+    "### 各分析师信号",
   ];
 
   for (const s of breakdown) {

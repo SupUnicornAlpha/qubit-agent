@@ -5,15 +5,15 @@
  * `runResearchTeamSlotReact`，仅 transport 不同。
  */
 
-import { getA2APool } from "../a2a/a2a-pool";
 import { config } from "../../config";
-import type { RawAnalystSignal } from "./signal-fusion";
+import { getA2APool } from "../a2a/a2a-pool";
 import { runResearchTeamSlotReact } from "./analyst-team-slot-react";
+import type { RawAnalystSignal } from "./signal-fusion";
 import {
-  dispatchSlotsViaA2A,
   type SlotDispatchResult,
   type SlotReactOut,
   type TeamSlotDispatchSpec,
+  dispatchSlotsViaA2A,
 } from "./team-slot-a2a";
 
 export const DEFAULT_TEAM_SLOT_TIMEOUT_MS = 1_200_000;
@@ -34,7 +34,9 @@ export function slotReactOutToSlotResult(reactOut: SlotReactOut): SlotResult {
   }
   return {
     kind: "missing_signal",
-    ...(reactOut.agentInstanceId !== undefined ? { agentInstanceId: reactOut.agentInstanceId } : {}),
+    ...(reactOut.agentInstanceId !== undefined
+      ? { agentInstanceId: reactOut.agentInstanceId }
+      : {}),
     body: reactOut.body,
   };
 }
@@ -171,7 +173,9 @@ export function buildTeamSlotDispatchSpecs(input: {
     expectJsonSignal: true,
     reactDepth: input.reactDepth,
     workflowRunId: input.workflowRunId,
-    ...(ws.groupConstraintHint !== undefined ? { groupConstraintHint: ws.groupConstraintHint } : {}),
+    ...(ws.groupConstraintHint !== undefined
+      ? { groupConstraintHint: ws.groupConstraintHint }
+      : {}),
   }));
 }
 

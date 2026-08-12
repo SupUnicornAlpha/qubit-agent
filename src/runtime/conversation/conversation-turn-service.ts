@@ -14,6 +14,7 @@ import { dispatchTaskToRole } from "../agent-pool";
 import { logResearchTeamInteraction } from "../research-team/interaction-log";
 import { clearWorkflowCheckpointForNewTurn } from "../workflow/checkpoint-turn";
 import { createAndDispatchWorkflow } from "../workflow/workflow-service";
+import { buildWorkspaceBootstrapPack, openWorkspaceById, writeRunRecord } from "../workspace";
 import { publishTurnStarted } from "./client-event-bus";
 import {
   completeWorkflowConversationAssistant,
@@ -22,19 +23,15 @@ import {
   linkConversationMessageToWorkflow,
 } from "./conversation-projection";
 import { registerTurnRunBinding } from "./turn-binding";
+import { type ConversationTurnMode, resolveTurnMode } from "./turn-mode";
 import {
-  type ConversationTurnMode,
-  resolveTurnMode,
-} from "./turn-mode";
-import {
+  type RecentToolLine,
   buildSessionChronicle,
   inferToolStatus,
   mergeWorkspaceBackground,
   parseRollingChronicle,
   rollChronicleWindow,
-  type RecentToolLine,
 } from "./turn-packet";
-import { buildWorkspaceBootstrapPack, writeRunRecord, openWorkspaceById } from "../workspace";
 
 export interface CreateConversationTurnInput {
   sessionId: string;
@@ -169,11 +166,9 @@ export async function loadWorkflowResumeHandoff(workflowRunId: string): Promise<
     .from(workflowRun)
     .where(eq(workflowRun.id, workflowRunId))
     .limit(1);
-  const loopOptions =
-    (wfRows[0]?.loopOptionsJson as Record<string, unknown> | null) ?? {};
+  const loopOptions = (wfRows[0]?.loopOptionsJson as Record<string, unknown> | null) ?? {};
   const persisted =
-    typeof loopOptions.lastUserPrompt === "string" &&
-    loopOptions.lastUserPrompt.trim()
+    typeof loopOptions.lastUserPrompt === "string" && loopOptions.lastUserPrompt.trim()
       ? loopOptions.lastUserPrompt.trim()
       : null;
 
@@ -182,16 +177,12 @@ export async function loadWorkflowResumeHandoff(workflowRunId: string): Promise<
     .from(chatMessageWorkflowLink)
     .innerJoin(chatMessage, eq(chatMessage.id, chatMessageWorkflowLink.chatMessageId))
     .where(
-      and(
-        eq(chatMessageWorkflowLink.workflowRunId, workflowRunId),
-        eq(chatMessage.role, "user")
-      )
+      and(eq(chatMessageWorkflowLink.workflowRunId, workflowRunId), eq(chatMessage.role, "user"))
     )
     .orderBy(desc(chatMessage.createdAt))
     .limit(1);
   const last = rows[0]?.message;
-  const lastUserPrompt =
-    (last?.content?.trim() ? last.content.trim() : null) ?? persisted;
+  const lastUserPrompt = (last?.content?.trim() ? last.content.trim() : null) ?? persisted;
   const lastUserMessageId = last?.id ?? null;
 
   let sessionChronicle: string | null = null;

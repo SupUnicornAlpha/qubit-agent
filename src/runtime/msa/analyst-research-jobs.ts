@@ -245,8 +245,9 @@ export async function resumeAnalystResearchJob(
     return undefined;
   }
 
-  const resumePayload =
-    row.resumePayloadJson ? (row.resumePayloadJson as ParsedResearchTeamExecute) : undefined;
+  const resumePayload = row.resumePayloadJson
+    ? (row.resumePayloadJson as ParsedResearchTeamExecute)
+    : undefined;
 
   if (row.status === "awaiting_approval") {
     const updated = nowIso();
@@ -360,9 +361,7 @@ export async function findActiveAnalystJobsByWorkflow(workflowRunId: string): Pr
  * 用途：completed 后「继续对话」时，前端不必重填研究范围——后端用上一次跑过的 ticker
  * 兜底，让续跑沿用同一标的。先查内存 cache（热路径），miss 再查 DB 取最新一行。
  */
-export async function getLatestJobTickerByWorkflow(
-  workflowRunId: string
-): Promise<string | null> {
+export async function getLatestJobTickerByWorkflow(workflowRunId: string): Promise<string | null> {
   const db = await getDb();
   const rows = await db
     .select({ ticker: analystResearchJob.ticker })

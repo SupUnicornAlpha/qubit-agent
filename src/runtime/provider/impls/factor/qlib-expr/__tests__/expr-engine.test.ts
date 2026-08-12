@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { tokenize, ExprLexError } from "../lexer";
-import { parse, ExprParseError } from "../parser";
-import { evalExpr, type PriceSeries } from "../evaluator";
+import { type PriceSeries, evalExpr } from "../evaluator";
+import { ExprLexError, tokenize } from "../lexer";
+import { ExprParseError, parse } from "../parser";
 
 function ps(close: number[]): PriceSeries {
   return {
@@ -40,7 +40,15 @@ describe("Lexer", () => {
     const toks = tokenize("Mean($close, 20) - $volume");
     /** $close / $volume 都被 lex 成 ident，值含 $ 由 parser 端 strip */
     expect(toks.map((t) => t.value)).toEqual([
-      "Mean", "(", "$close", ",", "20", ")", "-", "$volume", "",
+      "Mean",
+      "(",
+      "$close",
+      ",",
+      "20",
+      ")",
+      "-",
+      "$volume",
+      "",
     ]);
   });
   test("浮点数", () => {

@@ -9,7 +9,7 @@
  * 但只用 snapshot —— grade 在 diff 时按当前 thresholds 重新算，避免阈值改了之后历史 grade 不可比。
  */
 
-import { gradeSnapshot, type ReadinessSnapshot } from "./grader";
+import { type ReadinessSnapshot, gradeSnapshot } from "./grader";
 import type { MetricGrade } from "./thresholds";
 
 export interface SnapshotJson {
@@ -38,11 +38,28 @@ function gradeText(g: MetricGrade | null | undefined): string {
 
 /** v2 顺序：AQM 主指标在前，LEGACY 在后 */
 const METRIC_ORDER = [
-  "A-1", "A-2", "A-3", "A-4",
-  "B-1", "B-2", "B-3", "B-7",
-  "C-1", "C-2", "C-3-total", "C-3-p95", "C-5",
-  "D-1", "D-2", "D-3",
-  "O-1", "T-1", "T-3", "T-6", "S-1", "M-1",
+  "A-1",
+  "A-2",
+  "A-3",
+  "A-4",
+  "B-1",
+  "B-2",
+  "B-3",
+  "B-7",
+  "C-1",
+  "C-2",
+  "C-3-total",
+  "C-3-p95",
+  "C-5",
+  "D-1",
+  "D-2",
+  "D-3",
+  "O-1",
+  "T-1",
+  "T-3",
+  "T-6",
+  "S-1",
+  "M-1",
 ];
 
 export function renderDiffMarkdown(pair: DiffSnapshotPair): string {
@@ -53,7 +70,9 @@ export function renderDiffMarkdown(pair: DiffSnapshotPair): string {
   lines.push("# Agent Readiness Diff Report");
   lines.push("");
   lines.push(`- base:   \`${pair.base.snapshot.workflowRunId}\` · ${pair.base.snapshot.scenario}`);
-  lines.push(`- target: \`${pair.target.snapshot.workflowRunId}\` · ${pair.target.snapshot.scenario}`);
+  lines.push(
+    `- target: \`${pair.target.snapshot.workflowRunId}\` · ${pair.target.snapshot.scenario}`
+  );
   lines.push("");
   lines.push(`总分：**${baseGrade.overall}** → **${targetGrade.overall}**`);
   lines.push("");
@@ -104,8 +123,8 @@ function formatValue(value: number | null): string {
 function formatDelta(b: number | null, t: number | null): string {
   if (b === null && t === null) return "";
   if (b === t) return "";
-  if (b === null) return `↑ from n/a`;
-  if (t === null) return `↓ to n/a`;
+  if (b === null) return "↑ from n/a";
+  if (t === null) return "↓ to n/a";
   if (t > b) return `↑ +${formatNumber(t - b)}`;
   if (t < b) return `↓ ${formatNumber(t - b)}`;
   return "";

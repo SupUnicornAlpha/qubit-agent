@@ -1,4 +1,14 @@
 import { Hono } from "hono";
+import { getDb } from "../db/sqlite/client";
+import {
+  normalizeExecutionMarket,
+  recordExecutionMark,
+} from "../runtime/execution/execution-mark-service";
+import { queryKlines } from "../runtime/market/klines-query";
+import {
+  listStrategyRuntimes,
+  stopStrategyRuntime,
+} from "../runtime/strategy/strategy-runtime-service";
 import {
   appendTraderUserMessage,
   cancelTraderOrder,
@@ -10,22 +20,12 @@ import {
   pollTraderFeed,
 } from "../runtime/trader/trader-agent-service";
 import { cancelTraderWorkflows } from "../runtime/trader/trader-workflow";
-import { queryKlines } from "../runtime/market/klines-query";
-import { getDb } from "../db/sqlite/client";
-import type { OrderSide, OrderType } from "../types/entities";
-import type { BrokerProvider } from "../types/broker";
-import {
-  normalizeExecutionMarket,
-  recordExecutionMark,
-} from "../runtime/execution/execution-mark-service";
 import {
   getTradingModuleStatus,
   setTradingModuleEnabled,
 } from "../runtime/trader/trading-module-control";
-import {
-  listStrategyRuntimes,
-  stopStrategyRuntime,
-} from "../runtime/strategy/strategy-runtime-service";
+import type { BrokerProvider } from "../types/broker";
+import type { OrderSide, OrderType } from "../types/entities";
 
 export const traderRouter = new Hono();
 
@@ -162,7 +162,9 @@ traderRouter.post("/orders", async (c) => {
       ...(body.timeframe !== undefined ? { timeframe: body.timeframe } : {}),
       ...(body.rationale !== undefined ? { rationale: body.rationale } : {}),
       executionMode: body.executionMode ?? "paper",
-      ...(body.strategyRuntimeId !== undefined ? { strategyRuntimeId: body.strategyRuntimeId } : {}),
+      ...(body.strategyRuntimeId !== undefined
+        ? { strategyRuntimeId: body.strategyRuntimeId }
+        : {}),
       ...(body.signalBarTime !== undefined ? { signalBarTime: body.signalBarTime } : {}),
     });
     return c.json({ ok: true, data });
@@ -188,9 +190,14 @@ traderRouter.post("/orders/bracket", async (c) => {
     brokerAccountId?: string;
   }>();
   if (
-    !body.workflowRunId || !body.symbol || !body.side || body.qty === undefined ||
-    body.takeProfitPrice === undefined || body.stopLossPrice === undefined
-  ) return c.json({ ok: false, error: "bracket_order_required_fields_missing" }, 400);
+    !body.workflowRunId ||
+    !body.symbol ||
+    !body.side ||
+    body.qty === undefined ||
+    body.takeProfitPrice === undefined ||
+    body.stopLossPrice === undefined
+  )
+    return c.json({ ok: false, error: "bracket_order_required_fields_missing" }, 400);
   try {
     const { bars, meta } = await queryKlines({
       symbol: body.symbol,
@@ -199,7 +206,8 @@ traderRouter.post("/orders/bracket", async (c) => {
       limit: 2,
     });
     const latest = bars[bars.length - 1];
-    if (!latest?.close) return c.json({ ok: false, error: "bracket_reference_price_unavailable" }, 409);
+    if (!latest?.close)
+      return c.json({ ok: false, error: "bracket_reference_price_unavailable" }, 409);
     const market = normalizeExecutionMarket(body.exchange ?? "");
     await recordExecutionMark(await getDb(), {
       market,
@@ -228,7 +236,10 @@ traderRouter.post("/orders/bracket", async (c) => {
     });
     return c.json({ ok: true, data });
   } catch (error) {
-    return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 400);
+    return c.json(
+      { ok: false, error: error instanceof Error ? error.message : String(error) },
+      400
+    );
   }
 });
 

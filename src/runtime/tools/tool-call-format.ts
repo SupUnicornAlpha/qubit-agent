@@ -1,7 +1,7 @@
-import { getToolCatalogMap, resolveToolAlias } from "./tool-catalog";
-import { isBuiltinTool } from "./builtin-tools";
-import { resolveConnectorForTool } from "./tool-routes";
 import type { LlmToolCallRequest, LlmToolDefinition } from "../llm/gateway";
+import { isBuiltinTool } from "./builtin-tools";
+import { getToolCatalogMap, resolveToolAlias } from "./tool-catalog";
+import { resolveConnectorForTool } from "./tool-routes";
 import type { ToolCatalogEntry } from "./types";
 
 /**
@@ -135,13 +135,11 @@ export function nativeToolCallToSentinel(
   availableTools: string[]
 ): string | null {
   if (call.name !== "qubit_action") return null;
-  const tool = typeof call.args["tool"] === "string" ? call.args["tool"] : "";
+  const tool = typeof call.args.tool === "string" ? call.args.tool : "";
   if (!isAllowedTool(tool, availableTools)) return null;
   const params =
-    call.args["params"] &&
-    typeof call.args["params"] === "object" &&
-    !Array.isArray(call.args["params"])
-      ? (call.args["params"] as Record<string, unknown>)
+    call.args.params && typeof call.args.params === "object" && !Array.isArray(call.args.params)
+      ? (call.args.params as Record<string, unknown>)
       : {};
   return `<TOOL_CALL>\n${JSON.stringify({ tool, params })}\n</TOOL_CALL>`;
 }
@@ -338,13 +336,13 @@ function extractMcpMeta(
     }
   }
   const serverName =
-    (typeof params["serverName"] === "string" ? params["serverName"] : undefined) ??
-    (typeof params["server"] === "string" ? params["server"] : undefined);
+    (typeof params.serverName === "string" ? params.serverName : undefined) ??
+    (typeof params.server === "string" ? params.server : undefined);
   const mcpToolName =
-    (typeof params["mcpTool"] === "string" ? params["mcpTool"] : undefined) ??
-    (typeof params["toolName"] === "string" ? params["toolName"] : undefined) ??
-    (typeof params["tool"] === "string" ? params["tool"] : undefined);
-  const argumentsValue = params["arguments"];
+    (typeof params.mcpTool === "string" ? params.mcpTool : undefined) ??
+    (typeof params.toolName === "string" ? params.toolName : undefined) ??
+    (typeof params.tool === "string" ? params.tool : undefined);
+  const argumentsValue = params.arguments;
   const argumentsObj =
     argumentsValue && typeof argumentsValue === "object" && !Array.isArray(argumentsValue)
       ? (argumentsValue as Record<string, unknown>)
@@ -398,17 +396,17 @@ export function parseToolCallFromReason(
     return { kind: "parse_error", message: `工具调用 JSON 解析失败：${jsonStr.slice(0, 120)}` };
   }
 
-  const toolName = typeof parsed["tool"] === "string" ? parsed["tool"].trim() : "";
+  const toolName = typeof parsed.tool === "string" ? parsed.tool.trim() : "";
   if (!toolName) {
     return { kind: "parse_error", message: 'JSON 中缺少 "tool" 字段' };
   }
 
   if (toolName === "none" || toolName === "finish" || toolName === "respond") {
     const summary =
-      typeof parsed["summary"] === "string"
-        ? parsed["summary"]
-        : typeof parsed["message"] === "string"
-          ? parsed["message"]
+      typeof parsed.summary === "string"
+        ? parsed.summary
+        : typeof parsed.message === "string"
+          ? parsed.message
           : undefined;
     return { kind: "none", ...(summary !== undefined ? { summary } : {}) };
   }
@@ -420,7 +418,7 @@ export function parseToolCallFromReason(
     };
   }
 
-  const params = (parsed["params"] ?? parsed["parameters"] ?? {}) as Record<string, unknown>;
+  const params = (parsed.params ?? parsed.parameters ?? {}) as Record<string, unknown>;
   const mcp =
     toolName === "call_mcp" || toolName.startsWith("mcp:")
       ? extractMcpMeta(toolName, params)

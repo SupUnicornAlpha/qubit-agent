@@ -13,8 +13,8 @@ export function resolveForceReactLoop(input: {
   loopOptions?: LoopOptionsJson;
 }): boolean {
   const p = input.payloadParams ?? {};
-  if (p["forceLoop"] === true) return true;
-  if (p["forceLoop"] === false) return false;
+  if (p.forceLoop === true) return true;
+  if (p.forceLoop === false) return false;
   if (input.loopOptions?.reactLoop === true) return true;
   if (input.loopOptions?.reactLoop === false) return false;
   return input.def.maxIterations > 1;

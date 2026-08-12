@@ -1,12 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  resolveAppServerBin,
-  resolveCoreLlmEnv,
-  shouldRespawnCoreForLlm,
-} from "../spawn-core";
+import { resolveAppServerBin, resolveCoreLlmEnv, shouldRespawnCoreForLlm } from "../spawn-core";
 
 describe("spawn-core helpers", () => {
   test("resolveAppServerBin returns null or existing path", () => {

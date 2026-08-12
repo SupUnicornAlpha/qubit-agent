@@ -1,32 +1,28 @@
-import { planContractRecovery } from "../../policy";
 import { buildArtifactGapHint } from "../../agent-readiness/quality/artifact-checker";
 import { getScenarioExpectation } from "../../agent-readiness/quality/scenario-expectations";
+import { applyToolResultToWorkingMemory } from "../../context/working-memory";
 import {
   isRedundantTopologyProbe,
   shouldForceTopologySpecialistSynthesis,
 } from "../../orchestration/topology-dispatch";
+import { planContractRecovery } from "../../policy";
+import { SCENARIO_STALL_TOOLS } from "../../research-scenario/scenario-key-aliases";
 import { logResearchTeamInteraction } from "../../research-team/interaction-log";
 import { sandboxExecutor } from "../../sandbox-executor";
 import { autoMarkRecalledSkillsAsExecuted } from "../../skills/auto-skill-execution-hook";
+import { compactToolObservationValue } from "../../tools/compact-tool-observation";
 import { classifyDataGap, toolMatchesRequiredCapability } from "../../tools/data-gap";
 import {
   assessRequiredToolGate,
   buildRequiredToolNextActionHint,
 } from "../../tools/required-tool-gate";
-import { SCENARIO_STALL_TOOLS } from "../../research-scenario/scenario-key-aliases";
-import { parseToolCallFromReason } from "../../tools/tool-call-format";
+import { detectSemanticToolFailure } from "../../tools/semantic-tool-result";
 import {
   buildToolCallFingerprint,
   findReusableSuccessfulToolCall,
   shouldTerminateForNoProgress,
 } from "../../tools/tool-call-dedup";
-import {
-  findWorkflowArtifactByFingerprint,
-  recordWorkflowDataGap,
-  recordWorkflowToolArtifact,
-} from "../../tools/workflow-artifact-ledger";
-import { applyToolResultToWorkingMemory } from "../../context/working-memory";
-import { compactToolObservationValue } from "../../tools/compact-tool-observation";
+import { parseToolCallFromReason } from "../../tools/tool-call-format";
 import {
   recordToolCallError,
   recordToolCallSandboxBlocked,
@@ -34,15 +30,19 @@ import {
   recordToolCallSuccess,
   recordToolCallTimeout,
 } from "../../tools/tool-call-log-service";
-import { detectSemanticToolFailure } from "../../tools/semantic-tool-result";
 import { recordWorkflowToolFailure } from "../../tools/tool-governance-policy";
+import {
+  findWorkflowArtifactByFingerprint,
+  recordWorkflowDataGap,
+  recordWorkflowToolArtifact,
+} from "../../tools/workflow-artifact-ledger";
 import type { AgentGraphState, StepStreamEvent } from "../state";
-import { buildMcpRetryHint, classifyToolError } from "./tool-error-classifier";
-import { buildToolRecoveryPlan } from "./tool-recovery-policy";
 import { handleToolNoneAction } from "./terminal-turn-policy";
 import { admitTool } from "./tool-admission";
+import { buildMcpRetryHint, classifyToolError } from "./tool-error-classifier";
 import { executeAdmittedTool } from "./tool-executor";
 import { buildToolPlan } from "./tool-plan";
+import { buildToolRecoveryPlan } from "./tool-recovery-policy";
 
 /** Nodes consume the runner-owned facts; they must not reload snapshots mid-turn. */
 function resolveSharedSnapshot(state: AgentGraphState) {
@@ -1065,43 +1065,40 @@ export async function actNode(
     );
   }
   const nextObservations = [...state.observations];
-  if (toolResult["analystTeamResult"]) {
+  if (toolResult.analystTeamResult) {
     nextObservations.push({
-      analystTeamResult: compactToolObservationValue(
-        targetName,
-        toolResult["analystTeamResult"]
-      ),
+      analystTeamResult: compactToolObservationValue(targetName, toolResult.analystTeamResult),
     });
   }
-  if (toolResult["mcpResult"]) {
+  if (toolResult.mcpResult) {
     nextObservations.push({
-      mcpResult: compactToolObservationValue(targetName, toolResult["mcpResult"]),
+      mcpResult: compactToolObservationValue(targetName, toolResult.mcpResult),
     });
   }
-  if (toolResult["connectorResult"] !== undefined) {
+  if (toolResult.connectorResult !== undefined) {
     nextObservations.push({
-      connectorResult: compactToolObservationValue(targetName, toolResult["connectorResult"]),
+      connectorResult: compactToolObservationValue(targetName, toolResult.connectorResult),
     });
   }
-  if (toolResult["packEdit"]) {
-    nextObservations.push({ packEdit: toolResult["packEdit"] });
+  if (toolResult.packEdit) {
+    nextObservations.push({ packEdit: toolResult.packEdit });
   }
-  if (toolResult["builtinResult"]) {
+  if (toolResult.builtinResult) {
     nextObservations.push({
-      builtinResult: compactToolObservationValue(targetName, toolResult["builtinResult"]),
+      builtinResult: compactToolObservationValue(targetName, toolResult.builtinResult),
     });
   }
-  if (toolResult["fusionResult"]) {
-    nextObservations.push({ fusionResult: toolResult["fusionResult"] });
+  if (toolResult.fusionResult) {
+    nextObservations.push({ fusionResult: toolResult.fusionResult });
   }
 
   // Arrays returned directly by connectors (e.g. fetch_klines → BarData[]) don't have
   // a connectorResult key; still shrink them for the next reason call.
   if (
     Array.isArray(execution.value) &&
-    !toolResult["connectorResult"] &&
-    !toolResult["builtinResult"] &&
-    !toolResult["mcpResult"]
+    !toolResult.connectorResult &&
+    !toolResult.builtinResult &&
+    !toolResult.mcpResult
   ) {
     nextObservations.push({
       tool: targetName,

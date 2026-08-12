@@ -13,9 +13,7 @@ export function isFsWorkspaceId(raw: string | null | undefined): raw is string {
 }
 
 /** Params from bridge tools / HTTP (camel + snake). */
-export function resolveFsWorkspaceIdFromParams(
-  params: Record<string, unknown>
-): string | null {
+export function resolveFsWorkspaceIdFromParams(params: Record<string, unknown>): string | null {
   const direct =
     (typeof params.fs_workspace_id === "string" && params.fs_workspace_id.trim()) ||
     (typeof params.fsWorkspaceId === "string" && params.fsWorkspaceId.trim()) ||

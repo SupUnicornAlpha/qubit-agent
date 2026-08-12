@@ -24,26 +24,26 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 describe("Gateway P3-1 — Anthropic prompt-caching opt-in", () => {
   let fetchSpy: ReturnType<typeof spyOn>;
-  const origCache = process.env["QUBIT_LLM_ANTHROPIC_PROMPT_CACHE"];
-  const origCacheMin = process.env["QUBIT_LLM_ANTHROPIC_PROMPT_CACHE_MIN_CHARS"];
-  const origNonStream = process.env["QUBIT_LLM_ANTHROPIC_NON_STREAM"];
+  const origCache = process.env.QUBIT_LLM_ANTHROPIC_PROMPT_CACHE;
+  const origCacheMin = process.env.QUBIT_LLM_ANTHROPIC_PROMPT_CACHE_MIN_CHARS;
+  const origNonStream = process.env.QUBIT_LLM_ANTHROPIC_NON_STREAM;
 
   beforeEach(() => {
-    process.env["ANTHROPIC_API_KEY"] = "sk-test-anthropic";
-    process.env["QUBIT_LLM_ANTHROPIC_NON_STREAM"] = "1";
-    delete process.env["QUBIT_LLM_ANTHROPIC_PROMPT_CACHE"];
-    delete process.env["QUBIT_LLM_ANTHROPIC_PROMPT_CACHE_MIN_CHARS"];
+    process.env.ANTHROPIC_API_KEY = "sk-test-anthropic";
+    process.env.QUBIT_LLM_ANTHROPIC_NON_STREAM = "1";
+    delete process.env.QUBIT_LLM_ANTHROPIC_PROMPT_CACHE;
+    delete process.env.QUBIT_LLM_ANTHROPIC_PROMPT_CACHE_MIN_CHARS;
     fetchSpy = spyOn(globalThis, "fetch");
   });
 
   afterEach(() => {
     fetchSpy.mockRestore();
-    if (origCache === undefined) delete process.env["QUBIT_LLM_ANTHROPIC_PROMPT_CACHE"];
-    else process.env["QUBIT_LLM_ANTHROPIC_PROMPT_CACHE"] = origCache;
-    if (origCacheMin === undefined) delete process.env["QUBIT_LLM_ANTHROPIC_PROMPT_CACHE_MIN_CHARS"];
-    else process.env["QUBIT_LLM_ANTHROPIC_PROMPT_CACHE_MIN_CHARS"] = origCacheMin;
-    if (origNonStream === undefined) delete process.env["QUBIT_LLM_ANTHROPIC_NON_STREAM"];
-    else process.env["QUBIT_LLM_ANTHROPIC_NON_STREAM"] = origNonStream;
+    if (origCache === undefined) delete process.env.QUBIT_LLM_ANTHROPIC_PROMPT_CACHE;
+    else process.env.QUBIT_LLM_ANTHROPIC_PROMPT_CACHE = origCache;
+    if (origCacheMin === undefined) delete process.env.QUBIT_LLM_ANTHROPIC_PROMPT_CACHE_MIN_CHARS;
+    else process.env.QUBIT_LLM_ANTHROPIC_PROMPT_CACHE_MIN_CHARS = origCacheMin;
+    if (origNonStream === undefined) delete process.env.QUBIT_LLM_ANTHROPIC_NON_STREAM;
+    else process.env.QUBIT_LLM_ANTHROPIC_NON_STREAM = origNonStream;
   });
 
   test("默认（无 ENV）：长 system 也不启用 caching", async () => {
@@ -58,7 +58,7 @@ describe("Gateway P3-1 — Anthropic prompt-caching opt-in", () => {
           id: "msg_001",
           content: [{ type: "text", text: "ok" }],
           usage: { input_tokens: 100, output_tokens: 5 },
-        }),
+        })
       );
     });
 
@@ -76,7 +76,7 @@ describe("Gateway P3-1 — Anthropic prompt-caching opt-in", () => {
   });
 
   test("ENV QUBIT_LLM_ANTHROPIC_PROMPT_CACHE=1 → 启用 caching（header + system block）", async () => {
-    process.env["QUBIT_LLM_ANTHROPIC_PROMPT_CACHE"] = "1";
+    process.env.QUBIT_LLM_ANTHROPIC_PROMPT_CACHE = "1";
     const calls: Array<{ headers: Record<string, string>; body: Record<string, unknown> }> = [];
     fetchSpy.mockImplementation((_url: string | URL, init?: RequestInit) => {
       calls.push({
@@ -88,7 +88,7 @@ describe("Gateway P3-1 — Anthropic prompt-caching opt-in", () => {
           id: "msg_002",
           content: [{ type: "text", text: "ok" }],
           usage: { input_tokens: 100, output_tokens: 5, cache_creation_input_tokens: 95 },
-        }),
+        })
       );
     });
 
@@ -110,7 +110,7 @@ describe("Gateway P3-1 — Anthropic prompt-caching opt-in", () => {
   });
 
   test("ENV QUBIT_LLM_ANTHROPIC_PROMPT_CACHE_MIN_CHARS=4096：阈值生效", async () => {
-    process.env["QUBIT_LLM_ANTHROPIC_PROMPT_CACHE_MIN_CHARS"] = "4096";
+    process.env.QUBIT_LLM_ANTHROPIC_PROMPT_CACHE_MIN_CHARS = "4096";
     const calls: Array<{ body: Record<string, unknown>; headers: Record<string, string> }> = [];
     fetchSpy.mockImplementation((_u: string | URL, init?: RequestInit) => {
       calls.push({
@@ -121,7 +121,7 @@ describe("Gateway P3-1 — Anthropic prompt-caching opt-in", () => {
         jsonResponse({
           content: [{ type: "text", text: "ok" }],
           usage: { input_tokens: 1, output_tokens: 1 },
-        }),
+        })
       );
     });
 
@@ -147,7 +147,7 @@ describe("Gateway P3-1 — Anthropic prompt-caching opt-in", () => {
   });
 
   test("cache_read_input_tokens / cache_creation_input_tokens 同时存在 → usage 都映射", async () => {
-    process.env["QUBIT_LLM_ANTHROPIC_PROMPT_CACHE"] = "1";
+    process.env.QUBIT_LLM_ANTHROPIC_PROMPT_CACHE = "1";
     fetchSpy.mockImplementation(() =>
       Promise.resolve(
         jsonResponse({
@@ -158,8 +158,8 @@ describe("Gateway P3-1 — Anthropic prompt-caching opt-in", () => {
             cache_read_input_tokens: 150,
             cache_creation_input_tokens: 50,
           },
-        }),
-      ),
+        })
+      )
     );
 
     const result = await runLlmGateway({

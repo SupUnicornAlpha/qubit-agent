@@ -10,11 +10,7 @@
 
 import type { Database } from "bun:sqlite";
 import { REQUIRED_CAPABILITY_PRIMARY_TOOL } from "../research-scenario/scenario-key-aliases";
-import {
-  buildNotAttemptedDataGaps,
-  toolMatchesRequiredCapability,
-  type DataGap,
-} from "./data-gap";
+import { type DataGap, buildNotAttemptedDataGaps, toolMatchesRequiredCapability } from "./data-gap";
 
 export type RequiredToolGateAssessment = {
   unavailableRequired: DataGap[];
@@ -105,7 +101,12 @@ export function assessRequiredToolGate(input: {
   attemptedTools: readonly string[];
   /** Tools still advertised after connector/manifest filtering for the current agent. */
   runnableTools: readonly string[];
-  unavailableManifestTools: ReadonlyArray<{ toolName: string; status: string; provider?: string | null; reason?: string }>;
+  unavailableManifestTools: ReadonlyArray<{
+    toolName: string;
+    status: string;
+    provider?: string | null;
+    reason?: string;
+  }>;
   market: string;
 }): RequiredToolGateAssessment {
   const authorized = [...new Set([...input.authorizedTools, ...input.runnableTools])];
@@ -122,7 +123,8 @@ export function assessRequiredToolGate(input: {
     );
     return [
       {
-        kind: blocked?.status === "no_coverage" ? ("no_coverage" as const) : ("unconfigured" as const),
+        kind:
+          blocked?.status === "no_coverage" ? ("no_coverage" as const) : ("unconfigured" as const),
         capability,
         market: input.market,
         provider: blocked?.provider ?? null,

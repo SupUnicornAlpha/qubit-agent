@@ -42,7 +42,7 @@ describe("内置场景 toolPreset 与真实工具白名单对齐（防脱钩）"
       if (missing.length > 0) {
         throw new Error(
           `场景 "${scenario.key}" 声明了未实装的工具：${missing.join(", ")}。` +
-            ` 请检查 builtin-tools.ts / tool-routes.ts，或修正 scenarios-seed.ts。`
+            " 请检查 builtin-tools.ts / tool-routes.ts，或修正 scenarios-seed.ts。"
         );
       }
       expect(missing).toEqual([]);

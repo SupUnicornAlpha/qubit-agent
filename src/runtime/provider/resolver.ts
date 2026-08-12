@@ -20,11 +20,10 @@ import { getDb } from "../../db/sqlite/client";
 import { providerBinding, providerRegistry as providerRegistryTable } from "../../db/sqlite/schema";
 import { providerRegistry } from "./registry";
 import {
-  type BaseProvider,
+  ProviderError,
   type ProviderKind,
   type ProviderKindMap,
   type ProviderScope,
-  ProviderError,
 } from "./types";
 
 export interface ResolveOptions {
@@ -69,7 +68,10 @@ class ProviderResolver {
         const p = providerRegistry.get<ProviderKindMap[K]>(kind, row.providerKey);
         if (p) return p;
       }
-      throw new ProviderError("not_found", `Provider id=${options.providerId} not found or kind mismatch`);
+      throw new ProviderError(
+        "not_found",
+        `Provider id=${options.providerId} not found or kind mismatch`
+      );
     }
 
     // 3-6. 走 binding 优先级链
@@ -86,11 +88,10 @@ class ProviderResolver {
       if (fb) return fb;
     }
 
-    throw new ProviderError(
-      "no_fallback",
-      `No provider available for kind=${kind}`,
-      { kind, scope }
-    );
+    throw new ProviderError("no_fallback", `No provider available for kind=${kind}`, {
+      kind,
+      scope,
+    });
   }
 
   /** 列出某 kind 下所有可用 Provider（含禁用，便于 UI 渲染） */
@@ -151,10 +152,7 @@ class ProviderResolver {
           status: providerRegistryTable.status,
         })
         .from(providerBinding)
-        .innerJoin(
-          providerRegistryTable,
-          eq(providerBinding.providerId, providerRegistryTable.id)
-        )
+        .innerJoin(providerRegistryTable, eq(providerBinding.providerId, providerRegistryTable.id))
         .where(
           and(
             eq(providerBinding.scope, layer.scope),

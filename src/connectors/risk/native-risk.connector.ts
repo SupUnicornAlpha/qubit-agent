@@ -2,13 +2,13 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { intentOrder } from "../../db/sqlite/schema";
+import { loadRiskConfig } from "../../runtime/config/risk-config";
+import { evaluateRiskAndVeto } from "../../runtime/risk/veto-engine";
 import type {
   ConnectorMeta,
   RiskCheckRequest as ConnectorRiskCheckRequest,
   RiskCheckResponse as ConnectorRiskCheckResponse,
 } from "../../types/connector";
-import { loadRiskConfig } from "../../runtime/config/risk-config";
-import { evaluateRiskAndVeto } from "../../runtime/risk/veto-engine";
 import type { AnalystSignalValue } from "../../types/entities";
 import { RiskConnector, type RiskRuleSummary } from "./risk.connector";
 
@@ -42,15 +42,13 @@ export class QubitNativeRiskConnector extends RiskConnector {
 
   async evaluate(request: ConnectorRiskCheckRequest): Promise<ConnectorRiskCheckResponse> {
     const meta = request.metadata ?? {};
-    const signal = (meta["signal"] ?? meta["fusedSignal"] ?? "hold") as AnalystSignalValue;
-    const confidence = Number(meta["confidence"] ?? meta["fusedConfidence"] ?? 0.5);
+    const signal = (meta.signal ?? meta.fusedSignal ?? "hold") as AnalystSignalValue;
+    const confidence = Number(meta.confidence ?? meta.fusedConfidence ?? 0.5);
     const debateConsensusScore =
-      typeof meta["debateConsensusScore"] === "number"
-        ? meta["debateConsensusScore"]
-        : undefined;
+      typeof meta.debateConsensusScore === "number" ? meta.debateConsensusScore : undefined;
     const result = await evaluateRiskAndVeto({
-      workflowRunId: String(meta["workflowRunId"] ?? request.orderIntentId),
-      ticker: String(meta["ticker"] ?? request.instrumentId),
+      workflowRunId: String(meta.workflowRunId ?? request.orderIntentId),
+      ticker: String(meta.ticker ?? request.instrumentId),
       fusedSignal: signal,
       fusedConfidence: confidence,
       ...(debateConsensusScore !== undefined ? { debateConsensusScore } : {}),
@@ -92,11 +90,7 @@ export class QubitNativeRiskConnector extends RiskConnector {
 
   protected async onExecute<TOutput>(operation: string, payload: unknown): Promise<TOutput> {
     const p = (payload ?? {}) as Record<string, unknown>;
-    if (
-      operation === "evaluate" ||
-      operation === "evaluate_risk" ||
-      operation === "check_risk"
-    ) {
+    if (operation === "evaluate" || operation === "evaluate_risk" || operation === "check_risk") {
       return this.evaluate({
         orderIntentId: String(p.intentOrderId ?? p.orderIntentId ?? randomUUID()),
         strategyVersionId: String(p.strategyVersionId ?? ""),
@@ -132,7 +126,9 @@ export class QubitNativeRiskConnector extends RiskConnector {
       return { intentOrderId, status: approved ? "approved" : "rejected" } as unknown as TOutput;
     }
     if (operation === "check_concentration") {
-      const positions = Array.isArray(p.positions) ? (p.positions as Array<{ weight?: number }>) : [];
+      const positions = Array.isArray(p.positions)
+        ? (p.positions as Array<{ weight?: number }>)
+        : [];
       const maxWeight = positions.reduce((m, x) => Math.max(m, Number(x.weight ?? 0)), 0);
       const limit = Number(p.maxSingleWeight ?? 0.25);
       return {

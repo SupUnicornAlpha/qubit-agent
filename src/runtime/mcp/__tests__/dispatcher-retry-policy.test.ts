@@ -16,9 +16,9 @@ function parseRetryPolicyMirror(raw: unknown) {
   const DEFAULT = { maxAttempts: 2, backoffMs: 150, backoffMultiplier: 2 };
   if (!raw || typeof raw !== "object") return DEFAULT;
   const o = raw as Record<string, unknown>;
-  const max = Number(o["maxAttempts"]);
-  const backoff = Number(o["backoffMs"]);
-  const mult = Number(o["backoffMultiplier"]);
+  const max = Number(o.maxAttempts);
+  const backoff = Number(o.backoffMs);
+  const mult = Number(o.backoffMultiplier);
   return {
     maxAttempts:
       Number.isFinite(max) && max >= 1 ? Math.min(Math.floor(max), 10) : DEFAULT.maxAttempts,

@@ -4,10 +4,13 @@
  * 主要服务 BacktestStudio：让用户在前端选 strategyVersionId 后再发起回测。
  */
 
-import { Hono } from "hono";
 import { and, asc, desc, eq } from "drizzle-orm";
+import { Hono } from "hono";
 import { getDb } from "../db/sqlite/client";
-import { strategy as strategyTable, strategyVersion as strategyVersionTable } from "../db/sqlite/schema";
+import {
+  strategy as strategyTable,
+  strategyVersion as strategyVersionTable,
+} from "../db/sqlite/schema";
 import { strategyComposer } from "../runtime/strategy/strategy-composer";
 
 export const strategyRouter = new Hono();

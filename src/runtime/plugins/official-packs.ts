@@ -41,12 +41,7 @@ export function listOfficialPluginPacks(): PluginManifest[] {
       visibility: "public",
       kind: "builtin_pack",
       ref: {
-        builtinTools: [
-          "fetch_klines",
-          "fetch_price_data",
-          "fetch_news",
-          "run_screener",
-        ],
+        builtinTools: ["fetch_klines", "fetch_price_data", "fetch_news", "run_screener"],
       },
       auth: { type: "none" },
       safetyLevel: "medium",

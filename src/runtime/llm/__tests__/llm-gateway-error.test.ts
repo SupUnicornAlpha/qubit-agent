@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
+  LlmGatewayError,
   classifyLlmGatewayError,
   extractHttpStatus,
   extractRetryAfterMs,
   isFallbackEligibleLlmGatewayError,
   isRetryableLlmGatewayError,
-  LlmGatewayError,
 } from "../llm-gateway-error";
 
 describe("classifyLlmGatewayError", () => {
@@ -54,9 +54,7 @@ describe("classifyLlmGatewayError", () => {
   });
 
   test("extractHttpStatus from provider wrappers", () => {
-    expect(extractHttpStatus("OpenAI-compatible request failed: 429 Too Many Requests")).toBe(
-      429
-    );
+    expect(extractHttpStatus("OpenAI-compatible request failed: 429 Too Many Requests")).toBe(429);
     expect(extractRetryAfterMs("circuit breaker open: x (retry after ~7s)")).toBe(7_000);
   });
 });

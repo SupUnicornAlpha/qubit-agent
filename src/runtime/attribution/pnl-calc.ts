@@ -194,9 +194,8 @@ export function calcPnlSeries(input: PnlCalcInput): PnlCalcResult {
       pos.realizedCum += realizedDaily;
 
       // unrealized 用"今日 mark vs avgCost"
-      const unrealizedCum = pos.qty !== 0 && markPrice !== null
-        ? pos.qty * (markPrice - pos.avgCost)
-        : 0;
+      const unrealizedCum =
+        pos.qty !== 0 && markPrice !== null ? pos.qty * (markPrice - pos.avgCost) : 0;
 
       // unrealizedDaily：和上一日 unrealizedCum 的差值
       // 上一日 unrealizedCum 我们要从前一 snapshot 反推，这里用 prevDayMark 简化重建
@@ -250,10 +249,7 @@ function compareFills(a: PnlFill, b: PnlFill): number {
   return a.id < b.id ? -1 : 1;
 }
 
-function collectActiveSymbols(
-  book: Map<string, PositionState>,
-  dayFills: PnlFill[]
-): Set<string> {
+function collectActiveSymbols(book: Map<string, PositionState>, dayFills: PnlFill[]): Set<string> {
   const out = new Set<string>(book.keys());
   for (const f of dayFills) out.add(f.symbol);
   return out;

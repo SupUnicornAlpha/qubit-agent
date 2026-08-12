@@ -32,9 +32,7 @@ export type SyncServerDefaultStarBindingResult = {
 };
 
 function projectScope(projectId?: string | null) {
-  return projectId
-    ? eq(mcpToolBinding.projectId, projectId)
-    : isNull(mcpToolBinding.projectId);
+  return projectId ? eq(mcpToolBinding.projectId, projectId) : isNull(mcpToolBinding.projectId);
 }
 
 /**

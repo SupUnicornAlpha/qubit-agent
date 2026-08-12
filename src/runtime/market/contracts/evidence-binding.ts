@@ -3,11 +3,11 @@
  * Forces thesis + snapshot coherence for gated/live intents and portfolio construct.
  */
 
-import { getResearchThesisById } from "./research-thesis-service";
 import {
-  evaluateOrderDataQualityGate,
   type OrderDataQualityGateResult,
+  evaluateOrderDataQualityGate,
 } from "./order-data-quality-gate";
+import { getResearchThesisById } from "./research-thesis-service";
 
 export function isOrderThesisBindingEnabled(): boolean {
   const raw = (process.env.QUBIT_ORDER_REQUIRE_THESIS ?? "1").trim().toLowerCase();
@@ -46,7 +46,7 @@ export async function resolveExecutionEvidenceBinding(
   options?: { dataDir?: string }
 ): Promise<EvidenceBindingResult> {
   const warnings: string[] = [];
-  let thesisId = input.thesisId?.trim() || null;
+  const thesisId = input.thesisId?.trim() || null;
   let snapshotId = input.snapshotId?.trim() || null;
   const mustBind =
     isOrderThesisBindingEnabled() &&

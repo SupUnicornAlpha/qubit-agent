@@ -39,8 +39,7 @@ export const envInstallLogService = {
     const db = await getDb();
     const conditions = [];
     if (filter.kind) conditions.push(eq(envInstallLog.kind, filter.kind));
-    if (filter.packageName)
-      conditions.push(eq(envInstallLog.packageName, filter.packageName));
+    if (filter.packageName) conditions.push(eq(envInstallLog.packageName, filter.packageName));
     if (filter.status) conditions.push(eq(envInstallLog.status, filter.status));
     const limit = Math.min(filter.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
 
@@ -51,11 +50,7 @@ export const envInstallLogService = {
           .where(and(...conditions))
           .orderBy(desc(envInstallLog.startedAt))
           .limit(limit)
-      : db
-          .select()
-          .from(envInstallLog)
-          .orderBy(desc(envInstallLog.startedAt))
-          .limit(limit));
+      : db.select().from(envInstallLog).orderBy(desc(envInstallLog.startedAt)).limit(limit));
     return rows.map((r) => ({
       id: r.id,
       kind: r.kind as EnvKind,

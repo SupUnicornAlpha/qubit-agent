@@ -23,13 +23,10 @@ import { workflowRun } from "../../db/sqlite/schema";
 import type { TaskAssignPayload } from "../../types/a2a";
 import type { AgentRole } from "../../types/entities";
 import { normalizeLoopKind, parseLoopOptionsJson } from "../../types/loop";
+import { resolveCoreBackend } from "../prime/core-runtime";
+import { reasonSpecialistViaCore, resolveCalleeSpecId } from "../prime/run-specialist-via-core";
 import { executeAgentReact } from "../react/execute-agent-react";
 import type { RuntimeAgentDefinition } from "../types";
-import { resolveCoreBackend } from "../prime/core-runtime";
-import {
-  reasonSpecialistViaCore,
-  resolveCalleeSpecId,
-} from "../prime/run-specialist-via-core";
 
 export type RoleReasonerKind = "native" | "claude_cli" | "codex_cli";
 

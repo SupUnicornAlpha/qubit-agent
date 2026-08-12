@@ -14,7 +14,7 @@ export const PACKAGED_BACKEND_PORT = 17_385;
  * 开发时为仓库根；安装包内由 Tauri 设置 `QUBIT_APP_ROOT`。
  */
 export function getAppRoot(): string {
-  const root = process.env["QUBIT_APP_ROOT"]?.trim();
+  const root = process.env.QUBIT_APP_ROOT?.trim();
   if (root) return root;
   return process.cwd();
 }
@@ -84,7 +84,7 @@ export function _resetPythonBinCacheForTest(): void {
 
 /** 解析 Python 解释器：显式 env → 资源内 venv → 数据目录 venv → 系统 python3 */
 export function resolvePythonBin(dataDir: string): string {
-  const explicit = process.env["QUBIT_PYTHON"]?.trim();
+  const explicit = process.env.QUBIT_PYTHON?.trim();
   if (explicit) return explicit;
 
   const candidates = [
@@ -108,7 +108,7 @@ export function resolvePythonBin(dataDir: string): string {
 }
 
 export function defaultDataDir(): string {
-  return process.env["QUBIT_DATA_DIR"]?.trim() || join(homedir(), ".quant-agent");
+  return process.env.QUBIT_DATA_DIR?.trim() || join(homedir(), ".quant-agent");
 }
 
 /**
@@ -120,9 +120,9 @@ export function defaultDataDir(): string {
  * the root with QUBIT_SKILLS_DIR (useful for a shared read-only volume).
  */
 export function getGlobalSkillsDir(): string {
-  return process.env["QUBIT_SKILLS_DIR"]?.trim() || join(homedir(), ".qubit-agent", "skills");
+  return process.env.QUBIT_SKILLS_DIR?.trim() || join(homedir(), ".qubit-agent", "skills");
 }
 
 export function isPackagedRuntime(): boolean {
-  return Boolean(process.env["QUBIT_APP_ROOT"]?.trim());
+  return Boolean(process.env.QUBIT_APP_ROOT?.trim());
 }

@@ -41,15 +41,15 @@ export function filterMcpToolsByAvailability(
 
 function parseTools(raw: unknown): McpToolDescriptor[] | undefined {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-  const toolsRaw = (raw as Record<string, unknown>)["tools"];
+  const toolsRaw = (raw as Record<string, unknown>).tools;
   if (!Array.isArray(toolsRaw)) return undefined;
   const out: McpToolDescriptor[] = [];
   for (const item of toolsRaw) {
     if (!item || typeof item !== "object") continue;
     const obj = item as Record<string, unknown>;
-    const name = typeof obj["name"] === "string" ? obj["name"].trim() : "";
+    const name = typeof obj.name === "string" ? obj.name.trim() : "";
     if (!name) continue;
-    const desc = typeof obj["desc"] === "string" ? obj["desc"] : undefined;
+    const desc = typeof obj.desc === "string" ? obj.desc : undefined;
     out.push(desc ? { name, desc } : { name });
   }
   return out.length > 0 ? out : undefined;

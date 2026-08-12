@@ -8,6 +8,7 @@ import type { A2AMessageEnvelope, TaskAssignPayload } from "../../types/a2a";
 import { resolveAgentControlMode } from "../../types/loop";
 import { completeA2ATask, markA2ATaskWorking } from "../a2a/a2a-task-service";
 import { buildTaskResult } from "../a2a/task-result";
+import { completeWorkflowConversationAssistant } from "../conversation/conversation-projection";
 import { onWorkflowTerminal } from "../monitor/observability-hook";
 import { stepStreamBus } from "../react/event-stream";
 import type { RuntimeHandlerContext } from "../types";
@@ -15,8 +16,9 @@ import { createHitlRequest, loadWorkflowLoopContext } from "../workflow/hitl-ser
 import { setWorkflowState } from "../workflow/workflow-state-machine";
 import { clearPrimeBridgeRunContext, setPrimeBridgeRunContext } from "./bridge-run-context";
 import { buildCoreHitlClientMeta } from "./core-hitl-bridge";
-import { asRustCoreClient, ensureCoreSession } from "./ensure-core-session";
 import { resolveCoreBackend } from "./core-runtime";
+import { asRustCoreClient, ensureCoreSession } from "./ensure-core-session";
+import { persistDeliveryVerdictForCoreTurn } from "./persist-core-delivery";
 import {
   finalizeCorePlanForCompletedWorkflow,
   syncCorePlanToWorkflow,
@@ -27,10 +29,8 @@ import {
   projectCoreTurnResult,
   sanitizeCoreAnswerText,
 } from "./project-core-to-graph";
-import { persistDeliveryVerdictForCoreTurn } from "./persist-core-delivery";
 import type { InteractionMode, SessionSnapshot } from "./types";
 import { ORCHESTRATOR_TURN_CONTEXT } from "./types";
-import { completeWorkflowConversationAssistant } from "../conversation/conversation-projection";
 
 /** Long-running multi-agent research routinely exceeds five minutes. */
 const DEFAULT_PRIME_TURN_TIMEOUT_MS = 15 * 60_000;
@@ -549,9 +549,9 @@ export async function runOrchestratorTaskViaCore(
     const partial = deliveryStatus === "partial" || deliveryStatus === "delivered_with_gaps";
     const terminalStatus: "completed" | "partial" | "failed" = failed
       ? "failed"
-        : partial
-          ? "partial"
-          : "completed";
+      : partial
+        ? "partial"
+        : "completed";
 
     // Do not leave a completed resumed workflow visually stuck on the last
     // pending/in-progress plan item when the model omitted its final

@@ -12,9 +12,7 @@ export class SessionMemoryStore {
   ): Promise<SessionMemory> {
     const db = await getDb();
     const now = new Date().toISOString();
-    const ttlAt = new Date(
-      Date.now() + DEFAULT_TTL_HOURS * 3_600_000
-    ).toISOString();
+    const ttlAt = new Date(Date.now() + DEFAULT_TTL_HOURS * 3_600_000).toISOString();
 
     const existing = await this.findByWorkflowRun(workflowRunId);
 
@@ -53,9 +51,7 @@ export class SessionMemoryStore {
   async deleteExpired(): Promise<void> {
     const db = await getDb();
     const now = new Date().toISOString();
-    await db
-      .delete(sessionMemory)
-      .where(lt(sessionMemory.ttlAt, now));
+    await db.delete(sessionMemory).where(lt(sessionMemory.ttlAt, now));
   }
 }
 

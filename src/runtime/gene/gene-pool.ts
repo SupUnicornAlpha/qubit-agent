@@ -132,7 +132,11 @@ export async function evolveNextGeneration(input: { projectId: string }) {
 
 async function evolveFromGeneration(generationId: string) {
   const db = await getDb();
-  const currentRows = await db.select().from(geneGeneration).where(eq(geneGeneration.id, generationId)).limit(1);
+  const currentRows = await db
+    .select()
+    .from(geneGeneration)
+    .where(eq(geneGeneration.id, generationId))
+    .limit(1);
   const cur = currentRows[0];
   if (!cur) throw new Error("generation not found");
   const genomes = await db
@@ -168,7 +172,7 @@ async function evolveFromGeneration(generationId: string) {
       const b = Number(genesB[k] ?? a);
       const inherit = Math.random() < 0.5 ? a : b;
       const blend = (a + b) / 2;
-      snapshot[k] = Number(((inherit * 0.7 + blend * 0.3)).toFixed(3));
+      snapshot[k] = Number((inherit * 0.7 + blend * 0.3).toFixed(3));
     }
     // 变异
     for (const k of keys) {

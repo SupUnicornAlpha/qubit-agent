@@ -36,17 +36,17 @@ const MOCK_CONFIG = {
 
 describe("invokeWithFallback · P2 length-retry", () => {
   let runSpy: ReturnType<typeof spyOn<typeof gatewayModule, "runLlmGateway">>;
-  const origDisabled = process.env["QUBIT_LLM_LENGTH_RETRY_DISABLED"];
+  const origDisabled = process.env.QUBIT_LLM_LENGTH_RETRY_DISABLED;
 
   beforeEach(() => {
     runSpy = spyOn(gatewayModule, "runLlmGateway");
-    delete process.env["QUBIT_LLM_LENGTH_RETRY_DISABLED"];
+    delete process.env.QUBIT_LLM_LENGTH_RETRY_DISABLED;
   });
 
   afterEach(() => {
     runSpy.mockRestore();
-    if (origDisabled === undefined) delete process.env["QUBIT_LLM_LENGTH_RETRY_DISABLED"];
-    else process.env["QUBIT_LLM_LENGTH_RETRY_DISABLED"] = origDisabled;
+    if (origDisabled === undefined) delete process.env.QUBIT_LLM_LENGTH_RETRY_DISABLED;
+    else process.env.QUBIT_LLM_LENGTH_RETRY_DISABLED = origDisabled;
   });
 
   test("finishReason='length' → 自动加大 maxOutputTokens 重试一次", async () => {
@@ -56,13 +56,13 @@ describe("invokeWithFallback · P2 length-retry", () => {
       calls.push(m !== undefined ? { maxOutputTokens: m } : {});
       if (calls.length === 1) {
         return Promise.resolve(
-          ok("part 1...", "length", { usage: { promptTokens: 100, completionTokens: 4096 } }),
+          ok("part 1...", "length", { usage: { promptTokens: 100, completionTokens: 4096 } })
         );
       }
       return Promise.resolve(
         ok("part 1...part 2 done", "stop", {
           usage: { promptTokens: 100, completionTokens: 200 },
-        }),
+        })
       );
     }) as typeof gatewayModule.runLlmGateway);
 
@@ -141,7 +141,7 @@ describe("invokeWithFallback · P2 length-retry", () => {
   });
 
   test("ENV QUBIT_LLM_LENGTH_RETRY_DISABLED=1 → 完全关闭", async () => {
-    process.env["QUBIT_LLM_LENGTH_RETRY_DISABLED"] = "1";
+    process.env.QUBIT_LLM_LENGTH_RETRY_DISABLED = "1";
     let n = 0;
     runSpy.mockImplementation(() => {
       n += 1;
@@ -203,7 +203,9 @@ describe("invokeWithFallback · P2 length-retry", () => {
       calls += 1;
       if (calls === 1) {
         return Promise.reject(
-          new Error("The socket connection was closed unexpectedly. For more information, pass verbose")
+          new Error(
+            "The socket connection was closed unexpectedly. For more information, pass verbose"
+          )
         );
       }
       return Promise.resolve(ok("recovered", "stop"));

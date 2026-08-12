@@ -205,7 +205,7 @@ async function fallbackGetMarketNews(
     throw new Error("financex_fallback get_market_news: 必须传 symbol / ticker");
   }
   const sym = symbols[0]!;
-  const limitRaw = args["limit"];
+  const limitRaw = args.limit;
   const limit =
     typeof limitRaw === "number" && Number.isFinite(limitRaw) ? Math.floor(limitRaw) : 12;
 
@@ -213,8 +213,8 @@ async function fallbackGetMarketNews(
   const mode = requestedMode === "historical_validation" ? requestedMode : "current";
   const aliases = [
     pickStringField(args, "company_name", "companyName", "name"),
-    ...(Array.isArray(args["keywords"])
-      ? args["keywords"].filter((value): value is string => typeof value === "string")
+    ...(Array.isArray(args.keywords)
+      ? args.keywords.filter((value): value is string => typeof value === "string")
       : []),
   ].filter((value): value is string => Boolean(value));
   const brief = await queryMarketNewsBrief({ symbol: sym, exchange: "", limit, mode, aliases });

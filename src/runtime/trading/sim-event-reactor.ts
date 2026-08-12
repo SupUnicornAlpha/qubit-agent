@@ -6,12 +6,9 @@
  * Agent path (optional, higher TTFT): news_event / QUBIT_SIM_BAR_WAKE_AGENT → thin A2A wake.
  */
 
-import {
-  marketStreamGateway,
-  type MarketStreamEvent,
-} from "../market/market-stream-gateway";
-import { processStrategyRuntimesForSymbol } from "../strategy/strategy-runtime-worker";
 import { triggerAutonomousA2A } from "../a2a/autonomous-trigger";
+import { type MarketStreamEvent, marketStreamGateway } from "../market/market-stream-gateway";
+import { processStrategyRuntimesForSymbol } from "../strategy/strategy-runtime-worker";
 
 let unsubscribe: (() => void) | null = null;
 let newsHooked = false;
@@ -25,7 +22,7 @@ function barClosed(data: unknown): boolean {
 }
 
 function barWakeAgentEnabled(): boolean {
-  const v = process.env["QUBIT_SIM_BAR_WAKE_AGENT"];
+  const v = process.env.QUBIT_SIM_BAR_WAKE_AGENT;
   return v === "1" || v?.toLowerCase() === "true" || v?.toLowerCase() === "yes";
 }
 
@@ -102,10 +99,7 @@ export async function ingestTradingNewsEvent(input: {
       });
       agentTriggered = true;
     } catch (e) {
-      console.warn(
-        `[sim-event-reactor] agent wake failed:`,
-        e instanceof Error ? e.message : e
-      );
+      console.warn("[sim-event-reactor] agent wake failed:", e instanceof Error ? e.message : e);
     }
   }
 

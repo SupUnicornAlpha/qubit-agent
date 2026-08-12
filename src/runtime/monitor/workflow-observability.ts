@@ -8,12 +8,12 @@ import {
   mcpCallLog,
   toolCallLog,
 } from "../../db/sqlite/schema";
-import { loadWorkflowTokenBudgetStatus } from "../llm/workflow-token-budget";
 import { estimateLlmCostUsd } from "../../util/llm-pricing";
+import { loadWorkflowTokenBudgetStatus } from "../llm/workflow-token-budget";
 
 function sampleCountFromMeta(meta: unknown): number {
   if (!meta || typeof meta !== "object" || Array.isArray(meta)) return 1;
-  const n = (meta as Record<string, unknown>)["sampleCount"];
+  const n = (meta as Record<string, unknown>).sampleCount;
   if (typeof n === "number" && Number.isFinite(n) && n >= 1) return Math.floor(n);
   return 1;
 }
@@ -119,7 +119,9 @@ export type WorkflowObservability = {
   }>;
 };
 
-export async function getWorkflowObservability(workflowRunId: string): Promise<WorkflowObservability> {
+export async function getWorkflowObservability(
+  workflowRunId: string
+): Promise<WorkflowObservability> {
   const db = await getDb();
 
   /**
@@ -173,16 +175,12 @@ export async function getWorkflowObservability(workflowRunId: string): Promise<W
    * 老字段 totalTokenCount 用 llm_call_log.totalTokens 求和；如果该表没行
    * （非常老的 workflow 或 P1 之前的），回退到 agent_step.tokenCount 兼容。
    */
-  const llmCallsTotal = llmRows.reduce(
-    (a, r) => a + sampleCountFromMeta(r.requestMetaJson),
-    0
-  );
+  const llmCallsTotal = llmRows.reduce((a, r) => a + sampleCountFromMeta(r.requestMetaJson), 0);
   const sumLlmTokens = llmRows.reduce((a, r) => a + (r.totalTokens ?? 0), 0);
   const sumLlmPromptTokens = llmRows.reduce((a, r) => a + (r.promptTokens ?? 0), 0);
   const sumLlmCompletionTokens = llmRows.reduce((a, r) => a + (r.completionTokens ?? 0), 0);
   const sumLlmCostUsd = llmRows.reduce((a, r) => a + effectiveLlmCostUsd(r), 0);
-  const sumAgentStepTokens =
-    reasonSteps.reduce((acc, s) => acc + (s.tokenCount ?? 0), 0) || 0;
+  const sumAgentStepTokens = reasonSteps.reduce((acc, s) => acc + (s.tokenCount ?? 0), 0) || 0;
   const totalTokenCount =
     sumLlmTokens > 0 ? sumLlmTokens : sumAgentStepTokens > 0 ? sumAgentStepTokens : null;
   const totalPromptTokens = sumLlmPromptTokens > 0 ? sumLlmPromptTokens : null;
@@ -201,24 +199,23 @@ export async function getWorkflowObservability(workflowRunId: string): Promise<W
       row.requestMetaJson && typeof row.requestMetaJson === "object"
         ? (row.requestMetaJson as Record<string, unknown>)
         : {};
-    if (meta["parseRetryUsed"] === true) {
+    if (meta.parseRetryUsed === true) {
       parseRetryEstimatedTokens += Math.floor((row.totalTokens ?? 0) / 2);
     }
-    if (meta["nativeToolCallingUsed"] === true) nativeToolCallingCalls += 1;
-    if (meta["promptCompacted"] === true) compactedCalls += 1;
-    const components = meta["promptComponentChars"];
+    if (meta.nativeToolCallingUsed === true) nativeToolCallingCalls += 1;
+    if (meta.promptCompacted === true) compactedCalls += 1;
+    const components = meta.promptComponentChars;
     if (components && typeof components === "object" && !Array.isArray(components)) {
       for (const [key, value] of Object.entries(components as Record<string, unknown>)) {
         if (typeof value === "number" && Number.isFinite(value)) {
           promptComponentsChars[key] = (promptComponentsChars[key] ?? 0) + value;
         }
       }
-      const iteration = Number(meta["iteration"] ?? 1);
+      const iteration = Number(meta.iteration ?? 1);
       if (iteration > 1) {
         const componentMap = components as Record<string, unknown>;
         const repeatedChars =
-          Number(componentMap["systemFinal"] ?? 0) +
-          Number(componentMap["userGoalAndContext"] ?? 0);
+          Number(componentMap.systemFinal ?? 0) + Number(componentMap.userGoalAndContext ?? 0);
         repeatedStaticContextTokens += Math.max(0, Math.floor(repeatedChars / 3));
       }
     }
@@ -237,9 +234,7 @@ export async function getWorkflowObservability(workflowRunId: string): Promise<W
     llmRows.length > 0 ? Math.floor(sumLlmPromptTokens / llmRows.length) : 0;
   const failedToolRecoveryEstimatedTokens = failedToolCalls * averagePromptTokens;
   const totalEstimatedWasteTokens =
-    parseRetryEstimatedTokens +
-    failedToolRecoveryEstimatedTokens +
-    repeatedStaticContextTokens;
+    parseRetryEstimatedTokens + failedToolRecoveryEstimatedTokens + repeatedStaticContextTokens;
 
   const mcpByStatus: Record<string, number> = {};
   const mcpServerAgg = new Map<string, { count: number; success: number; failed: number }>();
@@ -324,7 +319,9 @@ export async function getWorkflowObservability(workflowRunId: string): Promise<W
    * 调用"也能在 byAgentRole 里被审计，而不是悄悄消失在总数里。
    */
   for (const r of llmRows) {
-    const role = r.agentDefinitionId ? (roleByDef.get(r.agentDefinitionId) ?? "unknown") : "internal_llm";
+    const role = r.agentDefinitionId
+      ? (roleByDef.get(r.agentDefinitionId) ?? "unknown")
+      : "internal_llm";
     const agg = ensure(roleAggMap, role);
     agg.llmCalls += sampleCountFromMeta(r.requestMetaJson);
     agg.llmTokens += r.totalTokens ?? 0;
@@ -339,7 +336,8 @@ export async function getWorkflowObservability(workflowRunId: string): Promise<W
       reasonSteps: agg.reasonSteps,
       toolCalls: agg.toolCalls,
       mcpCalls: agg.mcpCalls,
-      tokens: agg.llmTokens > 0 ? agg.llmTokens : agg.legacyStepTokens > 0 ? agg.legacyStepTokens : null,
+      tokens:
+        agg.llmTokens > 0 ? agg.llmTokens : agg.legacyStepTokens > 0 ? agg.legacyStepTokens : null,
       llmCalls: agg.llmCalls,
       llmPromptTokens: agg.llmPromptTokens,
       llmCompletionTokens: agg.llmCompletionTokens,
@@ -360,15 +358,11 @@ export async function getWorkflowObservability(workflowRunId: string): Promise<W
     },
     efficiency: {
       averageTokensPerCall:
-        llmCallsTotal > 0 && totalTokenCount !== null
-          ? totalTokenCount / llmCallsTotal
-          : null,
-      promptTokenShare:
-        sumLlmTokens > 0 ? sumLlmPromptTokens / sumLlmTokens : null,
+        llmCallsTotal > 0 && totalTokenCount !== null ? totalTokenCount / llmCallsTotal : null,
+      promptTokenShare: sumLlmTokens > 0 ? sumLlmPromptTokens / sumLlmTokens : null,
       cachedPromptTokenShare:
         sumLlmPromptTokens > 0 ? sumCachedPromptTokens / sumLlmPromptTokens : null,
-      nativeToolCallingRate:
-        llmCallsTotal > 0 ? nativeToolCallingCalls / llmCallsTotal : null,
+      nativeToolCallingRate: llmCallsTotal > 0 ? nativeToolCallingCalls / llmCallsTotal : null,
       compactedCalls,
       tokenBudget: {
         usedTokens: tokenBudget.usedTokens,

@@ -1,27 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
-import {
-  agentInstance,
-  project,
-  workflowRun,
-  workspace,
-} from "../../db/sqlite/schema";
+import { agentInstance, project, workflowRun, workspace } from "../../db/sqlite/schema";
+import type { AgentRole } from "../../types/entities";
 import { AgentRuntime } from "../agent-runtime";
 import { resolveEffectiveAgentDefinitions } from "../config/resolve-effective-config";
 import {
+  type WorkspaceConfigWatcherHandle,
   computeConfigHash,
   startWorkspaceConfigWatcher,
   syncWorkspaceConfigToDbFromFiles,
-  type WorkspaceConfigWatcherHandle,
 } from "../config/workspace-config-watcher";
 import { getRoleHandler } from "../handlers/role-handlers";
 import type { RuntimeAgentDefinition } from "../types";
-import type { AgentRole } from "../../types/entities";
-import {
-  A2A_POOL_PROJECT_ID,
-  A2A_POOL_WORKFLOW_ID,
-} from "./constants";
+import { A2A_POOL_PROJECT_ID, A2A_POOL_WORKFLOW_ID } from "./constants";
 
 const A2A_POOL_WORKSPACE_ID = "00000000-0000-4000-8000-a2a000000003";
 

@@ -98,9 +98,7 @@ export async function buildPrimeAgentSpecsFromDb(): Promise<AgentSpec[]> {
   return buildPrimeAgentSpecs(defs);
 }
 
-export function primePrimarySpecId(
-  specs: AgentSpec[] = buildPrimeAgentSpecs()
-): string {
+export function primePrimarySpecId(specs: AgentSpec[] = buildPrimeAgentSpecs()): string {
   const primary = specs.find((s) => s.execution_kind === "primary" && s.enabled);
   return primary?.id ?? "def-orchestrator";
 }

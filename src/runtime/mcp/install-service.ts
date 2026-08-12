@@ -25,10 +25,7 @@ import {
   mcpServerConfig,
   mcpToolBinding,
 } from "../../db/sqlite/schema.js";
-import {
-  MCP_WILDCARD_TOOL,
-  syncServerDefaultStarBinding,
-} from "./default-star-binding.js";
+import { MCP_WILDCARD_TOOL, syncServerDefaultStarBinding } from "./default-star-binding.js";
 
 export class CatalogNotFoundError extends Error {
   constructor(catalogId: string) {

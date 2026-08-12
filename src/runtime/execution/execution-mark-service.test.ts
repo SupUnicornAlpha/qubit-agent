@@ -13,7 +13,10 @@ describe("execution mark service", () => {
     const sqlite = new Database(":memory:");
     sqlite.exec("PRAGMA foreign_keys=ON;");
     const db = drizzle(sqlite, { schema });
-    const migrationsFolder = join(dirname(fileURLToPath(import.meta.url)), "../../db/sqlite/migrations");
+    const migrationsFolder = join(
+      dirname(fileURLToPath(import.meta.url)),
+      "../../db/sqlite/migrations"
+    );
     await migrate(db, { migrationsFolder });
     await db.insert(schema.dailyMarkPrice).values({
       id: randomUUID(),

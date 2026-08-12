@@ -5,10 +5,7 @@ export type DecisionEngineProvider = {
   readonly kind: string;
   listStrategies(ws: WorkspaceFs): Promise<Array<{ id: string; name: string; relPath?: string }>>;
   listFactors(ws: WorkspaceFs): Promise<Array<{ id: string; name: string; relPath?: string }>>;
-  openStrategy?(
-    ws: WorkspaceFs,
-    id: string
-  ): Promise<{ relPath?: string; externalUrl?: string }>;
+  openStrategy?(ws: WorkspaceFs, id: string): Promise<{ relPath?: string; externalUrl?: string }>;
   runBacktest?(
     ws: WorkspaceFs,
     req: { strategyId: string; params?: Record<string, unknown> }

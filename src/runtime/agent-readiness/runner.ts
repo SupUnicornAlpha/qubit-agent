@@ -15,12 +15,12 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getDb, getSqliteForTesting } from "../../db/sqlite/client";
 import { researchScenarioService } from "../research-scenario/service";
-import { collectSnapshot } from "./snapshot-collector";
-import { gradeSnapshot, type ReadinessSnapshot, type SnapshotGrade } from "./grader";
+import { type ReadinessSnapshot, type SnapshotGrade, gradeSnapshot } from "./grader";
 import type { JudgeClient } from "./quality/content-judge";
-import { renderJsonReport, renderMarkdownReport } from "./reporters";
-import { getScenarioRecipe, type ScenarioRecipe } from "./scenarios";
 import { assertGoldenMarketDataReadiness } from "./quality/market-data-readiness";
+import { renderJsonReport, renderMarkdownReport } from "./reporters";
+import { type ScenarioRecipe, getScenarioRecipe } from "./scenarios";
+import { collectSnapshot } from "./snapshot-collector";
 
 /**
  * P2 优先级（Round 7 复盘 2026-06-08）：把 scenario 写到 workflow_run.research_scenario_id，

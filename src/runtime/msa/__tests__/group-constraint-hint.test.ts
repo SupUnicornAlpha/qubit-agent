@@ -10,10 +10,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import {
-  buildGroupRoleConstraintHint,
-  hasHardConstraint,
-} from "../group-constraint-hint";
+import { buildGroupRoleConstraintHint, hasHardConstraint } from "../group-constraint-hint";
 
 describe("buildGroupRoleConstraintHint (P1 编组硬约束注入)", () => {
   test("grp-strategy-pipeline + research → 含 strategy.create_version + strategy.compose 强制提示", () => {
@@ -97,17 +94,13 @@ describe("buildGroupRoleConstraintHint (P1 编组硬约束注入)", () => {
 
 describe("hasHardConstraint", () => {
   test("strategy-pipeline research 命中", () => {
-    expect(hasHardConstraint({ groupId: "grp-strategy-pipeline", role: "research" })).toBe(
-      true
-    );
+    expect(hasHardConstraint({ groupId: "grp-strategy-pipeline", role: "research" })).toBe(true);
   });
   test("live-trading research 命中", () => {
     expect(hasHardConstraint({ groupId: "grp-live-trading", role: "research" })).toBe(true);
   });
   test("strategy-pipeline backtest 不命中", () => {
-    expect(hasHardConstraint({ groupId: "grp-strategy-pipeline", role: "backtest" })).toBe(
-      false
-    );
+    expect(hasHardConstraint({ groupId: "grp-strategy-pipeline", role: "backtest" })).toBe(false);
   });
   test("空 groupId 不命中", () => {
     expect(hasHardConstraint({ role: "research" })).toBe(false);

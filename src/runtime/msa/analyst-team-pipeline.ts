@@ -2,8 +2,6 @@ import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import type { BacktestConnector } from "../../connectors/backtest/backtest.connector";
 import { connectorRegistry } from "../../connectors/registry";
-import { runSmaCrossoverBacktestJob } from "../market/backtest-job-runner";
-import { resolveTickerMarket } from "../market/resolve-ticker-market";
 import { getDb } from "../../db/sqlite/client";
 import {
   agentDefinition,
@@ -17,22 +15,24 @@ import {
 } from "../../db/sqlite/schema";
 import type { AgentRole } from "../../types/entities";
 import type { AnalystSignalValue } from "../../types/entities";
-import { exportStrategyScriptToWorkflowDir } from "../strategy/strategy-script-files";
-import { invokeWithFallback } from "../llm/llm-router";
 import { loadModelConfig } from "../config/model-config";
+import { invokeWithFallback } from "../llm/llm-router";
+import { runSmaCrossoverBacktestJob } from "../market/backtest-job-runner";
+import { resolveTickerMarket } from "../market/resolve-ticker-market";
 import {
   type HandoffEnvelope,
   formatHandoffEnvelopeBlock,
   parseHandoffEnvelope,
 } from "../research-team/handoff-envelope";
 import { logResearchTeamInteraction } from "../research-team/interaction-log";
+import { exportStrategyScriptToWorkflowDir } from "../strategy/strategy-script-files";
 import {
   HITL_HINT_DELIMITER,
-  parsePlanWithHitlHint,
   type OrchestratorHitlHint,
   type OrchestratorPlanResult,
+  parsePlanWithHitlHint,
 } from "../workflow/hitl-hint-parse";
-import { partitionSlotsIntoWaves, type TeamRelationEdge } from "./analyst-team-topology";
+import { type TeamRelationEdge, partitionSlotsIntoWaves } from "./analyst-team-topology";
 
 /**
  * 历史这里直接定义了 hitlHint 的协议（分隔符 + parse + 类型）；现在被对话 orchestrator
@@ -184,7 +184,7 @@ export function extractRoleBriefSection(fullBrief: string, role: AgentRole): str
     truncatedIntro,
     truncatedIntro ? "---" : "",
     `## 你的角色：${role}`,
-    `（注：Orchestrator 简报未单独列出本角色小节，以下为系统补全的角色任务脚手架）`,
+    "（注：Orchestrator 简报未单独列出本角色小节，以下为系统补全的角色任务脚手架）",
     "",
     scaffold,
   ]
@@ -459,19 +459,16 @@ ${input.fusionSummary}`;
     parsed = {};
   }
   const signal = (
-    ["buy", "sell", "hold"].includes(parsed["signal"] as string)
-      ? parsed["signal"]
-      : input.msaSignal
+    ["buy", "sell", "hold"].includes(parsed.signal as string) ? parsed.signal : input.msaSignal
   ) as AnalystSignalValue;
   const confidence =
-    typeof parsed["confidence"] === "number"
-      ? Math.max(0, Math.min(1, parsed["confidence"]))
+    typeof parsed.confidence === "number"
+      ? Math.max(0, Math.min(1, parsed.confidence))
       : input.msaConfidence;
-  const reasoning =
-    typeof parsed["reasoning"] === "string" ? parsed["reasoning"] : answer.slice(0, 800);
+  const reasoning = typeof parsed.reasoning === "string" ? parsed.reasoning : answer.slice(0, 800);
   const proceedToStrategy =
-    typeof parsed["proceedToStrategy"] === "boolean"
-      ? parsed["proceedToStrategy"]
+    typeof parsed.proceedToStrategy === "boolean"
+      ? parsed.proceedToStrategy
       : confidence >= 0.45 && signal !== "hold";
 
   /**
@@ -482,14 +479,14 @@ ${input.fusionSummary}`;
    * 避免把"模型忘了写"和"模型明确说 false"混为一谈。
    */
   let shouldDebate: boolean | null = null;
-  if (typeof parsed["shouldDebate"] === "boolean") {
-    shouldDebate = parsed["shouldDebate"];
-  } else if (parsed["shouldDebate"] === null) {
+  if (typeof parsed.shouldDebate === "boolean") {
+    shouldDebate = parsed.shouldDebate;
+  } else if (parsed.shouldDebate === null) {
     shouldDebate = null;
   }
   const debateReason =
-    typeof parsed["debateReason"] === "string" && parsed["debateReason"].trim().length > 0
-      ? parsed["debateReason"].trim().slice(0, 200)
+    typeof parsed.debateReason === "string" && parsed.debateReason.trim().length > 0
+      ? parsed.debateReason.trim().slice(0, 200)
       : undefined;
 
   await logResearchTeamInteraction({
@@ -613,12 +610,12 @@ export async function logOrchestratorKickoff(input: {
   if (filteredTargets.length === 0) return;
 
   const plan = [
-    `【Orchestrator 编排】研究团队任务已启动`,
+    "【Orchestrator 编排】研究团队任务已启动",
     `标的：${input.ticker}`,
     `参与槽位：${input.slotRoles.join("、")}`,
     `广播对象：${filteredTargets.join("、")}`,
-    `流程：分析师并行 → MSA 融合 → 策略撰写 → 回测执行 → 风控复核`,
-    `（详细按角色任务由后续 plan 简报下发，避免重复转发）`,
+    "流程：分析师并行 → MSA 融合 → 策略撰写 → 回测执行 → 风控复核",
+    "（详细按角色任务由后续 plan 简报下发，避免重复转发）",
   ].join("\n");
 
   await logResearchTeamInteraction({
@@ -747,12 +744,12 @@ export async function runPostFusionPipeline(input: {
           {
             role: "research",
             body: [
-              `Orchestrator 判断暂不进入策略/回测阶段，已切到 explore fallback 模式输出研究方向草稿。`,
-              ``,
+              "Orchestrator 判断暂不进入策略/回测阶段，已切到 explore fallback 模式输出研究方向草稿。",
+              "",
               orch.reasoning,
-              ``,
-              `### 候选研究方向草稿`,
-              ``,
+              "",
+              "### 候选研究方向草稿",
+              "",
               draftBody,
               draftFactors.length > 0
                 ? `\n\n> 已自动落 ${draftFactors.length} 条 draft 因子到本工作流产出列表：${draftFactors.map((f) => f.name).join(", ")}`
@@ -1543,10 +1540,7 @@ async function persistExploreFallbackDrafts(input: {
         workflowRunId: input.workflowRunId,
       });
       persisted.push({ id, name });
-    } catch {
-      /** 不阻塞其他 draft 写入 —— 哪怕个别行违反 schema 约束也继续 */
-      continue;
-    }
+    } catch {}
   }
   return persisted;
 }

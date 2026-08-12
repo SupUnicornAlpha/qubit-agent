@@ -146,14 +146,14 @@ describe("AutoInstaller · W3 safety-scan + dry-run 集成", () => {
       .where(eq(autoInstallProposal.gapLogId, gapId))
       .all();
     expect(props.length).toBe(1);
-    expect(props[0]!.state).toBe("no_candidate");
+    expect(props[0]?.state).toBe("no_candidate");
 
     const run = await db
       .select()
       .from(autoInstallerRun)
       .where(eq(autoInstallerRun.id, out.runId))
       .all();
-    const actions = run[0]!.actionsJson as Array<{ action: string; blockers?: string[] }>;
+    const actions = run[0]?.actionsJson as Array<{ action: string; blockers?: string[] }>;
     expect(actions.some((a) => a.action === "safety_blocked")).toBe(true);
     const blocked = actions.find((a) => a.action === "safety_blocked")!;
     expect(blocked.blockers?.some((b) => b.includes("rm_recursive"))).toBe(true);
@@ -179,7 +179,7 @@ describe("AutoInstaller · W3 safety-scan + dry-run 集成", () => {
       .from(autoInstallerRun)
       .where(eq(autoInstallerRun.id, out.runId))
       .all();
-    const actions = run[0]!.actionsJson as Array<{ action: string; reason?: string }>;
+    const actions = run[0]?.actionsJson as Array<{ action: string; reason?: string }>;
     expect(actions.some((a) => a.action === "dry_run_failed")).toBe(true);
     const failed = actions.find((a) => a.action === "dry_run_failed")!;
     expect(failed.reason).toContain("spawn timed out");
@@ -198,9 +198,9 @@ describe("AutoInstaller · W3 safety-scan + dry-run 集成", () => {
       .from(autoInstallProposal)
       .where(eq(autoInstallProposal.gapLogId, gapId))
       .all();
-    expect(props[0]!.state).toBe("pending_review");
-    expect(props[0]!.proposalKind).toBe("install_mcp_external");
-    expect(props[0]!.targetSlug).toBe("clean-registry");
+    expect(props[0]?.state).toBe("pending_review");
+    expect(props[0]?.proposalKind).toBe("install_mcp_external");
+    expect(props[0]?.targetSlug).toBe("clean-registry");
   });
 
   test("builtin 候选完全跳过 safety/dry-run（命令含 rm -rf 也不 block）", async () => {

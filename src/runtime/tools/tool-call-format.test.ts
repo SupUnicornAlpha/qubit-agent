@@ -32,7 +32,7 @@ describe("parseToolCallFromReason", () => {
     expect(r.kind).toBe("tool");
     if (r.kind === "tool") {
       expect(r.toolName).toBe("fetch_klines");
-      expect(r.params["symbol"]).toBe("600519");
+      expect(r.params.symbol).toBe("600519");
     }
   });
 
@@ -76,7 +76,7 @@ describe("parseToolCallFromReason", () => {
     expect(r.kind).toBe("tool");
     if (r.kind === "tool") {
       expect(r.toolName).toBe("fetch_klines");
-      expect(r.params["symbol"]).toBe("NEW");
+      expect(r.params.symbol).toBe("NEW");
     }
   });
 
@@ -105,7 +105,7 @@ describe("parseToolCallFromReason", () => {
     expect(r.kind).toBe("tool");
     if (r.kind === "tool") {
       expect(r.toolName).toBe("fetch_klines");
-      expect(r.params["symbol"]).toBe("600519");
+      expect(r.params.symbol).toBe("600519");
     }
   });
 

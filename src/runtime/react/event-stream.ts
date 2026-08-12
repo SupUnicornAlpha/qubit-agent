@@ -1,10 +1,7 @@
-import type { StepStreamEvent } from "./state";
+import { clientEventBus, projectStepStreamToClientEvent } from "../conversation/client-event-bus";
 import { getTurnBindingByWorkflow } from "../conversation/turn-binding";
-import {
-  clientEventBus,
-  projectStepStreamToClientEvent,
-} from "../conversation/client-event-bus";
 import { setStepStreamPorts } from "../ports/step-stream";
+import type { StepStreamEvent } from "./state";
 
 type StreamController = ReadableStreamDefaultController<Uint8Array>;
 
@@ -249,4 +246,3 @@ setStepStreamPorts({
     stepStreamBus.publish(event as never);
   },
 });
-

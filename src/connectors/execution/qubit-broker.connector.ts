@@ -1,6 +1,15 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { intentOrder } from "../../db/sqlite/schema";
+import {
+  brokerCancelOrder,
+  brokerGetFills,
+  brokerGetPositions,
+  brokerHealthCheck,
+  resolveBrokerAccount,
+} from "../../runtime/execution/broker/broker-service";
+import { executeIntentLive, executeIntentPaper } from "../../runtime/reia/intent-engine";
+import { type BrokerProvider, isBrokerProvider } from "../../types/broker";
 import type {
   ConnectorFill,
   ConnectorMeta,
@@ -9,15 +18,6 @@ import type {
   ConnectorPosition,
   HealthCheckResult,
 } from "../../types/connector";
-import { executeIntentLive, executeIntentPaper } from "../../runtime/reia/intent-engine";
-import {
-  brokerCancelOrder,
-  brokerGetFills,
-  brokerGetPositions,
-  brokerHealthCheck,
-  resolveBrokerAccount,
-} from "../../runtime/execution/broker/broker-service";
-import { isBrokerProvider, type BrokerProvider } from "../../types/broker";
 import { ExecutionConnector, type ModifyOrderParams } from "./execution.connector";
 
 function asProvider(v: unknown): BrokerProvider {
@@ -43,11 +43,20 @@ export class QubitBrokerConnector extends ExecutionConnector {
     const provider = asProvider(process.env.QUBIT_BROKER_PROVIDER);
     const account = await resolveBrokerAccount(provider);
     if (!account) {
-      return { status: "degraded", latencyMs: 0, message: "no broker account configured", checkedAt: "" };
+      return {
+        status: "degraded",
+        latencyMs: 0,
+        message: "no broker account configured",
+        checkedAt: "",
+      };
     }
-    const h = await brokerHealthCheck({ provider: account.provider, accountRef: account.accountRef });
+    const h = await brokerHealthCheck({
+      provider: account.provider,
+      accountRef: account.accountRef,
+    });
     return {
-      status: h.status === "healthy" ? "healthy" : h.status === "degraded" ? "degraded" : "unhealthy",
+      status:
+        h.status === "healthy" ? "healthy" : h.status === "degraded" ? "degraded" : "unhealthy",
       latencyMs: h.latencyMs ?? 0,
       message: h.message,
       checkedAt: h.checkedAt,
@@ -67,7 +76,11 @@ export class QubitBrokerConnector extends ExecutionConnector {
     }
 
     const db = await getDb();
-    const rows = await db.select().from(intentOrder).where(eq(intentOrder.id, intentOrderId)).limit(1);
+    const rows = await db
+      .select()
+      .from(intentOrder)
+      .where(eq(intentOrder.id, intentOrderId))
+      .limit(1);
     const order = rows[0];
     if (!order) throw new Error(`intent order not found: ${intentOrderId}`);
     if (order.status !== "approved") {

@@ -13,13 +13,13 @@
  */
 import type { Database } from "bun:sqlite";
 
+import type { ScenarioRecipe } from "../scenarios";
 import {
-  getScenarioExpectation,
   type ArtifactExpectation,
   type ConsistencyCheck,
   type ScenarioExpectation,
+  getScenarioExpectation,
 } from "./scenario-expectations";
-import type { ScenarioRecipe } from "../scenarios";
 
 export interface ContentQualityInput {
   workflowRunId: string;
@@ -54,9 +54,7 @@ function evaluateArtifact(
   artifact: ArtifactExpectation
 ): { ok: boolean; rows: number } {
   // countSql 里的 ? 占位符 = workflowRunId
-  const row = sqlite.prepare(artifact.countSql).get(workflowRunId) as
-    | { c: number }
-    | undefined;
+  const row = sqlite.prepare(artifact.countSql).get(workflowRunId) as { c: number } | undefined;
   const rows = Number(row?.c ?? 0);
   return { ok: rows >= artifact.minRows, rows };
 }
@@ -122,7 +120,10 @@ function extractKeywords(goal: string, declared: ReadonlyArray<string>): string[
   // 再扫一遍宽松 ticker（覆盖 "NVDA、AMD" 这类无词边界场景）
   for (const m of goal.matchAll(TICKER_SPLIT_RX)) {
     const t = m[0];
-    if (t.length >= 2 && !["READINESS", "AGENT", "API", "USA", "AI", "IC", "IR", "ROIC"].includes(t)) {
+    if (
+      t.length >= 2 &&
+      !["READINESS", "AGENT", "API", "USA", "AI", "IC", "IR", "ROIC"].includes(t)
+    ) {
       out.add(t);
     }
   }
@@ -143,14 +144,12 @@ function fetchSearchHaystack(
   const parts: string[] = [];
   if (scenario === "research" || scenario === "research_multi") {
     const sigs = sqlite
-      .prepare(
-        `SELECT ticker, reasoning, signal FROM analyst_signal WHERE workflow_run_id = ?`
-      )
+      .prepare("SELECT ticker, reasoning, signal FROM analyst_signal WHERE workflow_run_id = ?")
       .all(workflowRunId) as Array<{ ticker: string; reasoning: string; signal: string }>;
     for (const s of sigs) parts.push(s.ticker, s.reasoning, s.signal);
     const fus = sqlite
       .prepare(
-        `SELECT ticker, fused_signal AS sig FROM signal_fusion_result WHERE workflow_run_id = ?`
+        "SELECT ticker, fused_signal AS sig FROM signal_fusion_result WHERE workflow_run_id = ?"
       )
       .all(workflowRunId) as Array<{ ticker: string; sig: string }>;
     for (const f of fus) parts.push(f.ticker, f.sig);
@@ -171,7 +170,7 @@ function fetchSearchHaystack(
     try {
       const recs = sqlite
         .prepare(
-          `SELECT symbol, side, rationale FROM recommendation_snapshot WHERE workflow_run_id = ?`
+          "SELECT symbol, side, rationale FROM recommendation_snapshot WHERE workflow_run_id = ?"
         )
         .all(workflowRunId) as Array<{ symbol: string; side: string; rationale: string }>;
       for (const r of recs) parts.push(r.symbol, r.side, r.rationale);
@@ -185,16 +184,12 @@ function fetchSearchHaystack(
      * 现严格限定本 workflow 的因子。
      */
     const facs = sqlite
-      .prepare(
-        `SELECT name, expr, category FROM factor_definition WHERE workflow_run_id = ?`
-      )
+      .prepare("SELECT name, expr, category FROM factor_definition WHERE workflow_run_id = ?")
       .all(workflowRunId) as Array<{ name: string; expr: string; category: string }>;
     for (const f of facs) parts.push(f.name, f.expr, f.category);
   } else if (scenario === "strategy" || scenario === "strategy_long_short") {
     const vers = sqlite
-      .prepare(
-        `SELECT version_tag AS tag FROM strategy_version WHERE workflow_run_id = ?`
-      )
+      .prepare("SELECT version_tag AS tag FROM strategy_version WHERE workflow_run_id = ?")
       .all(workflowRunId) as Array<{ tag: string }>;
     for (const v of vers) parts.push(v.tag);
   } else if (scenario === "live_trading" || scenario === "live_trading_short") {
@@ -261,7 +256,7 @@ function checkConsistency(
         if (typeof id !== "string") continue;
         total++;
         const exists = sqlite
-          .prepare(`SELECT 1 FROM factor_definition WHERE id = ? LIMIT 1`)
+          .prepare("SELECT 1 FROM factor_definition WHERE id = ? LIMIT 1")
           .get(id);
         if (!exists) broken++;
       }
@@ -271,16 +266,14 @@ function checkConsistency(
 
   if (check.kind === "order_strategy_refs") {
     const rows = sqlite
-      .prepare(
-        `SELECT strategy_version_id AS sv FROM order_intent WHERE workflow_run_id = ?`
-      )
+      .prepare("SELECT strategy_version_id AS sv FROM order_intent WHERE workflow_run_id = ?")
       .all(workflowRunId) as Array<{ sv: string }>;
     let total = 0;
     let broken = 0;
     for (const r of rows) {
       total++;
       const exists = sqlite
-        .prepare(`SELECT 1 FROM strategy_version WHERE id = ? LIMIT 1`)
+        .prepare("SELECT 1 FROM strategy_version WHERE id = ? LIMIT 1")
         .get(r.sv);
       if (!exists) broken++;
     }
@@ -290,18 +283,14 @@ function checkConsistency(
   if (check.kind === "fusion_signal_refs") {
     // signal_fusion_result.ticker 在本 workflow 至少有一条 analyst_signal 提到
     const rows = sqlite
-      .prepare(
-        `SELECT ticker FROM signal_fusion_result WHERE workflow_run_id = ?`
-      )
+      .prepare("SELECT ticker FROM signal_fusion_result WHERE workflow_run_id = ?")
       .all(workflowRunId) as Array<{ ticker: string }>;
     let total = 0;
     let broken = 0;
     for (const r of rows) {
       total++;
       const exists = sqlite
-        .prepare(
-          `SELECT 1 FROM analyst_signal WHERE workflow_run_id = ? AND ticker = ? LIMIT 1`
-        )
+        .prepare("SELECT 1 FROM analyst_signal WHERE workflow_run_id = ? AND ticker = ? LIMIT 1")
         .get(workflowRunId, r.ticker);
       if (!exists) broken++;
     }

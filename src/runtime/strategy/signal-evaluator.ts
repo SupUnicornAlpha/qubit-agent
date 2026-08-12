@@ -77,9 +77,7 @@ export async function evaluateScriptOnBar(
   } catch (err) {
     if (err instanceof PythonOneShotError) {
       const errMsg =
-        err.source === "exit"
-          ? err.stderr.trim() || `python_exit_${err.exitCode}`
-          : err.message;
+        err.source === "exit" ? err.stderr.trim() || `python_exit_${err.exitCode}` : err.message;
       return { buy: false, sell: false, barTime: lastTime, error: errMsg };
     }
     return {
@@ -140,9 +138,7 @@ export async function evaluateSignalCode(
   } catch (err) {
     if (err instanceof PythonOneShotError) {
       const errMsg =
-        err.source === "exit"
-          ? err.stderr.trim() || `python_exit_${err.exitCode}`
-          : err.message;
+        err.source === "exit" ? err.stderr.trim() || `python_exit_${err.exitCode}` : err.message;
       return { buy: false, sell: false, barTime: lastTime, error: errMsg };
     }
     return {

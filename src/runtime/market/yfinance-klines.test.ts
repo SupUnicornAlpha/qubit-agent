@@ -9,10 +9,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import {
-  parseKlinesDataSourceSetting,
-  type KlinesDataSourceSetting,
-} from "./klines-data-source";
+import { type KlinesDataSourceSetting, parseKlinesDataSourceSetting } from "./klines-data-source";
 import type { YfinanceAssetInfo } from "./yfinance-klines";
 
 describe("parseKlinesDataSourceSetting accepts yfinance", () => {

@@ -255,8 +255,8 @@ function summarizeCases(
   let sumRankIcN = 0;
   let sumIr = 0;
   let sumIrN = 0;
-  let topFactorId = cases[0]!.factorId;
-  let topFactorScore = cases[0]!.score;
+  let topFactorId = cases[0]?.factorId;
+  let topFactorScore = cases[0]?.score;
 
   for (const c of cases) {
     if (c.pass) passCount += 1;
@@ -373,14 +373,12 @@ export async function runEval(input: {
 
   const datasetMeta = (dataset.metaJson ?? {}) as Record<string, unknown>;
   const datasetProjectId =
-    typeof datasetMeta["projectId"] === "string" ? (datasetMeta["projectId"] as string) : undefined;
+    typeof datasetMeta.projectId === "string" ? (datasetMeta.projectId as string) : undefined;
 
   /** dataset.metaJson.projectId 作为 toggle.projectId 的默认值（若 toggle 没传） */
   const primaryToggle: EvalToggle = {
     ...(input.toggle ?? {}),
-    ...(input.toggle?.projectId || !datasetProjectId
-      ? {}
-      : { projectId: datasetProjectId }),
+    ...(input.toggle?.projectId || !datasetProjectId ? {} : { projectId: datasetProjectId }),
   };
   const primaryFilter = normalizeToggle(primaryToggle);
 
@@ -441,7 +439,12 @@ export async function runEval(input: {
   for (const c of primaryCases) {
     c.pass = c.score >= primaryFilter.icThreshold;
   }
-  const summary = summarizeCases(primaryCases, primaryFilter.icThreshold, primaryFilter, baselineSummary);
+  const summary = summarizeCases(
+    primaryCases,
+    primaryFilter.icThreshold,
+    primaryFilter,
+    baselineSummary
+  );
   await persistCases(primaryCases, runId);
 
   await db

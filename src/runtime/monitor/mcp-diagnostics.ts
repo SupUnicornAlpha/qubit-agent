@@ -311,14 +311,14 @@ export function extractErrorMessageFromResponse(resp: unknown): string | null {
   if (typeof resp === "string") return normalizeErrorMessage(resp);
   if (typeof resp !== "object") return null;
   const r = resp as Record<string, unknown>;
-  const errObj = r["error"];
+  const errObj = r.error;
   let candidate: unknown = null;
   if (errObj && typeof errObj === "object") {
-    candidate = (errObj as Record<string, unknown>)["message"];
+    candidate = (errObj as Record<string, unknown>).message;
   }
-  if (!candidate) candidate = r["message"];
+  if (!candidate) candidate = r.message;
   if (!candidate) candidate = errObj;
-  if (!candidate) candidate = r["detail"];
+  if (!candidate) candidate = r.detail;
   if (typeof candidate === "string") return normalizeErrorMessage(candidate);
   if (candidate != null) {
     try {

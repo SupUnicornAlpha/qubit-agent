@@ -222,10 +222,9 @@ export const AQM_THRESHOLDS: Record<string, MetricThreshold> = {
 };
 
 /** 兼容旧调用的 alias */
-export const MUST_HAVE_THRESHOLDS: Record<string, MetricThreshold> =
-  Object.fromEntries(
-    Object.entries(AQM_THRESHOLDS).filter(([, t]) => t.category === "LEGACY")
-  );
+export const MUST_HAVE_THRESHOLDS: Record<string, MetricThreshold> = Object.fromEntries(
+  Object.entries(AQM_THRESHOLDS).filter(([, t]) => t.category === "LEGACY")
+);
 
 /** 整体打分：把单指标等级聚合成 A-F */
 export type OverallGrade = "A" | "B" | "C" | "D" | "F";
@@ -321,8 +320,7 @@ export function aggregateAqm(input: AqmAggregateInput): AqmAggregateResult {
     }
   }
   if (allMetrics > 0 && totalRed > allMetrics / 2) halfPlusRed = true;
-  const weightedScore =
-    totalWeight === 0 ? 0 : Number((totalScore / totalWeight).toFixed(3));
+  const weightedScore = totalWeight === 0 ? 0 : Number((totalScore / totalWeight).toFixed(3));
 
   // 等级规则：先看 grade 分布的硬约束
   //   - 全绿 → A
@@ -333,7 +331,8 @@ export function aggregateAqm(input: AqmAggregateInput): AqmAggregateResult {
   let overall: OverallGrade;
   if (!anyRed && !anyYellow && allMetrics > 0) overall = "A";
   else if (!anyRed && allMetrics > 0) overall = "B";
-  else if (allMetrics === 0) overall = "F"; // 没任何指标可评
+  else if (allMetrics === 0)
+    overall = "F"; // 没任何指标可评
   else if (halfPlusRed) overall = "F";
   else if (totalRed / allMetrics <= 0.1) overall = "C";
   else overall = "D";

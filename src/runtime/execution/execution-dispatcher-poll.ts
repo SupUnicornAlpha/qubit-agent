@@ -9,20 +9,15 @@ import {
   fill,
   orderIntent,
 } from "../../db/sqlite/schema";
-import { connectorForAccount, resolveBrokerAccount } from "./broker/broker-service";
 import type { BrokerProvider } from "../../types/broker";
+import { connectorForAccount, resolveBrokerAccount } from "./broker/broker-service";
 
 /** Poll broker for orders in waiting_ack / partially_filled (Phase 3). */
 export async function pollPendingBrokerOrders(db: DbClient, nowIso: string): Promise<void> {
   const tasks = await db
     .select()
     .from(executionTask)
-    .where(
-      and(
-        eq(executionTask.status, "waiting_ack"),
-        eq(executionTask.dispatchMode, "live")
-      )
-    )
+    .where(and(eq(executionTask.status, "waiting_ack"), eq(executionTask.dispatchMode, "live")))
     .limit(20);
 
   for (const task of tasks) {

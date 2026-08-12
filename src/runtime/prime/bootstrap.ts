@@ -95,8 +95,6 @@ export async function smokePrimaryTurn(opts?: {
     ...(snap.active_turn?.delivery?.status
       ? { delivery_status: snap.active_turn.delivery.status }
       : {}),
-    ...(snap.active_turn?.lifecycle
-      ? { lifecycle: snap.active_turn.lifecycle }
-      : {}),
+    ...(snap.active_turn?.lifecycle ? { lifecycle: snap.active_turn.lifecycle } : {}),
   };
 }

@@ -4,9 +4,7 @@ import { evaluateDeliveryVerdict } from "./completion";
 import { resolveScenarioRecipe } from "./scenario-recipe";
 import type { ScenarioRuntimeSnapshot } from "./scenario-snapshot";
 
-function baseSnapshot(
-  overrides: Partial<ScenarioRuntimeSnapshot> = {}
-): ScenarioRuntimeSnapshot {
+function baseSnapshot(overrides: Partial<ScenarioRuntimeSnapshot> = {}): ScenarioRuntimeSnapshot {
   return {
     workflowId: "wf-soft",
     scenarioKey: "stock_pick",

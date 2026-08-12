@@ -4,17 +4,17 @@
  * 故障复盘见 src/db/sqlite/migrate.ts 头部注释。
  */
 
-import { describe, expect, test, beforeAll } from "bun:test";
 import { Database } from "bun:sqlite";
-import { join } from "node:path";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { config } from "../../../config";
 import {
   MigrationDriftError,
   readAppliedMigrationCount,
   readJournalEntryCount,
   runMigrations,
 } from "../migrate";
-import { config } from "../../../config";
 
 beforeAll(async () => {
   await runMigrations();

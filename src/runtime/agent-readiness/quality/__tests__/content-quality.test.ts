@@ -10,10 +10,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const tmpDir = join(
-  tmpdir(),
-  `qubit-aqm-content-${process.pid}-${Date.now()}`
-);
+const tmpDir = join(tmpdir(), `qubit-aqm-content-${process.pid}-${Date.now()}`);
 rmSync(tmpDir, { recursive: true, force: true });
 mkdirSync(join(tmpDir, "db"), { recursive: true });
 process.env.QUBIT_DATA_DIR = tmpDir;
@@ -21,9 +18,7 @@ process.env.HOME = tmpDir;
 
 const { afterAll, beforeAll, describe, expect, test } = await import("bun:test");
 const { runMigrations } = await import("../../../../db/sqlite/migrate");
-const { getDb, closeDb, getSqliteForTesting } = await import(
-  "../../../../db/sqlite/client"
-);
+const { getDb, closeDb, getSqliteForTesting } = await import("../../../../db/sqlite/client");
 const schema = await import("../../../../db/sqlite/schema");
 const { collectContentQuality } = await import("../content-quality");
 
@@ -148,7 +143,7 @@ describe("A 类 · 内容质量", () => {
         name: `f${i}`,
         category: "momentum",
         definitionJson: {} as never,
-        expr: `close - close[20]`,
+        expr: "close - close[20]",
       });
     }
     // strategy + version + composition 引用上述 2 个 factor
@@ -201,10 +196,10 @@ describe("A 类 · 内容质量", () => {
     await db.insert(schema.factorDefinition).values({
       id: `f-real-${wfId}`,
       projectId: PROJECT_ID,
-      name: `f-real`,
+      name: "f-real",
       category: "value",
       definitionJson: {} as never,
-      expr: `pe`,
+      expr: "pe",
     });
     const stratId = `s-broken-${wfId}`;
     const verId = `sv-broken-${wfId}`;

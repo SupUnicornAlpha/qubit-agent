@@ -29,9 +29,7 @@ describe("AutonomousTriggerKindSchema", () => {
   });
 
   test("未知 kind 被拒", () => {
-    expect(AutonomousTriggerKindSchema.safeParse("invalid_kind").success).toBe(
-      false,
-    );
+    expect(AutonomousTriggerKindSchema.safeParse("invalid_kind").success).toBe(false);
   });
 });
 

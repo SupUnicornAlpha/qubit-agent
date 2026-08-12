@@ -8,7 +8,9 @@ import { parseAgentPlanSnapshot } from "../agent-control-mode";
 import { resolveLlmForAgent } from "../llm/llm-router";
 import { loadWorkflowTokenBudgetStatus } from "../llm/workflow-token-budget";
 import { writeLlmCallLog } from "../monitor/llm-call-logger";
+import { planArtifactRecovery, planContractRecovery } from "../policy/recovery";
 import { sandboxExecutor } from "../sandbox-executor";
+import type { DataGap } from "../tools/data-gap";
 import { stripToolCallSentinels } from "../tools/tool-call-format";
 import type { RuntimeAgentDefinition } from "../types";
 import { HitlAwaitingApprovalError } from "../workflow/hitl-service";
@@ -19,8 +21,6 @@ import {
   isWorkflowCancellationRequested,
 } from "../workflow/workflow-cancellation";
 import { writeCheckpointSnapshot } from "./agent-checkpoint-snapshot";
-import { planArtifactRecovery, planContractRecovery } from "../policy/recovery";
-import type { DataGap } from "../tools/data-gap";
 import {
   didTurnMakeProgress,
   nextUnproductiveTurnCount,
@@ -350,8 +350,7 @@ async function runReason(
   let reasonResult: Awaited<ReturnType<typeof reasonNode>>;
   try {
     reasonResult = await withTimeoutAbortable(
-      (signal) =>
-        reasonNode({ ...state, iteration: nextIteration }, emit, { signal }),
+      (signal) => reasonNode({ ...state, iteration: nextIteration }, emit, { signal }),
       reasonNodeTimeoutMs(),
       `reason node timed out after ${reasonNodeTimeoutMs()}ms`,
       getWorkflowCancellationSignal(params.workflowId)
@@ -474,9 +473,7 @@ async function runReason(
         ...(reasonResult.meta.gatewayErrorCode
           ? { gatewayErrorCode: reasonResult.meta.gatewayErrorCode }
           : {}),
-        ...(reasonResult.meta.gatewayError
-          ? { gatewayError: reasonResult.meta.gatewayError }
-          : {}),
+        ...(reasonResult.meta.gatewayError ? { gatewayError: reasonResult.meta.gatewayError } : {}),
         ...(reasonResult.meta.nativeToolCallingUsed ? { nativeToolCallingUsed: true } : {}),
         ...(reasonResult.meta.tokenBudgetSoftLimitReached
           ? { tokenBudgetSoftLimitReached: true }

@@ -1,8 +1,8 @@
 import type { BarData, FetchBarsParams } from "../../connectors/data/data.connector";
-import { aggregateBarsByMsWindow } from "./klines-bars";
-import { resolveTickerMarket } from "./resolve-ticker-market";
 import type { BuiltinConnectorInitConfigs } from "../config/builtin-connector-settings";
+import { aggregateBarsByMsWindow } from "./klines-bars";
 import { marketDataFetch } from "./market-data-network";
+import { resolveTickerMarket } from "./resolve-ticker-market";
 
 const UA = "Mozilla/5.0 (compatible; QubitAgent/1.0; +https://github.com/)";
 const EM_KLINE_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get";
@@ -38,7 +38,8 @@ export function symbolToEastMoneySecId(symbol: string, exchange: string): string
     const [c, suffix] = s.split(".", 2);
     code = c ?? s;
     const suf = (suffix ?? "").toUpperCase();
-    if (suf === "SH" || suf === "SS") return `1.${code.replace(/\D/g, "").slice(-6).padStart(6, "0")}`;
+    if (suf === "SH" || suf === "SS")
+      return `1.${code.replace(/\D/g, "").slice(-6).padStart(6, "0")}`;
     if (suf === "SZ") return `0.${code.replace(/\D/g, "").slice(-6).padStart(6, "0")}`;
     if (suf === "BJ") {
       const bj = code.replace(/\D/g, "");
@@ -105,10 +106,7 @@ function eastMoneyKltForPeriod(period: FetchBarsParams["period"]): string | null
   }
 }
 
-function parseEastMoneyKlineRow(
-  row: string,
-  params: FetchBarsParams
-): BarData | null {
+function parseEastMoneyKlineRow(row: string, params: FetchBarsParams): BarData | null {
   const parts = row.split(",");
   if (parts.length < 6) return null;
   const dateRaw = parts[0]?.trim() ?? "";
@@ -143,7 +141,7 @@ async function fetchEastMoneyKlineJson(
   beg: string,
   end: string,
   lmt: number,
-  settings: BuiltinConnectorInitConfigs,
+  settings: BuiltinConnectorInitConfigs
 ): Promise<EastMoneyKlineResponse> {
   const qs = new URLSearchParams({
     fields1: "f1,f2,f3,f4,f5,f6",
@@ -188,7 +186,7 @@ async function fetchEastMoneyKlineJson(
  */
 export async function fetchEastMoneyBars(
   params: FetchBarsParams,
-  settings: BuiltinConnectorInitConfigs = {},
+  settings: BuiltinConnectorInitConfigs = {}
 ): Promise<BarData[]> {
   const secid = symbolToEastMoneySecId(params.symbol, params.exchange || "");
   if (!secid) throw new Error("eastmoney: unsupported symbol/exchange for A-share market");
@@ -206,9 +204,7 @@ export async function fetchEastMoneyBars(
   const end = parseIsoToYmd(params.endDate);
   const daySpan = Math.max(1, Math.ceil((endMs - startMs) / 86_400_000));
   const lmt =
-    params.period === "1d"
-      ? Math.min(daySpan + 30, 5000)
-      : Math.min(Math.ceil(daySpan * 80), 5000);
+    params.period === "1d" ? Math.min(daySpan + 30, 5000) : Math.min(Math.ceil(daySpan * 80), 5000);
 
   const json = await fetchEastMoneyKlineJson(secid, klt, beg, end, lmt, settings);
   const rows = json.data?.klines ?? [];

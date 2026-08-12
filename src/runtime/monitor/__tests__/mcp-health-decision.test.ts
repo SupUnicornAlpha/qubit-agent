@@ -10,10 +10,7 @@
  * 不依赖 DB / drizzle —— 纯函数级测试。
  */
 import { describe, expect, test } from "bun:test";
-import {
-  computeNextHealthDecision,
-  type CurrentHealthState,
-} from "../mcp-health-tracker";
+import { type CurrentHealthState, computeNextHealthDecision } from "../mcp-health-tracker";
 
 const baseClosed: CurrentHealthState = {
   circuitState: "closed",
@@ -59,10 +56,7 @@ describe("computeNextHealthDecision · failure 分支", () => {
   });
 
   test("closed + failure（达阈值）：转 open，归零计数为下轮 half_open 备用", () => {
-    const d = computeNextHealthDecision(
-      { ...baseClosed, failureCount: 2 },
-      "failed"
-    );
+    const d = computeNextHealthDecision({ ...baseClosed, failureCount: 2 }, "failed");
     expect(d.nextState).toBe("open");
     expect(d.reopen).toBe(true);
     expect(d.nextFailureCount).toBe(0);
@@ -80,10 +74,7 @@ describe("computeNextHealthDecision · failure 分支", () => {
   test("timeout 与 failed / sandbox_blocked 等同对待（都属于失败）", () => {
     const d1 = computeNextHealthDecision({ ...baseClosed, failureCount: 2 }, "timeout");
     expect(d1.nextState).toBe("open");
-    const d2 = computeNextHealthDecision(
-      { ...baseClosed, failureCount: 2 },
-      "sandbox_blocked"
-    );
+    const d2 = computeNextHealthDecision({ ...baseClosed, failureCount: 2 }, "sandbox_blocked");
     expect(d2.nextState).toBe("open");
   });
 });

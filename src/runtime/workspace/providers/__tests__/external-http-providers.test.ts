@@ -6,9 +6,9 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFsWorkspace } from "../../service";
-import { resolveProviders, listRegisteredProviderKinds } from "../resolve";
-import { createExternalHttpMemoryProvider } from "../external-http-memory";
 import { createExternalHttpDecisionProvider } from "../external-decision-stub";
+import { createExternalHttpMemoryProvider } from "../external-http-memory";
+import { listRegisteredProviderKinds, resolveProviders } from "../resolve";
 
 const originalFetch = globalThis.fetch;
 

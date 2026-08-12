@@ -34,7 +34,8 @@ export async function loadRiskConfig(rootDir = process.cwd()): Promise<RiskRunti
       blockConfidenceThreshold: clamp01(
         Number(parsed.blockConfidenceThreshold ?? DEFAULT_CONFIG.blockConfidenceThreshold)
       ),
-      severityMode: (parsed.severityMode as RiskRuntimeConfig["severityMode"]) ?? DEFAULT_CONFIG.severityMode,
+      severityMode:
+        (parsed.severityMode as RiskRuntimeConfig["severityMode"]) ?? DEFAULT_CONFIG.severityMode,
     };
   } catch {
     return DEFAULT_CONFIG;

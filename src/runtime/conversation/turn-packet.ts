@@ -51,8 +51,7 @@ export function parseRollingChronicle(raw: unknown): RollingChronicleState {
     return emptyRollingChronicle();
   }
   const o = raw as Record<string, unknown>;
-  const compactedSummary =
-    typeof o.compactedSummary === "string" ? o.compactedSummary : "";
+  const compactedSummary = typeof o.compactedSummary === "string" ? o.compactedSummary : "";
   const absorbedMessageIds = Array.isArray(o.absorbedMessageIds)
     ? o.absorbedMessageIds.filter((x): x is string => typeof x === "string")
     : [];
@@ -72,10 +71,7 @@ export function rollChronicleWindow(input: {
 }): { state: RollingChronicleState; priorCompactedSummary: string } {
   const maxEntries = input.maxEntries ?? 8;
   const prior = input.messages.filter(
-    (m) =>
-      m.id !== input.currentUserMessageId &&
-      m.content.trim().length > 0 &&
-      m.role !== "system"
+    (m) => m.id !== input.currentUserMessageId && m.content.trim().length > 0 && m.role !== "system"
   );
   const absorbed = new Set(input.state.absorbedMessageIds);
   let compacted = input.state.compactedSummary.trim();
@@ -205,10 +201,7 @@ function wrapBackground(label: string, body: string): string {
 export function buildSessionChronicle(input: BuildSessionChronicleInput): string {
   const maxMessages = input.maxMessages ?? 8;
   const allPrior = input.messages.filter(
-    (m) =>
-      m.id !== input.currentUserMessageId &&
-      m.content.trim().length > 0 &&
-      m.role !== "system"
+    (m) => m.id !== input.currentUserMessageId && m.content.trim().length > 0 && m.role !== "system"
   );
 
   let compactedHead = (input.priorCompactedSummary ?? "").trim();
@@ -263,10 +256,7 @@ export function buildSessionChronicle(input: BuildSessionChronicleInput): string
       return `- ${t.toolName}: ${t.status}${det}`;
     });
     sections.push(
-      wrapBackground(
-        "recent_tools",
-        ["## Recent tool outcomes (stubs)", ...toolLines].join("\n")
-      )
+      wrapBackground("recent_tools", ["## Recent tool outcomes (stubs)", ...toolLines].join("\n"))
     );
   }
 
@@ -290,7 +280,10 @@ export function mergeWorkspaceBackground(
 }
 
 /** Infer tool status from interaction content_text / payload. */
-export function inferToolStatus(contentText: string, payload?: Record<string, unknown>): RecentToolLine["status"] {
+export function inferToolStatus(
+  contentText: string,
+  payload?: Record<string, unknown>
+): RecentToolLine["status"] {
   const raw = `${contentText} ${JSON.stringify(payload ?? {})}`.toLowerCase();
   if (
     /\bfail(ed|ure)?\b/.test(raw) ||

@@ -32,7 +32,9 @@ export class ResearchScenarioRegistry {
   }
 
   /** 列出所有场景 */
-  async list(filter?: { status?: "enabled" | "disabled" }): Promise<Array<ResearchScenarioSpec & { id: string }>> {
+  async list(filter?: { status?: "enabled" | "disabled" }): Promise<
+    Array<ResearchScenarioSpec & { id: string }>
+  > {
     const all = [...this.byKey.values()].sort((a, b) => a.sortOrder - b.sortOrder);
     if (filter?.status) return all.filter((s) => s.status === filter.status);
     return all;

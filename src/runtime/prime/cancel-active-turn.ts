@@ -9,13 +9,7 @@ import { workflowRun } from "../../db/sqlite/schema";
 import { asRustCoreClient } from "./ensure-core-session";
 import { readPrimeCoreBinding } from "./workflow-session-binding";
 
-const TERMINAL_STATES = new Set([
-  "completed",
-  "failed",
-  "cancelled",
-  "canceled",
-  "error",
-]);
+const TERMINAL_STATES = new Set(["completed", "failed", "cancelled", "canceled", "error"]);
 
 export async function cancelActiveCoreTurnForWorkflow(
   workflowRunId: string

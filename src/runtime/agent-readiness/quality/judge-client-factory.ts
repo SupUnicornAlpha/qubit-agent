@@ -1,3 +1,4 @@
+import { type RuntimeModelConfig, loadModelConfig } from "../../config/model-config";
 /**
  * Judge Client 工厂：把现有 LLM Router 包装成 JudgeClient 接口。
  *
@@ -9,12 +10,8 @@
  *     注：现有 invokeWithFallback 路径并不写库（写库是 reasoning 节点的责任），所以保持同函数也可。
  *   - 出错时抛错，让 collectContentJudge 走 fallback 路径
  */
-import { runLlmGateway, type LlmGatewayInput } from "../../llm/gateway";
-import { loadModelConfig, type RuntimeModelConfig } from "../../config/model-config";
-import {
-  inferProviderFromModelName,
-  type LlmProvider,
-} from "../../llm/llm-router";
+import { type LlmGatewayInput, runLlmGateway } from "../../llm/gateway";
+import { type LlmProvider, inferProviderFromModelName } from "../../llm/llm-router";
 import type { JudgeClient } from "./content-judge";
 
 export interface CreateJudgeClientInput {
@@ -26,9 +23,7 @@ export interface CreateJudgeClientInput {
   perCallTimeoutMs?: number;
 }
 
-export async function createJudgeClient(
-  input: CreateJudgeClientInput = {}
-): Promise<JudgeClient> {
+export async function createJudgeClient(input: CreateJudgeClientInput = {}): Promise<JudgeClient> {
   let config: RuntimeModelConfig | null = null;
   if (input.model) {
     config = {
@@ -60,10 +55,7 @@ export async function createJudgeClient(
       const result = await Promise.race([
         runLlmGateway(gatewayInput),
         new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error(`judge timeout after ${timeoutMs}ms`)),
-            timeoutMs
-          )
+          setTimeout(() => reject(new Error(`judge timeout after ${timeoutMs}ms`)), timeoutMs)
         ),
       ]);
       return result.answer;

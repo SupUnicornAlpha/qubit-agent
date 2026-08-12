@@ -1,10 +1,9 @@
-import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { executionReport, intentOrder } from "../../db/sqlite/schema";
+import { createIntentOrder, executeIntentPaper } from "../../runtime/reia/intent-engine";
 import type { ConnectorMeta } from "../../types/connector";
 import { BaseConnector } from "../base.connector";
-import { createIntentOrder, executeIntentPaper } from "../../runtime/reia/intent-engine";
 
 /**
  * Paper-trading simulation connector (wraps intent-engine paper execution).

@@ -32,8 +32,7 @@ describe("/api/v1/environment routes", () => {
 
   beforeAll(async () => {
     expect(
-      config.dataDir.startsWith(join(tmpdir(), "qubit-test-")) ||
-        config.dataDir.startsWith("/tmp/")
+      config.dataDir.startsWith(join(tmpdir(), "qubit-test-")) || config.dataDir.startsWith("/tmp/")
     ).toBe(true);
     await runMigrations();
     await seedEnvRegistry([]); // 用空 mcp presets，避免 fmp/financex 干扰
@@ -61,9 +60,7 @@ describe("/api/v1/environment routes", () => {
   });
 
   test("GET /registry?kind=python 仅返回 python 项", async () => {
-    const res = await app.request(
-      new Request("http://t/api/v1/environment/registry?kind=python")
-    );
+    const res = await app.request(new Request("http://t/api/v1/environment/registry?kind=python"));
     expect(res.status).toBe(200);
     const body = await jsonOf<{ data: Array<{ kind: string; name: string }> }>(res);
     expect(body.data.length).toBeGreaterThan(0);
@@ -72,9 +69,7 @@ describe("/api/v1/environment routes", () => {
   });
 
   test("GET /registry?kind=invalid → 400", async () => {
-    const res = await app.request(
-      new Request("http://t/api/v1/environment/registry?kind=go")
-    );
+    const res = await app.request(new Request("http://t/api/v1/environment/registry?kind=go"));
     expect(res.status).toBe(400);
   });
 
@@ -121,9 +116,7 @@ describe("/api/v1/environment routes", () => {
   });
 
   test("DELETE 系统项 → 409 builtin_protected", async () => {
-    const list = await app.request(
-      new Request("http://t/api/v1/environment/registry?kind=python")
-    );
+    const list = await app.request(new Request("http://t/api/v1/environment/registry?kind=python"));
     const lb = await jsonOf<{ data: Array<{ id: string; name: string; isBuiltin: boolean }> }>(
       list
     );
@@ -138,9 +131,7 @@ describe("/api/v1/environment routes", () => {
   });
 
   test("PATCH /registry/:id 更新 status", async () => {
-    const list = await app.request(
-      new Request("http://t/api/v1/environment/registry?kind=python")
-    );
+    const list = await app.request(new Request("http://t/api/v1/environment/registry?kind=python"));
     const lb = await jsonOf<{ data: Array<{ id: string; name: string }> }>(list);
     const yfin = lb.data.find((p) => p.name === "yfinance")!;
 
@@ -206,9 +197,7 @@ describe("/api/v1/environment routes", () => {
   });
 
   test("GET /install-log 空表 → ok=true, data=[]", async () => {
-    const res = await app.request(
-      new Request("http://t/api/v1/environment/install-log")
-    );
+    const res = await app.request(new Request("http://t/api/v1/environment/install-log"));
     expect(res.status).toBe(200);
     const body = await jsonOf<{ ok: boolean; data: unknown[] }>(res);
     expect(body.ok).toBe(true);
@@ -216,9 +205,7 @@ describe("/api/v1/environment routes", () => {
   });
 
   test("GET /install-log?kind=invalid → 400", async () => {
-    const res = await app.request(
-      new Request("http://t/api/v1/environment/install-log?kind=go")
-    );
+    const res = await app.request(new Request("http://t/api/v1/environment/install-log?kind=go"));
     expect(res.status).toBe(400);
   });
 });

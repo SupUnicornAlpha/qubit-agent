@@ -1,6 +1,6 @@
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { parseAgentSkillFile, type ParsedSkillImport } from "./import-agent-skills";
+import { type ParsedSkillImport, parseAgentSkillFile } from "./import-agent-skills";
 import type { PluginManifest, PluginManifestRef } from "./types";
 
 export type CodexPluginImportResult = {
@@ -52,29 +52,15 @@ function parseMcpJson(raw: string): NonNullable<PluginManifestRef["mcpServers"]>
   for (const [name, value] of Object.entries(map)) {
     if (!value || typeof value !== "object") continue;
     const v = value as Record<string, unknown>;
-    const command =
-      typeof v.command === "string"
-        ? v.command
-        : undefined;
+    const command = typeof v.command === "string" ? v.command : undefined;
     const args = Array.isArray(v.args) ? v.args.map(String) : [];
-    const cmdParts = [
-      ...(typeof v.command === "string" ? [v.command] : []),
-      ...args,
-    ];
+    const cmdParts = [...(typeof v.command === "string" ? [v.command] : []), ...args];
     const url = typeof v.url === "string" ? v.url : undefined;
-    const transport =
-      typeof v.transport === "string"
-        ? v.transport
-        : url
-          ? "http"
-          : "stdio";
+    const transport = typeof v.transport === "string" ? v.transport : url ? "http" : "stdio";
     const env =
       v.env && typeof v.env === "object"
         ? Object.fromEntries(
-            Object.entries(v.env as Record<string, unknown>).map(([k, val]) => [
-              k,
-              String(val),
-            ])
+            Object.entries(v.env as Record<string, unknown>).map(([k, val]) => [k, String(val)])
           )
         : undefined;
     out.push({

@@ -14,9 +14,7 @@ export interface MidtermQueryParams {
 }
 
 export class MidtermMemoryStore {
-  async insert(
-    entry: Omit<MidtermMemory, "id" | "updatedAt">
-  ): Promise<MidtermMemory> {
+  async insert(entry: Omit<MidtermMemory, "id" | "updatedAt">): Promise<MidtermMemory> {
     const db = await getDb();
     const id = crypto.randomUUID();
     const now = new Date().toISOString();

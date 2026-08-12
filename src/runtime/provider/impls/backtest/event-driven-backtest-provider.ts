@@ -15,14 +15,14 @@
 
 import type { BarData } from "../../../../connectors/data/data.connector";
 import { queryBarsRange } from "../../../market/klines-query";
-import {
-  type BacktestProvider,
-  type BacktestRequest,
-  type BacktestResult,
-  type FactorComputeProvider,
-  type ProviderMeta,
-} from "../../types";
 import { providerResolver } from "../../resolver";
+import type {
+  BacktestProvider,
+  BacktestRequest,
+  BacktestResult,
+  FactorComputeProvider,
+  ProviderMeta,
+} from "../../types";
 import { type BarPoint, type EngineInput, runEventEngine } from "./event-engine";
 
 const META: ProviderMeta = {
@@ -101,9 +101,7 @@ export class EventDrivenBacktestProvider implements BacktestProvider {
             volume: b.volume,
           });
         }
-      } catch {
-        continue;
-      }
+      } catch {}
     }
 
     const dates = Array.from(datesSet).sort();

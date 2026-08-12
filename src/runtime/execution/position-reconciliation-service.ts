@@ -29,7 +29,7 @@ export function reconcilePositions(
   internalFills: InternalPositionFill[],
   brokerPositions: BrokerPosition[],
   quantityTolerance = 1e-8,
-  priceTolerancePct = 0.001,
+  priceTolerancePct = 0.001
 ): PositionReconciliationRow[] {
   const internal = new Map<string, { qty: number; avgPrice: number }>();
   for (const fillRow of internalFills) {
@@ -68,9 +68,7 @@ export function reconcilePositions(
     const brokerPosition = broker.get(symbol);
     const brokerQty = Number(brokerPosition?.qty ?? 0);
     const internalAvgPrice =
-      Math.abs(internalPosition.qty) > quantityTolerance
-        ? internalPosition.avgPrice
-        : null;
+      Math.abs(internalPosition.qty) > quantityTolerance ? internalPosition.avgPrice : null;
     const brokerAvgPrice =
       brokerPosition && Number.isFinite(brokerPosition.avgPrice)
         ? Number(brokerPosition.avgPrice)
@@ -127,7 +125,7 @@ export async function buildPositionReconciliation(input: {
       .map((row) => ({ symbol: row.symbol, side: row.side, qty: row.qty, price: row.price })),
     external,
     input.quantityTolerance,
-    input.priceTolerancePct,
+    input.priceTolerancePct
   );
   const mismatches = rows.filter((row) => !row.matched);
   return {
@@ -140,10 +138,7 @@ export async function buildPositionReconciliation(input: {
       matched: rows.length - mismatches.length,
       mismatched: mismatches.length,
       matchRate: rows.length ? (rows.length - mismatches.length) / rows.length : 1,
-      absoluteNotionalDelta: rows.reduce(
-        (sum, row) => sum + Math.abs(row.notionalDelta ?? 0),
-        0,
-      ),
+      absoluteNotionalDelta: rows.reduce((sum, row) => sum + Math.abs(row.notionalDelta ?? 0), 0),
     },
     rows,
   };
@@ -161,13 +156,13 @@ export function positionReconciliationSeverity(input: {
 }
 
 export function buildPositionRemediationPlan(
-  report: Awaited<ReturnType<typeof buildPositionReconciliation>>,
+  report: Awaited<ReturnType<typeof buildPositionReconciliation>>
 ) {
   const actions = report.rows
     .filter((row) => !row.matched && Math.abs(row.quantityDelta) > 1e-8)
     .map((row) => ({
       symbol: row.symbol,
-      action: row.quantityDelta > 0 ? "sell" as const : "buy" as const,
+      action: row.quantityDelta > 0 ? ("sell" as const) : ("buy" as const),
       quantity: Math.abs(row.quantityDelta),
       estimatedNotional: Math.abs(row.notionalDelta ?? 0),
       reason: `broker_qty=${row.brokerQty}, internal_qty=${row.internalQty}`,
@@ -211,8 +206,8 @@ export async function scanPositionReconciliation(input: {
         eq(alertEvent.scopeType, "system"),
         eq(alertEvent.scopeId, scopeId),
         eq(alertEvent.alertType, "position_reconciliation_mismatch"),
-        eq(alertEvent.status, "open"),
-      ),
+        eq(alertEvent.status, "open")
+      )
     )
     .limit(1);
   let alertId: string | null = open[0]?.id ?? null;

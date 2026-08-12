@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SEED_AGENT_DEFINITIONS } from "../../seed-agent-definitions-data";
@@ -21,7 +21,7 @@ describe("filesystem global skills", () => {
     await mkdir(dir);
     await writeFile(
       join(dir, "SKILL.md"),
-      "---\nname: market-microstructure\ndescription: Read order book imbalance before execution.\nversion: v1\n---\n# Checklist\nUse ticks, trades, and order-book depth.\n",
+      "---\nname: market-microstructure\ndescription: Read order book imbalance before execution.\nversion: v1\n---\n# Checklist\nUse ticks, trades, and order-book depth.\n"
     );
 
     const hits = await searchFilesystemSkills({
@@ -49,10 +49,10 @@ describe("filesystem global skills", () => {
       await mkdir(dir);
       await writeFile(
         join(dir, "SKILL.md"),
-        "---\nname: spread-check\ndescription: Check bid ask spread before a trade.\n---\nInspect order book and recent trades.\n",
+        "---\nname: spread-check\ndescription: Check bid ask spread before a trade.\n---\nInspect order book and recent trades.\n"
       );
       const definition = SEED_AGENT_DEFINITIONS.find((item) => item.id === "def-market-data")!;
-      const output = (await SKILL_HANDLERS["skill.search"]!(
+      const output = (await SKILL_HANDLERS["skill.search"]?.(
         {
           workflowId: "prime-bridge",
           runId: "run",
@@ -60,11 +60,16 @@ describe("filesystem global skills", () => {
           agentInstanceId: "agent",
           definition,
         },
-        { query: "bid ask spread", recordUsage: true },
-      )) as { sources: { filesystem: number; database: number }; skills: Array<{ name: string; source: string }> };
+        { query: "bid ask spread", recordUsage: true }
+      )) as {
+        sources: { filesystem: number; database: number };
+        skills: Array<{ name: string; source: string }>;
+      };
 
       expect(output.sources).toEqual({ filesystem: 1, database: 0 });
-      expect(output.skills).toEqual([expect.objectContaining({ name: "spread-check", source: "filesystem" })]);
+      expect(output.skills).toEqual([
+        expect.objectContaining({ name: "spread-check", source: "filesystem" }),
+      ]);
     } finally {
       if (previous === undefined) delete process.env.QUBIT_SKILLS_DIR;
       else process.env.QUBIT_SKILLS_DIR = previous;

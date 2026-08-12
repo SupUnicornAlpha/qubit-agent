@@ -5,15 +5,21 @@ import { workflowRun } from "../../db/sqlite/schema";
 import type { TaskAssignPayload } from "../../types/a2a";
 import type { AgentRole } from "../../types/entities";
 import { resolveAgentControlMode, resolveWorkflowProcessConfig } from "../../types/loop";
-import { resolveResearchScope, type ResearchScopeInput } from "../../types/research-scope";
-import { stepStreamBus } from "../react/event-stream";
-import type { StepStreamEvent } from "../react/state";
-import { onWorkflowTerminal } from "../monitor/observability-hook";
+import { type ResearchScopeInput, resolveResearchScope } from "../../types/research-scope";
 import {
   buildArtifactGapHint,
   checkRequiredArtifacts,
   resolveScenarioKey,
 } from "../agent-readiness/quality/artifact-checker";
+import { onWorkflowTerminal } from "../monitor/observability-hook";
+import {
+  evaluateDeliveryVerdict,
+  getRuntimeSqlite,
+  loadScenarioRuntimeSnapshot,
+  persistDeliveryVerdict,
+} from "../policy";
+import { stepStreamBus } from "../react/event-stream";
+import type { StepStreamEvent } from "../react/state";
 import { HitlAwaitingApprovalError } from "../workflow/hitl-service";
 import type { HitlApprovalPayload } from "../workflow/hitl-service";
 import {
@@ -22,19 +28,13 @@ import {
 } from "../workflow/process-config";
 import { setWorkflowState } from "../workflow/workflow-state-machine";
 import {
-  evaluateDeliveryVerdict,
-  getRuntimeSqlite,
-  loadScenarioRuntimeSnapshot,
-  persistDeliveryVerdict,
-} from "../policy";
-import {
   completeAnalystResearchJob,
   failAnalystResearchJob,
   getAnalystResearchJob,
   pauseAnalystResearchJobForHitl,
   registerAnalystResearchJob,
 } from "./analyst-research-jobs";
-import { RESEARCH_TEAM_SLOT_SET, runAnalystTeam, type AnalystTeamResult } from "./analyst-team";
+import { type AnalystTeamResult, RESEARCH_TEAM_SLOT_SET, runAnalystTeam } from "./analyst-team";
 
 export type ParsedResearchTeamExecute = {
   jobId: string;
@@ -135,8 +135,8 @@ export function buildParsedResearchTeamFromToolParams(input: {
 }): ParsedResearchTeamExecute {
   const pr = input.params;
   const inbound = input.inboundPayload ?? {};
-  const ticker = String(pr.ticker ?? inbound["ticker"] ?? "").trim() || "UNKNOWN";
-  const scopeRaw = pr.scope ?? inbound["scope"];
+  const ticker = String(pr.ticker ?? inbound.ticker ?? "").trim() || "UNKNOWN";
+  const scopeRaw = pr.scope ?? inbound.scope;
   const scope =
     scopeRaw && typeof scopeRaw === "object" && !Array.isArray(scopeRaw)
       ? (scopeRaw as ResearchScopeInput)
@@ -156,7 +156,7 @@ export function buildParsedResearchTeamFromToolParams(input: {
       ? defIdsRaw.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
       : undefined;
 
-  const context = String(pr.context ?? inbound["goal"] ?? "").trim() || undefined;
+  const context = String(pr.context ?? inbound.goal ?? "").trim() || undefined;
 
   return {
     jobId: input.jobId ?? randomUUID(),

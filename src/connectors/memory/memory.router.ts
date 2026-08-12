@@ -1,7 +1,7 @@
 import type { MemoryFilters, MemoryMetadata, MemoryRecord } from "../../types/connector";
 import type { MemoryWriteMode } from "../../types/entities";
-import { nativeMemoryConnector } from "./native/native.memory.connector";
 import type { BaseMemoryConnector } from "./memory.connector";
+import { nativeMemoryConnector } from "./native/native.memory.connector";
 
 export interface MemoryRouterConfig {
   writeMode: MemoryWriteMode;
@@ -58,11 +58,7 @@ export class MemoryRouter {
     }
   }
 
-  async search(
-    query: string,
-    filters: MemoryFilters,
-    topK: number
-  ): Promise<MemoryRecord[]> {
+  async search(query: string, filters: MemoryFilters, topK: number): Promise<MemoryRecord[]> {
     const { writeMode, externalConnector } = this.config;
 
     if (writeMode !== "native_only" && externalConnector) {

@@ -5,11 +5,7 @@ import {
 } from "../orchestration/topology-dispatch";
 import { listRegisteredBuiltinTools } from "./builtin-tools";
 import { TOOL_CONNECTOR_ROUTES } from "./tool-routes";
-import type {
-  ToolCatalogCategory,
-  ToolCatalogEntry,
-  ToolLifecycle,
-} from "./types";
+import type { ToolCatalogCategory, ToolCatalogEntry, ToolLifecycle } from "./types";
 
 type ToolMetaEntry = {
   description: string;
@@ -25,25 +21,23 @@ type ToolMetaEntry = {
 };
 
 /** 工具分类（配置中心 hover / 筛选） */
-export const TOOL_CATALOG_CATEGORIES: Record<
-  ToolCatalogCategory,
-  { label: string; hint: string }
-> = {
-  orchestration: {
-    label: "编排协作",
-    hint: "任务拆解、派单、团队分析、信号融合",
-  },
-  market: { label: "行情数据", hint: "K 线、Tick、快照、财务数据代理" },
-  research: { label: "量化研究", hint: "因子、指标、形态、估值、实验" },
-  backtest: { label: "回测验证", hint: "历史回测与任务状态查询" },
-  trading: { label: "交易执行", hint: "下单、撤单、成交、纸交易" },
-  risk: { label: "风控合规", hint: "风险评估、签核、集中度与流动性" },
-  sentiment: { label: "舆情事件", hint: "新闻、情绪、事件抽取" },
-  macro: { label: "宏观策略", hint: "宏观指标与政策框架" },
-  memory: { label: "记忆知识", hint: "跨会话记忆读写" },
-  audit: { label: "审计报告", hint: "留痕与报告生成" },
-  exec: { label: "命令执行", hint: "本地 CLI 工具 + 外部 agentic CLI 子代理" },
-};
+export const TOOL_CATALOG_CATEGORIES: Record<ToolCatalogCategory, { label: string; hint: string }> =
+  {
+    orchestration: {
+      label: "编排协作",
+      hint: "任务拆解、派单、团队分析、信号融合",
+    },
+    market: { label: "行情数据", hint: "K 线、Tick、快照、财务数据代理" },
+    research: { label: "量化研究", hint: "因子、指标、形态、估值、实验" },
+    backtest: { label: "回测验证", hint: "历史回测与任务状态查询" },
+    trading: { label: "交易执行", hint: "下单、撤单、成交、纸交易" },
+    risk: { label: "风控合规", hint: "风险评估、签核、集中度与流动性" },
+    sentiment: { label: "舆情事件", hint: "新闻、情绪、事件抽取" },
+    macro: { label: "宏观策略", hint: "宏观指标与政策框架" },
+    memory: { label: "记忆知识", hint: "跨会话记忆读写" },
+    audit: { label: "审计报告", hint: "留痕与报告生成" },
+    exec: { label: "命令执行", hint: "本地 CLI 工具 + 外部 agentic CLI 子代理" },
+  };
 
 /**
  * Removed from the global/model-visible surface. Dispatch aliases may remain
@@ -269,8 +263,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     category: "market",
     lifecycle: "deprecated",
     replacedBy: "fetch_klines",
-    deprecationReason:
-      "与 fetch_klines 是同一接口的两个名字，统一使用 fetch_klines",
+    deprecationReason: "与 fetch_klines 是同一接口的两个名字，统一使用 fetch_klines",
   },
   fetch_klines: {
     description:
@@ -298,8 +291,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     category: "market",
   },
   fetch_order_book: {
-    description:
-      "拉取标准化买卖盘口；CN 当前支持东财五档，CRYPTO 支持 Binance 深度",
+    description: "拉取标准化买卖盘口；CN 当前支持东财五档，CRYPTO 支持 Binance 深度",
     category: "market",
   },
   fetch_trades: {
@@ -307,8 +299,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     category: "market",
   },
   fetch_chip_distribution: {
-    description:
-      "拉取 A 股筹码分布：获利比例、平均成本、70%/90% 成本区间及集中度",
+    description: "拉取 A 股筹码分布：获利比例、平均成本、70%/90% 成本区间及集中度",
     category: "market",
   },
   fetch_price_data: {
@@ -316,8 +307,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     category: "market",
   },
   fetch_financial_data: {
-    description:
-      "[Retired] 价格统计与基本面混合入口；改用 fetch_klines + fetch_fundamentals",
+    description: "[Retired] 价格统计与基本面混合入口；改用 fetch_klines + fetch_fundamentals",
     category: "market",
     lifecycle: "deprecated",
     replacedBy: "fetch_fundamentals",
@@ -445,8 +435,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     description: "从文本抽取结构化事件（简化 stub）",
     category: "sentiment",
     lifecycle: "stub",
-    deprecationReason:
-      "返回与输入文本无关的硬编码事件，未对接 NER/事件抽取服务",
+    deprecationReason: "返回与输入文本无关的硬编码事件，未对接 NER/事件抽取服务",
   },
   score_sentiment: {
     description: "对单条文本做情绪打分",
@@ -483,21 +472,18 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     description: "预览过期记忆清理（TTL）",
     category: "memory",
     lifecycle: "stub",
-    deprecationReason:
-      "仅返回预览，未真正执行清理；后台 ttl-sweeper 已自动处理",
+    deprecationReason: "仅返回预览，未真正执行清理；后台 ttl-sweeper 已自动处理",
   },
   "memory.summarize_workflow": {
     description: "主动归纳当前工作流为 midterm（通常 workflow 结束自动触发）",
     category: "memory",
   },
   "memory.consolidate_longterm": {
-    description:
-      "把多条 midterm 提炼为 longterm（factor_archive / regime / playbook 等）",
+    description: "把多条 midterm 提炼为 longterm（factor_archive / regime / playbook 等）",
     category: "memory",
   },
   "memory.refresh_workspace": {
-    description:
-      "把当前 Agent 的长期记忆同步到 workspace/memory.md（让用户可见）",
+    description: "把当前 Agent 的长期记忆同步到 workspace/memory.md（让用户可见）",
     category: "memory",
   },
 
@@ -512,13 +498,11 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     category: "memory",
   },
   "skill.list": {
-    description:
-      "列出当前项目的全部 skill（默认排除 archived；可传 state 过滤）",
+    description: "列出当前项目的全部 skill（默认排除 archived；可传 state 过滤）",
     category: "memory",
   },
   "skill.search": {
-    description:
-      "按关键词检索 skill（pinned > 当前 def > 近期使用 > 命中次数 加权）",
+    description: "按关键词检索 skill（pinned > 当前 def > 近期使用 > 命中次数 加权）",
     category: "memory",
   },
   "skill.patch": {
@@ -527,8 +511,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     category: "memory",
   },
   "skill.archive": {
-    description:
-      "软删（state=archived，可通过 skill.patch state=active 恢复）；从不物理删除",
+    description: "软删（state=archived，可通过 skill.patch state=active 恢复）；从不物理删除",
     category: "memory",
   },
   "skill.use_record": {
@@ -537,8 +520,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     category: "memory",
   },
   "skill.import_market": {
-    description:
-      "把已 install 的 open_skill_market 条目镜像到 agent_skill，统一走 skill 检索",
+    description: "把已 install 的 open_skill_market 条目镜像到 agent_skill，统一走 skill 检索",
     category: "memory",
   },
 
@@ -577,22 +559,18 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     category: "research",
   },
   "factor.evaluate": {
-    description:
-      "评估因子（IC/RankIC/IR/衰减/换手），结果写 factor_evaluation 留痕",
+    description: "评估因子（IC/RankIC/IR/衰减/换手），结果写 factor_evaluation 留痕",
     category: "research",
     lifecycle: "deprecated",
     replacedBy: "factor.autoEvaluate",
-    deprecationReason:
-      "factor.autoEvaluate 已包含 evaluate 能力且自动接入市场数据",
+    deprecationReason: "factor.autoEvaluate 已包含 evaluate 能力且自动接入市场数据",
   },
   "rule.register": {
-    description:
-      "注册规则（落 rule_definition；走 RuleEngineProvider.parse 校验 DSL）",
+    description: "注册规则（落 rule_definition；走 RuleEngineProvider.parse 校验 DSL）",
     category: "research",
   },
   "rule.evaluate": {
-    description:
-      "执行规则（走 RuleEngineProvider.evaluate；写 rule_evaluation_log 留痕）",
+    description: "执行规则（走 RuleEngineProvider.evaluate；写 rule_evaluation_log 留痕）",
     category: "research",
   },
   "strategy.create_version": {
@@ -625,8 +603,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     category: "research",
   },
   "strategy.verify": {
-    description:
-      "strategy.compile 的别名：验证 Strategy API V2 源码能否编译为 Manifest。",
+    description: "strategy.compile 的别名：验证 Strategy API V2 源码能否编译为 Manifest。",
     category: "research",
   },
   "strategy.contract_backtest": {
@@ -680,8 +657,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
 
   // M6：Agent 直通量化工坊
   "factor.list": {
-    description:
-      "列出项目下因子（支持 category / status 过滤），用于 Agent 自助查询可用因子池",
+    description: "列出项目下因子（支持 category / status 过滤），用于 Agent 自助查询可用因子池",
     category: "research",
   },
   "factor.autoEvaluate": {
@@ -760,7 +736,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
 function metaFor(
   name: string,
   kind: ToolCatalogEntry["kind"],
-  connector?: string,
+  connector?: string
 ): ToolCatalogEntry {
   if (isTopologyTeamTool(name)) {
     const role = parseRoleFromTopologyTeamTool(name);
@@ -774,21 +750,17 @@ function metaFor(
   const m = TOOL_META[name];
   const description =
     m?.description ??
-    (kind === "connector" && connector
-      ? `经 ${connector} 连接器执行`
-      : "内置工具");
+    (kind === "connector" && connector ? `经 ${connector} 连接器执行` : "内置工具");
   const entry: ToolCatalogEntry = {
     name,
     kind,
     description,
-    category:
-      m?.category ?? (kind === "connector" ? "market" : "orchestration"),
+    category: m?.category ?? (kind === "connector" ? "market" : "orchestration"),
   };
   if (connector !== undefined) entry.connector = connector;
   if (m?.lifecycle !== undefined) entry.lifecycle = m.lifecycle;
   if (m?.replacedBy !== undefined) entry.replacedBy = m.replacedBy;
-  if (m?.deprecationReason !== undefined)
-    entry.deprecationReason = m.deprecationReason;
+  if (m?.deprecationReason !== undefined) entry.deprecationReason = m.deprecationReason;
   return entry;
 }
 
@@ -843,11 +815,7 @@ export function resolveToolAlias(name: string): {
   replacedBy?: string;
 } {
   const meta = TOOL_META[name];
-  if (
-    meta?.lifecycle === "deprecated" &&
-    meta.replacedBy &&
-    meta.resolveAlias !== false
-  ) {
+  if (meta?.lifecycle === "deprecated" && meta.replacedBy && meta.resolveAlias !== false) {
     const target = TOOL_META[meta.replacedBy];
     // 防御：target 必须存在且本身不是 deprecated（避免链式跳转）
     if (target && target.lifecycle !== "deprecated") {

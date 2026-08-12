@@ -2,7 +2,7 @@
  * Load ScenarioRecipe JSON from crates/qubit-policy/recipes/ (single source of truth).
  * Maps snake_case wire format → camelCase ScenarioRecipe used by TS runtime.
  */
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
@@ -27,9 +27,7 @@ const TS_RECIPE_FILES = [
 
 function findRecipesDir(): string {
   const here =
-    typeof import.meta.dir === "string"
-      ? import.meta.dir
-      : dirname(fileURLToPath(import.meta.url));
+    typeof import.meta.dir === "string" ? import.meta.dir : dirname(fileURLToPath(import.meta.url));
   const candidates = [
     resolve(process.cwd(), "crates/qubit-policy/recipes"),
     resolve(here, "../../../../crates/qubit-policy/recipes"),
@@ -57,8 +55,7 @@ function mapStallBudget(raw: Record<string, unknown>): StallBudget {
     keyRaw === "tool" || keyRaw === "tool_market" || keyRaw === "tool_fingerprint"
       ? keyRaw
       : "tool_fingerprint";
-  const onExceed =
-    raw.on_exceed === "inject_recovery" ? "inject_recovery" : "strip_from_surface";
+  const onExceed = raw.on_exceed === "inject_recovery" ? "inject_recovery" : "strip_from_surface";
   return {
     tools: asStringArray(raw.tools),
     key,

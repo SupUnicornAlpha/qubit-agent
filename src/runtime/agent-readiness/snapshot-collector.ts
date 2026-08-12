@@ -10,15 +10,12 @@
 
 import type { Database } from "bun:sqlite";
 import { getDb, getSqliteForTesting } from "../../db/sqlite/client";
+import type { ReadinessSnapshot } from "./grader";
+import { type JudgeClient, collectContentJudge } from "./quality/content-judge";
 import { collectContentQuality } from "./quality/content-quality";
-import { collectToolQuality } from "./quality/tool-quality";
 import { collectLlmQuality } from "./quality/llm-quality";
 import { collectOrchestrationQuality } from "./quality/orchestration-quality";
-import {
-  collectContentJudge,
-  type JudgeClient,
-} from "./quality/content-judge";
-import type { ReadinessSnapshot } from "./grader";
+import { collectToolQuality } from "./quality/tool-quality";
 import type { ScenarioRecipe } from "./scenarios";
 
 export interface CollectSnapshotInput {
@@ -88,7 +85,7 @@ function metricLegacyT3(sqlite: Database, workflowRunId: string): number {
 function metricLegacyT6(sqlite: Database, workflowRunId: string): number {
   const row = sqlite
     .prepare(
-      `SELECT COALESCE(SUM(total_tokens), 0) AS sum FROM llm_call_log WHERE workflow_run_id = ?`
+      "SELECT COALESCE(SUM(total_tokens), 0) AS sum FROM llm_call_log WHERE workflow_run_id = ?"
     )
     .get(workflowRunId) as { sum: number };
   return Number(row.sum ?? 0);
@@ -160,17 +157,13 @@ function metricUserResponseProjection(sqlite: Database, workflowRunId: string): 
 
 // ── 主入口 ─────────────────────────────────────────────────────────────────
 
-export async function collectSnapshot(
-  input: CollectSnapshotInput
-): Promise<ReadinessSnapshot> {
+export async function collectSnapshot(input: CollectSnapshotInput): Promise<ReadinessSnapshot> {
   await getDb();
   const sqlite = getSqliteForTesting();
 
   const wf = readWorkflow(sqlite, input.workflowRunId);
   if (!wf) {
-    throw new Error(
-      `[snapshot-collector] workflow_run not found: ${input.workflowRunId}`
-    );
+    throw new Error(`[snapshot-collector] workflow_run not found: ${input.workflowRunId}`);
   }
 
   // A 类（无需 LLM 部分）
@@ -193,9 +186,7 @@ export async function collectSnapshot(
     ? await collectContentJudge(sqlite, input.judgeClient, {
         workflowRunId: input.workflowRunId,
         scenario: input.scenario,
-        ...(input.judgeMaxArtifacts !== undefined
-          ? { maxArtifacts: input.judgeMaxArtifacts }
-          : {}),
+        ...(input.judgeMaxArtifacts !== undefined ? { maxArtifacts: input.judgeMaxArtifacts } : {}),
       })
     : { "A-3": null, details: { judged: [], failed: [] } };
 

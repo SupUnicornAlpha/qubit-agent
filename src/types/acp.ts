@@ -16,7 +16,12 @@ export const AcpRequestSchema = z.object({
   sessionId: z.string(),
   workflowId: z.string(),
   senderAgent: z.string(),
-  targetKind: z.enum(["skill", "mcp", "tool", "connector"] as const satisfies readonly ConnectorTargetKind[]),
+  targetKind: z.enum([
+    "skill",
+    "mcp",
+    "tool",
+    "connector",
+  ] as const satisfies readonly ConnectorTargetKind[]),
   targetName: z.string(),
   intent: z.string(),
   inputSchemaVersion: z.string().default("1.0"),

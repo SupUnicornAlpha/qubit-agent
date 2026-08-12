@@ -154,9 +154,9 @@ describe("builtin tool.report_gap", () => {
         )
       );
     expect(rows.length).toBe(1);
-    expect(rows[0]!.detectionKind).toBe("explicit_report");
-    expect(rows[0]!.definitionId).toBe(fx.definitionId);
-    expect(rows[0]!.workflowRunId).toBe(fx.workflowRunId);
+    expect(rows[0]?.detectionKind).toBe("explicit_report");
+    expect(rows[0]?.definitionId).toBe(fx.definitionId);
+    expect(rows[0]?.workflowRunId).toBe(fx.workflowRunId);
   });
 
   test("serverName + toolName → mcp:<srv>/<tool> 签名", async () => {

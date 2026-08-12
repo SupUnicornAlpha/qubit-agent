@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
+import { config } from "../../config";
 import type { BarData, FetchBarsParams } from "../../connectors/data/data.connector";
 import { PythonConnectorBridgeImpl } from "../../connectors/python-bridge";
-import { config } from "../../config";
-import type { BuiltinConnectorInitConfigs } from "../config/builtin-connector-settings";
 import { getPythonConnectorsDir, resolvePythonBin } from "../app-paths";
+import type { BuiltinConnectorInitConfigs } from "../config/builtin-connector-settings";
 
 export interface WindSessionStatus {
   connected: boolean;
@@ -33,9 +33,7 @@ function connectorRunnerPath(): string {
   return join(pythonConnectorsDir(), "connector_runner.py");
 }
 
-export function windConfigFromSettings(
-  settings: BuiltinConnectorInitConfigs
-): WindInitConfig {
+export function windConfigFromSettings(settings: BuiltinConnectorInitConfigs): WindInitConfig {
   const data = (settings["qubit-data"] ?? {}) as Record<string, unknown>;
   const username =
     typeof data.windUsername === "string" && data.windUsername.trim()

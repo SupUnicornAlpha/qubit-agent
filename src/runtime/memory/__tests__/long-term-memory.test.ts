@@ -6,12 +6,11 @@ import {
   resolveFsWorkspaceIdFromLoopOptions,
   resolveFsWorkspaceIdFromParams,
 } from "../fs-workspace-id";
-import {
-  projectedFsEntryId,
-  shouldProjectExperienceToFs,
-} from "../project-experience-to-fs";
+import { projectedFsEntryId, shouldProjectExperienceToFs } from "../project-experience-to-fs";
 
-function makeExp(partial: Partial<Experience> & Pick<Experience, "kind" | "contentJson">): Experience {
+function makeExp(
+  partial: Partial<Experience> & Pick<Experience, "kind" | "contentJson">
+): Experience {
   return {
     id: partial.id ?? "e1",
     kind: partial.kind,

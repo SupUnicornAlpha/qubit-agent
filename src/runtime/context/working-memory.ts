@@ -3,8 +3,8 @@
  * GraphState 一等字段的创建 / 工具结果更新 / Prompt 渲染。
  */
 
-import { incContextMetric } from "./context-metrics";
 import { isWorkingMemorySummarizeEnabled } from "./axioms";
+import { incContextMetric } from "./context-metrics";
 import type { WorkingMemory, WorkingMemoryFinanceRefs } from "./types";
 
 export function createEmptyWorkingMemory(now = new Date()): WorkingMemory {
@@ -19,9 +19,7 @@ export function createEmptyWorkingMemory(now = new Date()): WorkingMemory {
   };
 }
 
-export function ensureWorkingMemory(
-  wm: WorkingMemory | null | undefined
-): WorkingMemory {
+export function ensureWorkingMemory(wm: WorkingMemory | null | undefined): WorkingMemory {
   if (wm && wm.version === 1 && Array.isArray(wm.trailStub)) return wm;
   // 迁移期：可读 contextMemory.working
   return createEmptyWorkingMemory();
@@ -68,10 +66,10 @@ export function extractFinanceRefsFromPayload(
       const id = val.trim();
       if (seen[key].has(id)) return;
       seen[key].add(id);
-      if (key === "f") out.factorIds!.push(id);
-      if (key === "c") out.compositionIds!.push(id);
-      if (key === "e") out.evaluationIds!.push(id);
-      if (key === "s") out.symbols!.push(id);
+      if (key === "f") out.factorIds?.push(id);
+      if (key === "c") out.compositionIds?.push(id);
+      if (key === "e") out.evaluationIds?.push(id);
+      if (key === "s") out.symbols?.push(id);
     };
     push("f", o.factorId ?? o.factor_id);
     push("c", o.compositionId ?? o.composition_id);
@@ -149,7 +147,9 @@ export function renderWorkingMemoryForPrompt(wm: WorkingMemory | null | undefine
     lines.push("- hypotheses:");
     for (const h of m.hypotheses.slice(0, 6)) {
       const conf = h.confidence != null ? ` conf=${h.confidence.toFixed(2)}` : "";
-      lines.push(`  - [${h.status}${h.stance ? `/${h.stance}` : ""}] ${h.text.slice(0, 160)}${conf}`);
+      lines.push(
+        `  - [${h.status}${h.stance ? `/${h.stance}` : ""}] ${h.text.slice(0, 160)}${conf}`
+      );
     }
   }
 

@@ -13,8 +13,8 @@
  */
 
 import { runMigrations } from "../db/sqlite/migrate";
-import { SkillEvolverWatcher } from "../runtime/skill-evolver-watcher/watcher";
 import type { WatcherTickSummary } from "../runtime/skill-evolver-watcher/types";
+import { SkillEvolverWatcher } from "../runtime/skill-evolver-watcher/watcher";
 
 interface CliArgs {
   projectId?: string;

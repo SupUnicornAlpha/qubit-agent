@@ -1,21 +1,24 @@
+import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Database } from "bun:sqlite";
-import { describe, expect, test } from "bun:test";
+import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
-import { eq } from "drizzle-orm";
 import * as schema from "../../db/sqlite/schema";
-import { createOrderIntentWithExecution } from "./order-intent-service";
 import { processExecutionTasks } from "./execution-worker";
+import { createOrderIntentWithExecution } from "./order-intent-service";
 
 describe("execution pipeline (memory sqlite)", () => {
   test("allows intent and paper-fills through worker", async () => {
     const sqlite = new Database(":memory:");
     sqlite.exec("PRAGMA foreign_keys=ON;");
     const db = drizzle(sqlite, { schema });
-    const migrationsFolder = join(dirname(fileURLToPath(import.meta.url)), "../../db/sqlite/migrations");
+    const migrationsFolder = join(
+      dirname(fileURLToPath(import.meta.url)),
+      "../../db/sqlite/migrations"
+    );
     await migrate(db, { migrationsFolder });
 
     const wid = randomUUID();
@@ -100,7 +103,10 @@ describe("execution pipeline (memory sqlite)", () => {
 
     await processExecutionTasks(db);
 
-    const tasks = await db.select().from(schema.executionTask).where(eq(schema.executionTask.id, created.executionTaskId!));
+    const tasks = await db
+      .select()
+      .from(schema.executionTask)
+      .where(eq(schema.executionTask.id, created.executionTaskId!));
     expect(tasks[0]?.status).toBe("filled");
 
     const orders = await db
@@ -120,7 +126,10 @@ describe("execution pipeline (memory sqlite)", () => {
     const sqlite = new Database(":memory:");
     sqlite.exec("PRAGMA foreign_keys=ON;");
     const db = drizzle(sqlite, { schema });
-    const migrationsFolder = join(dirname(fileURLToPath(import.meta.url)), "../../db/sqlite/migrations");
+    const migrationsFolder = join(
+      dirname(fileURLToPath(import.meta.url)),
+      "../../db/sqlite/migrations"
+    );
     await migrate(db, { migrationsFolder });
 
     const wid = randomUUID();
@@ -200,7 +209,10 @@ describe("execution pipeline (memory sqlite)", () => {
 
     await processExecutionTasks(db);
 
-    const tasks = await db.select().from(schema.executionTask).where(eq(schema.executionTask.id, created.executionTaskId!));
+    const tasks = await db
+      .select()
+      .from(schema.executionTask)
+      .where(eq(schema.executionTask.id, created.executionTaskId!));
     expect(tasks[0]?.status).toBe("rejected");
   });
 
@@ -208,7 +220,10 @@ describe("execution pipeline (memory sqlite)", () => {
     const sqlite = new Database(":memory:");
     sqlite.exec("PRAGMA foreign_keys=ON;");
     const db = drizzle(sqlite, { schema });
-    const migrationsFolder = join(dirname(fileURLToPath(import.meta.url)), "../../db/sqlite/migrations");
+    const migrationsFolder = join(
+      dirname(fileURLToPath(import.meta.url)),
+      "../../db/sqlite/migrations"
+    );
     await migrate(db, { migrationsFolder });
 
     const workspaceId = randomUUID();
@@ -280,7 +295,10 @@ describe("execution pipeline (memory sqlite)", () => {
     const sqlite = new Database(":memory:");
     sqlite.exec("PRAGMA foreign_keys=ON;");
     const db = drizzle(sqlite, { schema });
-    const migrationsFolder = join(dirname(fileURLToPath(import.meta.url)), "../../db/sqlite/migrations");
+    const migrationsFolder = join(
+      dirname(fileURLToPath(import.meta.url)),
+      "../../db/sqlite/migrations"
+    );
     await migrate(db, { migrationsFolder });
 
     const workspaceId = randomUUID();
@@ -291,22 +309,48 @@ describe("execution pipeline (memory sqlite)", () => {
     const instrumentId = randomUUID();
     await db.insert(schema.workspace).values({ id: workspaceId, name: "w", owner: "t" });
     await db.insert(schema.project).values({
-      id: projectId, workspaceId, name: "p", marketScope: "US", status: "active",
+      id: projectId,
+      workspaceId,
+      name: "p",
+      marketScope: "US",
+      status: "active",
     });
     await db.insert(schema.workflowRun).values({
-      id: workflowRunId, projectId, goal: "stop", mode: "simulation", source: "api", status: "running",
+      id: workflowRunId,
+      projectId,
+      goal: "stop",
+      mode: "simulation",
+      source: "api",
+      status: "running",
     });
     await db.insert(schema.strategy).values({
-      id: strategyId, projectId, name: "s", style: "low_freq", description: "",
+      id: strategyId,
+      projectId,
+      name: "s",
+      style: "low_freq",
+      description: "",
     });
     await db.insert(schema.strategyVersion).values({
-      id: strategyVersionId, strategyId, versionTag: "v1", logicHash: "stop", paramSchemaJson: {},
+      id: strategyVersionId,
+      strategyId,
+      versionTag: "v1",
+      logicHash: "stop",
+      paramSchemaJson: {},
     });
     await db.insert(schema.instrument).values({
-      id: instrumentId, symbol: "STOP", assetClass: "stock", exchange: "NYSE", metaJson: {},
+      id: instrumentId,
+      symbol: "STOP",
+      assetClass: "stock",
+      exchange: "NYSE",
+      metaJson: {},
     });
     await db.insert(schema.dailyMarkPrice).values({
-      id: randomUUID(), market: "US", symbol: "STOP", tradingDay: "2026-07-10", close: 96, source: "test",
+      id: randomUUID(),
+      market: "US",
+      symbol: "STOP",
+      tradingDay: "2026-07-10",
+      close: 96,
+      source: "test",
     });
 
     const created = await createOrderIntentWithExecution(db, {
@@ -323,16 +367,30 @@ describe("execution pipeline (memory sqlite)", () => {
       timeInForce: "gtc",
     });
     await processExecutionTasks(db, new Date("2026-07-10T20:00:00Z"));
-    let tasks = await db.select().from(schema.executionTask).where(eq(schema.executionTask.id, created.executionTaskId!));
+    let tasks = await db
+      .select()
+      .from(schema.executionTask)
+      .where(eq(schema.executionTask.id, created.executionTaskId!));
     expect(tasks[0]?.status).toBe("conditional_wait");
 
     await db.insert(schema.dailyMarkPrice).values({
-      id: randomUUID(), market: "US", symbol: "STOP", tradingDay: "2026-07-11", close: 94, source: "test",
+      id: randomUUID(),
+      market: "US",
+      symbol: "STOP",
+      tradingDay: "2026-07-11",
+      close: 94,
+      source: "test",
     });
     await processExecutionTasks(db, new Date("2026-07-11T20:00:00Z"));
-    tasks = await db.select().from(schema.executionTask).where(eq(schema.executionTask.id, created.executionTaskId!));
+    tasks = await db
+      .select()
+      .from(schema.executionTask)
+      .where(eq(schema.executionTask.id, created.executionTaskId!));
     expect(tasks[0]?.status).toBe("filled");
-    const intents = await db.select().from(schema.orderIntent).where(eq(schema.orderIntent.id, created.orderIntentId));
+    const intents = await db
+      .select()
+      .from(schema.orderIntent)
+      .where(eq(schema.orderIntent.id, created.orderIntentId));
     expect(intents[0]?.activationStatus).toBe("triggered");
     expect(intents[0]?.lifecycleStatus).toBe("filled");
     expect(intents[0]?.price).toBe(94);

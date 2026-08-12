@@ -1,8 +1,8 @@
 import { desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import {
-  alertEvent,
   agentInstance,
+  alertEvent,
   workflowQualitySnapshot,
   workflowRun,
 } from "../../db/sqlite/schema";
@@ -72,10 +72,7 @@ export async function getMonitorSummary(input?: {
 
   const window24hStart = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const completed24h = recent.filter(
-    (w) =>
-      w.status === "completed" &&
-      w.endedAt &&
-      w.endedAt >= window24hStart
+    (w) => w.status === "completed" && w.endedAt && w.endedAt >= window24hStart
   ).length;
   const failed24h = recent.filter(
     (w) => w.status === "failed" && w.endedAt && w.endedAt >= window24hStart

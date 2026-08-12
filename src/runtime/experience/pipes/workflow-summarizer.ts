@@ -27,12 +27,7 @@
 
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "../../../db/sqlite/client";
-import {
-  agentDefinition,
-  agentInstance,
-  agentStep,
-  workflowRun,
-} from "../../../db/sqlite/schema";
+import { agentDefinition, agentInstance, agentStep, workflowRun } from "../../../db/sqlite/schema";
 import type { ExperienceBus } from "../experience-bus";
 import type { ExperienceStore } from "../experience-store";
 
@@ -212,8 +207,8 @@ async function summarizeOnceInternal(
 
   try {
     const writeScope = ctx.fsWorkspaceId?.trim()
-      ? ({ scope: "workspace" as const, scopeId: ctx.fsWorkspaceId.trim() })
-      : ({ scope: "project" as const, scopeId: ctx.projectId });
+      ? { scope: "workspace" as const, scopeId: ctx.fsWorkspaceId.trim() }
+      : { scope: "project" as const, scopeId: ctx.projectId };
     const inserted = await opts.store.insert({
       kind: "semantic",
       subKind: "workflow_summary",
@@ -288,13 +283,13 @@ export function buildSummaryPrompt(ctx: SummarizerWorkflowContext): {
     `- 步数：${ctx.stepCount}`,
     `- 起止：${ctx.startedAt} → ${ctx.endedAt ?? "n/a"}`,
     "",
-    `## 目标`,
+    "## 目标",
     ctx.goal.slice(0, 800),
     "",
     `## 最后 ${MAX_STEPS_FOR_PROMPT} 步素材（reason + final_answer 摘要）`,
     stepsBlock || "[no_steps]",
     "",
-    `## 输出要求`,
+    "## 输出要求",
     SUMMARY_SCHEMA_HINT,
   ].join("\n");
   return { system: SUMMARY_SYSTEM_PROMPT, user };
@@ -307,12 +302,15 @@ export function parseSummaryJson(raw: string): ParsedSummary | null {
   const blob = m?.[1]?.trim() ?? raw.trim();
   try {
     const obj = JSON.parse(blob) as Record<string, unknown>;
-    const goalRecap = String(obj["goal_recap"] ?? "").trim();
+    const goalRecap = String(obj.goal_recap ?? "").trim();
     if (!goalRecap) return null;
     const asArr = (k: string): string[] => {
       const v = obj[k];
       if (!Array.isArray(v)) return [];
-      return v.filter((s): s is string => typeof s === "string").map((s) => s.trim()).filter(Boolean);
+      return v
+        .filter((s): s is string => typeof s === "string")
+        .map((s) => s.trim())
+        .filter(Boolean);
     };
     return {
       goalRecap,
@@ -320,8 +318,8 @@ export function parseSummaryJson(raw: string): ParsedSummary | null {
       artifacts: asArr("artifacts"),
       lessons: asArr("lessons"),
       followups: asArr("followups"),
-      ...(parseFinanceRefs(obj["finance_refs"])
-        ? { financeRefs: parseFinanceRefs(obj["finance_refs"])! }
+      ...(parseFinanceRefs(obj.finance_refs)
+        ? { financeRefs: parseFinanceRefs(obj.finance_refs)! }
         : {}),
     };
   } catch {
@@ -342,7 +340,7 @@ function parseFinanceRefs(raw: unknown): ParsedSummary["financeRefs"] | null {
     ? asIds("composition_ids")
     : asIds("compositionIds");
   const symbols = asIds("symbols");
-  const asof = typeof o["asof"] === "string" ? o["asof"] : undefined;
+  const asof = typeof o.asof === "string" ? o.asof : undefined;
   if (!factorIds.length && !compositionIds.length && !symbols.length && !asof) return null;
   return {
     ...(factorIds.length ? { factorIds } : {}),
@@ -354,22 +352,22 @@ function parseFinanceRefs(raw: unknown): ParsedSummary["financeRefs"] | null {
 
 function renderSummaryBody(parsed: ParsedSummary, ctx: SummarizerWorkflowContext): string {
   return [
-    `## Goal`,
+    "## Goal",
     parsed.goalRecap,
     "",
-    `## Key Findings`,
+    "## Key Findings",
     parsed.keyFindings.map((s) => `- ${s}`).join("\n") || "(none)",
     "",
-    `## Artifacts`,
+    "## Artifacts",
     parsed.artifacts.map((s) => `- ${s}`).join("\n") || "(none)",
     "",
-    `## Lessons`,
+    "## Lessons",
     parsed.lessons.map((s) => `- ${s}`).join("\n") || "(none)",
     "",
-    `## Followups`,
+    "## Followups",
     parsed.followups.map((s) => `- ${s}`).join("\n") || "(none)",
     "",
-    `---`,
+    "---",
     `mode=${ctx.mode} · roles=${ctx.rolesInvolved.join(",")} · steps=${ctx.stepCount}`,
   ].join("\n");
 }
@@ -459,7 +457,8 @@ export const sqliteSummarizerLoader: SummarizerLoader = {
         goal: wf.goal ?? "",
         mode: wf.mode ?? "",
         startedAt: wf.startedAt instanceof Date ? wf.startedAt.toISOString() : String(wf.startedAt),
-        endedAt: wf.endedAt instanceof Date ? wf.endedAt.toISOString() : (wf.endedAt as string | null),
+        endedAt:
+          wf.endedAt instanceof Date ? wf.endedAt.toISOString() : (wf.endedAt as string | null),
         recentStepsText,
         rolesInvolved,
         stepCount: stepRows.length,

@@ -1,3 +1,7 @@
+import {
+  getOrCreateMarketSnapshot,
+  isMarketSnapshotGetEnabled,
+} from "../market/contracts/market-snapshot-service";
 import { computeDateRangeForLimit, queryBarsRange } from "../market/klines-query";
 import { getMarketDataReadiness } from "../market/market-data-health";
 import { listMarketDataSources } from "../market/market-data-source-control";
@@ -5,10 +9,6 @@ import { queryMarketNewsBrief } from "../market/news-brief-query";
 import { extractSymbolArgs, requireSymbols } from "../market/normalize-symbol-args";
 import { detectRegimeFromBars } from "../market/regime";
 import { resolveTickerMarket } from "../market/resolve-ticker-market";
-import {
-  getOrCreateMarketSnapshot,
-  isMarketSnapshotGetEnabled,
-} from "../market/contracts/market-snapshot-service";
 import {
   computeBollinger,
   computeMacd,
@@ -66,8 +66,7 @@ export const MARKET_ANALYSIS_HANDLERS: Record<string, BuiltinToolHandler> = {
     const contract = isToolContractEnabled() ? getToolContract("market.snapshot.get") : undefined;
     const canonical = contract ? applyToolContract(contract, params) : params;
 
-    const snapshotId =
-      typeof canonical.snapshotId === "string" ? canonical.snapshotId.trim() : "";
+    const snapshotId = typeof canonical.snapshotId === "string" ? canonical.snapshotId.trim() : "";
     if (snapshotId) {
       return getOrCreateMarketSnapshot({ snapshotId });
     }

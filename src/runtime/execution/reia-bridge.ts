@@ -10,7 +10,10 @@ import {
   workflowRun,
 } from "../../db/sqlite/schema";
 import type { BrokerProvider } from "../../types/broker";
-import { createOrderIntentWithExecution, type CreateOrderIntentResult } from "./order-intent-service";
+import {
+  type CreateOrderIntentResult,
+  createOrderIntentWithExecution,
+} from "./order-intent-service";
 
 export interface ReiaOrderPayload {
   workflowRunId: string;
@@ -40,9 +43,13 @@ export async function resolveExecutionStrategyContext(
   db: DbClient,
   workflowRunId: string,
   symbol: string,
-  market: string,
+  market: string
 ): Promise<{ strategyVersionId: string; instrumentId: string; projectId: string }> {
-  const runs = await db.select().from(workflowRun).where(eq(workflowRun.id, workflowRunId)).limit(1);
+  const runs = await db
+    .select()
+    .from(workflowRun)
+    .where(eq(workflowRun.id, workflowRunId))
+    .limit(1);
   const run = runs[0];
   if (!run) throw new Error("workflow_run_not_found");
 
@@ -137,7 +144,7 @@ export async function createOrderIntentFromReiaPayload(
     client,
     input.workflowRunId,
     input.ticker,
-    input.market ?? "US",
+    input.market ?? "US"
   );
 
   const legacyDualWrite =

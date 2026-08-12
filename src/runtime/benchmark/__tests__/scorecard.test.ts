@@ -1,10 +1,10 @@
+import { describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, test } from "bun:test";
 import { L0_CASES, L0_SOFT_CASES, runL0SoftSuite, runL0Suite } from "../l0-suite";
+import { QUBIT_BENCH_CASES, QUBIT_BENCH_VERSION, listQubitBenchCases } from "../qubit-bench-cases";
 import { enqueueHardFailures } from "../regression-queue";
 import { scoreRunEnvelope } from "../scorecard";
-import { listQubitBenchCases, QUBIT_BENCH_CASES, QUBIT_BENCH_VERSION } from "../qubit-bench-cases";
 
 describe("qubit benchmark scorecard", () => {
   test("L0 fixtures enforce all v0.1 hard-assertion semantics", () => {
@@ -20,7 +20,7 @@ describe("qubit benchmark scorecard", () => {
   });
 
   test("soft layer is scored (not skipped) when tools are present", () => {
-    const scorecard = scoreRunEnvelope(L0_CASES[0]!.envelope);
+    const scorecard = scoreRunEnvelope(L0_CASES[0]?.envelope);
     expect(scorecard.layers.soft.status).toBe("scored");
     expect(scorecard.layers.soft.score).not.toBeNull();
     expect(scorecard.layers.soft.dimensions.some((d) => d.id === "tools")).toBe(true);
@@ -29,7 +29,7 @@ describe("qubit benchmark scorecard", () => {
 
   test("a hard failure zeros the total score and disqualifies promotion", () => {
     const scorecard = scoreRunEnvelope({
-      ...L0_CASES[8]!.envelope,
+      ...L0_CASES[8]?.envelope,
       workflowRunId: "failed-delivery",
     });
     expect(scorecard.pass).toBe(false);
@@ -39,7 +39,7 @@ describe("qubit benchmark scorecard", () => {
 
   test("missing telemetry is explicit and cannot qualify a challenger", () => {
     const envelope = {
-      ...L0_CASES[0]!.envelope,
+      ...L0_CASES[0]?.envelope,
       workflowRunId: "missing-telemetry",
     };
     delete envelope.contract;
@@ -55,7 +55,7 @@ describe("qubit benchmark scorecard", () => {
     const queuePath = join(dir, "regressions.jsonl");
     try {
       const scorecard = scoreRunEnvelope({
-        ...L0_CASES[8]!.envelope,
+        ...L0_CASES[8]?.envelope,
         suite: "production",
         workflowRunId: "production-failure",
       });

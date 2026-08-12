@@ -146,10 +146,7 @@ export class RecommendationService {
 
     // audit_log.agent_instance_id → agent_instance FK；Prime Bridge 曾用假 id
     // （inst-prime-bridge）导致「推荐已写入、工具却报 FOREIGN KEY failed」。
-    const agentInstanceId = await resolveExistingAgentInstanceId(
-      db,
-      input.agentInstanceId
-    );
+    const agentInstanceId = await resolveExistingAgentInstanceId(db, input.agentInstanceId);
 
     const id = randomUUID();
     try {

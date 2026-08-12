@@ -54,7 +54,7 @@ export class PythonOneShotError extends Error {
   constructor(
     source: PythonOneShotErrorSource,
     message: string,
-    opts?: { exitCode?: number | null; stdout?: string; stderr?: string },
+    opts?: { exitCode?: number | null; stdout?: string; stderr?: string }
   ) {
     super(message);
     this.name = "PythonOneShotError";
@@ -101,7 +101,7 @@ export interface PythonOneShotResult<R = unknown> {
  *     如果 caller 明确想要"exit !=0 但 stdout 是 ok JSON"的语义，自己 try/catch）
  */
 export async function runPythonOneShot<R = unknown>(
-  input: RunPythonOneShotInput,
+  input: RunPythonOneShotInput
 ): Promise<PythonOneShotResult<R>> {
   const timeoutMs = input.timeoutMs ?? PYTHON_ONESHOT_DEFAULT_TIMEOUT_MS;
   const cmd = [input.bin, input.scriptPath, ...(input.args ?? [])];
@@ -112,7 +112,7 @@ export async function runPythonOneShot<R = unknown>(
   } catch (err) {
     throw new PythonOneShotError(
       "spawn",
-      `failed to spawn python: ${err instanceof Error ? err.message : String(err)}`,
+      `failed to spawn python: ${err instanceof Error ? err.message : String(err)}`
     );
   }
 
@@ -129,7 +129,7 @@ export async function runPythonOneShot<R = unknown>(
     }
     throw new PythonOneShotError(
       "spawn",
-      `failed to write stdin: ${err instanceof Error ? err.message : String(err)}`,
+      `failed to write stdin: ${err instanceof Error ? err.message : String(err)}`
     );
   }
 
@@ -185,7 +185,7 @@ export async function runPythonOneShot<R = unknown>(
     throw new PythonOneShotError(
       "parse",
       `python stdout is not JSON: ${err instanceof Error ? err.message : String(err)} | head=${detail}`,
-      { exitCode, stdout, stderr },
+      { exitCode, stdout, stderr }
     );
   }
 }
@@ -196,7 +196,7 @@ export async function runPythonOneShot<R = unknown>(
  * 错误：spawn / timeout / exit !=0 抛 PythonOneShotError；exit==0 直接返回 stdout/stderr。
  */
 export async function runPythonOneShotRaw(
-  input: Omit<RunPythonOneShotInput, "stdinPayload"> & { stdinPayload?: unknown },
+  input: Omit<RunPythonOneShotInput, "stdinPayload"> & { stdinPayload?: unknown }
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   const timeoutMs = input.timeoutMs ?? PYTHON_ONESHOT_DEFAULT_TIMEOUT_MS;
   const cmd = [input.bin, input.scriptPath, ...(input.args ?? [])];
@@ -207,7 +207,7 @@ export async function runPythonOneShotRaw(
   } catch (err) {
     throw new PythonOneShotError(
       "spawn",
-      `failed to spawn python: ${err instanceof Error ? err.message : String(err)}`,
+      `failed to spawn python: ${err instanceof Error ? err.message : String(err)}`
     );
   }
 

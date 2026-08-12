@@ -25,11 +25,19 @@ export async function enqueueCompensationTask(input: {
     nextRunAt: input.nextRunAt ?? new Date().toISOString(),
     status: "pending",
   });
-  const rows = await db.select().from(workflowCompensationTask).where(eq(workflowCompensationTask.id, id)).limit(1);
+  const rows = await db
+    .select()
+    .from(workflowCompensationTask)
+    .where(eq(workflowCompensationTask.id, id))
+    .limit(1);
   return rows[0];
 }
 
-export async function listCompensationTasks(input?: { status?: string; workflowRunId?: string; limit?: number }) {
+export async function listCompensationTasks(input?: {
+  status?: string;
+  workflowRunId?: string;
+  limit?: number;
+}) {
   const db = await getDb();
   const rows = await db
     .select()
@@ -49,7 +57,12 @@ export async function processCompensationQueue(limit = 10) {
   const candidates = await db
     .select()
     .from(workflowCompensationTask)
-    .where(and(eq(workflowCompensationTask.status, "pending"), lte(workflowCompensationTask.nextRunAt, now)))
+    .where(
+      and(
+        eq(workflowCompensationTask.status, "pending"),
+        lte(workflowCompensationTask.nextRunAt, now)
+      )
+    )
     .orderBy(asc(workflowCompensationTask.nextRunAt))
     .limit(limit);
   let picked = 0;
@@ -62,7 +75,11 @@ export async function processCompensationQueue(limit = 10) {
         .update(workflowCompensationTask)
         .set({ status: "running", updatedAt: new Date().toISOString() })
         .where(eq(workflowCompensationTask.id, task.id));
-      const workflowRows = await db.select().from(workflowRun).where(eq(workflowRun.id, task.workflowRunId)).limit(1);
+      const workflowRows = await db
+        .select()
+        .from(workflowRun)
+        .where(eq(workflowRun.id, task.workflowRunId))
+        .limit(1);
       const workflow = workflowRows[0];
       if (!workflow) throw new Error("workflow not found");
       await setWorkflowState(workflow.id, "pending", { reason: "compensation-queue:retry" });
@@ -72,7 +89,12 @@ export async function processCompensationQueue(limit = 10) {
         payload: {
           taskId: randomUUID(),
           taskType: task.actionType === "resume" ? "workflow_resume" : "workflow_retry",
-          params: { workflowRunId: workflow.id, goal: workflow.goal, mode: workflow.mode, compensationTaskId: task.id },
+          params: {
+            workflowRunId: workflow.id,
+            goal: workflow.goal,
+            mode: workflow.mode,
+            compensationTaskId: task.id,
+          },
           assignedRole: "orchestrator",
         },
       });
@@ -90,7 +112,9 @@ export async function processCompensationQueue(limit = 10) {
           status: exhausted ? "failed" : "pending",
           retryCount,
           lastError: error instanceof Error ? error.message : "unknown error",
-          nextRunAt: exhausted ? task.nextRunAt : new Date(Date.now() + retryCount * 60_000).toISOString(),
+          nextRunAt: exhausted
+            ? task.nextRunAt
+            : new Date(Date.now() + retryCount * 60_000).toISOString(),
           updatedAt: new Date().toISOString(),
         })
         .where(eq(workflowCompensationTask.id, task.id));

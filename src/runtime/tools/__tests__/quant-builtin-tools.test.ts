@@ -10,13 +10,12 @@
 
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { dispatchBuiltinTool, listRegisteredBuiltinTools } from "../builtin-tools";
-import { runMigrations } from "../../../db/sqlite/migrate";
 import { getDb } from "../../../db/sqlite/client";
+import { runMigrations } from "../../../db/sqlite/migrate";
 import * as schema from "../../../db/sqlite/schema";
-import { bootstrapProviders } from "../../provider/bootstrap";
 import { factorService } from "../../factor/factor-service";
-import { discoveryService } from "../../discovery/discovery-service";
+import { bootstrapProviders } from "../../provider/bootstrap";
+import { dispatchBuiltinTool, listRegisteredBuiltinTools } from "../builtin-tools";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 
@@ -142,12 +141,12 @@ describe("Agent 量化工坊工具入口", () => {
 
     const promoted = (await dispatchBuiltinTool("discovery.promote", ctx as never, {
       job_id: job.id,
-      candidate_id: good!.id,
+      candidate_id: good?.id,
       name: `agent_promote_${randomUUID().slice(0, 6)}`,
       category: "momentum",
     })) as { id: string; expr: string };
     expect(promoted.id).toBeDefined();
-    expect(promoted.expr).toBe(good!.expr);
+    expect(promoted.expr).toBe(good?.expr);
 
     // 确认入库
     const fresh = await factorService.get(promoted.id);

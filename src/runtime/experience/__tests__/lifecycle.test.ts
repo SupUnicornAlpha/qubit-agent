@@ -1,9 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Experience } from "../../../types/entities";
-import {
-  applyLifecycleToScore,
-  inferExperienceLifecycle,
-} from "../lifecycle";
+import { applyLifecycleToScore, inferExperienceLifecycle } from "../lifecycle";
 
 function exp(partial: Partial<Experience> & Pick<Experience, "id">): Experience {
   return {
@@ -36,11 +33,11 @@ function exp(partial: Partial<Experience> & Pick<Experience, "id">): Experience 
 describe("experience lifecycle", () => {
   test("respects metadata lifecycle", () => {
     expect(
-      inferExperienceLifecycle(
-        exp({ id: "1", metadataJson: { lifecycle: "superseded" } })
-      )
+      inferExperienceLifecycle(exp({ id: "1", metadataJson: { lifecycle: "superseded" } }))
     ).toBe("superseded");
-    expect(applyLifecycleToScore(exp({ id: "1", metadataJson: { lifecycle: "archived" } }), 1)).toBeNull();
+    expect(
+      applyLifecycleToScore(exp({ id: "1", metadataJson: { lifecycle: "archived" } }), 1)
+    ).toBeNull();
   });
 
   test("demotes playbook / 人肉说明书 content", () => {

@@ -97,20 +97,21 @@ export async function getSkillsSummary(input?: {
   }
 
   return [...grouped.values()]
-    .map((acc): SkillSummaryRow => ({
-      skillId: acc.skillId,
-      skillName: acc.skillName,
-      category: acc.category,
-      totalRuns: acc.totalRuns,
-      successCount: acc.successCount,
-      failCount: acc.failCount,
-      partialCount: acc.partialCount,
-      unknownCount: acc.unknownCount,
-      successRate: acc.totalRuns > 0 ? Number((acc.successCount / acc.totalRuns).toFixed(4)) : 0,
-      avgScore:
-        acc.scoreCount > 0 ? Number((acc.scoreSum / acc.scoreCount).toFixed(4)) : null,
-      lastUsedAt: acc.lastUsedAt,
-    }))
+    .map(
+      (acc): SkillSummaryRow => ({
+        skillId: acc.skillId,
+        skillName: acc.skillName,
+        category: acc.category,
+        totalRuns: acc.totalRuns,
+        successCount: acc.successCount,
+        failCount: acc.failCount,
+        partialCount: acc.partialCount,
+        unknownCount: acc.unknownCount,
+        successRate: acc.totalRuns > 0 ? Number((acc.successCount / acc.totalRuns).toFixed(4)) : 0,
+        avgScore: acc.scoreCount > 0 ? Number((acc.scoreSum / acc.scoreCount).toFixed(4)) : null,
+        lastUsedAt: acc.lastUsedAt,
+      })
+    )
     .sort((a, b) => b.totalRuns - a.totalRuns);
 }
 

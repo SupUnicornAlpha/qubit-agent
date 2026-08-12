@@ -33,16 +33,11 @@ export function coerceConfidence01(raw: unknown, fallback = 0.5): number {
   return n;
 }
 
-const LONG_HINT =
-  /^(long|buy|bull|看多|做多|多头|偏多|看涨|反弹|低吸)/i;
-const SHORT_HINT =
-  /^(short|sell|bear|看空|做空|空头|偏空|看跌|减仓|高抛)/i;
-const NEUTRAL_HINT =
-  /^(neutral|hold|flat|swing|t_swing|t-swing|中性|观望|震荡|横盘|波段|做t)/i;
+const LONG_HINT = /^(long|buy|bull|看多|做多|多头|偏多|看涨|反弹|低吸)/i;
+const SHORT_HINT = /^(short|sell|bear|看空|做空|空头|偏空|看跌|减仓|高抛)/i;
+const NEUTRAL_HINT = /^(neutral|hold|flat|swing|t_swing|t-swing|中性|观望|震荡|横盘|波段|做t)/i;
 
-export function coerceThesisDirection(
-  raw: unknown
-): "long" | "short" | "neutral" | null {
+export function coerceThesisDirection(raw: unknown): "long" | "short" | "neutral" | null {
   if (raw == null) return null;
   const text = String(raw).trim();
   if (!text) return null;
@@ -59,9 +54,7 @@ export function coerceThesisDirection(
 }
 
 /** Infer recommendation side from side/action/conviction free text. */
-export function coerceRecommendationSide(
-  raw: unknown
-): "long" | "short" | "neutral" | null {
+export function coerceRecommendationSide(raw: unknown): "long" | "short" | "neutral" | null {
   if (raw == null) return null;
   const text = String(raw).trim().toLowerCase();
   if (!text) return null;
@@ -87,7 +80,7 @@ export function inferSymbolsFromText(text: string, max = 8): string[] {
   // A-share: 6 digits optional .SH/.SZ/.SS
   const cn = text.matchAll(/\b([0-9]{6})(?:\.(?:SH|SZ|SS))?\b/gi);
   for (const m of cn) {
-    const raw = m[0]!.toUpperCase().replace(/\.SS$/, ".SH");
+    const raw = m[0]?.toUpperCase().replace(/\.SS$/, ".SH");
     const key = raw.includes(".") ? raw : raw;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -137,9 +130,7 @@ export function resolveThesisDirection(
 ): "long" | "short" | "neutral" {
   const direct = coerceThesisDirection(params.direction);
   if (direct) return direct;
-  const prose = String(
-    params.narrative ?? params.body ?? params.summary ?? params.text ?? ""
-  );
+  const prose = String(params.narrative ?? params.body ?? params.summary ?? params.text ?? "");
   const fromProse = coerceThesisDirection(prose.slice(0, 200));
   if (fromProse) return fromProse;
   return "neutral";
@@ -156,18 +147,23 @@ export function resolveInstrumentScope(params: Record<string, unknown>): string[
   if (typeof raw === "string" && raw.trim()) {
     const one = raw.trim().toUpperCase();
     return one.includes(",")
-      ? one.split(",").map((s) => s.trim()).filter(Boolean)
+      ? one
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
       : [one];
   }
   if (Array.isArray(raw)) {
     const out = raw
-      .map((x) => String(x ?? "").trim().toUpperCase())
+      .map((x) =>
+        String(x ?? "")
+          .trim()
+          .toUpperCase()
+      )
       .filter(Boolean);
     if (out.length) return out;
   }
-  const prose = String(
-    params.narrative ?? params.body ?? params.summary ?? params.text ?? ""
-  );
+  const prose = String(params.narrative ?? params.body ?? params.summary ?? params.text ?? "");
   return inferSymbolsFromText(prose);
 }
 
@@ -260,9 +256,7 @@ export function normalizePortfolioCandidates(
       price: Number.isFinite(price) && price > 0 ? price : 0,
       confidence: coerceConfidence01(row.confidence, 0.5),
       stopLoss:
-        row.stopLoss != null && Number.isFinite(Number(row.stopLoss))
-          ? Number(row.stopLoss)
-          : null,
+        row.stopLoss != null && Number.isFinite(Number(row.stopLoss)) ? Number(row.stopLoss) : null,
       currentQty: Number(row.currentQty ?? 0) || 0,
       sector: typeof row.sector === "string" ? row.sector : null,
       proposedWeight: Number.isFinite(weight) && weight > 0 ? weight : null,

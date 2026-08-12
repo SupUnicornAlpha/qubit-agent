@@ -439,9 +439,7 @@ describe("五产线就绪度（pipeline readiness）", () => {
       .where(drizzle.eq(schema.strategyComposition.strategyVersionId, versionId));
     expect(compRows.length).toBeGreaterThanOrEqual(1);
 
-    const factorIds = compRows.flatMap(
-      (r) => (r.factorIdsJson as string[] | null) ?? []
-    );
+    const factorIds = compRows.flatMap((r) => (r.factorIdsJson as string[] | null) ?? []);
     expect(factorIds).toContain(factor.id);
 
     const factorRows = await db
@@ -484,9 +482,7 @@ describe("五产线就绪度（pipeline readiness）", () => {
       .where(drizzle.eq(schema.strategyComposition.strategyVersionId, svRow.id));
     expect(compRows.length).toBeGreaterThanOrEqual(1);
 
-    const factorIds = compRows.flatMap(
-      (r) => (r.factorIdsJson as string[] | null) ?? []
-    );
+    const factorIds = compRows.flatMap((r) => (r.factorIdsJson as string[] | null) ?? []);
     expect(factorIds.length).toBeGreaterThanOrEqual(1);
 
     const factorRows = await db

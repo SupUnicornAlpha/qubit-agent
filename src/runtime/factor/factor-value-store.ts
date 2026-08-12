@@ -96,7 +96,7 @@ export class FactorValueStore {
       await conn.run(`CREATE TEMP TABLE IF NOT EXISTS _factor_value_stage (
         factor_id VARCHAR, symbol VARCHAR, date DATE, value DOUBLE
       );`);
-      await conn.run(`DELETE FROM _factor_value_stage;`);
+      await conn.run("DELETE FROM _factor_value_stage;");
 
       // 分批 1000 行一次 INSERT
       const BATCH = 1000;
@@ -121,7 +121,7 @@ export class FactorValueStore {
           SET value = EXCLUDED.value, created_at = now();
       `;
       await conn.run(writtenSql);
-      await conn.run(`DELETE FROM _factor_value_stage;`);
+      await conn.run("DELETE FROM _factor_value_stage;");
 
       return { written: input.rows.length };
     } finally {

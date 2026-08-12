@@ -1,17 +1,17 @@
 /**
  * FS-first Workspace API（与 DB `/api/v1/workspaces` 并列，互不替换）。
  */
-import { Hono, type Context } from "hono";
+import { type Context, Hono } from "hono";
 import {
+  WorkspacePathError,
+  WorkspaceProviderError,
+  buildWorkspaceBootstrapPack,
   createFsWorkspace,
   discoverWorkspaces,
+  listRegisteredProviderKinds,
   openWorkspaceById,
   openWorkspaceByRoot,
   resolveProviders,
-  listRegisteredProviderKinds,
-  buildWorkspaceBootstrapPack,
-  WorkspacePathError,
-  WorkspaceProviderError,
   writeRunRecord,
 } from "../runtime/workspace";
 
@@ -178,9 +178,7 @@ fsWorkspaceRouter.get("/:id/memory", async (c) => {
     // Default merge Experience (scope=workspace) + FS notes for Workspace panel.
     const include = (c.req.query("include") ?? "merged").toLowerCase();
     if (include === "merged" || include === "all") {
-      const { listMergedWorkspaceMemory } = await import(
-        "../runtime/memory/long-term-memory"
-      );
+      const { listMergedWorkspaceMemory } = await import("../runtime/memory/long-term-memory");
       const mergeOpts: { q?: string; pinned?: boolean; limit?: number } = {};
       if (q) mergeOpts.q = q;
       if (pinned !== undefined) mergeOpts.pinned = pinned === "1";
@@ -237,15 +235,10 @@ fsWorkspaceRouter.post("/:id/memory", async (c) => {
 
 fsWorkspaceRouter.get("/:id/memory/bootstrap", async (c) => {
   try {
-    const maxChars = c.req.query("maxChars")
-      ? Number(c.req.query("maxChars"))
-      : undefined;
+    const maxChars = c.req.query("maxChars") ? Number(c.req.query("maxChars")) : undefined;
     const { fs, manifest } = await openWorkspaceById(c.req.param("id"));
     const { memory } = resolveProviders(manifest);
-    const text = await memory.loadBootstrap(
-      fs,
-      maxChars !== undefined ? { maxChars } : {}
-    );
+    const text = await memory.loadBootstrap(fs, maxChars !== undefined ? { maxChars } : {});
     return c.json({ data: { text } });
   } catch (e) {
     return jsonError(c, e);

@@ -10,7 +10,11 @@ import {
   parsePublicHttpUrl,
   stripHtmlToText,
 } from "../tools/web-ssrf";
-import { type RssHeadlineItem, fetchYahooHeadlineRss, parseRssHeadlineItems } from "./rss-headlines";
+import {
+  type RssHeadlineItem,
+  fetchYahooHeadlineRss,
+  parseRssHeadlineItems,
+} from "./rss-headlines";
 
 const UA = "Mozilla/5.0 (compatible; QubitAgent/1.0; +https://github.com/)";
 

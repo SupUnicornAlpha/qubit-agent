@@ -1,6 +1,6 @@
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { parseAgentSkillFile, type ParsedSkillImport } from "./import-agent-skills";
+import { type ParsedSkillImport, parseAgentSkillFile } from "./import-agent-skills";
 import type { PluginManifest, PluginManifestRef } from "./types";
 
 export type ClaudePluginImportResult = {
@@ -66,7 +66,7 @@ export async function importClaudePluginDir(rootPath: string): Promise<ClaudePlu
     skills.push(await parseAgentSkillFile(join(dir, "SKILL.md"), dir));
   }
 
-  let mcpServers: NonNullable<PluginManifestRef["mcpServers"]> = [];
+  const mcpServers: NonNullable<PluginManifestRef["mcpServers"]> = [];
   const mcpPath = join(rootPath, ".mcp.json");
   if (await pathExists(mcpPath)) {
     try {

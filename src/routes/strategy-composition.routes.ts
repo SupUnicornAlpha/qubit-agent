@@ -6,10 +6,10 @@
 
 import { Hono } from "hono";
 import {
-  strategyComposer,
   StrategyComposerError,
   type StrategyKind,
   type WeightMethod,
+  strategyComposer,
 } from "../runtime/strategy/strategy-composer";
 
 export const strategyCompositionRouter = new Hono();

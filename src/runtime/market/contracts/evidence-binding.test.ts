@@ -1,16 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveExecutionEvidenceBinding } from "./evidence-binding";
-import { constructTargetPortfolio } from "./portfolio-construct-service";
-import { writeResearchThesis, clearResearchThesisCatalogForTests } from "./research-thesis-service";
 import { clearForecastBookCatalogForTests, getForecastBookEntry } from "./forecast-book-service";
 import {
   buildMarketSnapshotRecord,
   clearMarketSnapshotCatalogForTests,
 } from "./market-snapshot-service";
-import { mkdir, writeFile } from "node:fs/promises";
+import { constructTargetPortfolio } from "./portfolio-construct-service";
+import { clearResearchThesisCatalogForTests, writeResearchThesis } from "./research-thesis-service";
 
 const prevThesis = process.env.QUBIT_ORDER_REQUIRE_THESIS;
 const prevGate = process.env.QUBIT_MARKET_QUALITY_GATE;

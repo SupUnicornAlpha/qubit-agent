@@ -288,16 +288,8 @@ export async function resolveMcpStdioArgv(argv: readonly string[]): Promise<Reso
    */
   const financexEntry = join(installDir, "dist", "index.js");
   const spawnArgv =
-    spec.pkg === "mcp-financex" &&
-    existsSync(MCP_FINANCEX_GUARD) &&
-    existsSync(financexEntry)
-      ? [
-          resolveNodeBinaryForMcp(),
-          "--import",
-          MCP_FINANCEX_GUARD,
-          financexEntry,
-          ...spec.binArgs,
-        ]
+    spec.pkg === "mcp-financex" && existsSync(MCP_FINANCEX_GUARD) && existsSync(financexEntry)
+      ? [resolveNodeBinaryForMcp(), "--import", MCP_FINANCEX_GUARD, financexEntry, ...spec.binArgs]
       : [binPath, ...spec.binArgs];
   return {
     argv: spawnArgv,

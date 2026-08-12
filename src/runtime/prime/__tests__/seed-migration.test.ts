@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { SEED_AGENT_DEFINITIONS } from "../../seed-agent-definitions-data";
 import {
   buildPrimeAgentSpecs,
   executionKindForRole,
@@ -6,7 +7,6 @@ import {
   summarizePrimeSeed,
   toPrimeAgentSpec,
 } from "../index";
-import { SEED_AGENT_DEFINITIONS } from "../../seed-agent-definitions-data";
 
 describe("prime seed → AgentSpec migration", () => {
   test("role maps to execution kind", () => {
@@ -18,9 +18,9 @@ describe("prime seed → AgentSpec migration", () => {
   });
 
   test("resolveExecutionKind prefers explicit over role", () => {
-    expect(
-      resolveExecutionKind({ executionKind: "reactor", role: "orchestrator" })
-    ).toBe("reactor");
+    expect(resolveExecutionKind({ executionKind: "reactor", role: "orchestrator" })).toBe(
+      "reactor"
+    );
     expect(resolveExecutionKind({ role: "orchestrator" })).toBe("primary");
   });
 
@@ -44,9 +44,7 @@ describe("prime seed → AgentSpec migration", () => {
     expect(orch.execution_kind).toBe("primary");
     expect(orch.labels).toContain("orchestrator");
 
-    const news = toPrimeAgentSpec(
-      SEED_AGENT_DEFINITIONS.find((d) => d.id === "def-news-event")!
-    );
+    const news = toPrimeAgentSpec(SEED_AGENT_DEFINITIONS.find((d) => d.id === "def-news-event")!);
     expect(news.execution_kind).toBe("subagent");
     expect(news.triggers).toEqual([]);
     expect(news.labels).toContain("news_event");

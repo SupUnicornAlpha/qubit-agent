@@ -8,8 +8,8 @@
  */
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import { mkdir, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { mkdir, rm } from "node:fs/promises";
 import { closeDb, getDb } from "../db/sqlite/client";
 import { runMigrations } from "../db/sqlite/migrate";
 import {
@@ -170,7 +170,7 @@ describe("GET /api/v1/monitor/pnl/strategies", () => {
   test("marketScope=CN → 不匹配 → 空", async () => {
     const res = await app.request(
       new Request(
-        `http://test/api/v1/monitor/pnl/strategies?fromDay=2026-06-01&toDay=2026-06-03&marketScope=CN`
+        "http://test/api/v1/monitor/pnl/strategies?fromDay=2026-06-01&toDay=2026-06-03&marketScope=CN"
       )
     );
     expect(res.status).toBe(200);
@@ -182,7 +182,7 @@ describe("GET /api/v1/monitor/pnl/strategies", () => {
   test("limit 参数生效", async () => {
     const res = await app.request(
       new Request(
-        `http://test/api/v1/monitor/pnl/strategies?fromDay=2026-06-01&toDay=2026-06-03&limit=1`
+        "http://test/api/v1/monitor/pnl/strategies?fromDay=2026-06-01&toDay=2026-06-03&limit=1"
       )
     );
     const j = await jsonOf(res);
@@ -193,7 +193,7 @@ describe("GET /api/v1/monitor/pnl/strategies", () => {
 
 describe("GET /api/v1/monitor/pnl/skills", () => {
   test("缺 projectId → 400", async () => {
-    const res = await app.request(new Request(`http://test/api/v1/monitor/pnl/skills`));
+    const res = await app.request(new Request("http://test/api/v1/monitor/pnl/skills"));
     expect(res.status).toBe(400);
   });
 

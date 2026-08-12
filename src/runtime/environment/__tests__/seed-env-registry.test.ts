@@ -3,16 +3,11 @@
  * registry-service CRUD 业务规则。
  */
 import { beforeAll, describe, expect, test } from "bun:test";
-import { eq } from "drizzle-orm";
 import { getDb } from "../../../db/sqlite/client";
 import { runMigrations } from "../../../db/sqlite/migrate";
 import { envRegistry } from "../../../db/sqlite/schema";
-import { envRegistryService, EnvRegistryError } from "../registry-service";
-import {
-  parseNpxCommand,
-  parseRequirementsTxt,
-  seedEnvRegistry,
-} from "../seed-env-registry";
+import { type EnvRegistryError, envRegistryService } from "../registry-service";
+import { parseNpxCommand, parseRequirementsTxt, seedEnvRegistry } from "../seed-env-registry";
 
 beforeAll(async () => {
   await runMigrations();

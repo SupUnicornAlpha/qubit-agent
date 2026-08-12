@@ -14,7 +14,7 @@
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { OverallGrade, MetricGrade } from "./thresholds";
+import type { MetricGrade, OverallGrade } from "./thresholds";
 
 export interface CanvasScenarioRow {
   scenario: string;

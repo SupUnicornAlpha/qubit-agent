@@ -5,14 +5,14 @@
  */
 
 import { Hono } from "hono";
+import type { RuleEvalContext } from "../runtime/provider/types";
 import {
-  ruleService,
-  RuleServiceError,
   type RuleAppliesTo,
   type RuleLang,
+  RuleServiceError,
   type RuleStatus,
+  ruleService,
 } from "../runtime/rule/rule-service";
-import type { RuleEvalContext } from "../runtime/provider/types";
 
 export const ruleRouter = new Hono();
 
@@ -26,8 +26,9 @@ function asError(e: unknown) {
 /** GET /api/v1/rules?project_id=&applies_to=&status= */
 ruleRouter.get("/", async (c) => {
   try {
+    const projectId = c.req.query("project_id");
     const data = await ruleService.list({
-      ...(c.req.query("project_id") ? { projectId: c.req.query("project_id")! } : {}),
+      ...(projectId ? { projectId } : {}),
       ...(c.req.query("applies_to")
         ? { appliesTo: c.req.query("applies_to") as RuleAppliesTo }
         : {}),

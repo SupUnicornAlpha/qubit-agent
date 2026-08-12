@@ -96,9 +96,7 @@ export async function hitlGateNode(
   ) {
     const inputKind = hitlHint.inputKind ?? (hitlHint.fields?.length ? "form" : "free_form");
     const question =
-      hitlHint.question?.trim() ||
-      hitlHint.reason?.trim() ||
-      "Orchestrator 需要你的输入后才能继续";
+      hitlHint.question?.trim() || hitlHint.reason?.trim() || "Orchestrator 需要你的输入后才能继续";
     const title = `[提问] ${question.slice(0, 80)}`;
     const summary = (state.reasonText ?? question).slice(0, 6000);
     const { id: requestId } = await createHitlRequest({

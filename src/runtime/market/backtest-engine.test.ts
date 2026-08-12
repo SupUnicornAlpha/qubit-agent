@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { runSmaCrossoverBacktest } from "./backtest-engine";
 import type { BarData } from "../../connectors/data/data.connector";
+import { runSmaCrossoverBacktest } from "./backtest-engine";
 
 function fakeBars(n: number): BarData[] {
   const out: BarData[] = [];

@@ -17,8 +17,8 @@ import type { MemoryEntry } from "../workspace/types";
 import { resolveActiveFsWorkspaceId } from "./fs-workspace-id";
 import {
   projectExperienceToFs,
-  projectedFsEntryId,
   projectExperiencesToFs,
+  projectedFsEntryId,
   shouldProjectExperienceToFs,
 } from "./project-experience-to-fs";
 
@@ -95,10 +95,7 @@ async function maybeMirrorExternal(
       asofTime: new Date().toISOString(),
     });
   } catch (err) {
-    console.warn(
-      "[ltm.external] mirror skipped:",
-      err instanceof Error ? err.message : err
-    );
+    console.warn("[ltm.external] mirror skipped:", err instanceof Error ? err.message : err);
   }
 }
 
@@ -127,9 +124,7 @@ export async function recallLongTermMemory(
   const recall = new ExperienceRecall({
     store: getExperienceStore(),
     bus: getExperienceBus(),
-    ...(embeddingClient
-      ? { embeddingClient, vectorStore: getExperienceVectorStore() }
-      : {}),
+    ...(embeddingClient ? { embeddingClient, vectorStore: getExperienceVectorStore() } : {}),
   });
 
   const results = await recall.recall({
@@ -190,16 +185,14 @@ export async function listMergedWorkspaceMemory(
   const { fs, manifest } = await openWorkspaceById(fsWorkspaceId);
   const { memory } = resolveProviders(manifest, { allowBuiltinFallback: true });
 
-  let fsRows: MemoryEntry[] = q
+  const fsRows: MemoryEntry[] = q
     ? await memory.search(fs, q, { limit })
     : await memory.list(fs, {
         ...(opts?.pinned !== undefined ? { pinned: opts.pinned } : {}),
         limit,
       });
 
-  const projectedIds = new Set(
-    fsRows.filter((r) => r.id.startsWith("exp_")).map((r) => r.id)
-  );
+  const projectedIds = new Set(fsRows.filter((r) => r.id.startsWith("exp_")).map((r) => r.id));
 
   const store = getExperienceStore();
   const experiences = await store.query({
@@ -229,11 +222,7 @@ export async function listMergedWorkspaceMemory(
       createdAt: exp.createdAt,
       updatedAt: exp.updatedAt ?? exp.createdAt,
       pinned: Boolean(exp.pinned),
-      tags: [
-        "experience",
-        `kind:${exp.kind}`,
-        ...(exp.subKind ? [`sub:${exp.subKind}`] : []),
-      ],
+      tags: ["experience", `kind:${exp.kind}`, ...(exp.subKind ? [`sub:${exp.subKind}`] : [])],
       source: "experience",
     });
   }
@@ -252,9 +241,7 @@ export async function onExperiencesWritten(opts: {
   projectId?: string | null;
 }): Promise<{ projected: number; skipped: number }> {
   const fsWorkspaceId =
-    opts.fsWorkspaceId?.trim() ||
-    (await resolveActiveFsWorkspaceId({})) ||
-    null;
+    opts.fsWorkspaceId?.trim() || (await resolveActiveFsWorkspaceId({})) || null;
   const stats = await projectExperiencesToFs(fsWorkspaceId, opts.experiences);
 
   for (const exp of opts.experiences) {

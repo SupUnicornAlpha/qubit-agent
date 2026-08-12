@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildToolCatalog, resolveToolAlias, RETIRED_GLOBAL_TOOL_NAMES } from "../tool-catalog";
+import { RETIRED_GLOBAL_TOOL_NAMES, buildToolCatalog, resolveToolAlias } from "../tool-catalog";
 import type { ToolCatalogEntry } from "../types";
 
 function find(name: string): ToolCatalogEntry {
@@ -112,7 +112,7 @@ describe("resolveToolAlias (Step 3 — deprecated 别名透明跳转)", () => {
       const targetEntry = all.find((e) => e.name === r.resolved);
       expect(targetEntry).toBeDefined();
       expect(
-        targetEntry!.lifecycle,
+        targetEntry?.lifecycle,
         `${name} -> ${r.resolved}: target must not be deprecated`
       ).not.toBe("deprecated");
     }

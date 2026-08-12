@@ -11,11 +11,7 @@
 
 import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
-import {
-  agentSkill,
-  strategyPnlSnapshot,
-  strategyRuntime,
-} from "../../db/sqlite/schema";
+import { agentSkill, strategyPnlSnapshot, strategyRuntime } from "../../db/sqlite/schema";
 
 export interface StrategyPnlSummaryInput {
   /** project_id 过滤；不传则不过滤（汇总全部） */
@@ -47,9 +43,7 @@ export interface StrategyPnlSummaryRow {
   latestMarketValue: number | null;
 }
 
-export async function getStrategyPnlSummary(
-  input: StrategyPnlSummaryInput
-): Promise<{
+export async function getStrategyPnlSummary(input: StrategyPnlSummaryInput): Promise<{
   fromDay: string;
   toDay: string;
   rows: StrategyPnlSummaryRow[];
@@ -149,7 +143,10 @@ export async function getStrategyPnlSummary(
     });
   }
 
-  rows.sort((x, y) => y.realizedPnlSum + y.unrealizedPnlSumLast - (x.realizedPnlSum + x.unrealizedPnlSumLast));
+  rows.sort(
+    (x, y) =>
+      y.realizedPnlSum + y.unrealizedPnlSumLast - (x.realizedPnlSum + x.unrealizedPnlSumLast)
+  );
   const limit = input.limit ?? 200;
   return { fromDay, toDay, rows: rows.slice(0, limit) };
 }

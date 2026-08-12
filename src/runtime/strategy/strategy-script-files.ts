@@ -29,10 +29,9 @@ export async function saveWorkflowReportArtifact(input: {
   const dir = workflowArtifactDir(input.projectId, input.workflowRunId);
   await mkdir(dir, { recursive: true });
   const reportPath = join(dir, "report.md");
-  const header =
-    input.ticker?.trim() ?
-      `# 团队分析报告 · ${input.ticker.trim()}\n\n`
-    : `# 团队分析报告\n\n`;
+  const header = input.ticker?.trim()
+    ? `# 团队分析报告 · ${input.ticker.trim()}\n\n`
+    : "# 团队分析报告\n\n";
   await writeFile(reportPath, header + input.report, "utf8");
   return reportPath;
 }
@@ -42,7 +41,10 @@ export async function readWorkflowReportArtifact(
   workflowRunId: string
 ): Promise<string | null> {
   try {
-    const raw = await readFile(join(workflowArtifactDir(projectId, workflowRunId), "report.md"), "utf8");
+    const raw = await readFile(
+      join(workflowArtifactDir(projectId, workflowRunId), "report.md"),
+      "utf8"
+    );
     return raw.trim() || null;
   } catch {
     return null;

@@ -1,5 +1,5 @@
-import type { ScenarioRecipe } from "./types";
 import { listLoadedRecipes } from "./load-recipe-json";
+import type { ScenarioRecipe } from "./types";
 
 const RECIPES: ScenarioRecipe[] = listLoadedRecipes();
 
@@ -11,7 +11,9 @@ for (const recipe of RECIPES) {
   }
 }
 
-export function resolveScenarioRecipe(scenarioKey: string | null | undefined): ScenarioRecipe | null {
+export function resolveScenarioRecipe(
+  scenarioKey: string | null | undefined
+): ScenarioRecipe | null {
   if (!scenarioKey) return null;
   const key = scenarioKey.trim();
   if (!key) return null;

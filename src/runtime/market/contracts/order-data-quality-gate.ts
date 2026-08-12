@@ -3,13 +3,10 @@
  * Fail-closed for live/executable intents; paper may omit snapshot with a warning.
  */
 
+import { assessUpstreamIndependence, isMarketQualityGateEnabled } from "./data-quality-gate";
 import type { DataQualityVerdict } from "./market-event-v2";
 import { evaluateTradability } from "./market-event-v2";
-import { assessUpstreamIndependence, isMarketQualityGateEnabled } from "./data-quality-gate";
-import {
-  getMarketSnapshotById,
-  type MarketSnapshotRecord,
-} from "./market-snapshot-service";
+import { type MarketSnapshotRecord, getMarketSnapshotById } from "./market-snapshot-service";
 
 export type OrderDataQualityGateInput = {
   snapshotId?: string | null;
@@ -40,8 +37,7 @@ export async function evaluateOrderDataQualityGate(
 ): Promise<OrderDataQualityGateResult> {
   const warnings: string[] = [];
   const snapshotId = input.snapshotId?.trim() || null;
-  const mustHaveSnapshot =
-    input.requireQualityGate === true || input.dispatchMode === "live";
+  const mustHaveSnapshot = input.requireQualityGate === true || input.dispatchMode === "live";
 
   if (!isMarketQualityGateEnabled()) {
     if (snapshotId) {
@@ -68,8 +64,7 @@ export async function evaluateOrderDataQualityGate(
       return {
         ok: false,
         code: "snapshot_required",
-        reason:
-          "data_quality_gate: executable/live order requires snapshotId with tradable=true",
+        reason: "data_quality_gate: executable/live order requires snapshotId with tradable=true",
         snapshotId: null,
         verdict: null,
       };

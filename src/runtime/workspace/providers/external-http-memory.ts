@@ -22,9 +22,9 @@
  * 未配置 baseUrl 时明确失败（fail-closed）。
  */
 import type { MemoryEntry, ProviderRef } from "../types";
-import type { MemoryProvider } from "./fs-memory";
 import type { WorkspaceFs } from "../workspace-fs";
-import { httpJson, readHttpProviderConfig, type HttpProviderConfig } from "./http-client";
+import type { MemoryProvider } from "./fs-memory";
+import { type HttpProviderConfig, httpJson, readHttpProviderConfig } from "./http-client";
 
 export const EXTERNAL_HTTP_MEMORY_KIND = "external.http_memory";
 
@@ -33,7 +33,7 @@ function requireConfig(ref: ProviderRef): HttpProviderConfig {
   if (!cfg) {
     throw new Error(
       `${EXTERNAL_HTTP_MEMORY_KIND} requires providers.memory.config.baseUrl ` +
-        `(or set in .qubit/providers/memory.json). Example: ` +
+        "(or set in .qubit/providers/memory.json). Example: " +
         `{ "kind": "external.http_memory", "config": { "baseUrl": "http://127.0.0.1:8099" } }`
     );
   }
@@ -147,7 +147,11 @@ export function createExternalHttpMemoryProvider(ref: ProviderRef): MemoryProvid
       const maxChars = opts?.maxChars ?? 4000;
       const data = await httpJson<unknown>(c, `/bootstrap?maxChars=${maxChars}`);
       if (typeof data === "string") return data.slice(0, maxChars);
-      if (data && typeof data === "object" && typeof (data as { text?: unknown }).text === "string") {
+      if (
+        data &&
+        typeof data === "object" &&
+        typeof (data as { text?: unknown }).text === "string"
+      ) {
         return String((data as { text: string }).text).slice(0, maxChars);
       }
       return JSON.stringify(data).slice(0, maxChars);

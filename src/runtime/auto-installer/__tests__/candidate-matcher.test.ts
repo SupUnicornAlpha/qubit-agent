@@ -201,9 +201,9 @@ describe("findCandidatesForGap (DB)", () => {
 
     const out = await findCandidatesForGap("mcp:slack/post_message", { topK: 3 });
     expect(out.length).toBeGreaterThanOrEqual(2);
-    expect(out[0]!.score).toBeGreaterThanOrEqual(out[out.length - 1]!.score);
-    expect(out[0]!.targetSlug).toBe("slack");
-    expect(out[0]!.targetKind).toBe("mcp_catalog");
+    expect(out[0]?.score).toBeGreaterThanOrEqual(out[out.length - 1]?.score);
+    expect(out[0]?.targetSlug).toBe("slack");
+    expect(out[0]?.targetKind).toBe("mcp_catalog");
     // 区分外部来源改用 candidate.source
     expect(out.find((c) => c.source === "registry")).toBeDefined();
   });

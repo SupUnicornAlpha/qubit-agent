@@ -1,12 +1,12 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { workflowRun } from "../../db/sqlite/schema";
+import { isBenchmarkWorkflow } from "../benchmark/benchmark-namespace";
 import { getExperienceBus } from "../experience";
 import { consolidateFromWorkflow } from "../memory/memory-consolidation";
 import { syncMemoryForWorkflow } from "../memory/memory-workspace-sync";
 import { createAlertsFromWorkflowQuality } from "./alert-service";
 import { createWorkflowQualitySnapshot } from "./quality-metrics";
-import { isBenchmarkWorkflow } from "../benchmark/benchmark-namespace";
 
 export type WorkflowTerminalStatus = "completed" | "partial" | "failed";
 

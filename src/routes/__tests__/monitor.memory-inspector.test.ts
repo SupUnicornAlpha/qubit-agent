@@ -142,9 +142,7 @@ describe("GET /memory/experiences", () => {
     await seed({ summary: "wf-b memory", sourceRunId: "wf-b" });
     await seed({ summary: "legacy memory", sourceRunId: null });
 
-    const { body } = await get(
-      "/memory/experiences?projectId=p1&workflowRunId=wf-a"
-    );
+    const { body } = await get("/memory/experiences?projectId=p1&workflowRunId=wf-a");
     expect(body.data.total).toBe(1);
     expect(body.data.items[0]).toMatchObject({
       summary: "wf-a memory",

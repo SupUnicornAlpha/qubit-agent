@@ -16,13 +16,9 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { and, desc, eq } from "drizzle-orm";
-import { getDb } from "../../db/sqlite/client";
-import {
-  agentDefinition,
-  agentProfile,
-  longtermMemory,
-} from "../../db/sqlite/schema";
 import { config } from "../../config";
+import { getDb } from "../../db/sqlite/client";
+import { agentDefinition, agentProfile, longtermMemory } from "../../db/sqlite/schema";
 import { resolvePackRoot } from "../agent/agent-pack-service";
 
 const SYNC_HEADER =
@@ -40,18 +36,22 @@ export interface SyncMemoryResult {
 
 export async function syncMemoryFromDb(definitionId: string): Promise<SyncMemoryResult | null> {
   const db = await getDb();
-  const defRows = await db.select().from(agentDefinition).where(eq(agentDefinition.id, definitionId)).limit(1);
+  const defRows = await db
+    .select()
+    .from(agentDefinition)
+    .where(eq(agentDefinition.id, definitionId))
+    .limit(1);
   const def = defRows[0];
   if (!def) return null;
 
-  const profRows = await db.select().from(agentProfile).where(eq(agentProfile.definitionId, definitionId)).limit(1);
+  const profRows = await db
+    .select()
+    .from(agentProfile)
+    .where(eq(agentProfile.definitionId, definitionId))
+    .limit(1);
   const prof = profRows[0];
 
-  const packRoot = resolvePackRoot(
-    config.dataDir,
-    definitionId,
-    prof?.configRootUri ?? ""
-  );
+  const packRoot = resolvePackRoot(config.dataDir, definitionId, prof?.configRootUri ?? "");
   const workspaceDir = join(packRoot, "workspace");
   const packMemoryPath = join(packRoot, "memory.md");
   const workspaceMemoryPath = join(workspaceDir, "memory.md");
@@ -110,15 +110,18 @@ export async function syncMemoryFromDb(definitionId: string): Promise<SyncMemory
 interface RenderInput {
   definitionName: string;
   role: string;
-  longtermByType: Map<string, Array<{
-    id: string;
-    memoryType: string;
-    contentJson: unknown;
-    confidenceScore: number | null;
-    asofTime: string;
-    validFrom: string;
-    validTo: string | null;
-  }>>;
+  longtermByType: Map<
+    string,
+    Array<{
+      id: string;
+      memoryType: string;
+      contentJson: unknown;
+      confidenceScore: number | null;
+      asofTime: string;
+      validFrom: string;
+      validTo: string | null;
+    }>
+  >;
   midtermRows: Array<{
     id: string;
     memoryType: string;
@@ -150,7 +153,8 @@ export function renderMemoryMarkdown(input: RenderInput): string {
       lines.push("");
       for (const row of rows) {
         const content = extractContent(row.contentJson);
-        const confidence = row.confidenceScore != null ? ` · conf=${row.confidenceScore.toFixed(2)}` : "";
+        const confidence =
+          row.confidenceScore != null ? ` · conf=${row.confidenceScore.toFixed(2)}` : "";
         lines.push(`- **${row.asofTime.slice(0, 10)}**${confidence}: ${truncate(content, 280)}`);
       }
       lines.push("");
@@ -158,7 +162,9 @@ export function renderMemoryMarkdown(input: RenderInput): string {
   } else {
     lines.push("## 执行画像（execution_profile）");
     lines.push("");
-    lines.push("_暂无执行画像。可通过 write_memory(memoryType=execution_profile) 写入风险偏好等身份信息。_");
+    lines.push(
+      "_暂无执行画像。可通过 write_memory(memoryType=execution_profile) 写入风险偏好等身份信息。_"
+    );
     lines.push("");
   }
 
@@ -188,8 +194,8 @@ function extractContent(contentJson: unknown): string {
   if (typeof contentJson === "string") return contentJson;
   if (contentJson && typeof contentJson === "object") {
     const obj = contentJson as Record<string, unknown>;
-    if (typeof obj["content"] === "string") return obj["content"];
-    if (typeof obj["summary"] === "string") return obj["summary"];
+    if (typeof obj.content === "string") return obj.content;
+    if (typeof obj.summary === "string") return obj.summary;
     return JSON.stringify(contentJson).slice(0, 500);
   }
   return String(contentJson ?? "");

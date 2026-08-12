@@ -34,12 +34,7 @@ export interface LlmQualityResult {
   };
 }
 
-const TRUNCATED_FINISH = new Set([
-  "length",
-  "max_tokens",
-  "max_output_tokens",
-  "incomplete",
-]);
+const TRUNCATED_FINISH = new Set(["length", "max_tokens", "max_output_tokens", "incomplete"]);
 
 interface LlmRow {
   status: string;

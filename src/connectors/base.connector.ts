@@ -47,9 +47,7 @@ export abstract class BaseConnector implements Connector {
 
   async execute<TOutput>(operation: string, payload: unknown): Promise<TOutput> {
     if (!this.initialized) {
-      throw new Error(
-        `Connector "${this.meta.name}" is not initialized. Call init() first.`
-      );
+      throw new Error(`Connector "${this.meta.name}" is not initialized. Call init() first.`);
     }
     return this.onExecute<TOutput>(operation, payload);
   }

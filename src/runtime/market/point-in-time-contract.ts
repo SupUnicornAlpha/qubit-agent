@@ -29,7 +29,7 @@ export interface PointInTimeValidation {
 
 export function validatePointInTimeBars(
   rawBars: BarData[],
-  provenance: MarketDataProvenance,
+  provenance: MarketDataProvenance
 ): PointInTimeValidation {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -62,7 +62,11 @@ export function validatePointInTimeBars(
       errors.push(`non_finite_bar:${bar.timestamp}`);
       continue;
     }
-    if (bar.low > Math.min(bar.open, bar.close) || bar.high < Math.max(bar.open, bar.close) || bar.low > bar.high) {
+    if (
+      bar.low > Math.min(bar.open, bar.close) ||
+      bar.high < Math.max(bar.open, bar.close) ||
+      bar.low > bar.high
+    ) {
       errors.push(`invalid_ohlc:${bar.timestamp}`);
       continue;
     }
@@ -71,7 +75,9 @@ export function validatePointInTimeBars(
       continue;
     }
     const listedAt = provenance.security.listedAt ? Date.parse(provenance.security.listedAt) : null;
-    const delistedAt = provenance.security.delistedAt ? Date.parse(provenance.security.delistedAt) : null;
+    const delistedAt = provenance.security.delistedAt
+      ? Date.parse(provenance.security.delistedAt)
+      : null;
     if (listedAt != null && Number.isFinite(listedAt) && timestampMs < listedAt) {
       errors.push(`bar_before_listing:${bar.timestamp}`);
       continue;
@@ -95,9 +101,10 @@ export function validatePointInTimeBars(
       barCount: bars.length,
       firstBarAt: bars[0]?.timestamp ?? null,
       lastBarAt: bars.at(-1)?.timestamp ?? null,
-      freshnessMs: Number.isFinite(fetchedAtMs) && Number.isFinite(dataAsofMs)
-        ? Math.max(0, fetchedAtMs - dataAsofMs)
-        : null,
+      freshnessMs:
+        Number.isFinite(fetchedAtMs) && Number.isFinite(dataAsofMs)
+          ? Math.max(0, fetchedAtMs - dataAsofMs)
+          : null,
     },
   };
 }

@@ -31,9 +31,9 @@ export class Mem0Connector extends BaseMemoryConnector {
     version: "1.0.0",
     connectorType: "memory",
     capabilities: [
-      "hybrid_search",       // semantic + BM25 + entity matching
-      "entity_linking",      // lightweight entity-aware memory
-      "cross_agent_memory",  // shared memory across agents
+      "hybrid_search", // semantic + BM25 + entity matching
+      "entity_linking", // lightweight entity-aware memory
+      "cross_agent_memory", // shared memory across agents
     ],
     assetClasses: [],
     latencyProfile: "neartime",
@@ -49,15 +49,11 @@ export class Mem0Connector extends BaseMemoryConnector {
       const mem0 = await import("mem0ai" as string);
       this.client = new (mem0 as { Memory: new (cfg: ConnectorConfig) => unknown }).Memory(config);
     } catch {
-      throw new Error(
-        "Mem0Connector: mem0ai package not found. Install it with: bun add mem0ai"
-      );
+      throw new Error("Mem0Connector: mem0ai package not found. Install it with: bun add mem0ai");
     }
   }
 
-  protected async onHealthcheck(): Promise<
-    Omit<HealthCheckResult, "latencyMs" | "checkedAt">
-  > {
+  protected async onHealthcheck(): Promise<Omit<HealthCheckResult, "latencyMs" | "checkedAt">> {
     if (!this.client) {
       return { status: "unhealthy", message: "Mem0 client not initialized" };
     }
@@ -70,17 +66,16 @@ export class Mem0Connector extends BaseMemoryConnector {
 
   async add(content: string, metadata: MemoryMetadata): Promise<MemoryRecord> {
     const client = this._requireClient();
-    const result = await (client as { add: (msgs: unknown[], opts: unknown) => Promise<{ id: string }[]> }).add(
-      [{ role: "user", content }],
-      {
-        user_id: metadata.projectId ?? "default",
-        metadata: {
-          ...metadata,
-          layer: metadata.layer,
-          asofTime: metadata.asofTime,
-        },
-      }
-    );
+    const result = await (
+      client as { add: (msgs: unknown[], opts: unknown) => Promise<{ id: string }[]> }
+    ).add([{ role: "user", content }], {
+      user_id: metadata.projectId ?? "default",
+      metadata: {
+        ...metadata,
+        layer: metadata.layer,
+        asofTime: metadata.asofTime,
+      },
+    });
 
     const id = result[0]?.id ?? crypto.randomUUID();
     const now = new Date().toISOString();
@@ -88,15 +83,16 @@ export class Mem0Connector extends BaseMemoryConnector {
     return { id, content, metadata, createdAt: now, updatedAt: now };
   }
 
-  async search(
-    query: string,
-    filters: MemoryFilters,
-    topK: number
-  ): Promise<MemoryRecord[]> {
+  async search(query: string, filters: MemoryFilters, topK: number): Promise<MemoryRecord[]> {
     const client = this._requireClient();
-    const results = await (client as {
-      search: (q: string, opts: unknown) => Promise<Array<{ id: string; memory: string; score: number; metadata: unknown }>>
-    }).search(query, {
+    const results = await (
+      client as {
+        search: (
+          q: string,
+          opts: unknown
+        ) => Promise<Array<{ id: string; memory: string; score: number; metadata: unknown }>>;
+      }
+    ).search(query, {
       user_id: filters.projectId ?? "default",
       limit: topK,
     });
@@ -118,15 +114,20 @@ export class Mem0Connector extends BaseMemoryConnector {
   async get(id: string): Promise<MemoryRecord | null> {
     const client = this._requireClient();
     try {
-      const result = await (client as {
-        get: (id: string) => Promise<{ id: string; memory: string; metadata: unknown } | null>
-      }).get(id);
+      const result = await (
+        client as {
+          get: (id: string) => Promise<{ id: string; memory: string; metadata: unknown } | null>;
+        }
+      ).get(id);
       if (!result) return null;
 
       return {
         id: result.id,
         content: result.memory,
-        metadata: (result.metadata ?? { layer: "longterm", asofTime: new Date().toISOString() }) as MemoryMetadata,
+        metadata: (result.metadata ?? {
+          layer: "longterm",
+          asofTime: new Date().toISOString(),
+        }) as MemoryMetadata,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
@@ -142,16 +143,23 @@ export class Mem0Connector extends BaseMemoryConnector {
 
   async list(filters: MemoryFilters): Promise<MemoryRecord[]> {
     const client = this._requireClient();
-    const results = await (client as {
-      getAll: (opts: unknown) => Promise<Array<{ id: string; memory: string; metadata: unknown }>>
-    }).getAll({
+    const results = await (
+      client as {
+        getAll: (
+          opts: unknown
+        ) => Promise<Array<{ id: string; memory: string; metadata: unknown }>>;
+      }
+    ).getAll({
       user_id: filters.projectId ?? "default",
     });
 
     return results.map((r) => ({
       id: r.id,
       content: r.memory,
-      metadata: (r.metadata ?? { layer: "longterm", asofTime: new Date().toISOString() }) as MemoryMetadata,
+      metadata: (r.metadata ?? {
+        layer: "longterm",
+        asofTime: new Date().toISOString(),
+      }) as MemoryMetadata,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }));

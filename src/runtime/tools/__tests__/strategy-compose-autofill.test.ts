@@ -10,11 +10,11 @@
 
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { dispatchBuiltinTool } from "../builtin-tools";
-import { runMigrations } from "../../../db/sqlite/migrate";
 import { getDb } from "../../../db/sqlite/client";
+import { runMigrations } from "../../../db/sqlite/migrate";
 import * as schema from "../../../db/sqlite/schema";
 import { factorService } from "../../factor/factor-service";
+import { dispatchBuiltinTool } from "../builtin-tools";
 
 const NOW = "2026-06-09T00:00:00.000Z";
 
@@ -116,9 +116,7 @@ describe("strategy.compose · factor_score 自动兜底", () => {
 
   test("kind=factor_score 显式传了 factor_ids → 沿用传入值、不覆盖", async () => {
     const ctx = buildCtx();
-    const explicit = (
-      await factorService.list({ projectId, status: "active" })
-    ).map((f) => f.id);
+    const explicit = (await factorService.list({ projectId, status: "active" })).map((f) => f.id);
     const picked = explicit.slice(0, 2);
     const out = (await dispatchBuiltinTool("strategy.compose", ctx as never, {
       strategy_version_id: strategyVersionId,

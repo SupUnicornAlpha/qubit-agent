@@ -5,7 +5,6 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { SEED_AGENT_DEFINITIONS } from "../seed-agent-definitions-data";
 import {
   BUILTIN_AGENT_GROUPS,
   DISCOVERY_GROUP,
@@ -16,6 +15,7 @@ import {
   STRATEGY_PIPELINE_GROUP,
 } from "../seed-agent-catalog";
 import { BUILTIN_GROUP_LAYOUTS } from "../seed-agent-definitions";
+import { SEED_AGENT_DEFINITIONS } from "../seed-agent-definitions-data";
 
 const BY_ID = new Map(SEED_AGENT_DEFINITIONS.map((d) => [d.id, d]));
 
@@ -36,7 +36,7 @@ function expectTools(defId: string, requiredTools: string[]) {
   const def = BY_ID.get(defId);
   expect(def).toBeDefined();
   for (const tool of requiredTools) {
-    expect(def!.tools).toContain(tool);
+    expect(def?.tools).toContain(tool);
   }
 }
 
@@ -159,10 +159,10 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
       "compute_indicators",
       "research.thesis.write",
     ]);
-    expect(BY_ID.get("def-analyst-technical")!.tools).not.toContain("market.readiness");
+    expect(BY_ID.get("def-analyst-technical")?.tools).not.toContain("market.readiness");
 
     expectTools("def-news-event", ["fetch_news", "fetch_news_sentiment"]);
-    expect(BY_ID.get("def-news-event")!.tools).not.toContain("code.run_python");
+    expect(BY_ID.get("def-news-event")?.tools).not.toContain("code.run_python");
   });
 
   test("分析师 / news 版本号在 3.x；market_data 在 2.x", () => {
@@ -173,9 +173,9 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
       "def-analyst-macro",
       "def-news-event",
     ]) {
-      expect(BY_ID.get(id)!.version.startsWith("3.")).toBe(true);
+      expect(BY_ID.get(id)?.version.startsWith("3.")).toBe(true);
     }
-    expect(BY_ID.get("def-market-data")!.version.startsWith("2.")).toBe(true);
+    expect(BY_ID.get("def-market-data")?.version.startsWith("2.")).toBe(true);
   });
 
   test("微观结构数据仅授权给行情 Agent", () => {
@@ -187,7 +187,7 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
       "fetch_option_chain",
     ]);
     for (const id of SPECIALIST_IDS.filter((id) => id !== "def-market-data")) {
-      const tools = BY_ID.get(id)!.tools;
+      const tools = BY_ID.get(id)?.tools;
       expect(tools).not.toContain("fetch_ticks");
       expect(tools).not.toContain("fetch_order_book");
       expect(tools).not.toContain("fetch_trades");
@@ -221,7 +221,7 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
   test("def-walk-forward-validator 装齐 backtest + batch evaluate", () => {
     const def = BY_ID.get("def-walk-forward-validator");
     expect(def).toBeDefined();
-    expect(def!.role).toBe("backtest_engineer");
+    expect(def?.role).toBe("backtest_engineer");
     expectTools("def-walk-forward-validator", [
       "backtest.run",
       "factor.list",
@@ -322,22 +322,18 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
       "skill.archive",
     ];
     for (const tool of fullToolset) {
-      expect(BY_ID.get("def-orchestrator")!.tools).toContain(tool);
+      expect(BY_ID.get("def-orchestrator")?.tools).toContain(tool);
     }
     for (const id of ["def-research", "def-backtest", "def-risk"]) {
-      expect(BY_ID.get(id)!.tools).not.toContain("skill.create");
-      expect(BY_ID.get(id)!.tools).not.toContain("skill.patch");
-      expect(BY_ID.get(id)!.tools).not.toContain("skill.archive");
+      expect(BY_ID.get(id)?.tools).not.toContain("skill.create");
+      expect(BY_ID.get(id)?.tools).not.toContain("skill.patch");
+      expect(BY_ID.get(id)?.tools).not.toContain("skill.archive");
     }
   });
 
   test("跨域工具不在默认授权面；微观结构由行情 Agent 独占", () => {
     const forbiddenByRole: Record<string, string[]> = {
-      "def-market-data": [
-        "fetch_bars",
-        "write_snapshot",
-        "call_mcp",
-      ],
+      "def-market-data": ["fetch_bars", "write_snapshot", "call_mcp"],
       "def-analyst-technical": [
         "fetch_order_book",
         "run_screener",

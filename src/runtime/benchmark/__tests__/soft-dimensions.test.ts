@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { looksLikeStubNarrative, scoreSoftDimensions } from "../soft-dimensions";
 import type { RunEnvelope } from "../contracts";
+import { looksLikeStubNarrative, scoreSoftDimensions } from "../soft-dimensions";
 
 function base(): RunEnvelope {
   return {
@@ -52,8 +52,8 @@ describe("soft-dimensions", () => {
         errorCount: 0,
       },
     });
-    const hitScore = withHits.dimensions.find((d) => d.id === "memory")!.score!;
-    const emptyScore = emptyHits.dimensions.find((d) => d.id === "memory")!.score!;
+    const hitScore = withHits.dimensions.find((d) => d.id === "memory")?.score!;
+    const emptyScore = emptyHits.dimensions.find((d) => d.id === "memory")?.score!;
     expect(hitScore).toBeGreaterThan(emptyScore);
   });
 

@@ -8,11 +8,11 @@
 
 import { syncPrimeSpecsToRustCore } from "./bootstrap";
 import {
+  type CoreBackend,
   getCoreRuntime,
   resetCoreRuntimeCache,
   resolveCoreBackend,
   rustCoreBaseUrl,
-  type CoreBackend,
 } from "./core-runtime";
 
 export type PrimeAttachMode = "ts" | "rust" | "auto";
@@ -42,10 +42,7 @@ export function resolveAttachMode(
 }
 
 /** mode=rust defaults strict; auto/ts do not. Explicit QUBIT_CORE_STRICT=0 opts out. */
-export function resolveCoreStrict(
-  mode: PrimeAttachMode,
-  explicit?: boolean
-): boolean {
+export function resolveCoreStrict(mode: PrimeAttachMode, explicit?: boolean): boolean {
   if (explicit !== undefined) return explicit;
   const raw = process.env.QUBIT_CORE_STRICT?.trim();
   if (raw === "0" || raw === "false") return false;

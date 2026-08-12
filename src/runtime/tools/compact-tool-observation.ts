@@ -41,8 +41,8 @@ export function compactMarketBarsPayload(
     compacted: bars.length > keepTail,
     keepTail: tail.length,
     range: {
-      firstTs: first && typeof first === "object" ? first.timestamp ?? first.ts ?? null : null,
-      lastTs: last && typeof last === "object" ? last.timestamp ?? last.ts ?? null : null,
+      firstTs: first && typeof first === "object" ? (first.timestamp ?? first.ts ?? null) : null,
+      lastTs: last && typeof last === "object" ? (last.timestamp ?? last.ts ?? null) : null,
       firstClose: closes[0] ?? null,
       lastClose: closes[closes.length - 1] ?? null,
       high: Number.isFinite(high) ? high : null,
@@ -56,10 +56,7 @@ export function compactMarketBarsPayload(
   };
 }
 
-export function compactToolObservationValue(
-  toolName: string,
-  value: unknown
-): unknown {
+export function compactToolObservationValue(toolName: string, value: unknown): unknown {
   const name = toolName.toLowerCase();
   const isKlines =
     name.includes("fetch_klines") ||

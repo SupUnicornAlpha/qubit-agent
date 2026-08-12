@@ -226,8 +226,12 @@ describe("resolveEffectiveKlinesSource", () => {
       hasTushareToken: false,
       hasIbAvailable: true,
     } as const;
-    expect(resolveEffectiveKlinesSource({ ...common, symbol: "GC=F", exchange: "CME" })).toBe("ib_bridge");
-    expect(resolveEffectiveKlinesSource({ ...common, symbol: "AAPL240621C00200000", exchange: "OPRA" })).toBe("ib_bridge");
+    expect(resolveEffectiveKlinesSource({ ...common, symbol: "GC=F", exchange: "CME" })).toBe(
+      "ib_bridge"
+    );
+    expect(
+      resolveEffectiveKlinesSource({ ...common, symbol: "AAPL240621C00200000", exchange: "OPRA" })
+    ).toBe("ib_bridge");
   });
 
   test("explicit binance_crypto mode", () => {

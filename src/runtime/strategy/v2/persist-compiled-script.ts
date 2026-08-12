@@ -5,10 +5,7 @@
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../../../db/sqlite/client";
-import {
-  indicatorStrategyScript,
-  workflowRun,
-} from "../../../db/sqlite/schema";
+import { indicatorStrategyScript, workflowRun } from "../../../db/sqlite/schema";
 import { exportStrategyScriptToWorkflowDir } from "../strategy-script-files";
 import type { StrategyManifestV2 } from "./contract-service";
 

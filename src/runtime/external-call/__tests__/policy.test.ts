@@ -150,8 +150,8 @@ describe("executeWithPolicy onAttemptFailure", () => {
         throw new Error("boom");
       })
     ).rejects.toThrow("boom");
-    await expect(
-      executeWithPolicy(policy, async () => "should-not-run")
-    ).rejects.toThrow(/circuit breaker open: .*retry after ~/);
+    await expect(executeWithPolicy(policy, async () => "should-not-run")).rejects.toThrow(
+      /circuit breaker open: .*retry after ~/
+    );
   });
 });

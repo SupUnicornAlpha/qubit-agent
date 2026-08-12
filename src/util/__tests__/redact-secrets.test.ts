@@ -8,12 +8,7 @@
  *   - 序列化超长截断：`…[truncated …]`
  */
 import { describe, expect, test } from "bun:test";
-import {
-  isSecretKey,
-  redactHeaders,
-  redactPayload,
-  __TEST_ONLY__,
-} from "../redact-secrets";
+import { __TEST_ONLY__, isSecretKey, redactHeaders, redactPayload } from "../redact-secrets";
 
 describe("redactHeaders", () => {
   test("Record 入参剥除 Authorization / cookie / x-api-key", () => {
@@ -34,7 +29,7 @@ describe("redactHeaders", () => {
     headers.set("authorization", "Bearer sk-x");
     headers.set("x-trace-id", "abc-123");
     const out = redactHeaders(headers);
-    expect(out["authorization"]).toBe(__TEST_ONLY__.REDACTED);
+    expect(out.authorization).toBe(__TEST_ONLY__.REDACTED);
     expect(out["x-trace-id"]).toBe("abc-123");
   });
 
@@ -63,16 +58,16 @@ describe("redactPayload", () => {
       env: { OPENAI_API_KEY: "sk-2", PATH: "/usr/bin" },
     };
     const out = redactPayload(input) as Record<string, unknown>;
-    const env = out["env"] as Record<string, unknown>;
-    const auth = out["auth"] as Record<string, unknown>;
-    const inner = auth["inner"] as Record<string, unknown>;
-    expect(out["apiKey"]).toBe(__TEST_ONLY__.REDACTED);
-    expect(auth["token"]).toBe(__TEST_ONLY__.REDACTED);
-    expect(inner["password"]).toBe(__TEST_ONLY__.REDACTED);
-    expect(inner["visible"]).toBe(1);
-    expect(env["OPENAI_API_KEY"]).toBe(__TEST_ONLY__.REDACTED);
-    expect(env["PATH"]).toBe("/usr/bin");
-    expect(out["provider"]).toBe("openai");
+    const env = out.env as Record<string, unknown>;
+    const auth = out.auth as Record<string, unknown>;
+    const inner = auth.inner as Record<string, unknown>;
+    expect(out.apiKey).toBe(__TEST_ONLY__.REDACTED);
+    expect(auth.token).toBe(__TEST_ONLY__.REDACTED);
+    expect(inner.password).toBe(__TEST_ONLY__.REDACTED);
+    expect(inner.visible).toBe(1);
+    expect(env.OPENAI_API_KEY).toBe(__TEST_ONLY__.REDACTED);
+    expect(env.PATH).toBe("/usr/bin");
+    expect(out.provider).toBe("openai");
   });
 
   test("不修改入参（深拷贝）", () => {

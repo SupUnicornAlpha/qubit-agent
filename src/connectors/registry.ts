@@ -60,9 +60,7 @@ export async function dispatchAcpCall(request: AcpRequest): Promise<unknown> {
 
   const connector = connectorRegistry.get(request.targetName);
   if (!connector) {
-    throw new Error(
-      `dispatchAcpCall: connector "${request.targetName}" is not registered.`
-    );
+    throw new Error(`dispatchAcpCall: connector "${request.targetName}" is not registered.`);
   }
 
   const payload = request.payload as { operation: string; params: unknown };

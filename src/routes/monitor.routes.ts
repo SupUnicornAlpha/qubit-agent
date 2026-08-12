@@ -982,7 +982,7 @@ monitorRouter.post("/alerts/:id/resolve", async (c) => {
 monitorRouter.post("/alerts/resolve-by-scope", async (c) => {
   const body = await c.req
     .json<{ scopeType?: "workflow" | "agent" | "system"; scopeId?: string }>()
-    .catch(() => ({} as { scopeType?: "workflow" | "agent" | "system"; scopeId?: string }));
+    .catch(() => ({}) as { scopeType?: "workflow" | "agent" | "system"; scopeId?: string });
   if (!body.scopeType || !body.scopeId) {
     return c.json({ ok: false, error: "scopeType and scopeId required" }, 400);
   }
@@ -1004,13 +1004,16 @@ monitorRouter.post("/eval/datasets", async (c) => {
       sourceDesc?: string;
       metaJson?: Record<string, unknown>;
     }>()
-    .catch(() => ({} as {
-      name?: string;
-      version?: string;
-      scenario?: string;
-      sourceDesc?: string;
-      metaJson?: Record<string, unknown>;
-    }));
+    .catch(
+      () =>
+        ({}) as {
+          name?: string;
+          version?: string;
+          scenario?: string;
+          sourceDesc?: string;
+          metaJson?: Record<string, unknown>;
+        }
+    );
   if (!body.name) return c.json({ ok: false, error: "name is required" }, 400);
   const data = await createEvalDataset({
     name: body.name,
@@ -1030,12 +1033,15 @@ monitorRouter.post("/eval/runs", async (c) => {
       toggle?: { msa?: boolean; sdp?: boolean; rfv?: boolean };
       baselineToggle?: { msa?: boolean; sdp?: boolean; rfv?: boolean };
     }>()
-    .catch(() => ({} as {
-      datasetId?: string;
-      caseCount?: number;
-      toggle?: { msa?: boolean; sdp?: boolean; rfv?: boolean };
-      baselineToggle?: { msa?: boolean; sdp?: boolean; rfv?: boolean };
-    }));
+    .catch(
+      () =>
+        ({}) as {
+          datasetId?: string;
+          caseCount?: number;
+          toggle?: { msa?: boolean; sdp?: boolean; rfv?: boolean };
+          baselineToggle?: { msa?: boolean; sdp?: boolean; rfv?: boolean };
+        }
+    );
   if (!body.datasetId) return c.json({ ok: false, error: "datasetId is required" }, 400);
   const data = await runEval({
     datasetId: body.datasetId,
@@ -1140,9 +1146,7 @@ monitorRouter.get("/memory/experiences", async (c) => {
     limit: fetchLimit,
   });
 
-  let filtered = workflowRunId
-    ? rows.filter((row) => row.sourceRunId === workflowRunId)
-    : rows;
+  let filtered = workflowRunId ? rows.filter((row) => row.sourceRunId === workflowRunId) : rows;
   if (q) {
     filtered = filtered.filter((r) => {
       const summary = (r.contentJson.summary ?? "").toLowerCase();
@@ -1197,6 +1201,7 @@ monitorRouter.get("/memory/experiences/:id/links", async (c) => {
   const allowedRels = [
     "evidence_of",
     "derive_from",
+    "conflicts_with",
     "supersedes",
     "contradicts",
     "related_to",

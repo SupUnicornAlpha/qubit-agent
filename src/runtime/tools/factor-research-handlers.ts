@@ -13,11 +13,7 @@ import { ruleService } from "../rule/rule-service";
 import type { RuleAppliesTo, RuleLang, RuleStatus } from "../rule/rule-service";
 import { PYTHON_HANDLER } from "./python-handler";
 import type { BuiltinToolHandler } from "./types";
-import {
-  coerceSymbolList,
-  defaultDateWindow,
-  unwrapToolArgs,
-} from "./unwrap-tool-args";
+import { coerceSymbolList, defaultDateWindow, unwrapToolArgs } from "./unwrap-tool-args";
 
 /**
  * LLM 经常把 `factor.compute / factor.evaluate / factor.autoEvaluate` 的入参写成：
@@ -581,7 +577,7 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
         `factor.mine.llm: expressions.length(${expressions.length}) < min_count(${minCount}). ` +
           `必须传 expressions:string[]（≥${minCount} 条 qlib_expr），不要只传 task/targets。` +
           `示例: ["EMA(close,12)-EMA(close,26)","(close-Min(low,9))/(Max(high,9)-Min(low,9)+1e-8)","volume/Mean(volume,20)","close/Ref(close,20)-1","Corr(volume,Abs(Delta(close,1)),20)"]。` +
-          `若只要注册 1 条，请改用 factor.register。`
+          "若只要注册 1 条，请改用 factor.register。"
       );
     }
 

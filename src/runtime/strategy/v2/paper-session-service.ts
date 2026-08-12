@@ -62,9 +62,7 @@ export function createPaperSession(input: {
     projectId: input.projectId ?? null,
     primarySymbol: input.primarySymbol,
     market: (input.market ?? "US").trim() || "US",
-    timeframe:
-      input.timeframe?.trim() ||
-      String(input.manifest.primaryFrequency ?? "1d"),
+    timeframe: input.timeframe?.trim() || String(input.manifest.primaryFrequency ?? "1d"),
     status: "ready",
     intentCount: 0,
     lastRunAt: null,
@@ -86,12 +84,7 @@ export function updatePaperSession(
   patch: Partial<
     Pick<
       StrategyPaperSession,
-      | "status"
-      | "intentCount"
-      | "lastRunAt"
-      | "lastError"
-      | "strategyVersionId"
-      | "workflowRunId"
+      "status" | "intentCount" | "lastRunAt" | "lastError" | "strategyVersionId" | "workflowRunId"
     >
   >
 ): StrategyPaperSession | null {

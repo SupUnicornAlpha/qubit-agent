@@ -2,13 +2,13 @@ import { createHash } from "node:crypto";
 import { type FSWatcher, watch } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { SEED_AGENT_DEFINITIONS } from "../seed-agent-definitions-data";
 import { syncWorkspaceConfigToDb } from "./config-sync";
 import {
   buildDefaultSandboxPoliciesFromDefinitions,
   ensureWorkspaceRuntimeConfigFiles,
   loadWorkspaceRuntimeConfig,
 } from "./workspace-config";
-import { SEED_AGENT_DEFINITIONS } from "../seed-agent-definitions-data";
 
 /**
  * workspace-config-watcher

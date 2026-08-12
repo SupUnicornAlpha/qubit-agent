@@ -8,11 +8,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { defaultDataDir } from "../../app-paths";
 import { coerceConfidence01 } from "../../tools/research-arg-normalize";
-import {
-  type ResearchThesis,
-  ResearchThesisSchema,
-  newThesisId,
-} from "./market-event-v2";
+import { type ResearchThesis, ResearchThesisSchema, newThesisId } from "./market-event-v2";
 
 export type ResearchThesisWriteInput = {
   snapshotId: string;
@@ -120,16 +116,16 @@ export async function writeResearchThesis(
   const snapshotId = input.snapshotId.trim();
   if (!snapshotId) throw new Error("missing_snapshotId: research.thesis.write requires snapshotId");
 
-  const instrumentScope = [
-    ...new Set(input.instrumentScope.map((s) => s.trim()).filter(Boolean)),
-  ];
+  const instrumentScope = [...new Set(input.instrumentScope.map((s) => s.trim()).filter(Boolean))];
   if (instrumentScope.length === 0) {
     throw new Error("missing_instrumentScope: research.thesis.write requires instrumentScope");
   }
 
-  const confidence = coerceConfidence01(input.confidence, NaN);
+  const confidence = coerceConfidence01(input.confidence, Number.NaN);
   if (!Number.isFinite(confidence)) {
-    throw new Error("invalid_confidence: must be between 0 and 1 (or label low/medium/high, or 0-100)");
+    throw new Error(
+      "invalid_confidence: must be between 0 and 1 (or label low/medium/high, or 0-100)"
+    );
   }
 
   const body = {
@@ -144,8 +140,7 @@ export async function writeResearchThesis(
     modelAndPromptVersion: (input.modelAndPromptVersion ?? "unknown").trim() || "unknown",
   };
   const fingerprint = canonicalFingerprint(body);
-  const thesisId =
-    input.thesisId?.trim() || thesisIdFromFingerprint(fingerprint) || newThesisId();
+  const thesisId = input.thesisId?.trim() || thesisIdFromFingerprint(fingerprint) || newThesisId();
   const createdAt = input.createdAt ?? new Date().toISOString();
 
   const existing = await getResearchThesisById(thesisId, options?.dataDir);

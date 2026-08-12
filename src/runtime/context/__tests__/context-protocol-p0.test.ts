@@ -4,39 +4,27 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { InMemoryExperienceStore } from "../../experience/experience-store";
-import {
-  assembleContextEnvelope,
-  renderHandoffForPrompt,
-} from "../assemble-context-prompt";
-import {
-  getContextMetricsSnapshot,
-  resetContextMetricsForTesting,
-} from "../context-metrics";
-import {
-  FinanceRecall,
-  renderFinanceRecallBlockForPrompt,
-} from "../finance-recall";
+import { assembleContextEnvelope, renderHandoffForPrompt } from "../assemble-context-prompt";
+import { getContextMetricsSnapshot, resetContextMetricsForTesting } from "../context-metrics";
 import {
   validateFactorArchiveMeta,
   validateResearchConclusionMeta,
 } from "../finance-memory-schemas";
-import {
-  FinanceMemoryWriteError,
-  upsertFactorArchiveExperience,
-} from "../finance-memory-writer";
+import { FinanceMemoryWriteError, upsertFactorArchiveExperience } from "../finance-memory-writer";
+import { FinanceRecall, renderFinanceRecallBlockForPrompt } from "../finance-recall";
 
 beforeEach(() => {
   resetContextMetricsForTesting();
-  process.env["CONTEXT_PROTOCOL_V1"] = "1";
-  process.env["FINANCE_MEMORY_STRICT"] = "1";
-  process.env["CONTEXT_AXIOM_PIT"] = "1";
+  process.env.CONTEXT_PROTOCOL_V1 = "1";
+  process.env.FINANCE_MEMORY_STRICT = "1";
+  process.env.CONTEXT_AXIOM_PIT = "1";
 });
 
 afterEach(() => {
   resetContextMetricsForTesting();
-  delete process.env["CONTEXT_PROTOCOL_V1"];
-  delete process.env["FINANCE_MEMORY_STRICT"];
-  delete process.env["CONTEXT_AXIOM_PIT"];
+  delete process.env.CONTEXT_PROTOCOL_V1;
+  delete process.env.FINANCE_MEMORY_STRICT;
+  delete process.env.CONTEXT_AXIOM_PIT;
 });
 
 describe("FinanceMemory schemas", () => {
@@ -104,7 +92,7 @@ describe("FinanceMemory writer", () => {
       scopeId: "p1",
     });
     expect(rows.length).toBe(1);
-    expect(rows[0]?.metadataJson["rankIc"]).toBe(0.09);
+    expect(rows[0]?.metadataJson.rankIc).toBe(0.09);
   });
 
   test("strict 模式缺字段抛 FinanceMemoryWriteError", async () => {
@@ -185,9 +173,9 @@ describe("FinanceRecall", () => {
       silentEmit: true,
     });
 
-    expect(hits.every((h) => h.experience.metadataJson["factorId"])).toBe(true);
-    expect(hits.some((h) => h.experience.metadataJson["factorId"] === "f-future")).toBe(false);
-    expect(hits.some((h) => h.experience.metadataJson["factorId"] === "f-ok")).toBe(true);
+    expect(hits.every((h) => h.experience.metadataJson.factorId)).toBe(true);
+    expect(hits.some((h) => h.experience.metadataJson.factorId === "f-future")).toBe(false);
+    expect(hits.some((h) => h.experience.metadataJson.factorId === "f-ok")).toBe(true);
 
     const md = renderFinanceRecallBlockForPrompt(hits);
     expect(md).toContain("## Memory · Finance Recall");
@@ -219,7 +207,7 @@ describe("assembleContextEnvelope", () => {
   });
 
   test("softOmit 优先丢掉 general/session 保留 finance+goal", () => {
-    process.env["QUBIT_SOFT_USER_PROMPT_CHARS"] = "500";
+    process.env.QUBIT_SOFT_USER_PROMPT_CHARS = "500";
     const env = assembleContextEnvelope({
       workflowRunId: "wf-1",
       definitionId: "def-1",
@@ -235,7 +223,7 @@ describe("assembleContextEnvelope", () => {
     expect(env.slots.goal).toBeTruthy();
     expect(env.slots.recall_finance).toBeTruthy();
     expect(env.slots.recall_general || env.slots.session).toBeFalsy();
-    delete process.env["QUBIT_SOFT_USER_PROMPT_CHARS"];
+    delete process.env.QUBIT_SOFT_USER_PROMPT_CHARS;
   });
 
   test("handoff 无结构字段计 unstructured", () => {

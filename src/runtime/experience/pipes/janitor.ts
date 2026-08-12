@@ -176,9 +176,7 @@ export function evaluateDecay(
   // shallow：过 TTL 直接 mark_decay（即使 quality 尚可）
   if (tier === "shallow") {
     const decayHours =
-      typeof exp.metadataJson?.["decayHours"] === "number"
-        ? Number(exp.metadataJson["decayHours"])
-        : 48;
+      typeof exp.metadataJson?.decayHours === "number" ? Number(exp.metadataJson.decayHours) : 48;
     const ageMs = now.getTime() - new Date(exp.validFrom).getTime();
     if (ageMs >= decayHours * 3_600_000) return "mark_decay";
   }
@@ -201,15 +199,23 @@ export function evaluateDecay(
 
 function resolveMemoryTier(exp: Experience): "shallow" | "intermediate" | "deep" {
   const meta = exp.metadataJson ?? {};
-  if (meta["memoryTier"] === "shallow" || meta["memoryTier"] === "intermediate" || meta["memoryTier"] === "deep") {
-    return meta["memoryTier"];
+  if (
+    meta.memoryTier === "shallow" ||
+    meta.memoryTier === "intermediate" ||
+    meta.memoryTier === "deep"
+  ) {
+    return meta.memoryTier;
   }
   const tag = exp.tagsJson.find((t) => t.startsWith("tier:"));
   if (tag === "tier:shallow") return "shallow";
   if (tag === "tier:intermediate") return "intermediate";
   if (tag === "tier:deep") return "deep";
   if (exp.subKind === "market_snapshot") return "shallow";
-  if (exp.subKind === "factor_archive" || exp.subKind === "strategy_recipe" || exp.subKind === "playbook") {
+  if (
+    exp.subKind === "factor_archive" ||
+    exp.subKind === "strategy_recipe" ||
+    exp.subKind === "playbook"
+  ) {
     return "deep";
   }
   return "intermediate";

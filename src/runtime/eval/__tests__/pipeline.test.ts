@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 /**
  * P3-2 闭环：eval/pipeline.ts 重写为真 evaluator（读 factor_evaluation 表）。
  *
@@ -23,7 +24,6 @@
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 
 const tmpDir = join(tmpdir(), `qubit-p3-2-eval-${process.pid}-${Date.now()}`);
 rmSync(tmpDir, { recursive: true, force: true });
@@ -140,7 +140,7 @@ describe("eval/pipeline P3-2 — 真 evaluator", () => {
       name: "empty_run",
       metaJson: { projectId: `${PROJECT_ID}_nonexistent` },
     });
-    const r = await runEval({ datasetId: dataset!.id, caseCount: 10 });
+    const r = await runEval({ datasetId: dataset?.id, caseCount: 10 });
     expect(r.summaryMetricsJson.insufficient).toBe(true);
     expect(r.summaryMetricsJson.caseCount).toBe(0);
     expect(r.summaryMetricsJson.passCount).toBe(0);
@@ -154,7 +154,7 @@ describe("eval/pipeline P3-2 — 真 evaluator", () => {
   test("正常路径：每条 evaluation 一个 case，score=abs(rank_ic)，pass=score>=0.03", async () => {
     /** 5 个 factor evaluation：rank_ic 0.10/0.05/0.02/-0.08/0.001 → 4 个 pass（>=0.03） */
     await seedFactorEvaluations([
-      { factorName: "f_high_a", category: "momentum", rankIc: 0.10 },
+      { factorName: "f_high_a", category: "momentum", rankIc: 0.1 },
       { factorName: "f_high_b", category: "momentum", rankIc: 0.05 },
       { factorName: "f_mid", category: "value", rankIc: 0.02 },
       { factorName: "f_neg_strong", category: "momentum", rankIc: -0.08 },
@@ -164,14 +164,14 @@ describe("eval/pipeline P3-2 — 真 evaluator", () => {
       name: "normal_run",
       metaJson: { projectId: PROJECT_ID },
     });
-    const r = await runEval({ datasetId: dataset!.id, caseCount: 10 });
+    const r = await runEval({ datasetId: dataset?.id, caseCount: 10 });
     expect(r.summaryMetricsJson.insufficient).toBe(false);
     expect(r.summaryMetricsJson.caseCount).toBe(5);
     /** abs(0.10), 0.05, 0.02, 0.08, 0.001 → 0.10/0.05/0.08 >= 0.03 → 3 pass */
     expect(r.summaryMetricsJson.passCount).toBe(3);
     expect(r.summaryMetricsJson.passRate).toBeCloseTo(0.6, 2);
     /** topFactorScore = 0.10（abs(0.10)） */
-    expect(r.summaryMetricsJson.topFactorScore).toBeCloseTo(0.10, 2);
+    expect(r.summaryMetricsJson.topFactorScore).toBeCloseTo(0.1, 2);
     /** avgRankIc 是有符号平均：(0.10+0.05+0.02-0.08+0.001)/5 = 0.0182 */
     expect(r.summaryMetricsJson.avgRankIc).toBeCloseTo(0.0182, 2);
     /** avgScore 是 abs 平均：(0.10+0.05+0.02+0.08+0.001)/5 = 0.0502 */
@@ -181,9 +181,9 @@ describe("eval/pipeline P3-2 — 真 evaluator", () => {
     /** case actualJson 字段都填齐 */
     for (const c of detail.cases) {
       const actual = c.actualJson as Record<string, unknown>;
-      expect(typeof actual["factorId"]).toBe("string");
-      expect(typeof actual["factorCategory"]).toBe("string");
-      expect(typeof actual["sampleSize"]).toBe("number");
+      expect(typeof actual.factorId).toBe("string");
+      expect(typeof actual.factorCategory).toBe("string");
+      expect(typeof actual.sampleSize).toBe("number");
     }
   });
 
@@ -199,7 +199,7 @@ describe("eval/pipeline P3-2 — 真 evaluator", () => {
       metaJson: { projectId: PROJECT_ID },
     });
     const r = await runEval({
-      datasetId: dataset!.id,
+      datasetId: dataset?.id,
       /** 仅看上面新种的 3 条；caseCount 只取最近 3 个 */
       caseCount: 3,
       toggle: { icThreshold: 0.05 },
@@ -220,7 +220,7 @@ describe("eval/pipeline P3-2 — 真 evaluator", () => {
       metaJson: { projectId: PROJECT_ID },
     });
     const r = await runEval({
-      datasetId: dataset!.id,
+      datasetId: dataset?.id,
       caseCount: 10,
       toggle: { category: "value" },
     });
@@ -228,14 +228,14 @@ describe("eval/pipeline P3-2 — 真 evaluator", () => {
     expect(r.summaryMetricsJson.caseCount).toBe(2);
     const detail = await getEvalRunDetail(r.runId);
     for (const c of detail.cases) {
-      expect((c.actualJson as Record<string, unknown>)["factorCategory"]).toBe("value");
+      expect((c.actualJson as Record<string, unknown>).factorCategory).toBe("value");
     }
     expect(r.summaryMetricsJson.filter.category).toBe("value");
   });
 
   test("baselineToggle 提供 → 两条 run + gainVsBaseline 算出", async () => {
     await seedFactorEvaluations([
-      { factorName: "f_bl_a", category: "momentum", rankIc: 0.10 },
+      { factorName: "f_bl_a", category: "momentum", rankIc: 0.1 },
       { factorName: "f_bl_b", category: "momentum", rankIc: 0.02 },
       { factorName: "f_bl_c", category: "value", rankIc: 0.01 },
     ]);
@@ -244,7 +244,7 @@ describe("eval/pipeline P3-2 — 真 evaluator", () => {
       metaJson: { projectId: PROJECT_ID },
     });
     const r = await runEval({
-      datasetId: dataset!.id,
+      datasetId: dataset?.id,
       caseCount: 3,
       /** primary 限定 momentum（avg score=(0.10+0.02)/2=0.06） */
       toggle: { category: "momentum" },
@@ -265,14 +265,19 @@ describe("eval/pipeline P3-2 — 真 evaluator", () => {
   test("dataset.metaJson.projectId 作 toggle.projectId 默认值（toggle 没传时生效）", async () => {
     /** OTHER_PROJECT_ID 项目下种 1 条，PROJECT_ID 下种 1 条 */
     await seedFactorEvaluations([
-      { factorName: "f_other_proj", category: "momentum", rankIc: 0.09, projectId: OTHER_PROJECT_ID },
+      {
+        factorName: "f_other_proj",
+        category: "momentum",
+        rankIc: 0.09,
+        projectId: OTHER_PROJECT_ID,
+      },
       { factorName: "f_main_proj", category: "momentum", rankIc: 0.04 },
     ]);
     const dataset = await createEvalDataset({
       name: "proj_default_run",
       metaJson: { projectId: OTHER_PROJECT_ID },
     });
-    const r = await runEval({ datasetId: dataset!.id, caseCount: 10 });
+    const r = await runEval({ datasetId: dataset?.id, caseCount: 10 });
     /** 只该看到 OTHER_PROJECT_ID 下的 evaluation = 1 条 */
     expect(r.summaryMetricsJson.filter.projectId).toBe(OTHER_PROJECT_ID);
     const detail = await getEvalRunDetail(r.runId);
@@ -283,7 +288,7 @@ describe("eval/pipeline P3-2 — 真 evaluator", () => {
     expect(detail.cases.length).toBeGreaterThanOrEqual(1);
     /** 验证 OTHER_PROJECT 下种的 factor 出现 */
     const names = detail.cases.map(
-      (c) => (c.actualJson as Record<string, unknown>)["factorName"] as string
+      (c) => (c.actualJson as Record<string, unknown>).factorName as string
     );
     expect(names).toContain("f_other_proj");
   });
@@ -298,7 +303,7 @@ describe("eval/pipeline P3-2 — 真 evaluator", () => {
       metaJson: { projectId: PROJECT_ID },
     });
     const r = await runEval({
-      datasetId: dataset!.id,
+      datasetId: dataset?.id,
       caseCount: 2,
       /** msa/sdp/rfv = 一切关闭，验证它们对 score 完全无影响 */
       toggle: { msa: false, sdp: false, rfv: false },
@@ -309,9 +314,9 @@ describe("eval/pipeline P3-2 — 真 evaluator", () => {
 
     const detail = await getEvalRunDetail(r.runId);
     const cfg = detail.run.configSnapshotJson as Record<string, unknown>;
-    const dep = cfg["__deprecated_toggle"] as Record<string, unknown>;
-    expect(dep["msa"]).toBe(false);
-    expect(dep["sdp"]).toBe(false);
-    expect(dep["rfv"]).toBe(false);
+    const dep = cfg.__deprecated_toggle as Record<string, unknown>;
+    expect(dep.msa).toBe(false);
+    expect(dep.sdp).toBe(false);
+    expect(dep.rfv).toBe(false);
   });
 });

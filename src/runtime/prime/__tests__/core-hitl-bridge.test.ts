@@ -16,9 +16,7 @@ describe("core-hitl-bridge", () => {
   });
 
   test("resolve prefers hitlChatMode over hitlMode", () => {
-    expect(
-      resolveCoreBridgeChatHitlMode({ hitlChatMode: "off", hitlMode: "always" })
-    ).toBe("off");
+    expect(resolveCoreBridgeChatHitlMode({ hitlChatMode: "off", hitlMode: "always" })).toBe("off");
     expect(resolveCoreBridgeChatHitlMode({ hitlMode: "always" })).toBe("always");
     expect(resolveCoreBridgeChatHitlMode({})).toBe("ai");
   });

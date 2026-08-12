@@ -176,15 +176,13 @@ export function classifyLlmGatewayError(
         fallbackEligible: error.fallbackEligible,
         circuitRelevant: error.circuitRelevant,
         cause: error.cause ?? error,
-        ...(error.provider ?? context?.provider
+        ...((error.provider ?? context?.provider)
           ? { provider: error.provider ?? context?.provider }
           : {}),
-        ...(error.model ?? context?.model
-          ? { model: error.model ?? context?.model }
-          : {}),
+        ...((error.model ?? context?.model) ? { model: error.model ?? context?.model } : {}),
         ...(error.httpStatus !== undefined ? { httpStatus: error.httpStatus } : {}),
         ...(error.retryAfterMs !== undefined ? { retryAfterMs: error.retryAfterMs } : {}),
-        ...(error.attempt ?? context?.attempt !== undefined
+        ...((error.attempt ?? context?.attempt !== undefined)
           ? { attempt: error.attempt ?? context?.attempt }
           : {}),
       });
@@ -244,10 +242,7 @@ export function classifyLlmGatewayError(
     });
   }
 
-  if (
-    /rate limit|too many requests|\b429\b/i.test(message) ||
-    httpStatus === 429
-  ) {
+  if (/rate limit|too many requests|\b429\b/i.test(message) || httpStatus === 429) {
     return new LlmGatewayError("RATE_LIMIT", message, {
       ...base,
       httpStatus: httpStatus ?? 429,

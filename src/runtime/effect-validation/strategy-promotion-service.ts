@@ -29,7 +29,7 @@ export interface StrategyVersionScorecard {
 }
 
 export function buildStrategyVersionScorecards(
-  rows: Array<typeof strategyEvalRun.$inferSelect>,
+  rows: Array<typeof strategyEvalRun.$inferSelect>
 ): StrategyVersionScorecard[] {
   const byVersion = new Map<string, Array<typeof strategyEvalRun.$inferSelect>>();
   for (const row of rows) {
@@ -38,37 +38,44 @@ export function buildStrategyVersionScorecards(
     bucket.push(row);
     byVersion.set(row.strategyVersionId, bucket);
   }
-  return [...byVersion].map(([strategyVersionId, evaluations]) => {
-    const latest = (kind: typeof strategyEvalRun.$inferSelect.evalKind) =>
-      evaluations
-        .filter((row) => row.evalKind === kind)
-        .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
-    const backtest = latest("backtest");
-    const walkForward = latest("walk_forward");
-    const paper = latest("paper");
-    const backtestScore = backtest?.qualityScore ?? null;
-    const walkForwardScore = walkForward?.qualityScore ?? null;
-    const paperScore = paper?.qualityScore ?? null;
-    const allPrerequisitesPassed = backtest?.pass === true && walkForward?.pass === true && paper?.pass === true;
-    const score = (backtestScore ?? 0) * 0.25 + (walkForwardScore ?? 0) * 0.35 + (paperScore ?? 0) * 0.4;
-    return {
-      strategyVersionId,
-      score: Number(score.toFixed(6)),
-      backtestScore,
-      walkForwardScore,
-      paperScore,
-      allPrerequisitesPassed,
-      evaluationCount: evaluations.length,
-    };
-  }).sort((left, right) => right.score - left.score);
+  return [...byVersion]
+    .map(([strategyVersionId, evaluations]) => {
+      const latest = (kind: typeof strategyEvalRun.$inferSelect.evalKind) =>
+        evaluations
+          .filter((row) => row.evalKind === kind)
+          .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+      const backtest = latest("backtest");
+      const walkForward = latest("walk_forward");
+      const paper = latest("paper");
+      const backtestScore = backtest?.qualityScore ?? null;
+      const walkForwardScore = walkForward?.qualityScore ?? null;
+      const paperScore = paper?.qualityScore ?? null;
+      const allPrerequisitesPassed =
+        backtest?.pass === true && walkForward?.pass === true && paper?.pass === true;
+      const score =
+        (backtestScore ?? 0) * 0.25 + (walkForwardScore ?? 0) * 0.35 + (paperScore ?? 0) * 0.4;
+      return {
+        strategyVersionId,
+        score: Number(score.toFixed(6)),
+        backtestScore,
+        walkForwardScore,
+        paperScore,
+        allPrerequisitesPassed,
+        evaluationCount: evaluations.length,
+      };
+    })
+    .sort((left, right) => right.score - left.score);
 }
 
 export class StrategyPromotionService {
-  async compareVersions(input: {
-    projectId: string;
-    challengerStrategyVersionId?: string;
-    minimumScoreUplift?: number;
-  }, client?: DbClient) {
+  async compareVersions(
+    input: {
+      projectId: string;
+      challengerStrategyVersionId?: string;
+      minimumScoreUplift?: number;
+    },
+    client?: DbClient
+  ) {
     const db = client ?? (await getDb());
     const rows = await db
       .select()
@@ -76,10 +83,14 @@ export class StrategyPromotionService {
       .where(eq(strategyEvalRun.projectId, input.projectId));
     const scorecards = buildStrategyVersionScorecards(rows);
     const challenger = input.challengerStrategyVersionId
-      ? scorecards.find((row) => row.strategyVersionId === input.challengerStrategyVersionId) ?? null
-      : scorecards[0] ?? null;
-    const champion = scorecards.find((row) =>
-      row.strategyVersionId !== challenger?.strategyVersionId && row.allPrerequisitesPassed) ?? null;
+      ? (scorecards.find((row) => row.strategyVersionId === input.challengerStrategyVersionId) ??
+        null)
+      : (scorecards[0] ?? null);
+    const champion =
+      scorecards.find(
+        (row) =>
+          row.strategyVersionId !== challenger?.strategyVersionId && row.allPrerequisitesPassed
+      ) ?? null;
     const minimumScoreUplift = Math.max(0, input.minimumScoreUplift ?? 0.03);
     const scoreUplift = challenger && champion ? challenger.score - champion.score : null;
     return {
@@ -89,7 +100,11 @@ export class StrategyPromotionService {
       scoreUplift,
       minimumScoreUplift,
       promotionEligible: Boolean(
-        champion && challenger && challenger.allPrerequisitesPassed && scoreUplift != null && scoreUplift >= minimumScoreUplift
+        champion &&
+          challenger &&
+          challenger.allPrerequisitesPassed &&
+          scoreUplift != null &&
+          scoreUplift >= minimumScoreUplift
       ),
       decision: !challenger
         ? "no_challenger"

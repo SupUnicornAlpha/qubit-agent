@@ -1,7 +1,7 @@
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { getDb } from "../db/sqlite/client";
-import { workspace, project } from "../db/sqlite/schema";
-import { eq } from "drizzle-orm";
+import { project, workspace } from "../db/sqlite/schema";
 import {
   DEFAULT_USER_WORKSPACE_ID,
   DEFAULT_USER_WORKSPACE_NAME,

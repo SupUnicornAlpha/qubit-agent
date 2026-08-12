@@ -16,15 +16,13 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { envRegistry } from "../../db/sqlite/schema";
-import type {
-  EnvKind,
-  EnvSource,
-  EnvStatus,
-  ExpectedPackage,
-} from "./types";
+import type { EnvKind, EnvSource, EnvStatus, ExpectedPackage } from "./types";
 
 export class EnvRegistryError extends Error {
-  constructor(public readonly code: EnvRegistryErrorCode, message?: string) {
+  constructor(
+    public readonly code: EnvRegistryErrorCode,
+    message?: string
+  ) {
     super(message ?? code);
     this.name = "EnvRegistryError";
   }
@@ -97,10 +95,12 @@ export const envRegistryService = {
     const conditions = [];
     if (filter.kind) conditions.push(eq(envRegistry.kind, filter.kind));
     if (filter.status) conditions.push(eq(envRegistry.status, filter.status));
-    if (filter.capability)
-      conditions.push(eq(envRegistry.capability, filter.capability));
+    if (filter.capability) conditions.push(eq(envRegistry.capability, filter.capability));
     const rows = await (conditions.length
-      ? db.select().from(envRegistry).where(and(...conditions))
+      ? db
+          .select()
+          .from(envRegistry)
+          .where(and(...conditions))
       : db.select().from(envRegistry));
     return rows
       .map(toExpected)
@@ -133,9 +133,7 @@ export const envRegistryService = {
     const dup = await db
       .select()
       .from(envRegistry)
-      .where(
-        and(eq(envRegistry.kind, input.kind), eq(envRegistry.packageName, input.packageName))
-      )
+      .where(and(eq(envRegistry.kind, input.kind), eq(envRegistry.packageName, input.packageName)))
       .limit(1);
     if (dup[0]) throw new EnvRegistryError("duplicate");
 
@@ -174,8 +172,7 @@ export const envRegistryService = {
       updatedAt: new Date().toISOString(),
     };
     if (patch.status !== undefined) update.status = patch.status;
-    if (patch.userVersionSpec !== undefined)
-      update.userVersionSpec = patch.userVersionSpec;
+    if (patch.userVersionSpec !== undefined) update.userVersionSpec = patch.userVersionSpec;
 
     if (!existing.isBuiltin) {
       if (patch.displayName !== undefined) update.displayName = patch.displayName;

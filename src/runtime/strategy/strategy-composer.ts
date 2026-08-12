@@ -16,13 +16,13 @@ import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import {
-  strategy as strategyTable,
   strategyComposition as compositionTable,
+  strategy as strategyTable,
   strategyVersion as strategyVersionTable,
 } from "../../db/sqlite/schema";
 import { factorService } from "../factor/factor-service";
-import { ruleService } from "../rule/rule-service";
 import type { FactorComputeRow, RuleEvalContext } from "../provider/types";
+import { ruleService } from "../rule/rule-service";
 
 // ─── 类型 ───────────────────────────────────────────────────────────────────
 
@@ -174,10 +174,7 @@ export class StrategyComposer {
         .where(eq(strategyTable.id, strategyId))
         .limit(1);
       if (!exists[0]) {
-        throw new StrategyComposerError(
-          "validation_failed",
-          `strategy_not_found: ${strategyId}`
-        );
+        throw new StrategyComposerError("validation_failed", `strategy_not_found: ${strategyId}`);
       }
     } else {
       strategyId = randomUUID();
@@ -321,8 +318,8 @@ export class StrategyComposer {
       weightMethod: override?.weightMethod ?? src.weightMethod,
       ...(override?.factorWeights
         ? { factorWeights: override.factorWeights }
-        : src.params["factorWeights"]
-          ? { factorWeights: src.params["factorWeights"] as Record<string, number> }
+        : src.params.factorWeights
+          ? { factorWeights: src.params.factorWeights as Record<string, number> }
           : {}),
       rebalanceFreq: override?.rebalanceFreq ?? src.rebalanceFreq,
       universe: override?.universe ?? src.universe,
@@ -409,9 +406,8 @@ export class StrategyComposer {
       const result = await ruleService.evaluate({ ruleId: rid, context: ctx });
       const m: Record<string, { passed: boolean; score?: number }> = {};
       for (const s of result.symbols) {
-        m[s.symbol] = s.score !== undefined
-          ? { passed: s.passed, score: s.score }
-          : { passed: s.passed };
+        m[s.symbol] =
+          s.score !== undefined ? { passed: s.passed, score: s.score } : { passed: s.passed };
       }
       ruleByName.set(rule.name, m);
     }
@@ -513,7 +509,7 @@ export class StrategyComposer {
     const method = comp.weightMethod;
 
     if (method === "manual") {
-      const manual = (comp.params["factorWeights"] as Record<string, number>) ?? {};
+      const manual = (comp.params.factorWeights as Record<string, number>) ?? {};
       let total = 0;
       for (const fid of ids) {
         const meta = factorMeta.get(fid);
@@ -560,7 +556,7 @@ export class StrategyComposer {
       throw new StrategyComposerError(
         "validation_failed",
         `${method}_no_factor_evaluation: 所有因子都没有 factor_evaluation 留痕，无法用 IC 权重；` +
-          `请先调 factor.evaluate / factor.autoEvaluate，或切回 weight_method=equal`
+          "请先调 factor.evaluate / factor.autoEvaluate，或切回 weight_method=equal"
       );
     }
 

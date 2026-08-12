@@ -12,7 +12,20 @@
 import { resolve } from "node:path";
 import type { BarData } from "../../connectors/data/data.connector";
 import { PythonOneShotError, runPythonOneShot } from "../../util/python-oneshot";
+import {
+  type PerformanceMetrics,
+  computePerformanceMetrics,
+} from "../backtest/performance-metrics";
 import { getPythonBin } from "../sandbox/python-runtime";
+
+export type StrategyBacktestMetrics = PerformanceMetrics & {
+  totalReturnPct: number;
+  maxDrawdownPct: number;
+  sharpeApprox: number;
+  tradeCount: number;
+  bars: number;
+  lastPosition?: number;
+};
 
 export interface StrategyBacktestInput {
   strategyCode: string;
@@ -24,14 +37,7 @@ export interface StrategyBacktestInput {
 export interface StrategyBacktestResult {
   equityCurve: Array<{ time: string; equity: number }>;
   trades: Array<{ time: string; side: "buy" | "sell"; qty: number; price: number; fee: number }>;
-  metrics: {
-    totalReturnPct: number;
-    maxDrawdownPct: number;
-    sharpeApprox: number;
-    tradeCount: number;
-    bars: number;
-    lastPosition?: number;
-  };
+  metrics: StrategyBacktestMetrics;
   stderrText?: string;
 }
 
@@ -49,7 +55,10 @@ interface RawErr {
   stderrText?: string;
 }
 
-async function runWithBinary(bin: string, input: StrategyBacktestInput): Promise<StrategyBacktestResult> {
+async function runWithBinary(
+  bin: string,
+  input: StrategyBacktestInput
+): Promise<StrategyBacktestResult> {
   const script = resolve(import.meta.dir, "python_strategy_backtest_runner.py");
   const payload = {
     strategyCode: input.strategyCode,
@@ -84,7 +93,9 @@ async function runWithBinary(bin: string, input: StrategyBacktestInput): Promise
       } else if (err.source === "exit") {
         throw new Error(`python exited ${err.exitCode}: ${err.stderr || "(no output)"}`);
       } else if (err.source === "parse") {
-        throw new Error(`python output not JSON (exit=${err.exitCode}): ${err.stderr || err.stdout.slice(0, 400)}`);
+        throw new Error(
+          `python output not JSON (exit=${err.exitCode}): ${err.stderr || err.stdout.slice(0, 400)}`
+        );
       } else {
         throw err;
       }
@@ -106,10 +117,19 @@ async function runWithBinary(bin: string, input: StrategyBacktestInput): Promise
     fee: Number(t.fee) || 0,
   }));
 
+  const performanceMetrics = computePerformanceMetrics({
+    equityCurve: parsed.equityCurve,
+    trades,
+    initialCapital: input.initialCapital,
+  });
+
   return {
     equityCurve: parsed.equityCurve,
     trades,
-    metrics: parsed.metrics,
+    metrics: {
+      ...parsed.metrics,
+      ...performanceMetrics,
+    },
     stderrText: parsed.stderrText,
   };
 }

@@ -90,9 +90,7 @@ export async function saveModelConfig(
     const base = current.embedding ?? EmbeddingModelConfigSchema.parse({});
     const patch = input.embedding;
     const mergedApiKey =
-      typeof patch.apiKey === "string" && patch.apiKey.trim()
-        ? patch.apiKey.trim()
-        : base.apiKey;
+      typeof patch.apiKey === "string" && patch.apiKey.trim() ? patch.apiKey.trim() : base.apiKey;
     const merged: Record<string, unknown> = {
       enabled: patch.enabled ?? base.enabled,
       model: patch.model ?? base.model,
@@ -166,10 +164,7 @@ export function resolveEmbeddingRuntimeOptions(
 
   const model = emb?.model?.trim() || "text-embedding-3-small";
   const apiKey =
-    emb?.apiKey?.trim() ||
-    config?.apiKey?.trim() ||
-    env.OPENAI_API_KEY?.trim() ||
-    undefined;
+    emb?.apiKey?.trim() || config?.apiKey?.trim() || env.OPENAI_API_KEY?.trim() || undefined;
   const baseURL = emb?.baseUrl?.trim() || config?.baseUrl?.trim() || undefined;
   const dimensions = emb?.dimensions;
 

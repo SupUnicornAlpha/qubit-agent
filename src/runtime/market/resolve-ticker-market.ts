@@ -69,19 +69,32 @@ export interface ResolveTickerMarketOptions {
 }
 
 const CRYPTO_QUOTE_SUFFIXES = ["USDT", "BUSD", "USDC", "USD", "BTC", "ETH"] as const;
-const CRYPTO_HINT_EXCHANGES = new Set([
-  "CRYPTO",
-  "CC",
-  "BINANCE",
-  "BINANCEUS",
-  "OKX",
-  "BYBIT",
-]);
+const CRYPTO_HINT_EXCHANGES = new Set(["CRYPTO", "CC", "BINANCE", "BINANCEUS", "OKX", "BYBIT"]);
 const FUTURES_HINT_EXCHANGES = new Set(["CME", "CBOT", "NYMEX", "COMEX", "ICE", "FUTURES"]);
 const OPTION_HINT_EXCHANGES = new Set(["OPRA", "OCC", "OPTION", "OPTIONS"]);
 const FUTURES_ROOTS = [
-  "ES", "NQ", "YM", "RTY", "CL", "NG", "GC", "SI", "HG", "ZB", "ZN", "ZF", "ZT",
-  "6E", "6J", "ZC", "ZS", "ZW", "HE", "LE", "KC", "SB",
+  "ES",
+  "NQ",
+  "YM",
+  "RTY",
+  "CL",
+  "NG",
+  "GC",
+  "SI",
+  "HG",
+  "ZB",
+  "ZN",
+  "ZF",
+  "ZT",
+  "6E",
+  "6J",
+  "ZC",
+  "ZS",
+  "ZW",
+  "HE",
+  "LE",
+  "KC",
+  "SB",
 ] as const;
 
 /** Yahoo 风格后缀 → (market, exchange) 映射；用于显式后缀路径 */

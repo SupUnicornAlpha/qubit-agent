@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -7,11 +7,11 @@ import {
   assessUpstreamIndependence,
   isMarketQualityGateEnabled,
 } from "./data-quality-gate";
-import { evaluateOrderDataQualityGate } from "./order-data-quality-gate";
 import {
   buildMarketSnapshotRecord,
   clearMarketSnapshotCatalogForTests,
 } from "./market-snapshot-service";
+import { evaluateOrderDataQualityGate } from "./order-data-quality-gate";
 
 const prevGate = process.env.QUBIT_MARKET_QUALITY_GATE;
 
@@ -24,19 +24,13 @@ afterEach(() => {
 describe("data quality assessments (D3)", () => {
   test("same upstreamFamily is never verified", () => {
     expect(
-      assessUpstreamIndependence([
-        { upstreamFamily: "eastmoney" },
-        { upstreamFamily: "eastmoney" },
-      ])
+      assessUpstreamIndependence([{ upstreamFamily: "eastmoney" }, { upstreamFamily: "eastmoney" }])
     ).toBe("insufficient_peers");
   });
 
   test("independent families can verify; large price gap is divergent", () => {
     expect(
-      assessUpstreamIndependence([
-        { upstreamFamily: "wind" },
-        { upstreamFamily: "broker" },
-      ])
+      assessUpstreamIndependence([{ upstreamFamily: "wind" }, { upstreamFamily: "broker" }])
     ).toBe("verified");
 
     expect(

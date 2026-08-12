@@ -121,7 +121,7 @@ describe("runPostFusionPipeline explore_fallback 路由（F-P0-08）", () => {
     /** 必须写一条 phase=research_explore_fallback 的 llm_message */
     const fallbackLlm = interactionCalls.filter(
       (c) =>
-        c.payloadJson?.["phase"] === "research_explore_fallback" &&
+        c.payloadJson?.phase === "research_explore_fallback" &&
         (c.kind === undefined || c.kind === "llm_message")
     );
     expect(fallbackLlm.length).toBeGreaterThanOrEqual(1);
@@ -154,7 +154,7 @@ describe("runPostFusionPipeline explore_fallback 路由（F-P0-08）", () => {
 
     /** 不该走 fallback 分支 */
     const fallback = interactionCalls.filter(
-      (c) => c.payloadJson?.["phase"] === "research_explore_fallback"
+      (c) => c.payloadJson?.phase === "research_explore_fallback"
     );
     expect(fallback.length).toBe(0);
   });

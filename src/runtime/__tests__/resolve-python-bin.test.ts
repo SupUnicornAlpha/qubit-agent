@@ -20,33 +20,33 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _resetPythonBinCacheForTest, resolvePythonBin } from "../app-paths";
 
-const ORIGINAL_QUBIT_PYTHON = process.env["QUBIT_PYTHON"];
-const ORIGINAL_QUBIT_APP_ROOT = process.env["QUBIT_APP_ROOT"];
+const ORIGINAL_QUBIT_PYTHON = process.env.QUBIT_PYTHON;
+const ORIGINAL_QUBIT_APP_ROOT = process.env.QUBIT_APP_ROOT;
 
 describe("resolvePythonBin", () => {
   let tmp: string;
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), "qubit-pybin-"));
-    delete process.env["QUBIT_PYTHON"];
-    process.env["QUBIT_APP_ROOT"] = tmp;
+    delete process.env.QUBIT_PYTHON;
+    process.env.QUBIT_APP_ROOT = tmp;
     _resetPythonBinCacheForTest();
   });
   afterEach(() => {
     rmSync(tmp, { recursive: true, force: true });
-    if (ORIGINAL_QUBIT_PYTHON === undefined) delete process.env["QUBIT_PYTHON"];
-    else process.env["QUBIT_PYTHON"] = ORIGINAL_QUBIT_PYTHON;
-    if (ORIGINAL_QUBIT_APP_ROOT === undefined) delete process.env["QUBIT_APP_ROOT"];
-    else process.env["QUBIT_APP_ROOT"] = ORIGINAL_QUBIT_APP_ROOT;
+    if (ORIGINAL_QUBIT_PYTHON === undefined) delete process.env.QUBIT_PYTHON;
+    else process.env.QUBIT_PYTHON = ORIGINAL_QUBIT_PYTHON;
+    if (ORIGINAL_QUBIT_APP_ROOT === undefined) delete process.env.QUBIT_APP_ROOT;
+    else process.env.QUBIT_APP_ROOT = ORIGINAL_QUBIT_APP_ROOT;
     _resetPythonBinCacheForTest();
   });
 
   it("QUBIT_PYTHON 显式指定 → 直接返回，不做探针", () => {
-    process.env["QUBIT_PYTHON"] = "/fake/python3";
+    process.env.QUBIT_PYTHON = "/fake/python3";
     expect(resolvePythonBin(tmp)).toBe("/fake/python3");
   });
 

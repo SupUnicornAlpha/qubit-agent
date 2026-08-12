@@ -6,10 +6,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import {
-  ReflectionRequestSchema,
-  ReflectionScopeSchema,
-} from "../self-improve-loop";
+import { ReflectionRequestSchema, ReflectionScopeSchema } from "../self-improve-loop";
 
 describe("ReflectionScopeSchema", () => {
   test("已知 scope 通过", () => {
@@ -41,9 +38,7 @@ describe("ReflectionRequestSchema", () => {
   });
 
   test("缺 subjectId 被拒", () => {
-    expect(
-      ReflectionRequestSchema.safeParse({ scope: "daily_summary" }).success,
-    ).toBe(false);
+    expect(ReflectionRequestSchema.safeParse({ scope: "daily_summary" }).success).toBe(false);
   });
 
   test("空 subjectId 被拒", () => {
@@ -51,7 +46,7 @@ describe("ReflectionRequestSchema", () => {
       ReflectionRequestSchema.safeParse({
         scope: "daily_summary",
         subjectId: "",
-      }).success,
+      }).success
     ).toBe(false);
   });
 

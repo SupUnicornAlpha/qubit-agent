@@ -1,7 +1,11 @@
-import { factorService } from "../factor/factor-service";
 import type { BacktestJobRecord } from "../backtest/backtest-job-service";
 import { backtestJobService } from "../backtest/backtest-job-service";
-import { strategyComposer, type CompositionRecord, type StrategyVersionRecord } from "../strategy/strategy-composer";
+import { factorService } from "../factor/factor-service";
+import {
+  type CompositionRecord,
+  type StrategyVersionRecord,
+  strategyComposer,
+} from "../strategy/strategy-composer";
 
 export interface FactorBacktestPromotionInput {
   projectId?: string;

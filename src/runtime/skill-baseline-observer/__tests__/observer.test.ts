@@ -13,8 +13,8 @@
  */
 
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { config } from "../../../config";
@@ -32,7 +32,7 @@ import {
   workspace,
 } from "../../../db/sqlite/schema";
 import { setSelfEvolveConfigForTest } from "../../config/self-evolve-config";
-import { getExperienceBus, type ExperienceEvent } from "../../experience/experience-bus";
+import { type ExperienceEvent, getExperienceBus } from "../../experience/experience-bus";
 import { SkillBaselineObserver } from "../observer";
 
 interface Fx {
@@ -79,7 +79,10 @@ async function seedRecall(skillId: string, executed = true): Promise<void> {
     .run();
 }
 
-async function seedRun(skillId: string, outcome: "success" | "fail" | "partial" | "unknown"): Promise<void> {
+async function seedRun(
+  skillId: string,
+  outcome: "success" | "fail" | "partial" | "unknown"
+): Promise<void> {
   const db = await getDb();
   await db
     .insert(agentSkillRun)
@@ -156,14 +159,20 @@ afterEach(() => {
 describe("SkillBaselineObserver", () => {
   test("总闸关 → status='disabled'，不扫", async () => {
     setSelfEvolveConfigForTest({ enabled: false });
-    const s = await new SkillBaselineObserver().runOnce({ projectId: fx.projectId, emitMetrics: false });
+    const s = await new SkillBaselineObserver().runOnce({
+      projectId: fx.projectId,
+      emitMetrics: false,
+    });
     expect(s.status).toBe("disabled");
     expect(s.reason).toContain("SELF_EVOLVE_ENABLED=false");
     expect(s.scanned).toBe(0);
   });
 
   test("无候选 skill → scanned=0", async () => {
-    const s = await new SkillBaselineObserver().runOnce({ projectId: fx.projectId, emitMetrics: false });
+    const s = await new SkillBaselineObserver().runOnce({
+      projectId: fx.projectId,
+      emitMetrics: false,
+    });
     expect(s.scanned).toBe(0);
     expect(s.approved).toBe(0);
   });
@@ -182,11 +191,11 @@ describe("SkillBaselineObserver", () => {
     expect(s.scanned).toBe(1);
     expect(s.approved).toBe(0);
     expect(s.notReady).toBe(1);
-    expect(s.results[0]!.action).toBe("not_ready");
-    expect(s.results[0]!.reason).toContain("recall=1<3");
+    expect(s.results[0]?.action).toBe("not_ready");
+    expect(s.results[0]?.reason).toContain("recall=1<3");
     const db = await getDb();
     const [row] = await db.select().from(agentSkill).where(eq(agentSkill.id, id));
-    expect(row!.state).toBe("pending_review");
+    expect(row?.state).toBe("pending_review");
   });
 
   test("recall 够但 signaled 不够 → not_ready", async () => {
@@ -203,7 +212,7 @@ describe("SkillBaselineObserver", () => {
       emitMetrics: false,
     });
     expect(s.notReady).toBe(1);
-    expect(s.results[0]!.reason).toContain("signaled=1<2");
+    expect(s.results[0]?.reason).toContain("signaled=1<2");
   });
 
   test("recall+signaled 够但 success rate 不够 → not_ready", async () => {
@@ -222,7 +231,7 @@ describe("SkillBaselineObserver", () => {
       emitMetrics: false,
     });
     expect(s.notReady).toBe(1);
-    expect(s.results[0]!.reason).toMatch(/successRate=33%/);
+    expect(s.results[0]?.reason).toMatch(/successRate=33%/);
   });
 
   test("全部达标 → approve（state→active）", async () => {
@@ -239,18 +248,21 @@ describe("SkillBaselineObserver", () => {
       emitMetrics: false,
     });
     expect(s.approved).toBe(1);
-    expect(s.results[0]!.action).toBe("approved");
+    expect(s.results[0]?.action).toBe("approved");
     const db = await getDb();
     const [row] = await db.select().from(agentSkill).where(eq(agentSkill.id, id));
-    expect(row!.state).toBe("active");
-    expect(row!.lastPromotedAt).toBeTruthy();
-    expect(row!.promotionReviewAt).toBeTruthy();
+    expect(row?.state).toBe("active");
+    expect(row?.lastPromotedAt).toBeTruthy();
+    expect(row?.promotionReviewAt).toBeTruthy();
   });
 
   test("source!='evolved' 不扫", async () => {
     await seedSkill({ source: "agent_created" });
     await seedSkill({ source: "user_authored" });
-    const s = await new SkillBaselineObserver().runOnce({ projectId: fx.projectId, emitMetrics: false });
+    const s = await new SkillBaselineObserver().runOnce({
+      projectId: fx.projectId,
+      emitMetrics: false,
+    });
     expect(s.scanned).toBe(0);
   });
 
@@ -268,8 +280,8 @@ describe("SkillBaselineObserver", () => {
       emitMetrics: false,
     });
     expect(s.approved).toBe(1);
-    expect(s.results[0]!.signaledRunCount).toBe(2); // unknown 不计
-    expect(s.results[0]!.successRate).toBe(1);
+    expect(s.results[0]?.signaledRunCount).toBe(2); // unknown 不计
+    expect(s.results[0]?.successRate).toBe(1);
   });
 
   test("maxApprovesPerRun 截断", async () => {
@@ -310,10 +322,12 @@ describe("SkillBaselineObserver", () => {
     } finally {
       off();
     }
-    const ev = evs.find((e) => e.type === "maintenance_run" && e.kind === "skill_baseline_observer");
+    const ev = evs.find(
+      (e) => e.type === "maintenance_run" && e.kind === "skill_baseline_observer"
+    );
     expect(ev).toBeDefined();
     const s = (ev as { summary: Record<string, unknown> }).summary;
-    expect(s["status"]).toBe("completed");
-    expect(s["approved"]).toBe(1);
+    expect(s.status).toBe("completed");
+    expect(s.approved).toBe(1);
   });
 });

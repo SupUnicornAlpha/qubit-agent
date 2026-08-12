@@ -7,14 +7,8 @@ import {
   logResearchTeamInteraction,
   projectWorkflowFinalAnswer,
 } from "../research-team/interaction-log";
-import {
-  publishCoreToolCallEnd,
-  publishCoreToolCallStart,
-} from "./project-core-activity";
-import {
-  recordCoreMonitorToolCall,
-  recordCoreMonitorToolStart,
-} from "./project-core-monitor";
+import { publishCoreToolCallEnd, publishCoreToolCallStart } from "./project-core-activity";
+import { recordCoreMonitorToolCall, recordCoreMonitorToolStart } from "./project-core-monitor";
 import type { SessionSnapshot } from "./types";
 
 /**
@@ -70,9 +64,7 @@ export async function projectCoreTurnResult(input: {
 }): Promise<void> {
   const turn = input.snap.active_turn;
   const fromWire =
-    typeof turn?.answer_text === "string"
-      ? sanitizeCoreAnswerText(turn.answer_text)
-      : "";
+    typeof turn?.answer_text === "string" ? sanitizeCoreAnswerText(turn.answer_text) : "";
   const text =
     fromWire ||
     sanitizeCoreAnswerText(input.fallbackText ?? "") ||
@@ -84,9 +76,7 @@ export async function projectCoreTurnResult(input: {
     workflowRunId: input.workflowRunId,
     contentText: text,
     sourceTaskType: input.sourceTaskType ?? "orchestrator_chat_prime",
-    ...(input.conversationTurnId
-      ? { conversationTurnId: input.conversationTurnId }
-      : {}),
+    ...(input.conversationTurnId ? { conversationTurnId: input.conversationTurnId } : {}),
     payloadJson: {
       backend: "rust",
       turnId: turn?.turn_id,
@@ -113,9 +103,7 @@ export async function projectTeamResearchEdges(input: {
       kind: "tool_call",
       toolKind: "prime_team_msa",
       toolName: "research_team_execute",
-      contentText: input.ticker
-        ? `team slot ${role} for ${input.ticker}`
-        : `team slot ${role}`,
+      contentText: input.ticker ? `team slot ${role} for ${input.ticker}` : `team slot ${role}`,
       payloadJson: {
         backend: "rust",
         phase: "prime_team_msa_bridge",
@@ -160,10 +148,7 @@ export async function projectCoreInvocation(input: {
   };
   const state = input.state ?? "unknown";
   const isTerminal =
-    state === "completed" ||
-    state === "failed" ||
-    state === "cancelled" ||
-    state === "timed_out";
+    state === "completed" || state === "failed" || state === "cancelled" || state === "timed_out";
 
   if (!input.endOnly) {
     publishCoreToolCallStart(activityCtx, {
@@ -236,12 +221,8 @@ export async function projectCoreInvocation(input: {
     });
   }
 
-  const invokeOk =
-    state !== "failed" && state !== "cancelled" && state !== "timed_out";
-  const resultPreview = sanitizeCoreAnswerText(String(input.resultText ?? "").trim()).slice(
-    0,
-    240
-  );
+  const invokeOk = state !== "failed" && state !== "cancelled" && state !== "timed_out";
+  const resultPreview = sanitizeCoreAnswerText(String(input.resultText ?? "").trim()).slice(0, 240);
   publishCoreToolCallEnd(activityCtx, {
     toolCallId: input.invocationId,
     toolName: "agent.invoke",
@@ -319,9 +300,7 @@ export async function projectCoreInvocationsFromSnapshot(input: {
     const isRunning = state === "running";
     const alreadyStarted = prev != null;
     const narrative =
-      typeof inv.handoff_out?.narrative === "string"
-        ? inv.handoff_out.narrative.trim()
-        : "";
+      typeof inv.handoff_out?.narrative === "string" ? inv.handoff_out.narrative.trim() : "";
 
     await projectCoreInvocation({
       workflowRunId: input.workflowRunId,
@@ -336,13 +315,8 @@ export async function projectCoreInvocationsFromSnapshot(input: {
       state,
       deliveryStatus: inv.delivery?.status,
       ...(narrative ? { resultText: narrative } : {}),
-      ...(isRunning
-        ? { startOnly: true }
-        : alreadyStarted
-          ? { endOnly: true }
-          : {}),
+      ...(isRunning ? { startOnly: true } : alreadyStarted ? { endOnly: true } : {}),
     });
     input.projected.set(invocationId, state);
   }
 }
-

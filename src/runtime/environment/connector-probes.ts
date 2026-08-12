@@ -29,10 +29,7 @@ async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   return await Promise.race<T>([
     p,
     new Promise<never>((_, reject) =>
-      setTimeout(
-        () => reject(new Error(`connector probe timed out after ${ms}ms`)),
-        ms
-      )
+      setTimeout(() => reject(new Error(`connector probe timed out after ${ms}ms`)), ms)
     ),
   ]);
 }

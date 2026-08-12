@@ -253,7 +253,7 @@ export class AutoInstaller {
               gapSignature: gap.gapSignature,
               action: "skipped_existing",
               reason: "pending_review proposal already exists",
-              proposalId: existing[0]!.id,
+              proposalId: existing[0]?.id,
             });
           }
           continue;

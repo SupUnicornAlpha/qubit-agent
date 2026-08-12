@@ -38,15 +38,8 @@ export const AutonomousTriggerKindSchema = z.enum([
 ]);
 export type AutonomousTriggerKind = z.infer<typeof AutonomousTriggerKindSchema>;
 
-export const AutonomousTriggerSeveritySchema = z.enum([
-  "info",
-  "warn",
-  "error",
-  "critical",
-]);
-export type AutonomousTriggerSeverity = z.infer<
-  typeof AutonomousTriggerSeveritySchema
->;
+export const AutonomousTriggerSeveritySchema = z.enum(["info", "warn", "error", "critical"]);
+export type AutonomousTriggerSeverity = z.infer<typeof AutonomousTriggerSeveritySchema>;
 
 export const AutonomousTriggerInputSchema = z.object({
   /** 事件种类，决定 orchestrator/handler 的语义 */
@@ -68,10 +61,7 @@ export const AutonomousTriggerInputSchema = z.object({
 });
 export type AutonomousTriggerInput = z.infer<typeof AutonomousTriggerInputSchema>;
 
-export type AutonomousTriggerDispatch =
-  | "alert_only"
-  | "task_assigned"
-  | "workflow_created";
+export type AutonomousTriggerDispatch = "alert_only" | "task_assigned" | "workflow_created";
 
 export interface AutonomousTriggerResult {
   triggerId: string;
@@ -104,7 +94,7 @@ function severityToPriority(severity: AutonomousTriggerSeverity): number {
  * envelope+payload schema 校验保护；payload 形状异常 strict 模式会直接 throw。
  */
 export async function triggerAutonomousA2A(
-  raw: AutonomousTriggerInput,
+  raw: AutonomousTriggerInput
 ): Promise<AutonomousTriggerResult> {
   const input = AutonomousTriggerInputSchema.parse(raw);
   const triggerId = randomUUID();

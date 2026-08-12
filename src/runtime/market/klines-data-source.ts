@@ -3,8 +3,8 @@ import type { BuiltinConnectorInitConfigs } from "../config/builtin-connector-se
 import { isCryptoMarket } from "./crypto-market";
 import { isChinaAShareMarket } from "./eastmoney-klines";
 import { aggregateBarsByMsWindow } from "./klines-bars";
-import { resolveTickerMarket } from "./resolve-ticker-market";
 import { marketDataFetch } from "./market-data-network";
+import { resolveTickerMarket } from "./resolve-ticker-market";
 
 /** User-selectable K-line upstream (配置中心 `qubit-data.klinesDataSource`). */
 export type KlinesDataSourceSetting =
@@ -112,13 +112,9 @@ export function resolveEffectiveKlinesSource(params: {
   }
 
   const crypto =
-    params.symbol !== undefined
-      ? isCryptoMarket(params.symbol, params.exchange ?? "")
-      : false;
+    params.symbol !== undefined ? isCryptoMarket(params.symbol, params.exchange ?? "") : false;
   const china =
-    params.symbol !== undefined
-      ? isChinaAShareMarket(params.symbol, params.exchange ?? "")
-      : false;
+    params.symbol !== undefined ? isChinaAShareMarket(params.symbol, params.exchange ?? "") : false;
   const market = resolveTickerMarket(params.symbol ?? "", {
     hintExchange: params.exchange,
   }).market;
@@ -129,10 +125,7 @@ export function resolveEffectiveKlinesSource(params: {
   if (crypto) return "binance_crypto";
   if (china && params.hasWindAvailable) return "wind";
   if (china && params.hasIfindAvailable) return "supermind_bridge";
-  if (
-    params.hasFutuAvailable &&
-    (market === "CN" || market === "HK" || market === "US")
-  ) {
+  if (params.hasFutuAvailable && (market === "CN" || market === "HK" || market === "US")) {
     return "futu_bridge";
   }
   const isCompactOptionContract = /^[A-Z]{1,6}\d{6}[CP]\d{8}$/.test(
@@ -315,7 +308,7 @@ async function fetchYahooChartJson(
   period1Sec: number,
   period2Sec: number,
   interval: string,
-  settings: BuiltinConnectorInitConfigs,
+  settings: BuiltinConnectorInitConfigs
 ): Promise<YahooChartResponse> {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?period1=${period1Sec}&period2=${period2Sec}&interval=${encodeURIComponent(interval)}`;
   const res = await marketDataFetch("yahoo_chart", settings, url, {
@@ -432,7 +425,7 @@ function dedupeBarsByTimestamp(bars: BarData[]): BarData[] {
  */
 export async function fetchYahooFinanceBars(
   params: FetchBarsParams,
-  settings: BuiltinConnectorInitConfigs = {},
+  settings: BuiltinConnectorInitConfigs = {}
 ): Promise<BarData[]> {
   const ticker = symbolToYahooSymbol(params.symbol, params.exchange || "");
   if (!ticker) throw new Error("yahoo_chart: empty symbol");

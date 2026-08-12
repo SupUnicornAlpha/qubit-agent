@@ -25,7 +25,8 @@ export const WEB_FETCH_HANDLER: BuiltinToolHandler = async (_ctx, params) => {
     const contentType = response.headers.get("content-type") ?? "";
     const buffer = await response.arrayBuffer();
     let text = decodeBoundedText(buffer);
-    const title = /html/i.test(contentType) || /^\s*</.test(text) ? extractHtmlTitle(text) : undefined;
+    const title =
+      /html/i.test(contentType) || /^\s*</.test(text) ? extractHtmlTitle(text) : undefined;
     if (/html/i.test(contentType) || /^\s*</.test(text)) {
       text = stripHtmlToText(text);
     }

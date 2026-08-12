@@ -40,7 +40,9 @@ describe("scoreCandidate — gate 通过", () => {
   });
 
   test("useCount 极大 → recallNorm 趋近 1，但被 clamp 在 score <=1", () => {
-    const r = scoreCandidate(cand({ useCount: 1_000_000, qualityScore: 1, successCount: 100, failCount: 0 }));
+    const r = scoreCandidate(
+      cand({ useCount: 1_000_000, qualityScore: 1, successCount: 100, failCount: 0 })
+    );
     expect(r.qualified).toBe(true);
     expect(r.score).toBeLessThanOrEqual(1);
     expect(r.score).toBeGreaterThan(0.9);
@@ -76,13 +78,24 @@ describe("scoreCandidate — gate 不通过", () => {
 
 describe("scoreCandidate — 权重与 clamp", () => {
   test("自定义阈值放宽 → 同一候选可通过", () => {
-    const cfg = { ...DEFAULT_SCORING_CONFIG, minRecall: 1, minExec: 1, minSuccessRate: 0.2, minQuality: 0.1 };
-    const r = scoreCandidate(cand({ useCount: 1, successCount: 1, failCount: 0, qualityScore: 0.2 }), cfg);
+    const cfg = {
+      ...DEFAULT_SCORING_CONFIG,
+      minRecall: 1,
+      minExec: 1,
+      minSuccessRate: 0.2,
+      minQuality: 0.1,
+    };
+    const r = scoreCandidate(
+      cand({ useCount: 1, successCount: 1, failCount: 0, qualityScore: 0.2 }),
+      cfg
+    );
     expect(r.qualified).toBe(true);
   });
 
   test("非 finite 输入 → 被 clamp 成 0，但不崩", () => {
-    const r = scoreCandidate(cand({ useCount: Number.POSITIVE_INFINITY, qualityScore: Number.NaN }));
+    const r = scoreCandidate(
+      cand({ useCount: Number.POSITIVE_INFINITY, qualityScore: Number.NaN })
+    );
     // qualityScore NaN → clamp 0 → gate_quality 不过
     expect(r.qualified).toBe(false);
   });

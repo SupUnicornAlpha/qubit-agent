@@ -1,9 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  compareVersions,
-  parseVersionSpec,
-  satisfies,
-} from "../version-spec";
+import { compareVersions, parseVersionSpec, satisfies } from "../version-spec";
 
 describe("compareVersions", () => {
   test("基本数字比较", () => {

@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import type { StrategyManifestV2 } from "../contract-service";
 import {
   __resetPaperSessionsForTests,
   createPaperSession,
   tradesToPaperOrderDrafts,
 } from "../paper-session-service";
-import type { StrategyManifestV2 } from "../contract-service";
 
 const MANIFEST: StrategyManifestV2 = {
   apiVersion: 2,

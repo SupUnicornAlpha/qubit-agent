@@ -29,7 +29,7 @@ describe("StepStreamBus heartbeat", () => {
 
     (globalThis as unknown as { setInterval: typeof setInterval }).setInterval = ((
       cb: () => void,
-      ms: number,
+      ms: number
     ) => {
       const id = nextIntervalId++;
       pendingIntervals.push({ id, cb, ms });
@@ -37,7 +37,7 @@ describe("StepStreamBus heartbeat", () => {
     }) as typeof setInterval;
 
     (globalThis as unknown as { clearInterval: typeof clearInterval }).clearInterval = ((
-      handle: ReturnType<typeof setInterval>,
+      handle: ReturnType<typeof setInterval>
     ) => {
       const id = handle as unknown as number;
       pendingIntervals = pendingIntervals.filter((entry) => entry.id !== id);

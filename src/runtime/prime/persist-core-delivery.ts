@@ -5,8 +5,8 @@
  */
 import { evaluateDeliveryVerdict } from "../policy/completion";
 import { persistDeliveryVerdict } from "../policy/delivery-ledger";
-import { loadScenarioRuntimeSnapshot } from "../policy/scenario-snapshot";
 import { getRuntimeSqlite } from "../policy/repositories/runtime-sqlite";
+import { loadScenarioRuntimeSnapshot } from "../policy/scenario-snapshot";
 import type { DeliveryVerdict } from "../policy/types";
 
 export async function persistDeliveryVerdictForCoreTurn(input: {

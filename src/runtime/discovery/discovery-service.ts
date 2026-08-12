@@ -18,23 +18,18 @@
 
 import { randomUUID } from "node:crypto";
 import { desc, eq } from "drizzle-orm";
-import { getDb } from "../../db/sqlite/client";
-import {
-  discoveryJob as discoveryJobTable,
-} from "../../db/sqlite/schema";
-import { parse } from "../provider/impls/factor/qlib-expr/parser";
-import { evalQlibExpr as evalExpr, type PriceSeries } from "../provider";
-import { generateGbmTicks } from "../../util/synthesize-gbm";
-import { providerResolver } from "../provider/resolver";
-import { queryBarsRange } from "../market/klines-query";
 import type { BarData } from "../../connectors/data/data.connector";
-import type {
-  FactorComputeRow,
-  FactorEvaluationProvider,
-} from "../provider/types";
+import { getDb } from "../../db/sqlite/client";
+import { discoveryJob as discoveryJobTable } from "../../db/sqlite/schema";
+import { generateGbmTicks } from "../../util/synthesize-gbm";
+import { type FactorRecord, factorService } from "../factor/factor-service";
+import { queryBarsRange } from "../market/klines-query";
+import { type PriceSeries, evalQlibExpr as evalExpr } from "../provider";
+import { parse } from "../provider/impls/factor/qlib-expr/parser";
+import { providerResolver } from "../provider/resolver";
+import type { FactorComputeRow, FactorEvaluationProvider } from "../provider/types";
 import { ALPHA_TEMPLATES } from "./alpha-templates";
 import { GpGenerator } from "./gp-generator";
-import { factorService, type FactorRecord } from "../factor/factor-service";
 
 // ─── 类型 ───────────────────────────────────────────────────────────────────
 
@@ -211,10 +206,7 @@ export class DiscoveryService {
           endedAt: new Date().toISOString(),
         })
         .where(eq(discoveryJobTable.id, jobId));
-      throw new DiscoveryError(
-        "execute_failed",
-        `discovery_failed: ${(e as Error).message}`
-      );
+      throw new DiscoveryError("execute_failed", `discovery_failed: ${(e as Error).message}`);
     }
     return this.get(jobId);
   }
@@ -269,9 +261,7 @@ export class DiscoveryService {
       throw new DiscoveryError("validation_failed", "name_required");
     }
     const category =
-      body.category ??
-      (cand.category as FactorRecord["category"] | undefined) ??
-      "momentum";
+      body.category ?? (cand.category as FactorRecord["category"] | undefined) ?? "momentum";
 
     return factorService.register({
       projectId: job.projectId,
@@ -356,9 +346,7 @@ export class DiscoveryService {
   private async runLlm(input: DiscoverySubmitInput): Promise<DiscoveryCandidate[]> {
     const seriesBySymbol = await this.loadPriceData(input);
     const evaluator = await this.resolveEvaluator();
-    const exprs = (input.expressions ?? [])
-      .map((e) => String(e ?? "").trim())
-      .filter(Boolean);
+    const exprs = (input.expressions ?? []).map((e) => String(e ?? "").trim()).filter(Boolean);
     const out: DiscoveryCandidate[] = [];
     let idx = 0;
     for (const expr of exprs) {
@@ -401,9 +389,9 @@ export class DiscoveryService {
   /**
    * 拉真实价格；任意 symbol 拿不到 → 用 GBM 合成（保证可单测 + 离线开发）
    */
-  private async loadPriceData(input: DiscoverySubmitInput): Promise<
-    Map<string, { dates: string[]; series: PriceSeries; closes: number[] }>
-  > {
+  private async loadPriceData(
+    input: DiscoverySubmitInput
+  ): Promise<Map<string, { dates: string[]; series: PriceSeries; closes: number[] }>> {
     const out = new Map<string, { dates: string[]; series: PriceSeries; closes: number[] }>();
     for (const sym of input.symbols) {
       let bars: BarData[] = [];
@@ -519,7 +507,7 @@ export class DiscoveryService {
       workflowRunId: r.workflowRunId ?? null,
       kind: r.kind,
       status: r.status,
-      input: (r.inputJson as unknown) as DiscoverySubmitInput,
+      input: r.inputJson as unknown as DiscoverySubmitInput,
       candidates: output.candidates ?? [],
       startedAt: r.startedAt,
       endedAt: r.endedAt ?? null,

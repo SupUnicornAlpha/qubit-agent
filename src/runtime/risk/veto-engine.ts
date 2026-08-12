@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { getDb } from "../../db/sqlite/client";
 import { riskVetoLog } from "../../db/sqlite/schema";
-import { loadRiskConfig } from "../config/risk-config";
 import type { AnalystSignalValue } from "../../types/entities";
+import { loadRiskConfig } from "../config/risk-config";
 
 export interface RiskCheckInput {
   workflowRunId: string;

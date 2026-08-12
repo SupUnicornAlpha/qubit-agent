@@ -7,8 +7,8 @@
  */
 
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { config } from "../../../../config";
 import { closeDb, getDb } from "../../../../db/sqlite/client";
@@ -79,7 +79,10 @@ beforeAll(async () => {
   };
   const polId = `sp_${randomUUID()}`;
   await db.insert(workspace).values({ id: workspaceId, name: "t", owner: "tester" }).run();
-  await db.insert(project).values({ id: fx.projectId, workspaceId, name: "p", marketScope: "US" }).run();
+  await db
+    .insert(project)
+    .values({ id: fx.projectId, workspaceId, name: "p", marketScope: "US" })
+    .run();
   await db.insert(sandboxPolicy).values({ id: polId, name: "permissive-test" }).run();
   await db
     .insert(agentDefinition)
@@ -156,9 +159,9 @@ describe("fetchPnlAwareTopSkills", () => {
     const db = await getDb();
     const r = await fetchPnlAwareTopSkills(db, fx.definitionId);
     expect(r).toHaveLength(3);
-    expect(r[0]!.skillId).toBe(fx.s2);
-    expect(r[1]!.skillId).toBe(fx.s1);
-    expect(r[2]!.skillId).toBe(fx.s3);
+    expect(r[0]?.skillId).toBe(fx.s2);
+    expect(r[1]?.skillId).toBe(fx.s1);
+    expect(r[2]?.skillId).toBe(fx.s3);
   });
 
   test("全是 pnlSum ≤ 0 → 全过滤", async () => {
@@ -177,7 +180,7 @@ describe("fetchPnlAwareTopSkills", () => {
     const db = await getDb();
     const r = await fetchPnlAwareTopSkills(db, fx.definitionId);
     expect(r).toHaveLength(1);
-    expect(r[0]!.skillId).toBe(fx.s1);
+    expect(r[0]?.skillId).toBe(fx.s1);
   });
 });
 
@@ -195,7 +198,14 @@ describe("renderPnlAwareSkillBlock", () => {
       reasonPnlWindowDays: 7,
     });
     const out = renderPnlAwareSkillBlock([
-      { skillId: "x", name: "skill_alpha", pnlSum: 25.5, winCount: 3, loseCount: 1, sampleCount: 4 },
+      {
+        skillId: "x",
+        name: "skill_alpha",
+        pnlSum: 25.5,
+        winCount: 3,
+        loseCount: 1,
+        sampleCount: 4,
+      },
       { skillId: "y", name: "skill_beta", pnlSum: 10, winCount: 1, loseCount: 0, sampleCount: 1 },
     ]);
     expect(out).toContain("最近 7 天最赚钱 top-2 skill");

@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import type { A2AMessageType, AgentRole } from "../types/entities";
 import {
-  A2A_GOVERNANCE,
+  type A2AMessageEnvelope,
   A2AMessageSchema,
+  A2A_GOVERNANCE,
   AlertPayloadSchema,
   MemoryWritePayloadSchema,
   OrderIntentPayloadSchema,
@@ -10,8 +10,8 @@ import {
   TaskAssignPayloadSchema,
   TaskProgressPayloadSchema,
   TaskResultPayloadSchema,
-  type A2AMessageEnvelope,
 } from "../types/a2a";
+import type { A2AMessageType } from "../types/entities";
 import { persistA2AMessage } from "./a2a-persistence";
 import { messageBus } from "./bus";
 
@@ -79,9 +79,7 @@ export class A2ARouter {
   /**
    * Build and route a new A2A message.
    */
-  async send(
-    params: Omit<A2AMessageEnvelope, "messageId" | "createdAt">
-  ): Promise<void> {
+  async send(params: Omit<A2AMessageEnvelope, "messageId" | "createdAt">): Promise<void> {
     const envelope: A2AMessageEnvelope = {
       ...params,
       messageId: randomUUID(),
@@ -116,7 +114,7 @@ export class A2ARouter {
       throw new Error(
         `A2A envelope schema mismatch: ${envelopeCheck.error.issues
           .map((i) => `${i.path.join(".")}: ${i.message}`)
-          .join("; ")}`,
+          .join("; ")}`
       );
     }
 
@@ -130,9 +128,8 @@ export class A2ARouter {
       const msg = `A2A payload schema mismatch (messageType=${message.messageType}, id=${message.messageId}): ${detail}`;
       if (isStrictMode()) {
         throw new Error(msg);
-      } else {
-        console.warn("[A2ARouter]", msg);
       }
+      console.warn("[A2ARouter]", msg);
     }
   }
 
@@ -146,7 +143,7 @@ export class A2ARouter {
       A2A_GOVERNANCE.EXECUTION_REQUIRES_RISK_SIGNATURE
     ) {
       const payload = message.payload as Record<string, unknown> | null;
-      if (!payload?.["riskSignature"]) {
+      if (!payload?.riskSignature) {
         throw new Error(
           `A2A governance violation: ORDER_INTENT [${message.messageId}] must carry a risk signature.`
         );

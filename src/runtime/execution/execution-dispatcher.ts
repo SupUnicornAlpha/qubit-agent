@@ -11,13 +11,10 @@ import {
   fill,
   orderIntent,
 } from "../../db/sqlite/schema";
+import type { BrokerProvider } from "../../types/broker";
 import { executeWithPolicy } from "../external-call/policy";
 import { connectorForAccount, resolveBrokerAccount } from "./broker/broker-service";
-import type { BrokerProvider } from "../../types/broker";
-import {
-  assertBrokerDispatchAllowed,
-  type DispatchMode,
-} from "./live-trading-gate";
+import { type DispatchMode, assertBrokerDispatchAllowed } from "./live-trading-gate";
 
 export type { DispatchMode };
 
@@ -39,7 +36,7 @@ export interface DispatchExecutionResult {
 
 export function assertDispatchableOrderType(
   orderType: (typeof orderIntent.$inferSelect)["orderType"],
-  dispatchMode: DispatchMode,
+  dispatchMode: DispatchMode
 ): asserts orderType is "market" | "limit" {
   if (orderType !== "market" && orderType !== "limit") {
     throw new Error(`conditional_order_not_supported:${dispatchMode}:${orderType}`);
@@ -48,10 +45,11 @@ export function assertDispatchableOrderType(
 
 export function resolveEffectiveOrderType(
   orderType: (typeof orderIntent.$inferSelect)["orderType"],
-  activationStatus: (typeof orderIntent.$inferSelect)["activationStatus"],
+  activationStatus: (typeof orderIntent.$inferSelect)["activationStatus"]
 ): "market" | "limit" {
   if (orderType === "market" || orderType === "limit") return orderType;
-  if (activationStatus !== "triggered") throw new Error(`conditional_order_not_triggered:${orderType}`);
+  if (activationStatus !== "triggered")
+    throw new Error(`conditional_order_not_triggered:${orderType}`);
   return orderType === "stop_limit" ? "limit" : "market";
 }
 
@@ -134,7 +132,7 @@ async function dispatchLiveBroker(
   intent: typeof orderIntent.$inferSelect,
   fillPrice: number,
   nowIso: string,
-  effectiveOrderType: "market" | "limit",
+  effectiveOrderType: "market" | "limit"
 ): Promise<DispatchExecutionResult> {
   if (!input.brokerAccountId) {
     throw new Error("broker_account_id_required_for_live");
@@ -150,17 +148,13 @@ async function dispatchLiveBroker(
     throw new Error("broker_account_not_found_or_disabled");
   }
 
-  assertBrokerDispatchAllowed(
-    input.dispatchMode,
-    accountRow.mode as "mock" | "sandbox" | "live",
-    {
-      provider: accountRow.provider as BrokerProvider,
-      accountRef: accountRow.accountRef,
-      // A dispatch knows the concrete strategy version; project-level stops are
-      // enforced during pre-trade evaluation where the parent strategy is loaded.
-      strategyId: intent.strategyVersionId,
-    }
-  );
+  assertBrokerDispatchAllowed(input.dispatchMode, accountRow.mode as "mock" | "sandbox" | "live", {
+    provider: accountRow.provider as BrokerProvider,
+    accountRef: accountRow.accountRef,
+    // A dispatch knows the concrete strategy version; project-level stops are
+    // enforced during pre-trade evaluation where the parent strategy is loaded.
+    strategyId: intent.strategyVersionId,
+  });
 
   const provider = accountRow.provider as BrokerProvider;
   const resolved = await resolveBrokerAccount(provider, accountRow.accountRef);
@@ -169,7 +163,8 @@ async function dispatchLiveBroker(
   const connector = connectorForAccount(resolved);
   const ticker =
     intent.symbol?.trim() ||
-    (await db.select().from(orderIntent).where(eq(orderIntent.id, intent.id)).limit(1))[0]?.symbol ||
+    (await db.select().from(orderIntent).where(eq(orderIntent.id, intent.id)).limit(1))[0]
+      ?.symbol ||
     intent.instrumentId;
 
   const side = intent.side;
@@ -213,11 +208,7 @@ async function dispatchLiveBroker(
   });
 
   const brokerStatus =
-    live.status === "filled"
-      ? "filled"
-      : live.status === "rejected"
-        ? "rejected"
-        : "submitted";
+    live.status === "filled" ? "filled" : live.status === "rejected" ? "rejected" : "submitted";
 
   await db.insert(brokerOrder).values({
     id: brokerOrderPk,
@@ -288,7 +279,11 @@ export async function dispatchExecutionTask(
   input: DispatchExecutionInput,
   nowIso = new Date().toISOString()
 ): Promise<DispatchExecutionResult> {
-  const intents = await db.select().from(orderIntent).where(eq(orderIntent.id, input.orderIntentId)).limit(1);
+  const intents = await db
+    .select()
+    .from(orderIntent)
+    .where(eq(orderIntent.id, input.orderIntentId))
+    .limit(1);
   const intent = intents[0];
   if (!intent) throw new Error("order_intent_missing");
   const effectiveOrderType = resolveEffectiveOrderType(intent.orderType, intent.activationStatus);

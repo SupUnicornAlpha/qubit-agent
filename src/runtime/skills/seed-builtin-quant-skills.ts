@@ -160,7 +160,7 @@ export const SEED_QUANT_SKILLS: ReadonlyArray<QuantSkillSpec> = [
  * 与 fsi-config 同源：若 QUBIT_APP_ROOT 不存在 / 目录不存在 → 回退到源码相对路径。
  */
 export function getQuantSkillsRoot(): string {
-  const appRoot = process.env["QUBIT_APP_ROOT"];
+  const appRoot = process.env.QUBIT_APP_ROOT;
   if (appRoot) {
     const candidate = join(appRoot, "content-packs", "quant-skills");
     if (existsSync(candidate)) return candidate;
@@ -173,7 +173,7 @@ export function getQuantSkillsRoot(): string {
 function descriptionFromMd(raw: string, fallback: string): string {
   const fm = raw.match(FRONTMATTER_BLOCK_RE);
   if (fm) {
-    const m = fm[1]!.match(FRONTMATTER_DESC_RE);
+    const m = fm[1]?.match(FRONTMATTER_DESC_RE);
     const block = (m?.[1] ?? m?.[2] ?? "").trim();
     if (block) {
       return block
@@ -202,7 +202,7 @@ export async function syncBuiltinQuantSkillsForProject(projectId: string): Promi
   if (!existsSync(root)) {
     console.warn(
       `[Seed:quant-skills] root not found: ${root} ` +
-        `(检查 QUBIT_APP_ROOT 或仓库 content-packs/quant-skills 是否存在)`
+        "(检查 QUBIT_APP_ROOT 或仓库 content-packs/quant-skills 是否存在)"
     );
     return 0;
   }

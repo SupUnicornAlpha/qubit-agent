@@ -5,15 +5,15 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
-  allocatePortfolio,
   type PortfolioAllocationConfig,
-  type PortfolioCandidate,
   type PortfolioAllocationRow,
+  type PortfolioCandidate,
   type PortfolioExposureReport,
+  allocatePortfolio,
 } from "../../execution/portfolio-allocation-service";
-import { getResearchThesisById } from "./research-thesis-service";
-import { getMarketSnapshotById } from "./market-snapshot-service";
 import { ensureForecastBookForThesis, linkForecastBookEntry } from "./forecast-book-service";
+import { getMarketSnapshotById } from "./market-snapshot-service";
+import { getResearchThesisById } from "./research-thesis-service";
 
 export const TargetPortfolioSchema = z.object({
   portfolioId: z.string().min(1),
@@ -112,20 +112,22 @@ export async function constructTargetPortfolio(
         });
 
   // Fill missing/zero prices from snapshot bars (models often pass allocation weights only).
-  candidates = candidates.map((c) => {
-    if (c.price > 0) return c;
-    const keys = [c.symbol, `CN:${c.symbol}`, `US:${c.symbol}`, `HK:${c.symbol}`];
-    let price = 0;
-    for (const key of keys) {
-      const bars = barsByInstrument[key];
-      const close = bars?.at(-1)?.close;
-      if (Number.isFinite(close) && (close as number) > 0) {
-        price = close as number;
-        break;
+  candidates = candidates
+    .map((c) => {
+      if (c.price > 0) return c;
+      const keys = [c.symbol, `CN:${c.symbol}`, `US:${c.symbol}`, `HK:${c.symbol}`];
+      let price = 0;
+      for (const key of keys) {
+        const bars = barsByInstrument[key];
+        const close = bars?.at(-1)?.close;
+        if (Number.isFinite(close) && (close as number) > 0) {
+          price = close as number;
+          break;
+        }
       }
-    }
-    return { ...c, price: price > 0 ? price : 100 };
-  }).filter((c) => c.symbol);
+      return { ...c, price: price > 0 ? price : 100 };
+    })
+    .filter((c) => c.symbol);
 
   if (candidates.length === 0) {
     throw new Error(

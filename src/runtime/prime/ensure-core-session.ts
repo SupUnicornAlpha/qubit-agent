@@ -8,10 +8,7 @@ import { getCoreRuntime, rustCoreBaseUrl } from "./core-runtime";
 import { RustCoreClient } from "./rust-core-client";
 import { primePrimarySpecId } from "./seed-prime-agent-specs";
 import type { InteractionMode } from "./types";
-import {
-  readPrimeCoreBinding,
-  writePrimeCoreBinding,
-} from "./workflow-session-binding";
+import { readPrimeCoreBinding, writePrimeCoreBinding } from "./workflow-session-binding";
 
 export function asRustCoreClient(): RustCoreClient {
   const core = getCoreRuntime();

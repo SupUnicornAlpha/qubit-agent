@@ -13,8 +13,8 @@
  */
 
 import { runMigrations } from "../db/sqlite/migrate";
-import { ToolGapWatcher } from "../runtime/tool-gap-watcher/watcher";
 import type { WatcherRunSummary } from "../runtime/tool-gap-watcher/types";
+import { ToolGapWatcher } from "../runtime/tool-gap-watcher/watcher";
 
 interface CliArgs {
   projectId?: string;

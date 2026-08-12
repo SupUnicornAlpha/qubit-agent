@@ -25,10 +25,7 @@
  */
 
 import OpenAI from "openai";
-import {
-  loadModelConfigSync,
-  resolveEmbeddingRuntimeOptions,
-} from "../config/model-config";
+import { loadModelConfigSync, resolveEmbeddingRuntimeOptions } from "../config/model-config";
 
 // ───────────────────────── 接口 ─────────────────────────
 
@@ -87,8 +84,7 @@ export class OpenAIEmbeddingClient implements EmbeddingClient {
   constructor(opts: OpenAIEmbeddingOptions = {}) {
     this.model = opts.model ?? DEFAULT_MODEL;
     this.requestDimensions = opts.dimensions;
-    this.dimension =
-      opts.dimensions ?? MODEL_DIMENSIONS[this.model] ?? DEFAULT_DIMENSION;
+    this.dimension = opts.dimensions ?? MODEL_DIMENSIONS[this.model] ?? DEFAULT_DIMENSION;
     this.maxBatchSize = Math.max(1, Math.min(2048, opts.maxBatchSize ?? 256));
     const apiKey = opts.apiKey ?? process.env.OPENAI_API_KEY;
     if (!apiKey) {
@@ -270,10 +266,7 @@ let _client: EmbeddingClient | null = null;
 /** When true, `_client` was set by tests and must not be rebuilt from config. */
 let _clientPinned = false;
 /** Test-only override for credential resolution (avoids reading developer model.json). */
-let _resolveOverride:
-  | ReturnType<typeof resolveEmbeddingRuntimeOptions>
-  | null
-  | undefined;
+let _resolveOverride: ReturnType<typeof resolveEmbeddingRuntimeOptions> | null | undefined;
 
 /**
  * 取进程内默认 client：
@@ -288,8 +281,7 @@ export function getDefaultEmbeddingClient(): EmbeddingClient | null {
   if (_clientPinned) return _client;
   if (_client) return _client;
 
-  const resolved =
-    _resolveOverride ?? resolveEmbeddingRuntimeOptions(loadModelConfigSync());
+  const resolved = _resolveOverride ?? resolveEmbeddingRuntimeOptions(loadModelConfigSync());
   if (!resolved.enabled || !resolved.apiKey) return null;
 
   _client = new OpenAIEmbeddingClient({
@@ -336,8 +328,7 @@ export function describeDefaultEmbeddingClient(): {
       baseUrlConfigured: false,
     };
   }
-  const resolved =
-    _resolveOverride ?? resolveEmbeddingRuntimeOptions(loadModelConfigSync());
+  const resolved = _resolveOverride ?? resolveEmbeddingRuntimeOptions(loadModelConfigSync());
   return {
     configured: Boolean(resolved.enabled && resolved.apiKey),
     model: resolved.model,

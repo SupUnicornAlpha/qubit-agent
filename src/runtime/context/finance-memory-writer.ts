@@ -3,8 +3,8 @@
  */
 
 import type { Experience } from "../../types/entities";
-import type { ExperienceStore } from "../experience/experience-store";
 import { getExperienceStore } from "../experience";
+import type { ExperienceStore } from "../experience/experience-store";
 import { isFinanceMemoryStrict, isMarketSnapshotWriteEnabled } from "./axioms";
 import { incContextMetric } from "./context-metrics";
 import {
@@ -69,7 +69,7 @@ export async function upsertFactorArchiveExperience(
   });
   const existing = recent.find((e) => {
     const m = e.metadataJson ?? {};
-    return m["factorId"] === meta.factorId && String(m["asof"] ?? "").slice(0, 10) === asofDay;
+    return m.factorId === meta.factorId && String(m.asof ?? "").slice(0, 10) === asofDay;
   });
 
   const summary =
@@ -153,15 +153,15 @@ export async function upsertStrategyEvalExperience(
   const existing = recent.find((e) => {
     const m = e.metadataJson ?? {};
     const id =
-      (m["backtestRunId"] as string | undefined) ??
-      (m["strategyVersionId"] as string | undefined) ??
-      (m["compositionId"] as string | undefined) ??
+      (m.backtestRunId as string | undefined) ??
+      (m.strategyVersionId as string | undefined) ??
+      (m.compositionId as string | undefined) ??
       "anon";
-    return id === key && String(m["asof"] ?? "").slice(0, 10) === asofDay;
+    return id === key && String(m.asof ?? "").slice(0, 10) === asofDay;
   });
 
   const sharpe =
-    typeof meta.metrics["sharpe"] === "number" ? (meta.metrics["sharpe"] as number) : undefined;
+    typeof meta.metrics.sharpe === "number" ? (meta.metrics.sharpe as number) : undefined;
   const summary =
     input.summary ??
     `[strategy_eval] ${meta.evalKind} pass=${meta.pass ?? "n/a"} sharpe=${fmt(sharpe)} asof=${asofDay}`;
@@ -174,8 +174,7 @@ export async function upsertStrategyEvalExperience(
   ];
   const contentJson = { summary, metrics: meta.metrics };
   const qualityScore =
-    meta.qualityScore ??
-    (meta.pass === true ? 0.8 : meta.pass === false ? 0.35 : 0.5);
+    meta.qualityScore ?? (meta.pass === true ? 0.8 : meta.pass === false ? 0.35 : 0.5);
 
   if (existing) {
     return store.update(existing.id, {
@@ -239,15 +238,14 @@ export async function upsertPnlEpisodeExperience(
   const existing = recent.find((e) => {
     const m = e.metadataJson ?? {};
     return (
-      m["tradingDay"] === meta.tradingDay &&
-      String(m["symbol"] ?? "").toUpperCase() === meta.symbol.toUpperCase() &&
-      (m["strategyRuntimeId"] ?? null) === (meta.strategyRuntimeId ?? null)
+      m.tradingDay === meta.tradingDay &&
+      String(m.symbol ?? "").toUpperCase() === meta.symbol.toUpperCase() &&
+      (m.strategyRuntimeId ?? null) === (meta.strategyRuntimeId ?? null)
     );
   });
 
   const summary =
-    input.summary ??
-    `[pnl] ${meta.symbol} ${meta.tradingDay} realized=${meta.realized.toFixed(2)}`;
+    input.summary ?? `[pnl] ${meta.symbol} ${meta.tradingDay} realized=${meta.realized.toFixed(2)}`;
   const tags = [
     `symbol:${meta.symbol.toUpperCase()}`,
     `day:${meta.tradingDay}`,
@@ -327,13 +325,13 @@ export async function upsertMarketSnapshotExperience(
   });
   const existing = recent.find((e) => {
     const m = e.metadataJson ?? {};
-    const syms = Array.isArray(m["symbols"])
-      ? (m["symbols"] as string[])
+    const syms = Array.isArray(m.symbols)
+      ? (m.symbols as string[])
           .map((s) => String(s).toUpperCase())
           .sort()
           .join(",")
       : "";
-    return syms === symKey && String(m["asof"] ?? "").slice(0, 10) === asofDay;
+    return syms === symKey && String(m.asof ?? "").slice(0, 10) === asofDay;
   });
 
   const summary =

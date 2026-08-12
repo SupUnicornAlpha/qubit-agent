@@ -99,9 +99,9 @@ describe("extractSignalJsonFromText", () => {
   it("when there are multiple candidates, picks the one containing signal field", () => {
     const text = [
       "首先列一些数据：",
-      '```json',
+      "```json",
       '{"market_data": {"price": 119.7, "volume": 2300000}}',
-      '```',
+      "```",
       "然后是信号：",
       "```json",
       '{"signal": "sell", "confidence": 0.6, "reasoning": "RSI 顶背离"}',

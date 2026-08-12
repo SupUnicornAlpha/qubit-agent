@@ -18,7 +18,7 @@
  *     验证 sanitize 行为）。
  */
 
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { runLlmGateway } from "../gateway";
 
 type MockResponseInit = {
@@ -36,23 +36,23 @@ function jsonResponse(init: MockResponseInit): Response {
 
 describe("Gateway P0 — Anthropic sampling", () => {
   let fetchSpy: ReturnType<typeof spyOn>;
-  const origNonStream = process.env["QUBIT_LLM_ANTHROPIC_NON_STREAM"];
+  const origNonStream = process.env.QUBIT_LLM_ANTHROPIC_NON_STREAM;
 
   beforeEach(() => {
-    process.env["ANTHROPIC_API_KEY"] = "sk-test-anthropic";
+    process.env.ANTHROPIC_API_KEY = "sk-test-anthropic";
     /**
      * P0 这组覆盖的是 sampling 字段下发 / 默认值，与流式协议无关；
      * P1 把流式作为默认后，这里 force 走非流式让 mock 用普通 JSON 即可。
      * Streaming 协议的覆盖见 gateway-streaming.test.ts。
      */
-    process.env["QUBIT_LLM_ANTHROPIC_NON_STREAM"] = "1";
+    process.env.QUBIT_LLM_ANTHROPIC_NON_STREAM = "1";
     fetchSpy = spyOn(globalThis, "fetch");
   });
 
   afterEach(() => {
     fetchSpy.mockRestore();
-    if (origNonStream === undefined) delete process.env["QUBIT_LLM_ANTHROPIC_NON_STREAM"];
-    else process.env["QUBIT_LLM_ANTHROPIC_NON_STREAM"] = origNonStream;
+    if (origNonStream === undefined) delete process.env.QUBIT_LLM_ANTHROPIC_NON_STREAM;
+    else process.env.QUBIT_LLM_ANTHROPIC_NON_STREAM = origNonStream;
   });
 
   test("默认 max_tokens=4096（修复历史 1024 截断问题）", async () => {
@@ -72,12 +72,16 @@ describe("Gateway P0 — Anthropic sampling", () => {
             stop_reason: "end_turn",
             usage: { input_tokens: 5, output_tokens: 1 },
           },
-        }),
+        })
       );
     });
 
     const result = await runLlmGateway({
-      config: { provider: "anthropic", model: "claude-3-5-sonnet-latest", apiKey: "sk-test-anthropic" },
+      config: {
+        provider: "anthropic",
+        model: "claude-3-5-sonnet-latest",
+        apiKey: "sk-test-anthropic",
+      },
       systemPrompt: "sys",
       userPrompt: "hi",
       onToken: () => {},
@@ -103,12 +107,16 @@ describe("Gateway P0 — Anthropic sampling", () => {
             content: [{ type: "text", text: "ok" }],
             usage: { input_tokens: 1, output_tokens: 1 },
           },
-        }),
+        })
       );
     });
 
     await runLlmGateway({
-      config: { provider: "anthropic", model: "claude-3-5-sonnet-latest", apiKey: "sk-test-anthropic" },
+      config: {
+        provider: "anthropic",
+        model: "claude-3-5-sonnet-latest",
+        apiKey: "sk-test-anthropic",
+      },
       systemPrompt: "s",
       userPrompt: "u",
       onToken: () => {},
@@ -122,30 +130,30 @@ describe("Gateway P0 — Anthropic sampling", () => {
 
 describe("Gateway P0 — OpenAI Responses API 路由", () => {
   let fetchSpy: ReturnType<typeof spyOn>;
-  const origForceChat = process.env["QUBIT_LLM_USE_RESPONSES_API"];
-  const origNonStream = process.env["QUBIT_LLM_RESPONSES_NON_STREAM"];
+  const origForceChat = process.env.QUBIT_LLM_USE_RESPONSES_API;
+  const origNonStream = process.env.QUBIT_LLM_RESPONSES_NON_STREAM;
 
   beforeEach(() => {
-    process.env["OPENAI_API_KEY"] = "sk-test-openai";
-    delete process.env["QUBIT_LLM_USE_RESPONSES_API"];
+    process.env.OPENAI_API_KEY = "sk-test-openai";
+    delete process.env.QUBIT_LLM_USE_RESPONSES_API;
     /**
      * 同 P0 Anthropic 组：流式协议在 gateway-streaming.test.ts 单独覆盖，
      * 这里只关心 sampling 字段路由 / sanitize / finishReason 解析，
      * force NON_STREAM 让 mock 用普通 JSON 即可。
      */
-    process.env["QUBIT_LLM_RESPONSES_NON_STREAM"] = "1";
+    process.env.QUBIT_LLM_RESPONSES_NON_STREAM = "1";
     fetchSpy = spyOn(globalThis, "fetch");
   });
 
   afterEach(() => {
     fetchSpy.mockRestore();
     if (origForceChat === undefined) {
-      delete process.env["QUBIT_LLM_USE_RESPONSES_API"];
+      delete process.env.QUBIT_LLM_USE_RESPONSES_API;
     } else {
-      process.env["QUBIT_LLM_USE_RESPONSES_API"] = origForceChat;
+      process.env.QUBIT_LLM_USE_RESPONSES_API = origForceChat;
     }
-    if (origNonStream === undefined) delete process.env["QUBIT_LLM_RESPONSES_NON_STREAM"];
-    else process.env["QUBIT_LLM_RESPONSES_NON_STREAM"] = origNonStream;
+    if (origNonStream === undefined) delete process.env.QUBIT_LLM_RESPONSES_NON_STREAM;
+    else process.env.QUBIT_LLM_RESPONSES_NON_STREAM = origNonStream;
   });
 
   test("provider=openai + model=gpt-5* → 路由到 /v1/responses，带 reasoning.effort=medium", async () => {
@@ -171,7 +179,7 @@ describe("Gateway P0 — OpenAI Responses API 路由", () => {
               output_tokens_details: { reasoning_tokens: 12 },
             },
           },
-        }),
+        })
       );
     });
 
@@ -208,8 +216,13 @@ describe("Gateway P0 — OpenAI Responses API 路由", () => {
         jsonResponse({
           ok: true,
           status: 200,
-          body: { id: "resp_2", status: "completed", output_text: "ok", usage: { input_tokens: 1, output_tokens: 1 } },
-        }),
+          body: {
+            id: "resp_2",
+            status: "completed",
+            output_text: "ok",
+            usage: { input_tokens: 1, output_tokens: 1 },
+          },
+        })
       );
     });
 
@@ -238,8 +251,8 @@ describe("Gateway P0 — OpenAI Responses API 路由", () => {
             incomplete_details: { reason: "max_output_tokens" },
             usage: { input_tokens: 100, output_tokens: 4096 },
           },
-        }),
-      ),
+        })
+      )
     );
 
     const result = await runLlmGateway({
@@ -252,7 +265,7 @@ describe("Gateway P0 — OpenAI Responses API 路由", () => {
   });
 
   test("ENV QUBIT_LLM_USE_RESPONSES_API=0 → 即使 reasoning model 也不走 responses（兜底给老代理）", async () => {
-    process.env["QUBIT_LLM_USE_RESPONSES_API"] = "0";
+    process.env.QUBIT_LLM_USE_RESPONSES_API = "0";
     /**
      * 不 mock fetch：如果误走 responses 会抛网络错误；当前期望走 chat.completions
      * 路径，而 chat.completions 用 OpenAI SDK 在没有真实 key 的情况下会抛 SDK 内部
@@ -272,9 +285,7 @@ describe("Gateway P0 — OpenAI Responses API 路由", () => {
       threw = true;
     }
     /** Chat SDK 同样通过 fetch 且会重试；只要未命中 /v1/responses 即验证了路由。 */
-    expect(
-      fetchSpy.mock.calls.some(([url]) => String(url).includes("/v1/responses"))
-    ).toBe(false);
+    expect(fetchSpy.mock.calls.some(([url]) => String(url).includes("/v1/responses"))).toBe(false);
     expect(threw).toBe(true);
   });
 });
@@ -304,7 +315,7 @@ describe("Gateway P0 — Ollama sampling 透传", () => {
             eval_count: 20,
             done_reason: "stop",
           },
-        }),
+        })
       );
     });
 

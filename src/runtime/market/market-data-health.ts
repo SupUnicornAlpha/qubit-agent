@@ -1,17 +1,20 @@
+import { eq } from "drizzle-orm";
 import type { BarData, FetchBarsParams } from "../../connectors/data/data.connector";
 import { getDb } from "../../db/sqlite/client";
 import { marketDataSource } from "../../db/sqlite/schema";
-import { eq } from "drizzle-orm";
 import { loadBuiltinConnectorSettings } from "../config/builtin-connector-settings";
 import type { BuiltinConnectorInitConfigs } from "../config/builtin-connector-settings";
 import { fetchAkshareBars, fetchAkshareTencentBars } from "./akshare-klines";
 import { fetchBinanceBars } from "./binance-klines";
-import { fetchEastMoneyBars } from "./eastmoney-klines";
 import {
   bridgeIdForSourceId,
   isBrokerMarketBridgeSourceId,
   resolveBridgeWsUrl,
 } from "./broker-market-bridge";
+import { fetchEastMoneyBars } from "./eastmoney-klines";
+import { fetchFutuBars } from "./futu-klines";
+import { fetchIbBars } from "./ib-klines";
+import { fetchIfindBars } from "./ifind-klines";
 import { type KlinesDataSourceMeta, fetchYahooFinanceBars } from "./klines-data-source";
 import { formatMarketDataFailure } from "./market-data-errors";
 import { marketDataFetch } from "./market-data-network";
@@ -25,9 +28,6 @@ import {
 import { queryMarketQuote } from "./microstructure-query";
 import { getWindSessionStatus } from "./wind-klines";
 import { fetchYfinanceBars } from "./yfinance-klines";
-import { fetchFutuBars } from "./futu-klines";
-import { fetchIbBars } from "./ib-klines";
-import { fetchIfindBars } from "./ifind-klines";
 
 const PROBE_TIMEOUT_MS = 20_000;
 

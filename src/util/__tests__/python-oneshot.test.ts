@@ -35,9 +35,9 @@ describe("runPythonOneShot", () => {
       if (err instanceof PythonOneShotError) caught = err;
     }
     expect(caught).not.toBeNull();
-    expect(caught!.source).toBe("exit");
-    expect(caught!.exitCode).toBe(3);
-    expect(caught!.stderr).toContain("oops");
+    expect(caught?.source).toBe("exit");
+    expect(caught?.exitCode).toBe(3);
+    expect(caught?.stderr).toContain("oops");
   });
 
   test("exit==0 但 stdout 非 JSON → 抛 PythonOneShotError(source='parse')", async () => {
@@ -52,8 +52,8 @@ describe("runPythonOneShot", () => {
       if (err instanceof PythonOneShotError) caught = err;
     }
     expect(caught).not.toBeNull();
-    expect(caught!.source).toBe("parse");
-    expect(caught!.exitCode).toBe(0);
+    expect(caught?.source).toBe("parse");
+    expect(caught?.exitCode).toBe(0);
   });
 
   test("超时 → 抛 PythonOneShotError(source='timeout')", async () => {
@@ -69,7 +69,7 @@ describe("runPythonOneShot", () => {
       if (err instanceof PythonOneShotError) caught = err;
     }
     expect(caught).not.toBeNull();
-    expect(caught!.source).toBe("timeout");
+    expect(caught?.source).toBe("timeout");
   });
 
   test("stdin payload 写入并被 python 端读取", async () => {
@@ -101,13 +101,13 @@ describe("runPythonOneShotRaw", () => {
       await runPythonOneShotRaw({
         bin: "/bin/sh",
         scriptPath: "-c",
-        args: [`exit 1`],
+        args: ["exit 1"],
       });
     } catch (err) {
       if (err instanceof PythonOneShotError) caught = err;
     }
     expect(caught).not.toBeNull();
-    expect(caught!.source).toBe("exit");
-    expect(caught!.exitCode).toBe(1);
+    expect(caught?.source).toBe("exit");
+    expect(caught?.exitCode).toBe(1);
   });
 });

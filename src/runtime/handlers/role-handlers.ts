@@ -39,7 +39,7 @@ const noopHandler = (role: AgentRole): RuntimeRoleHandler => ({
 });
 
 const handlers = Object.fromEntries(
-  ALL_AGENT_ROLES.map((role) => [role, noopHandler(role)]),
+  ALL_AGENT_ROLES.map((role) => [role, noopHandler(role)])
 ) as Record<AgentRole, RuntimeRoleHandler>;
 
 handlers.orchestrator = createOrchestratorHandler();

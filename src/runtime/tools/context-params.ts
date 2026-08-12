@@ -53,8 +53,8 @@ export function injectContextParams(
 ): Record<string, unknown> {
   const out: Record<string, unknown> = { ...params, workflowRunId: source.workflowRunId };
   if (source.projectId) {
-    out["projectId"] = source.projectId;
-    out["project_id"] = source.projectId;
+    out.projectId = source.projectId;
+    out.project_id = source.projectId;
   }
   return out;
 }

@@ -31,12 +31,8 @@ describe("iteration-budget-policy", () => {
     process.env.QUBIT_UNPRODUCTIVE_BUDGET = "1";
     try {
       expect(DEFAULT_MAX_CONSECUTIVE_UNPRODUCTIVE_TURNS).toBe(4);
-      expect(
-        shouldStopForUnproductiveTurns({ consecutiveUnproductiveTurns: 3 })
-      ).toBe(false);
-      expect(
-        shouldStopForUnproductiveTurns({ consecutiveUnproductiveTurns: 4 })
-      ).toBe(true);
+      expect(shouldStopForUnproductiveTurns({ consecutiveUnproductiveTurns: 3 })).toBe(false);
+      expect(shouldStopForUnproductiveTurns({ consecutiveUnproductiveTurns: 4 })).toBe(true);
     } finally {
       if (prev === undefined) delete process.env.QUBIT_UNPRODUCTIVE_BUDGET;
       else process.env.QUBIT_UNPRODUCTIVE_BUDGET = prev;
@@ -47,9 +43,7 @@ describe("iteration-budget-policy", () => {
     const prev = process.env.QUBIT_UNPRODUCTIVE_BUDGET;
     delete process.env.QUBIT_UNPRODUCTIVE_BUDGET;
     try {
-      expect(
-        shouldStopForUnproductiveTurns({ consecutiveUnproductiveTurns: 99 })
-      ).toBe(false);
+      expect(shouldStopForUnproductiveTurns({ consecutiveUnproductiveTurns: 99 })).toBe(false);
     } finally {
       if (prev === undefined) delete process.env.QUBIT_UNPRODUCTIVE_BUDGET;
       else process.env.QUBIT_UNPRODUCTIVE_BUDGET = prev;

@@ -86,9 +86,7 @@ export function buildGroupRoleConstraintHint(input: GroupRoleConstraintInput): s
   if (!input.groupId) {
     return input.groupDescription ? renderSoftHint(input.groupDescription) : "";
   }
-  const match = HARD_CONSTRAINTS.find(
-    (c) => c.groupId === input.groupId && c.role === input.role
-  );
+  const match = HARD_CONSTRAINTS.find((c) => c.groupId === input.groupId && c.role === input.role);
   if (match) return match.buildHint();
   return input.groupDescription ? renderSoftHint(input.groupDescription) : "";
 }
@@ -109,7 +107,5 @@ function renderSoftHint(description: string): string {
  */
 export function hasHardConstraint(input: { groupId?: string | null; role: AgentRole }): boolean {
   if (!input.groupId) return false;
-  return HARD_CONSTRAINTS.some(
-    (c) => c.groupId === input.groupId && c.role === input.role
-  );
+  return HARD_CONSTRAINTS.some((c) => c.groupId === input.groupId && c.role === input.role);
 }

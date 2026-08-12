@@ -21,7 +21,8 @@ describe("parseRssHeadlineItems", () => {
   test("respects limit", () => {
     const xml = Array.from({ length: 5 })
       .map(
-        (_, i) => `<item><title>T${i}</title><link>https://x/${i}</link><pubDate>Mon, 01 Jan 2024 00:00:00 GMT</pubDate></item>`
+        (_, i) =>
+          `<item><title>T${i}</title><link>https://x/${i}</link><pubDate>Mon, 01 Jan 2024 00:00:00 GMT</pubDate></item>`
       )
       .join("");
     expect(parseRssHeadlineItems(xml, 2).length).toBe(2);

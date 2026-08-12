@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { isInternetBuiltinTool, INTERNET_BUILTIN_TOOLS } from "../internet-tools";
+import { type LoadedSandboxPolicy, isToolAuthorized } from "../../sandbox-executor";
+import { isBuiltinTool } from "../builtin-tools";
+import { INTERNET_BUILTIN_TOOLS, isInternetBuiltinTool } from "../internet-tools";
+import { buildToolCatalog } from "../tool-catalog";
+import { WEB_FETCH_HANDLER } from "../web-fetch-handler";
 import { parseDuckDuckGoHtml, resolveWebSearchProvider, runWebSearch } from "../web-search-handler";
 import {
   extractHtmlTitle,
@@ -7,10 +11,6 @@ import {
   parsePublicHttpUrl,
   stripHtmlToText,
 } from "../web-ssrf";
-import { WEB_FETCH_HANDLER } from "../web-fetch-handler";
-import { isBuiltinTool } from "../builtin-tools";
-import { buildToolCatalog } from "../tool-catalog";
-import { isToolAuthorized, type LoadedSandboxPolicy } from "../../sandbox-executor";
 
 const emptyPolicy = (): LoadedSandboxPolicy => ({
   id: "pol-empty",

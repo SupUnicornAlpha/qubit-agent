@@ -22,7 +22,6 @@ import { randomUUID } from "node:crypto";
 import { and, between, eq, inArray, lt, sql } from "drizzle-orm";
 import type { DbClient } from "../../db/sqlite/client";
 import { runInTransaction } from "../../db/sqlite/client";
-import { getExperienceBus, type ExperienceBus } from "../experience/experience-bus";
 import {
   brokerOrder,
   fill as fillTable,
@@ -30,23 +29,24 @@ import {
   strategyPnlSnapshot,
   strategyRuntime,
 } from "../../db/sqlite/schema";
-import type { FeeCalculator } from "./fee-calculator";
-import { createFeeCalculator } from "./fee-calculator";
-import type { DailyMarkPriceFetcher } from "./mark-price-fetcher";
-import { createDailyMarkPriceFetcher } from "./mark-price-fetcher";
-import {
-  calcPnlSeries,
-  type MarkPriceLookup,
-  type PnlCalcResult,
-  type PnlFill,
-  type PositionState,
-} from "./pnl-calc";
+import { type ExperienceBus, getExperienceBus } from "../experience/experience-bus";
 import {
   type AnalystAccuracyWriter,
   type EvaluatePendingResult,
   type SyncPlaceholdersResult,
   createAnalystAccuracyWriter,
 } from "./analyst-accuracy-writer";
+import type { FeeCalculator } from "./fee-calculator";
+import { createFeeCalculator } from "./fee-calculator";
+import type { DailyMarkPriceFetcher } from "./mark-price-fetcher";
+import { createDailyMarkPriceFetcher } from "./mark-price-fetcher";
+import {
+  type MarkPriceLookup,
+  type PnlCalcResult,
+  type PnlFill,
+  type PositionState,
+  calcPnlSeries,
+} from "./pnl-calc";
 import {
   type SkillAttributor,
   type SkillAttributorSummary,
@@ -455,10 +455,7 @@ export class PnlAttributor {
    * 走 ORM：先按 symbol 找每个 symbol 的 max(trading_day < fromDay)，再二次取整行。
    * 数据量很小（每 runtime 持仓 symbol 通常 ≤ 数十）—— 不走相关子查询也不会爆。
    */
-  private async loadPriorPositions(
-    runtimeId: string,
-    fromDay: string
-  ): Promise<PositionState[]> {
+  private async loadPriorPositions(runtimeId: string, fromDay: string): Promise<PositionState[]> {
     const maxRows = await this.db
       .select({
         symbol: strategyPnlSnapshot.symbol,
@@ -668,9 +665,7 @@ function round6(n: number): number {
  *   - 同 runtime 同 day 多个 workflow → 把 pnlAttributed 等权拆分到每个 workflow
  *     （v0 简化；P5+ 可按 workflow 触发的 fill 数量加权）
  */
-function flattenPerRunDayToSkillItems(
-  results: PnlAttributorRuntimeResult[]
-): Array<{
+function flattenPerRunDayToSkillItems(results: PnlAttributorRuntimeResult[]): Array<{
   workflowRunId: string;
   tradingDay: string;
   pnlAttributed: number;
@@ -698,4 +693,3 @@ function flattenPerRunDayToSkillItems(
   }
   return out;
 }
-

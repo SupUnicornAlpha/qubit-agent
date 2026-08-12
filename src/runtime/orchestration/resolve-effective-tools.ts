@@ -1,10 +1,7 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { workflowRun } from "../../db/sqlite/schema";
-import { researchScenarioRegistry } from "../research-scenario/registry";
-import { resolveRegistryScenarioKey } from "../research-scenario/scenario-key-aliases";
-import { resolveToolAlias } from "../tools/tool-catalog";
-import type { RuntimeAgentDefinition } from "../types";
+import { stripOrchestratorTeamCompatTools } from "../market/contracts/prime-tool-host-surface";
 import {
   applyMissingArtifactToolFilter,
   applyStallToolFilter,
@@ -12,12 +9,15 @@ import {
   ensureFactsPort,
   getWorkflowFactsPort,
 } from "../policy";
-import { stripOrchestratorTeamCompatTools } from "../market/contracts/prime-tool-host-surface";
+import { researchScenarioRegistry } from "../research-scenario/registry";
+import { resolveRegistryScenarioKey } from "../research-scenario/scenario-key-aliases";
+import { resolveToolAlias } from "../tools/tool-catalog";
+import type { RuntimeAgentDefinition } from "../types";
 import {
+  type OrchestratorTopologyContext,
   buildAgentCollaborationHint,
   buildTopologyToolsPromptBlock,
   loadOrchestratorTopologyForWorkflow,
-  type OrchestratorTopologyContext,
 } from "./topology-dispatch";
 
 export type EffectiveToolsResult = {

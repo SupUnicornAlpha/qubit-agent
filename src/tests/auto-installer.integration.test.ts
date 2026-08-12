@@ -95,16 +95,14 @@ beforeAll(async () => {
     .from(autoInstallProposal)
     .where(eq(autoInstallProposal.projectId, projectId))
     .all();
-  withCandidateProposalId = allProps.find((p) => p.gapLogId === withCandidateGapId)!.id;
-  noCandidateProposalId = allProps.find((p) => p.gapLogId === noCandidateGapId)!.id;
+  withCandidateProposalId = allProps.find((p) => p.gapLogId === withCandidateGapId)?.id;
+  noCandidateProposalId = allProps.find((p) => p.gapLogId === noCandidateGapId)?.id;
 });
 
 describe("GET /memory/auto-installer/proposals", () => {
   test("默认 state=pending_review 只回 1 条", async () => {
     const res = await app.request(
-      new Request(
-        `http://x/api/v1/monitor/memory/auto-installer/proposals?projectId=${projectId}`
-      )
+      new Request(`http://x/api/v1/monitor/memory/auto-installer/proposals?projectId=${projectId}`)
     );
     expect(res.status).toBe(200);
     const body = (await jsonOf(res)) as { ok: boolean; data: { items: unknown[] } };
@@ -186,7 +184,7 @@ describe("POST /memory/auto-installer/proposals/:id/approve", () => {
 
     const db = await getDb();
     const [gap] = await db.select().from(toolGapLog).where(eq(toolGapLog.id, withCandidateGapId));
-    expect(gap!.status).toBe("installed");
+    expect(gap?.status).toBe("installed");
   });
 
   test("approve 已 approved → 400 + ProposalStateError 文案", async () => {
@@ -234,7 +232,7 @@ describe("POST /memory/auto-installer/proposals/:id/reject", () => {
 
     const db = await getDb();
     const [gap] = await db.select().from(toolGapLog).where(eq(toolGapLog.id, noCandidateGapId));
-    expect(gap!.status).toBe("open");
+    expect(gap?.status).toBe("open");
   });
 
   test("reject 已 approved → 400", async () => {

@@ -1,7 +1,6 @@
-import { and, asc, count, desc, eq, inArray, isNull, or } from "drizzle-orm";
+import { and, count, desc, eq, isNull, or } from "drizzle-orm";
 import { Hono } from "hono";
 import { reloadBuiltinConnectorsFromSettings } from "../connectors/bootstrap";
-import { invalidateWindBridge } from "../runtime/market/wind-klines";
 import { getDb } from "../db/sqlite/client";
 import {
   agentDefinition,
@@ -18,7 +17,12 @@ import {
   skillMarketInstall,
 } from "../db/sqlite/schema";
 import { getRuntimeAgents } from "../runtime/agent-pool";
-import { buildToolCatalog } from "../runtime/tools/tool-catalog";
+import { reloadAgentPool } from "../runtime/agent-pool";
+import {
+  type AgentDefinitionBindingInput,
+  clearAllAgentDefinitionOverrides,
+  setAgentDefinitionBindings,
+} from "../runtime/agent/agent-binding-service";
 import {
   type PromptMode,
   defaultMemoryNamespace,
@@ -30,38 +34,27 @@ import {
   writePackMarkdownFiles,
   writePackSessionSnapshotFiles,
 } from "../runtime/agent/agent-pack-service";
+import { buildAgentPromptPreview } from "../runtime/agent/agent-prompt-preview";
+import {
+  deleteAgentDefinitionById,
+  isBuiltinAgentDefinitionId,
+} from "../runtime/agent/delete-agent-definition";
 import {
   loadBuiltinConnectorSettings,
   saveBuiltinConnectorSettings,
 } from "../runtime/config/builtin-connector-settings";
 import {
+  type RuntimeModelConfig,
   loadModelConfig,
   saveModelConfig,
-  type RuntimeModelConfig,
 } from "../runtime/config/model-config";
+import { loadWorkspaceRuntimeConfig } from "../runtime/config/workspace-config";
 import {
   describeDefaultEmbeddingClient,
   getDefaultEmbeddingClient,
   resetDefaultEmbeddingClient,
 } from "../runtime/llm/embedding-client";
-import { loadWorkspaceRuntimeConfig } from "../runtime/config/workspace-config";
-import {
-  deleteAgentDefinitionById,
-  isBuiltinAgentDefinitionId,
-} from "../runtime/agent/delete-agent-definition";
-import { buildAgentPromptPreview } from "../runtime/agent/agent-prompt-preview";
-import { seedAgentDefinitions } from "../runtime/seed-agent-definitions";
-import {
-  type AgentDefinitionBindingInput,
-  clearAllAgentDefinitionOverrides,
-  setAgentDefinitionBindings,
-} from "../runtime/agent/agent-binding-service";
-import { reloadAgentPool } from "../runtime/agent-pool";
-import {
-  isExecutionKind,
-  resolveExecutionKind,
-  syncPrimeSpecsFromDbIfRust,
-} from "../runtime/prime";
+import { invalidateWindBridge } from "../runtime/market/wind-klines";
 import { syncServerDefaultStarBinding } from "../runtime/mcp/default-star-binding";
 import { dispatchMcpToolCall } from "../runtime/mcp/dispatcher";
 import {
@@ -77,6 +70,12 @@ import {
 } from "../runtime/mcp/market-service";
 import { deriveMcpServerOrigin } from "../runtime/mcp/origin";
 import {
+  isExecutionKind,
+  resolveExecutionKind,
+  syncPrimeSpecsFromDbIfRust,
+} from "../runtime/prime";
+import { seedAgentDefinitions } from "../runtime/seed-agent-definitions";
+import {
   DEFAULT_OPEN_SKILL_MARKET_BASE,
   ensureOpenSkillMarketLoaded,
   getOpenSkillMarketCacheSnapshot,
@@ -90,6 +89,7 @@ import {
   searchSkillsMp,
   searchSkillsMpPaginated,
 } from "../runtime/skills/skillsmp-client";
+import { buildToolCatalog } from "../runtime/tools/tool-catalog";
 import { ALL_AGENT_ROLES, type AgentRole } from "../types/entities";
 
 export const agentRouter = new Hono();
@@ -363,7 +363,11 @@ agentRouter.post("/definitions", async (c) => {
     executionKind: body.executionKind,
     role,
   });
-  if (body.executionKind != null && body.executionKind !== "" && !isExecutionKind(body.executionKind)) {
+  if (
+    body.executionKind != null &&
+    body.executionKind !== "" &&
+    !isExecutionKind(body.executionKind)
+  ) {
     return c.json({ error: "invalid executionKind (primary|subagent|reactor)" }, 400);
   }
   const db = await getDb();
@@ -464,14 +468,17 @@ agentRouter.post("/definitions/:id/prompt-preview", async (c) => {
       skillsJson?: unknown;
       subscriptionsJson?: unknown;
     }>()
-    .catch(() => ({} as {
-      systemPrompt?: string;
-      promptMode?: PromptMode;
-      toolsJson?: unknown;
-      mcpServersJson?: unknown;
-      skillsJson?: unknown;
-      subscriptionsJson?: unknown;
-    }));
+    .catch(
+      () =>
+        ({}) as {
+          systemPrompt?: string;
+          promptMode?: PromptMode;
+          toolsJson?: unknown;
+          mcpServersJson?: unknown;
+          skillsJson?: unknown;
+          subscriptionsJson?: unknown;
+        }
+    );
   const db = await getDb();
   const preview = await buildAgentPromptPreview(db, {
     definitionId,
@@ -481,7 +488,9 @@ agentRouter.post("/definitions/:id/prompt-preview", async (c) => {
       ...(body.toolsJson !== undefined ? { toolsJson: body.toolsJson } : {}),
       ...(body.mcpServersJson !== undefined ? { mcpServersJson: body.mcpServersJson } : {}),
       ...(body.skillsJson !== undefined ? { skillsJson: body.skillsJson } : {}),
-      ...(body.subscriptionsJson !== undefined ? { subscriptionsJson: body.subscriptionsJson } : {}),
+      ...(body.subscriptionsJson !== undefined
+        ? { subscriptionsJson: body.subscriptionsJson }
+        : {}),
     },
   });
   if (!preview) return c.json({ error: "Agent definition not found" }, 404);
@@ -788,7 +797,11 @@ agentRouter.post("/definitions/:id/draft", async (c) => {
     .limit(1);
   if (!existed[0]) return c.json({ error: "Agent definition not found" }, 404);
   const source = existed[0];
-  if (body.executionKind != null && body.executionKind !== "" && !isExecutionKind(body.executionKind)) {
+  if (
+    body.executionKind != null &&
+    body.executionKind !== "" &&
+    !isExecutionKind(body.executionKind)
+  ) {
     return c.json({ error: "invalid executionKind (primary|subagent|reactor)" }, 400);
   }
   const draftId = crypto.randomUUID();
@@ -1086,9 +1099,7 @@ agentRouter.post("/model-config", async (c) => {
                   ...(body.embedding.enabled !== undefined
                     ? { enabled: body.embedding.enabled }
                     : {}),
-                  ...(body.embedding.model !== undefined
-                    ? { model: body.embedding.model }
-                    : {}),
+                  ...(body.embedding.model !== undefined ? { model: body.embedding.model } : {}),
                   ...(body.embedding.apiKey?.trim()
                     ? { apiKey: body.embedding.apiKey.trim() }
                     : {}),
@@ -1129,7 +1140,7 @@ agentRouter.post("/model-config/embedding/test", async (c) => {
     );
   }
   try {
-    const body = await c.req.json<{ text?: string }>().catch(() => ({} as { text?: string }));
+    const body = await c.req.json<{ text?: string }>().catch(() => ({}) as { text?: string });
     const text = (body.text?.trim() || "qubit embedding probe").slice(0, 500);
     const result = await client.embed([text]);
     const vector = result.vectors[0] ?? [];
@@ -1140,9 +1151,7 @@ agentRouter.post("/model-config/embedding/test", async (c) => {
         dimension: vector.length || client.dimension,
         tokensUsed: result.tokensUsed,
         latencyMs: result.latencyMs,
-        sampleNorm: Number(
-          Math.sqrt(vector.reduce((acc, x) => acc + x * x, 0)).toFixed(6)
-        ),
+        sampleNorm: Number(Math.sqrt(vector.reduce((acc, x) => acc + x * x, 0)).toFixed(6)),
       },
     });
   } catch (err) {
@@ -1616,7 +1625,7 @@ agentRouter.post("/mcp/market/installs/:id/test", async (c) => {
   const installId = c.req.param("id");
   const body = await c.req
     .json<{ toolName?: string; arguments?: Record<string, unknown> }>()
-    .catch(() => ({} as { toolName?: string; arguments?: Record<string, unknown> }));
+    .catch(() => ({}) as { toolName?: string; arguments?: Record<string, unknown> });
   const data = await testProjectInstall({
     installId,
     ...(body.toolName !== undefined ? { toolName: body.toolName } : {}),
@@ -1632,10 +1641,7 @@ agentRouter.get("/plugins", async (c) => {
   const q = c.req.query("q")?.trim() || undefined;
   const tabRaw = c.req.query("tab")?.trim();
   const tab =
-    tabRaw === "featured" ||
-    tabRaw === "installed" ||
-    tabRaw === "catalog" ||
-    tabRaw === "all"
+    tabRaw === "featured" || tabRaw === "installed" || tabRaw === "catalog" || tabRaw === "all"
       ? tabRaw
       : "all";
   const page = Number(c.req.query("page") ?? 1);
@@ -1709,11 +1715,7 @@ agentRouter.post("/plugins/import", async (c) => {
   if (!projectId || !rootPath || !format) {
     return c.json({ error: "projectId, format, rootPath required" }, 400);
   }
-  if (
-    format !== "codex_plugin" &&
-    format !== "claude_plugin" &&
-    format !== "agent_skills"
-  ) {
+  if (format !== "codex_plugin" && format !== "claude_plugin" && format !== "agent_skills") {
     return c.json({ error: "format must be codex_plugin|claude_plugin|agent_skills" }, 400);
   }
   try {
@@ -1725,10 +1727,7 @@ agentRouter.post("/plugins/import", async (c) => {
     });
     return c.json({ data }, 201);
   } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : String(error) },
-      400
-    );
+    return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
   }
 });
 
@@ -1746,7 +1745,7 @@ agentRouter.get("/skills/market/status", (c) => {
 agentRouter.post("/skills/market/refresh", async (c) => {
   const body = await c.req
     .json<{ baseUrl?: string; provider?: string; apiKey?: string }>()
-    .catch(() => ({} as { baseUrl?: string; provider?: string; apiKey?: string }));
+    .catch(() => ({}) as { baseUrl?: string; provider?: string; apiKey?: string });
   const provider = (body.provider ?? "skillsmp").toLowerCase();
   try {
     if (provider === "open") {

@@ -12,8 +12,8 @@
  */
 
 import type { DbClient } from "../../../db/sqlite/client";
-import { getSelfEvolveConfig } from "../../config/self-evolve-config";
 import { createSkillAttributor } from "../../attribution/skill-attributor";
+import { getSelfEvolveConfig } from "../../config/self-evolve-config";
 
 export interface PnlAwareSkillEntry {
   skillId: string;
@@ -69,10 +69,7 @@ export function renderPnlAwareSkillBlock(rows: PnlAwareSkillEntry[]): string {
 }
 
 /** 一站式：拉 + 渲染。reason 节点直接调它，省一行 boilerplate。 */
-export async function buildPnlAwareSkillBlock(
-  db: DbClient,
-  definitionId: string
-): Promise<string> {
+export async function buildPnlAwareSkillBlock(db: DbClient, definitionId: string): Promise<string> {
   const rows = await fetchPnlAwareTopSkills(db, definitionId);
   return renderPnlAwareSkillBlock(rows);
 }

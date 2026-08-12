@@ -1,9 +1,5 @@
 import { executionKindForRole } from "./prime/role-to-execution-kind";
-import {
-  ROLE_OUTPUTS,
-  ROLE_SKILLS,
-  resolveSeedMcpServers,
-} from "./seed-agent-catalog";
+import { ROLE_OUTPUTS, ROLE_SKILLS, resolveSeedMcpServers } from "./seed-agent-catalog";
 import {
   PROMPT_ANALYST_FUNDAMENTAL,
   PROMPT_ANALYST_MACRO,
@@ -194,13 +190,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     version: "3.5.3",
     executionKind: "subagent",
     systemPrompt: PROMPT_NEWS_EVENT,
-    tools: [
-      "fetch_news",
-      "fetch_news_sentiment",
-      "web.search",
-      "skill.search",
-      "skill.use_record",
-    ],
+    tools: ["fetch_news", "fetch_news_sentiment", "web.search", "skill.search", "skill.use_record"],
     maxIterations: 4,
   }),
   def({
@@ -387,13 +377,9 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
   }),
 ];
 
-export const BUILTIN_AGENT_DEFINITION_IDS = new Set(
-  SEED_AGENT_DEFINITIONS.map((d) => d.id),
-);
+export const BUILTIN_AGENT_DEFINITION_IDS = new Set(SEED_AGENT_DEFINITIONS.map((d) => d.id));
 
-export const BUILTIN_AGENT_ROLES = new Set(
-  SEED_AGENT_DEFINITIONS.map((d) => d.role),
-);
+export const BUILTIN_AGENT_ROLES = new Set(SEED_AGENT_DEFINITIONS.map((d) => d.role));
 
 /** 已退役/合并的内置 definition id，seed 时禁用 */
 export const RETIRED_BUILTIN_DEFINITION_IDS = [

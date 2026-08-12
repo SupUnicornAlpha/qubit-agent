@@ -6,9 +6,9 @@
  */
 
 import { join } from "node:path";
+import { config } from "../../config";
 import type { BarData, FetchBarsParams } from "../../connectors/data/data.connector";
 import { PythonConnectorBridgeImpl } from "../../connectors/python-bridge";
-import { config } from "../../config";
 import { getPythonConnectorsDir, resolvePythonBin } from "../app-paths";
 import { resolveFutuOpenDConfig } from "./futu-runtime";
 
@@ -58,9 +58,7 @@ async function getFutuBridge(): Promise<PythonConnectorBridgeImpl> {
     });
     await instance.init({
       opendHost: openD?.opendHost ?? process.env.QUBIT_FUTU_OPEND_HOST ?? "127.0.0.1",
-      opendPort:
-        openD?.opendPort ??
-        (Number(process.env.QUBIT_FUTU_OPEND_PORT) || 11111),
+      opendPort: openD?.opendPort ?? (Number(process.env.QUBIT_FUTU_OPEND_PORT) || 11111),
     });
     bridge = instance;
     return instance;
@@ -109,9 +107,7 @@ export async function fetchFutuBars(params: FetchBarsParams): Promise<BarData[]>
     period: params.period,
     startDate: params.startDate,
     endDate: params.endDate,
-    ...(openD
-      ? { opendHost: openD.opendHost, opendPort: openD.opendPort }
-      : {}),
+    ...(openD ? { opendHost: openD.opendHost, opendPort: openD.opendPort } : {}),
   })) as BarData[];
 
   let sorted = [...bars].sort((a, b) => a.timestamp.localeCompare(b.timestamp));

@@ -1,18 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
-import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { factorDefinition, strategy, strategyVersion } from "../../db/sqlite/schema";
-import type { ConnectorMeta } from "../../types/connector";
-import { computeDateRangeForLimit, queryBarsRange, timeframeToPeriod } from "../../runtime/market/klines-query";
+import { computeDateRangeForLimit, queryBarsRange } from "../../runtime/market/klines-query";
 import { snapshotIndicators } from "../../runtime/market/technical-indicators";
+import type { ConnectorMeta } from "../../types/connector";
 import {
-  ResearchConnector,
   type ComputeFactorsParams,
   type FactorResult,
   type FeatureEngineeringParams,
   type FeatureResult,
   type ModelResult,
+  ResearchConnector,
   type TrainModelParams,
 } from "./research.connector";
 
@@ -57,7 +56,7 @@ export class QubitNativeResearchConnector extends ResearchConnector {
 
   async computeFactors(params: ComputeFactorsParams): Promise<FactorResult> {
     const symbol = params.datasetUri.replace(/^bars:\/\//, "").split(":")[0] ?? params.datasetUri;
-    const exchange = params.datasetUri.includes(":") ? params.datasetUri.split(":")[1] ?? "" : "";
+    const exchange = params.datasetUri.includes(":") ? (params.datasetUri.split(":")[1] ?? "") : "";
     const { period, startDate, endDate } = computeDateRangeForLimit("1d", 120);
     const bars = await queryBarsRange({
       symbol,

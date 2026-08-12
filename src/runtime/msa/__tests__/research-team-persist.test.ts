@@ -159,8 +159,8 @@ describe("runTeamResearchAndPersist", () => {
     expect(m.publishedEvents.length).toBe(1);
     const evt = m.publishedEvents[0]!;
     expect(evt.type).toBe("final");
-    expect(evt.payload["status"]).toBe("completed");
-    expect(evt.payload["fusionId"]).toBe("fusion-x");
+    expect(evt.payload.status).toBe("completed");
+    expect(evt.payload.fusionId).toBe("fusion-x");
   });
 
   test("awaiting_approval: pauseJob 缓存 resumePayload + workflow_run=awaiting_approval + SSE final(awaiting_approval)", async () => {
@@ -202,8 +202,8 @@ describe("runTeamResearchAndPersist", () => {
     expect(m.publishedEvents.length).toBe(1);
     const evt = m.publishedEvents[0]!;
     expect(evt.type).toBe("final");
-    expect(evt.payload["status"]).toBe("awaiting_approval");
-    expect(evt.payload["hitlRequestId"]).toBe("hitl-req-9");
+    expect(evt.payload.status).toBe("awaiting_approval");
+    expect(evt.payload.hitlRequestId).toBe("hitl-req-9");
   });
 
   test("failed: failJob + workflow_run=failed + onTerminal(failed) + 不发 SSE final", async () => {

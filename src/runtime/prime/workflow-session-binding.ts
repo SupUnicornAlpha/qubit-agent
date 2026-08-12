@@ -25,9 +25,7 @@ export function readPrimeCoreBinding(
   return {
     sessionId,
     agentSpecId,
-    ...(typeof o.agentInstanceId === "string"
-      ? { agentInstanceId: o.agentInstanceId }
-      : {}),
+    ...(typeof o.agentInstanceId === "string" ? { agentInstanceId: o.agentInstanceId } : {}),
     ...(typeof o.syncedAtMs === "number" ? { syncedAtMs: o.syncedAtMs } : {}),
   };
 }
@@ -51,9 +49,7 @@ export async function writePrimeCoreBinding(
         primeCore: {
           sessionId: binding.sessionId,
           agentSpecId: binding.agentSpecId,
-          ...(binding.agentInstanceId
-            ? { agentInstanceId: binding.agentInstanceId }
-            : {}),
+          ...(binding.agentInstanceId ? { agentInstanceId: binding.agentInstanceId } : {}),
           syncedAtMs: binding.syncedAtMs ?? Date.now(),
           backend: "rust",
         },

@@ -158,9 +158,7 @@ export async function authorizeCapability(call: CapabilityCall): Promise<Capabil
     const askBlocked = agentMode === "ask";
     return deny(
       askBlocked ? "ask_mode_blocked" : "plan_mode_blocked",
-      askBlocked
-        ? `Ask 模式不允许工具 ${toolName}`
-        : `Plan 模式不允许工具 ${toolName}`,
+      askBlocked ? `Ask 模式不允许工具 ${toolName}` : `Plan 模式不允许工具 ${toolName}`,
       askBlocked
         ? "Ask 仅允许只读控制面工具，或切换到 Agent/Goal 后再执行。"
         : "改用 update_plan 保存计划，或退出 Plan 模式后再执行。",

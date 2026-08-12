@@ -64,8 +64,8 @@ export class NativeMemoryConnector extends BaseMemoryConnector {
      */
     const now = new Date().toISOString();
 
-    if (metadata.layer === "session" && metadata["workflowRunId"]) {
-      const row = await sessionStore.upsert(metadata["workflowRunId"] as string, {
+    if (metadata.layer === "session" && metadata.workflowRunId) {
+      const row = await sessionStore.upsert(metadata.workflowRunId as string, {
         summary: content,
         stateJson: metadata,
         asofTime: metadata.asofTime,
@@ -83,12 +83,12 @@ export class NativeMemoryConnector extends BaseMemoryConnector {
       const row = await midtermStore.insert({
         projectId: metadata.projectId,
         definitionId: typeof metadata.definitionId === "string" ? metadata.definitionId : null,
-        memoryType: ((metadata["memoryType"] as string) ?? "strategy_iteration") as never,
+        memoryType: ((metadata.memoryType as string) ?? "strategy_iteration") as never,
         contentJson: { content, ...metadata },
-        timeWindowStart: (metadata["timeWindowStart"] as string) ?? now,
-        timeWindowEnd: (metadata["timeWindowEnd"] as string) ?? now,
+        timeWindowStart: (metadata.timeWindowStart as string) ?? now,
+        timeWindowEnd: (metadata.timeWindowEnd as string) ?? now,
         asofTime: metadata.asofTime,
-        score: (metadata["score"] as number) ?? null,
+        score: (metadata.score as number) ?? null,
       });
       return {
         id: row.id,
@@ -100,17 +100,17 @@ export class NativeMemoryConnector extends BaseMemoryConnector {
     }
 
     const row = await longtermStore.insert({
-      scope: ((metadata["scope"] as string) ?? "project") as never,
+      scope: ((metadata.scope as string) ?? "project") as never,
       scopeId: metadata.projectId ?? metadata.strategyId ?? "default",
       definitionId: typeof metadata.definitionId === "string" ? metadata.definitionId : null,
-      memoryType: ((metadata["memoryType"] as string) ?? "playbook") as never,
+      memoryType: ((metadata.memoryType as string) ?? "playbook") as never,
       contentJson: { content, ...metadata },
       embeddingRef: null,
       artifactUri: null,
       validFrom: metadata.asofTime,
       validTo: null,
       asofTime: metadata.asofTime,
-      confidenceScore: (metadata["confidenceScore"] as number) ?? null,
+      confidenceScore: (metadata.confidenceScore as number) ?? null,
     });
     return {
       id: row.id,

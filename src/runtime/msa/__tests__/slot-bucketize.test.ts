@@ -25,8 +25,8 @@ mkdirSync(join(tmpDir, "db"), { recursive: true });
 process.env.QUBIT_DATA_DIR = tmpDir;
 process.env.HOME = tmpDir;
 
-import type { AgentOutput } from "../../types";
 import type { AgentRole } from "../../../types/entities";
+import type { AgentOutput } from "../../types";
 
 const { describe, expect, test } = await import("bun:test");
 const { slotProducesSignal, slotIsAuxReporter } = await import("../analyst-team");
@@ -72,9 +72,7 @@ describe("slotIsAuxReporter — 取代 POST_FUSION_AUX_ROLES.has", () => {
     expect(slotIsAuxReporter(slot("news_event", ["events", "report"]))).toBe(true);
     expect(slotIsAuxReporter(slot("research", ["report", "factor_candidates"]))).toBe(true);
     expect(slotIsAuxReporter(slot("backtest", ["backtest_results", "report"]))).toBe(true);
-    expect(slotIsAuxReporter(slot("backtest_engineer", ["backtest_results", "report"]))).toBe(
-      true
-    );
+    expect(slotIsAuxReporter(slot("backtest_engineer", ["backtest_results", "report"]))).toBe(true);
     expect(slotIsAuxReporter(slot("risk", ["risk_assessment", "report"]))).toBe(true);
     expect(slotIsAuxReporter(slot("market_data", ["report"]))).toBe(true);
   });
@@ -175,12 +173,6 @@ describe("P0-01 / P1-04 修复直接验证（模拟 case 4 / case 5 编组桶化
     ]);
     // 现在 aux 桶比 MSA 时代更"完整"——多了 market_data + news_event，
     // 它们也会通过 post-fusion 串行 pipeline 跑（之前默默被丢，token 浪费 + 数据缺失）。
-    expect(auxSlots).toEqual([
-      "market_data",
-      "news_event",
-      "research",
-      "backtest",
-      "risk",
-    ]);
+    expect(auxSlots).toEqual(["market_data", "news_event", "research", "backtest", "risk"]);
   });
 });

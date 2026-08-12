@@ -1,4 +1,8 @@
 import type { BarData } from "../../connectors/data/data.connector";
+import {
+  type PerformanceMetrics,
+  computePerformanceMetrics,
+} from "../backtest/performance-metrics";
 
 export interface SmaCrossoverBacktestParams {
   fastPeriod: number;
@@ -15,7 +19,7 @@ export interface EquityPoint {
 
 export interface SmaCrossoverResult {
   equityCurve: EquityPoint[];
-  metrics: {
+  metrics: PerformanceMetrics & {
     totalReturnPct: number;
     maxDrawdownPct: number;
     sharpeApprox: number;
@@ -42,7 +46,10 @@ function sma(values: number[], period: number): number[] {
  * Long-only SMA crossover: all-in on golden cross, flat on death cross.
  * Uses bar close prices; deterministic for a given `BarData[]`.
  */
-export function runSmaCrossoverBacktest(bars: BarData[], p: SmaCrossoverBacktestParams): SmaCrossoverResult {
+export function runSmaCrossoverBacktest(
+  bars: BarData[],
+  p: SmaCrossoverBacktestParams
+): SmaCrossoverResult {
   const closes = bars.map((b) => b.close);
   const fast = Math.max(1, Math.floor(p.fastPeriod));
   const slow = Math.max(fast + 1, Math.floor(p.slowPeriod));
@@ -52,6 +59,8 @@ export function runSmaCrossoverBacktest(bars: BarData[], p: SmaCrossoverBacktest
   let shares = 0;
   let position: 0 | 1 = 0;
   let trades = 0;
+  let totalCommission = 0;
+  let tradedNotional = 0;
   const equityCurve: EquityPoint[] = [];
   const fee = Math.max(0, p.commission);
 
@@ -73,17 +82,22 @@ export function runSmaCrossoverBacktest(bars: BarData[], p: SmaCrossoverBacktest
       const crossDown = (previousFast ?? 0) >= (previousSlow ?? 0) && (f ?? 0) < (s ?? 0);
       const price = bar.close;
       if (crossUp && position === 0 && cash > 0 && price > 0) {
-        const lot = (cash * (1 - fee)) / price;
+        const feePaid = cash * fee;
+        const lot = (cash - feePaid) / price;
         shares = lot;
         cash = 0;
         position = 1;
         trades++;
+        totalCommission += feePaid;
+        tradedNotional += lot * price;
       } else if (crossDown && position === 1 && shares > 0 && price > 0) {
         const gross = shares * price;
         cash = gross * (1 - fee);
         shares = 0;
         position = 0;
         trades++;
+        totalCommission += gross * fee;
+        tradedNotional += gross;
       }
     }
     const eq = cash + shares * bar.close;
@@ -94,37 +108,21 @@ export function runSmaCrossoverBacktest(bars: BarData[], p: SmaCrossoverBacktest
   const lastEq = equityCurve[equityCurve.length - 1]?.equity ?? firstEq;
   const totalReturnPct = firstEq > 0 ? ((lastEq - firstEq) / firstEq) * 100 : 0;
 
-  let peak = firstEq;
-  let maxDd = 0;
-  for (const pt of equityCurve) {
-    if (pt.equity > peak) peak = pt.equity;
-    const dd = peak > 0 ? (peak - pt.equity) / peak : 0;
-    if (dd > maxDd) maxDd = dd;
-  }
-
-  const rets: number[] = [];
-  for (let i = 1; i < equityCurve.length; i++) {
-    const a = equityCurve[i - 1]?.equity;
-    const b = equityCurve[i]?.equity;
-    if (a === undefined || b === undefined) continue;
-    if (a > 1e-8) rets.push((b - a) / a);
-  }
-  let sharpeApprox = 0;
-  if (rets.length > 2) {
-    const mean = rets.reduce((x, y) => x + y, 0) / rets.length;
-    const variance = rets.reduce((x, r) => x + (r - mean) ** 2, 0) / rets.length;
-    const std = Math.sqrt(variance) || 1e-9;
-    sharpeApprox = (mean / std) * Math.sqrt(Math.min(252, rets.length));
-  }
+  const performance = computePerformanceMetrics({ equityCurve, initialCapital: p.initialCapital });
+  const years = Math.max(1 / 252, equityCurve.length / 252);
+  const turnover = firstEq > 0 ? tradedNotional / firstEq / years : 0;
 
   return {
     equityCurve,
     metrics: {
+      ...performance,
       totalReturnPct,
-      maxDrawdownPct: maxDd * 100,
-      sharpeApprox,
+      maxDrawdownPct: performance.maxDrawdown * 100,
+      sharpeApprox: performance.sharpe,
       tradeCount: trades,
       bars: bars.length,
+      turnover,
+      totalCommission,
     },
   };
 }

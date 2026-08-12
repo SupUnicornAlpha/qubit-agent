@@ -2,8 +2,8 @@
  * Curator YAML parser tests — 纯函数，不需要 DB / LLM。
  */
 import { describe, expect, test } from "bun:test";
-import { parseCuratorYaml, buildCuratorReviewPrompt } from "../skill-curator";
 import type { AgentSkill } from "../../../types/entities";
+import { buildCuratorReviewPrompt, parseCuratorYaml } from "../skill-curator";
 
 describe("parseCuratorYaml — fenced block", () => {
   test("strips ```yaml fence", () => {

@@ -89,11 +89,7 @@ export type RedactPayloadOptions = {
  * 多值 header 以 ", " 拼接，与 HTTP/1.1 RFC 7230 §3.2.2 处理一致。
  */
 export function redactHeaders(
-  headers:
-    | Headers
-    | Record<string, string | string[] | undefined>
-    | undefined
-    | null
+  headers: Headers | Record<string, string | string[] | undefined> | undefined | null
 ): Record<string, string> {
   if (!headers) return {};
   const out: Record<string, string> = {};
@@ -187,12 +183,13 @@ function truncateIfTooLarge(value: unknown, maxBytes: number): unknown {
   }
   // 使用 Buffer.byteLength（如可用）以匹配 UTF-8 真实长度；
   // 浏览器环境 fallback 到 string length（保留近似上限即可）。
-  const byteLength =
-    typeof Buffer !== "undefined" ? Buffer.byteLength(json, "utf8") : json.length;
+  const byteLength = typeof Buffer !== "undefined" ? Buffer.byteLength(json, "utf8") : json.length;
   if (byteLength <= maxBytes) return value;
   const head =
     typeof Buffer !== "undefined"
-      ? Buffer.from(json, "utf8").slice(0, maxBytes - 64).toString("utf8")
+      ? Buffer.from(json, "utf8")
+          .slice(0, maxBytes - 64)
+          .toString("utf8")
       : json.slice(0, maxBytes - 64);
   return `${head}…[truncated ${byteLength - head.length} bytes]`;
 }

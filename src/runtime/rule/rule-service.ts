@@ -11,7 +11,7 @@
  * 强制约束：不直接 import jsonlogic / python；统一从 ProviderResolver 拿。
  */
 
-import { randomUUID, createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import {
@@ -116,11 +116,9 @@ export class RuleService {
     const provider = await this.resolveProvider(providerKey, {});
     const parsed = await provider.parse(input.dsl, lang);
     if (!parsed.ok) {
-      throw new RuleServiceError(
-        "parse_failed",
-        `dsl_parse_failed: ${parsed.error ?? "unknown"}`,
-        { ruleName: input.name }
-      );
+      throw new RuleServiceError("parse_failed", `dsl_parse_failed: ${parsed.error ?? "unknown"}`, {
+        ruleName: input.name,
+      });
     }
 
     const id = randomUUID();
@@ -192,7 +190,11 @@ export class RuleService {
 
   async evaluate(input: RuleEvaluateInput): Promise<RuleEvalResult & { evaluationId: string }> {
     const r = await this.get(input.ruleId);
-    const provider = await this.resolveProvider(r.providerKey, input.scope ?? {}, input.providerKey);
+    const provider = await this.resolveProvider(
+      r.providerKey,
+      input.scope ?? {},
+      input.providerKey
+    );
 
     let result: RuleEvalResult;
     try {

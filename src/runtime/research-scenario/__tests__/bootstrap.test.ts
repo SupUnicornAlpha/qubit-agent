@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { researchScenarioRegistry } from "../registry";
-import { buildAnalystLaunchInput, researchScenarioService } from "../service";
-import { BUILTIN_RESEARCH_SCENARIOS } from "../scenarios-seed";
-import { bootstrapProviders } from "../../provider/bootstrap";
 import { runMigrations } from "../../../db/sqlite/migrate";
+import { bootstrapProviders } from "../../provider/bootstrap";
+import { researchScenarioRegistry } from "../registry";
+import { BUILTIN_RESEARCH_SCENARIOS } from "../scenarios-seed";
+import { buildAnalystLaunchInput, researchScenarioService } from "../service";
 
 describe("Research scenario bootstrap + service", () => {
   test("启动序列：migrate → providers → scenarios", async () => {
@@ -16,7 +16,7 @@ describe("Research scenario bootstrap + service", () => {
 
     const factor = researchScenarioRegistry.get("factor_research");
     expect(factor).not.toBeNull();
-    expect(factor!.requiredCapabilities.some((c) => c.kind === "factor_compute")).toBe(true);
+    expect(factor?.requiredCapabilities.some((c) => c.kind === "factor_compute")).toBe(true);
   });
 
   test("validate: 漏 required 字段 → invalid_input", async () => {
@@ -25,9 +25,9 @@ describe("Research scenario bootstrap + service", () => {
       // 漏 factorCategory（required）
     });
     expect(result.ok).toBe(false);
-    expect(result.invalidInputs?.some((e) => e.field === "factorCategory" && e.error === "required")).toBe(
-      true
-    );
+    expect(
+      result.invalidInputs?.some((e) => e.field === "factorCategory" && e.error === "required")
+    ).toBe(true);
   });
 
   test("validate: enum 不在白名单 → not_in_enum", async () => {

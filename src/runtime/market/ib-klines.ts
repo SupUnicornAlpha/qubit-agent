@@ -6,9 +6,9 @@
  */
 
 import { join } from "node:path";
+import { config } from "../../config";
 import type { BarData, FetchBarsParams } from "../../connectors/data/data.connector";
 import { PythonConnectorBridgeImpl } from "../../connectors/python-bridge";
-import { config } from "../../config";
 import { getPythonConnectorsDir, resolvePythonBin } from "../app-paths";
 import { resolveIbGatewayConfig } from "./ib-runtime";
 

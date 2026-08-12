@@ -10,44 +10,28 @@
  *     drizzle SQL 模板耦合产生脆性。
  */
 import { describe, expect, test } from "bun:test";
-import {
-  buildBucketStarts,
-  fillMissingBuckets,
-  floorToBucket,
-} from "../timeseries";
+import { buildBucketStarts, fillMissingBuckets, floorToBucket } from "../timeseries";
 
 describe("floorToBucket", () => {
   test("1m 对齐到整分钟", () => {
-    expect(floorToBucket(new Date("2026-05-26T10:23:45.678Z"), "1m")).toBe(
-      "2026-05-26T10:23:00Z"
-    );
+    expect(floorToBucket(new Date("2026-05-26T10:23:45.678Z"), "1m")).toBe("2026-05-26T10:23:00Z");
   });
 
   test("5m 向下对齐到 5 分钟边界", () => {
-    expect(floorToBucket(new Date("2026-05-26T10:23:45.678Z"), "5m")).toBe(
-      "2026-05-26T10:20:00Z"
-    );
-    expect(floorToBucket(new Date("2026-05-26T10:25:00.000Z"), "5m")).toBe(
-      "2026-05-26T10:25:00Z"
-    );
+    expect(floorToBucket(new Date("2026-05-26T10:23:45.678Z"), "5m")).toBe("2026-05-26T10:20:00Z");
+    expect(floorToBucket(new Date("2026-05-26T10:25:00.000Z"), "5m")).toBe("2026-05-26T10:25:00Z");
   });
 
   test("15m 向下对齐到 15 分钟边界", () => {
-    expect(floorToBucket(new Date("2026-05-26T10:29:00.000Z"), "15m")).toBe(
-      "2026-05-26T10:15:00Z"
-    );
+    expect(floorToBucket(new Date("2026-05-26T10:29:00.000Z"), "15m")).toBe("2026-05-26T10:15:00Z");
   });
 
   test("1h 对齐到整点（UTC）", () => {
-    expect(floorToBucket(new Date("2026-05-26T10:59:59.999Z"), "1h")).toBe(
-      "2026-05-26T10:00:00Z"
-    );
+    expect(floorToBucket(new Date("2026-05-26T10:59:59.999Z"), "1h")).toBe("2026-05-26T10:00:00Z");
   });
 
   test("1d 对齐到 UTC 日开始", () => {
-    expect(floorToBucket(new Date("2026-05-26T23:59:59.999Z"), "1d")).toBe(
-      "2026-05-26T00:00:00Z"
-    );
+    expect(floorToBucket(new Date("2026-05-26T23:59:59.999Z"), "1d")).toBe("2026-05-26T00:00:00Z");
   });
 });
 
@@ -82,11 +66,7 @@ describe("buildBucketStarts", () => {
 
   test("to <= from → 空数组", () => {
     expect(
-      buildBucketStarts(
-        new Date("2026-05-26T10:00:00Z"),
-        new Date("2026-05-26T10:00:00Z"),
-        "1h"
-      )
+      buildBucketStarts(new Date("2026-05-26T10:00:00Z"), new Date("2026-05-26T10:00:00Z"), "1h")
     ).toEqual([]);
   });
 
@@ -118,11 +98,7 @@ describe("buildBucketStarts", () => {
 });
 
 describe("fillMissingBuckets", () => {
-  const bucketStarts = [
-    "2026-05-26T10:00:00Z",
-    "2026-05-26T10:05:00Z",
-    "2026-05-26T10:10:00Z",
-  ];
+  const bucketStarts = ["2026-05-26T10:00:00Z", "2026-05-26T10:05:00Z", "2026-05-26T10:10:00Z"];
 
   test("空 rows → 0 series 数组", () => {
     expect(fillMissingBuckets(bucketStarts, [])).toEqual([]);

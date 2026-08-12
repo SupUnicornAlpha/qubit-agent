@@ -1,7 +1,7 @@
-import { buildRunEnvelope } from "./run-envelope";
-import { enqueueHardFailures } from "./regression-queue";
-import { scoreRunEnvelope } from "./scorecard";
 import { isBenchmarkWorkflow } from "./benchmark-namespace";
+import { enqueueHardFailures } from "./regression-queue";
+import { buildRunEnvelope } from "./run-envelope";
+import { scoreRunEnvelope } from "./scorecard";
 
 /** 在 workflow 完结后调用；当前不接入热路径，以免 P0 观测逻辑影响生产执行。 */
 export async function scoreProductionRun(input: {

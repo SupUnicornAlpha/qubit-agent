@@ -8,8 +8,8 @@ import {
   workflowQualitySnapshot,
   workflowRun,
 } from "../../db/sqlite/schema";
-import { setWorkflowState } from "../workflow/workflow-state-machine";
 import { failAnalystResearchJob } from "../msa/analyst-research-jobs";
+import { setWorkflowState } from "../workflow/workflow-state-machine";
 import type { WorkflowTerminalStatus } from "./observability-hook";
 
 export function deriveSeverity(
@@ -187,7 +187,9 @@ export async function cancelInactiveWorkflows(maxIdleMinutes = 20) {
     try {
       await setWorkflowState(wf.id, "failed", { reason: `watchdog:${reason}` });
     } catch (e) {
-      console.warn(`[cancelInactiveWorkflows] setWorkflowState failed for ${wf.id}: ${(e as Error).message}`);
+      console.warn(
+        `[cancelInactiveWorkflows] setWorkflowState failed for ${wf.id}: ${(e as Error).message}`
+      );
       continue;
     }
 
@@ -233,7 +235,9 @@ export async function cancelInactiveWorkflows(maxIdleMinutes = 20) {
         });
       }
     } catch (e) {
-      console.warn(`[cancelInactiveWorkflows] alert insert failed for ${wf.id}: ${(e as Error).message}`);
+      console.warn(
+        `[cancelInactiveWorkflows] alert insert failed for ${wf.id}: ${(e as Error).message}`
+      );
     }
 
     cancelled.push({ workflowId: wf.id, idleMs, reason });

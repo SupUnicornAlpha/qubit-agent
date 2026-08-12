@@ -59,7 +59,9 @@ function mapRow(row: Record<string, unknown>): OpenSkillMarketEntry | null {
         : undefined;
   const stars = typeof starsNum === "number" && Number.isFinite(starsNum) ? starsNum : undefined;
   const updatedAt =
-    typeof row.updatedAt === "string" || typeof row.updatedAt === "number" ? row.updatedAt : undefined;
+    typeof row.updatedAt === "string" || typeof row.updatedAt === "number"
+      ? row.updatedAt
+      : undefined;
   const compatibility: Record<string, unknown> = { skillsmp: true };
   if (skillUrl) compatibility.skillUrl = skillUrl;
   if (githubUrl) compatibility.githubUrl = githubUrl;

@@ -11,7 +11,7 @@ export type BrokerAccountMode = "mock" | "sandbox" | "live";
 
 /** Global gate for real-money live broker dispatch (default off). */
 export function isLiveTradingEnabled(): boolean {
-  const v = process.env["QUBIT_LIVE_TRADING_ENABLED"] ?? "false";
+  const v = process.env.QUBIT_LIVE_TRADING_ENABLED ?? "false";
   return v === "1" || v.toLowerCase() === "true" || v.toLowerCase() === "yes";
 }
 
@@ -20,7 +20,7 @@ export function isLiveTradingEnabled(): boolean {
  * flipping the live kill-switch. Set QUBIT_SIM_TRADING_ENABLED=false to disable.
  */
 export function isSimTradingEnabled(): boolean {
-  const v = process.env["QUBIT_SIM_TRADING_ENABLED"];
+  const v = process.env.QUBIT_SIM_TRADING_ENABLED;
   if (v === undefined || v === "") return true;
   return v === "1" || v.toLowerCase() === "true" || v.toLowerCase() === "yes";
 }
@@ -28,7 +28,12 @@ export function isSimTradingEnabled(): boolean {
 export function assertBrokerDispatchAllowed(
   dispatchMode: DispatchMode,
   accountMode: BrokerAccountMode,
-  scope?: { provider?: BrokerProvider; accountRef?: string; projectId?: string; strategyId?: string }
+  scope?: {
+    provider?: BrokerProvider;
+    accountRef?: string;
+    projectId?: string;
+    strategyId?: string;
+  }
 ): void {
   if (dispatchMode === "paper") return;
   assertKillSwitchClear(scope);

@@ -5,13 +5,11 @@
  * 这里把 6 条关键断言锁住，后续 schema 改动至少要更新这里。
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { A2AMessageEnvelope } from "../../types/a2a";
 import { a2aRouter } from "../a2a";
 import { messageBus } from "../bus";
-import type { A2AMessageEnvelope } from "../../types/a2a";
 
-const baseEnvelope = (
-  overrides: Partial<A2AMessageEnvelope> = {},
-): A2AMessageEnvelope => ({
+const baseEnvelope = (overrides: Partial<A2AMessageEnvelope> = {}): A2AMessageEnvelope => ({
   messageId: crypto.randomUUID(),
   workflowId: "wf-1",
   traceId: "trace-1",
@@ -47,12 +45,14 @@ describe("A2ARouter.route — envelope schema", () => {
     const bad = baseEnvelope();
     delete (bad as Record<string, unknown>).workflowId;
     await expect(a2aRouter.route(bad as A2AMessageEnvelope)).rejects.toThrow(
-      /envelope schema mismatch/i,
+      /envelope schema mismatch/i
     );
   });
 
   test("envelope.messageType 非法 → throw envelope schema mismatch", async () => {
-    const bad = baseEnvelope({ messageType: "NOT_A_TYPE" as unknown as A2AMessageEnvelope["messageType"] });
+    const bad = baseEnvelope({
+      messageType: "NOT_A_TYPE" as unknown as A2AMessageEnvelope["messageType"],
+    });
     await expect(a2aRouter.route(bad)).rejects.toThrow(/envelope schema mismatch/i);
   });
 });

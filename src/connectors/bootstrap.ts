@@ -1,21 +1,21 @@
-import { connectorRegistry } from "./registry";
+import { runMigrations } from "../db/sqlite/migrate";
+import {
+  type BuiltinConnectorInitConfigs,
+  loadBuiltinConnectorSettings,
+} from "../runtime/config/builtin-connector-settings";
+import { seedEnvRegistry } from "../runtime/environment/seed-env-registry";
+import { ensureFutuRuntime } from "../runtime/market/futu-runtime";
+import { bootstrapMarketDataSources } from "../runtime/market/market-data-source-control";
+import { bootstrapProviders } from "../runtime/provider/bootstrap";
+import { bootstrapResearchScenarios } from "../runtime/research-scenario/bootstrap";
 import { QubitNativeBacktestConnector } from "./backtest/native-backtest.connector";
 import { QubitNativeDataConnector } from "./data/native-data.connector";
 import { QubitNativeNewsConnector } from "./data/native-news.connector";
 import { QubitBrokerConnector } from "./execution/qubit-broker.connector";
+import { connectorRegistry } from "./registry";
 import { QubitNativeResearchConnector } from "./research/native-research.connector";
 import { QubitNativeRiskConnector } from "./risk/native-risk.connector";
 import { QubitNativeSimConnector } from "./simulation/native-sim.connector";
-import { runMigrations } from "../db/sqlite/migrate";
-import {
-  loadBuiltinConnectorSettings,
-  type BuiltinConnectorInitConfigs,
-} from "../runtime/config/builtin-connector-settings";
-import { seedEnvRegistry } from "../runtime/environment/seed-env-registry";
-import { bootstrapProviders } from "../runtime/provider/bootstrap";
-import { bootstrapResearchScenarios } from "../runtime/research-scenario/bootstrap";
-import { bootstrapMarketDataSources } from "../runtime/market/market-data-source-control";
-import { ensureFutuRuntime } from "../runtime/market/futu-runtime";
 
 export type { BuiltinConnectorInitConfigs };
 
@@ -35,7 +35,9 @@ export async function reloadBuiltinConnectorsFromSettings(): Promise<BuiltinConn
  * Loads init payloads from SQLite (`builtin_connector_settings`), or use `initConfigs` to override (tests).
  * Safe to call from both `src/index.ts` and `src/server.ts` (idempotent).
  */
-export function registerBuiltinConnectors(initConfigs?: BuiltinConnectorInitConfigs): Promise<void> {
+export function registerBuiltinConnectors(
+  initConfigs?: BuiltinConnectorInitConfigs
+): Promise<void> {
   bootstrapPromise ??= (async () => {
     await runMigrations();
     // M1: Provider 抽象层与研究场景注册中心；先于 connector init，

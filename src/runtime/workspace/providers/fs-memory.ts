@@ -8,10 +8,7 @@ export const BUILTIN_FS_MEMORY_KIND = "builtin.fs_memory";
 
 export type MemoryProvider = {
   readonly kind: string;
-  list(
-    ws: WorkspaceFs,
-    q?: { pinned?: boolean; limit?: number }
-  ): Promise<MemoryEntry[]>;
+  list(ws: WorkspaceFs, q?: { pinned?: boolean; limit?: number }): Promise<MemoryEntry[]>;
   get(ws: WorkspaceFs, id: string): Promise<MemoryEntry | null>;
   upsert(
     ws: WorkspaceFs,
@@ -42,9 +39,7 @@ async function listAll(ws: WorkspaceFs): Promise<MemoryEntry[]> {
     try {
       const e = await ws.readJson<MemoryEntry>(f.relPath);
       if (e?.id) out.push({ ...e, relPath: f.relPath });
-    } catch {
-      continue;
-    }
+    } catch {}
   }
   out.sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
   return out;

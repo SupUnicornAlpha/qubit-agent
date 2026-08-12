@@ -16,11 +16,9 @@ process.env.QUBIT_DATA_DIR = tmpDir;
 process.env.HOME = tmpDir;
 
 const { describe, expect, test } = await import("bun:test");
-const {
-  evaluateChatHitlTrigger,
-  evaluateTeamHitlTrigger,
-  isHighRiskChatTool,
-} = await import("../hitl-service");
+const { evaluateChatHitlTrigger, evaluateTeamHitlTrigger, isHighRiskChatTool } = await import(
+  "../hitl-service"
+);
 const { workflowRun } = await import("../../../db/sqlite/schema");
 
 /**

@@ -1,16 +1,16 @@
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { joinRoot, resolveInsideRoot, WorkspacePathError } from "./path-safety";
+import { WorkspacePathError, joinRoot, resolveInsideRoot } from "./path-safety";
 import {
+  type AgentInstructionLayer,
   DEFAULT_DECISION_PROVIDER,
   DEFAULT_MEMORY_PROVIDER,
   GITIGNORE_TEMPLATE,
   MEMORY_MD_TEMPLATE,
+  type ProviderBindingFile,
   QUBIT_MD_TEMPLATE,
   SKELETON_DIRS,
   WORKSPACE_SCHEMA_VERSION,
-  type AgentInstructionLayer,
-  type ProviderBindingFile,
   type WorkspaceManifest,
   type WorkspaceTreeNode,
   type WorkspaceTreeNodeKind,

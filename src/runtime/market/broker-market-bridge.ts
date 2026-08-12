@@ -106,9 +106,7 @@ export function isBrokerBridgeConfigured(id: BrokerMarketBridgeId): boolean {
   return Boolean(resolveBridgeWsUrl(id));
 }
 
-export function bridgeIdForSourceId(
-  sourceId: string
-): BrokerMarketBridgeId | undefined {
+export function bridgeIdForSourceId(sourceId: string): BrokerMarketBridgeId | undefined {
   for (const desc of registry.values()) {
     if (desc.sourceId === sourceId) return desc.id;
   }
@@ -204,9 +202,7 @@ export function selectBrokerMarketBridge(input: {
   }
 
   const market = String(input.market || "").toUpperCase();
-  const candidates = [...registry.values()].filter((d) =>
-    d.markets.some((m) => m === market)
-  );
+  const candidates = [...registry.values()].filter((d) => d.markets.some((m) => m === market));
   const order: BrokerMarketBridgeId[] =
     market === "US" ? ["ib", "futu", "supermind"] : ["futu", "supermind", "ib"];
 

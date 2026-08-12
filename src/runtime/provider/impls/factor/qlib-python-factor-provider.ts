@@ -18,20 +18,20 @@
 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { queryBarsRange } from "../../../market/klines-query";
-import { getPythonBin } from "../../../sandbox/python-runtime";
 import type { BarData } from "../../../../connectors/data/data.connector";
 import {
   PythonOneShotError,
   runPythonOneShot,
   runPythonOneShotRaw,
 } from "../../../../util/python-oneshot";
-import {
-  type FactorComputeProvider,
-  type FactorComputeRequest,
-  type FactorComputeResult,
-  type FactorComputeRow,
-  type ProviderMeta,
+import { queryBarsRange } from "../../../market/klines-query";
+import { getPythonBin } from "../../../sandbox/python-runtime";
+import type {
+  FactorComputeProvider,
+  FactorComputeRequest,
+  FactorComputeResult,
+  FactorComputeRow,
+  ProviderMeta,
 } from "../../types";
 
 const META: ProviderMeta = {
@@ -43,12 +43,7 @@ const META: ProviderMeta = {
   version: "0.1.0",
   capability: {
     supportedAssetClasses: ["stock", "crypto"],
-    features: [
-      "qlib_expression",
-      "alpha158_alias",
-      "python_subprocess",
-      "pandas_fallback",
-    ],
+    features: ["qlib_expression", "alpha158_alias", "python_subprocess", "pandas_fallback"],
     performanceProfile: "neartime",
   },
   isBuiltin: true,
@@ -215,11 +210,7 @@ export class QlibPythonFactorProvider implements FactorComputeProvider {
     }
   }
 
-  private emptyResult(
-    input: FactorComputeRequest,
-    t0: number,
-    _err?: string
-  ): FactorComputeResult {
+  private emptyResult(input: FactorComputeRequest, t0: number, _err?: string): FactorComputeResult {
     return {
       rows: [],
       meta: input.factorId

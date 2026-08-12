@@ -1,8 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  compactMarketBarsPayload,
-  compactToolObservationValue,
-} from "./compact-tool-observation";
+import { compactMarketBarsPayload, compactToolObservationValue } from "./compact-tool-observation";
 
 describe("compactToolObservationValue", () => {
   test("keeps short bar arrays intact but adds range stats", () => {

@@ -11,8 +11,6 @@ describe("Rust Core Skill topology projection", () => {
           null,
         ],
       })
-    ).toEqual([
-      { id: "skill-1", name: "backtest-leakage-self-check", version: "v1", score: 0.9 },
-    ]);
+    ).toEqual([{ id: "skill-1", name: "backtest-leakage-self-check", version: "v1", score: 0.9 }]);
   });
 });

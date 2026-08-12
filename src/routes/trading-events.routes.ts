@@ -45,10 +45,7 @@ tradingEventsRouter.post("/news", async (c) => {
     });
     return c.json({ ok: true, data });
   } catch (e) {
-    return c.json(
-      { ok: false, error: e instanceof Error ? e.message : String(e) },
-      400
-    );
+    return c.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 400);
   }
 });
 

@@ -9,14 +9,10 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { and, eq, desc } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { providerRegistry as providerRegistryTable } from "../../db/sqlite/schema";
-import {
-  type BaseProvider,
-  type ProviderKind,
-  ProviderError,
-} from "./types";
+import { type BaseProvider, ProviderError, type ProviderKind } from "./types";
 
 type RegistryEntry = {
   provider: BaseProvider;
@@ -41,10 +37,7 @@ class ProviderRegistry {
   register(provider: BaseProvider): void {
     const k = this.keyOf(provider.meta.kind, provider.meta.key);
     if (this.byKey.has(k)) {
-      throw new ProviderError(
-        "validation_failed",
-        `Provider already registered: ${k}`
-      );
+      throw new ProviderError("validation_failed", `Provider already registered: ${k}`);
     }
     this.byKey.set(k, {
       provider,
@@ -88,10 +81,7 @@ class ProviderRegistry {
     return out;
   }
 
-  get<T extends BaseProvider = BaseProvider>(
-    kind: ProviderKind,
-    providerKey: string
-  ): T | null {
+  get<T extends BaseProvider = BaseProvider>(kind: ProviderKind, providerKey: string): T | null {
     const entry = this.byKey.get(this.keyOf(kind, providerKey));
     return (entry?.provider as T) ?? null;
   }
@@ -170,7 +160,10 @@ class ProviderRegistry {
       .select()
       .from(providerRegistryTable)
       .orderBy(desc(providerRegistryTable.priority));
-    const byKey = new Map<string, { status: "enabled" | "disabled"; priority: number; dbId: string }>();
+    const byKey = new Map<
+      string,
+      { status: "enabled" | "disabled"; priority: number; dbId: string }
+    >();
     for (const r of rows) {
       byKey.set(`${r.kind}:${r.providerKey}`, {
         status: r.status as "enabled" | "disabled",

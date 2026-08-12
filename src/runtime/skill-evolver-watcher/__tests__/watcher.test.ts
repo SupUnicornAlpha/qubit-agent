@@ -30,8 +30,8 @@ import type { ExperienceBus } from "../../experience/experience-bus";
 import { getExperienceStore } from "../../experience/experience-store";
 import { SkillEvolver } from "../../skills/skill-evolve";
 import { requestSkillRevision } from "../request-skill-revision";
-import { SkillEvolverWatcher } from "../watcher";
 import type { SkillRevisionRequestMeta } from "../types";
+import { SkillEvolverWatcher } from "../watcher";
 
 interface Fixture {
   workspaceId: string;
@@ -141,12 +141,12 @@ describe("SkillEvolverWatcher.runOnce", () => {
     expect(summary.scanned).toBe(1);
     expect(summary.processed).toBe(1);
     expect(summary.failed).toBe(0);
-    expect(summary.results[0]!.status).toBe("completed");
-    expect(summary.results[0]!.evolutionRunId).toBeTruthy();
+    expect(summary.results[0]?.status).toBe("completed");
+    expect(summary.results[0]?.evolutionRunId).toBeTruthy();
 
     const store = getExperienceStore();
     const exp = await store.findById(experienceId);
-    const meta = exp!.metadataJson as unknown as SkillRevisionRequestMeta;
+    const meta = exp?.metadataJson as unknown as SkillRevisionRequestMeta;
     expect(meta.processedAt).toBeTruthy();
     expect(meta.evolveStatus).toBe("completed");
     expect(meta.evolutionRunId).toBeTruthy();
@@ -193,7 +193,7 @@ describe("SkillEvolverWatcher.runOnce", () => {
 
     const store = getExperienceStore();
     const exp = await store.findById(experienceId);
-    const meta = exp!.metadataJson as unknown as SkillRevisionRequestMeta;
+    const meta = exp?.metadataJson as unknown as SkillRevisionRequestMeta;
     expect(meta.evolveStatus).toBe("skipped_base_missing");
     expect(meta.processedAt).toBeTruthy();
   });
@@ -263,13 +263,18 @@ describe("SkillEvolverWatcher.runOnce", () => {
       requestedBy: "test",
     });
     const captured: { kind: string; summary: Record<string, unknown> }[] = [];
-    const handlers = new Set<(ev: { kind: string; summary: Record<string, number | string> }) => void>();
+    const handlers = new Set<
+      (ev: { kind: string; summary: Record<string, number | string> }) => void
+    >();
     const bus: ExperienceBus = {
       emit: (ev) => {
         if (ev.type === "maintenance_run") for (const h of handlers) h(ev);
       },
       subscribe: (_type, handler) => {
-        const h = handler as unknown as (ev: { kind: string; summary: Record<string, number | string> }) => void;
+        const h = handler as unknown as (ev: {
+          kind: string;
+          summary: Record<string, number | string>;
+        }) => void;
         handlers.add(h);
         return () => handlers.delete(h);
       },
@@ -283,7 +288,7 @@ describe("SkillEvolverWatcher.runOnce", () => {
     await watcher.runOnce({ projectId: fixture.projectId, emitMetrics: true });
     const evs = captured.filter((e) => e.kind === "skill_evolver");
     expect(evs.length).toBe(1);
-    expect(Number(evs[0]!.summary.processed)).toBe(1);
+    expect(Number(evs[0]?.summary.processed)).toBe(1);
   });
 
   test("8) evolve 抛错 → 标 failed + errorMessage 回写", async () => {
@@ -303,6 +308,6 @@ describe("SkillEvolverWatcher.runOnce", () => {
     });
     expect(summary.failed).toBe(1);
     expect(summary.processed).toBe(0);
-    expect(summary.results[0]!.errorMessage).toBe("boom");
+    expect(summary.results[0]?.errorMessage).toBe("boom");
   });
 });

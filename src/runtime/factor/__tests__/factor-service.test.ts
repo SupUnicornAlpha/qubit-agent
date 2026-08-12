@@ -1,10 +1,10 @@
-import { randomUUID } from "node:crypto";
 import { beforeAll, describe, expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { getDb } from "../../../db/sqlite/client";
-import * as schema from "../../../db/sqlite/schema";
 import { runMigrations } from "../../../db/sqlite/migrate";
-import { bootstrapProviders, _resetBootstrapForTests } from "../../provider/bootstrap";
-import { factorService, FactorServiceError } from "../factor-service";
+import * as schema from "../../../db/sqlite/schema";
+import { _resetBootstrapForTests, bootstrapProviders } from "../../provider/bootstrap";
+import { FactorServiceError, factorService } from "../factor-service";
 
 let projectId = "";
 
@@ -68,7 +68,7 @@ describe("FactorService", () => {
       expr: "import os; close",
       lang: "python",
     });
-    expect(rec.definition["providerValidationWarning"]).toBeDefined();
+    expect(rec.definition.providerValidationWarning).toBeDefined();
   });
 
   test("list: 按 category 过滤", async () => {
@@ -92,7 +92,7 @@ describe("FactorService", () => {
     const otherProjectId = randomUUID();
     await db.insert(schema.project).values({
       id: otherProjectId,
-      workspaceId: (await db.select().from(schema.project).limit(1))[0]!.workspaceId,
+      workspaceId: (await db.select().from(schema.project).limit(1))[0]?.workspaceId,
       name: `fs-other-${randomUUID().slice(0, 6)}`,
       marketScope: "CN-A",
       status: "active",
@@ -233,10 +233,10 @@ describe("FactorService", () => {
       dryRun: true,
     });
     expect(rec.id).toBeTruthy();
-    const dr = rec.definition["dryRun"] as Record<string, unknown> | undefined;
+    const dr = rec.definition.dryRun as Record<string, unknown> | undefined;
     expect(dr).toBeTruthy();
-    expect(dr?.["ok"]).toBe(true);
-    expect(typeof dr?.["sampleSize"]).toBe("number");
+    expect(dr?.ok).toBe(true);
+    expect(typeof dr?.sampleSize).toBe("number");
   });
 
   test("dry-run reject: 语法错的表达式被拒（不入库）", async () => {
@@ -283,12 +283,11 @@ describe("FactorService", () => {
       name: `dr_py_skip_${randomUUID().slice(0, 6)}`,
       category: "momentum",
       /** Python 合约要求每根 bar 对应一个值，因此显式构造 20 日动量序列。 */
-      expr:
-        "factor_values = [None if i < 20 else close[i] / close[i - 20] - 1 for i in range(len(close))]",
+      expr: "factor_values = [None if i < 20 else close[i] / close[i - 20] - 1 for i in range(len(close))]",
       lang: "python",
       dryRun: true,
     });
-    const dr = rec.definition["dryRun"] as Record<string, unknown> | undefined;
+    const dr = rec.definition.dryRun as Record<string, unknown> | undefined;
     /**
      * 两种合法结果：
      *   (a) sandbox 不可用（开发机 / CI）→ skipped=true + reason=sandbox_unavailable:*
@@ -296,15 +295,15 @@ describe("FactorService", () => {
      * 任一即可；test 关心的是「不阻塞注册 + 给出可审计 reason」。
      */
     expect(dr).toBeDefined();
-    const skipped = dr?.["skipped"] === true;
-    const sandboxRan = dr?.["pythonSandbox"] === true;
+    const skipped = dr?.skipped === true;
+    const sandboxRan = dr?.pythonSandbox === true;
     expect(skipped || sandboxRan).toBe(true);
     if (skipped) {
-      expect(String(dr?.["reason"] ?? "")).toMatch(/sandbox_unavailable/);
+      expect(String(dr?.reason ?? "")).toMatch(/sandbox_unavailable/);
     }
     if (sandboxRan) {
-      expect(typeof dr?.["sampleSize"]).toBe("number");
-      expect(Number(dr?.["sampleSize"])).toBeGreaterThanOrEqual(10);
+      expect(typeof dr?.sampleSize).toBe("number");
+      expect(Number(dr?.sampleSize)).toBeGreaterThanOrEqual(10);
     }
   });
 
@@ -318,7 +317,7 @@ describe("FactorService", () => {
       lang: "python",
       dryRun: false,
     });
-    expect(rec.definition["dryRun"]).toBeUndefined();
+    expect(rec.definition.dryRun).toBeUndefined();
   });
 
   test("dry-run lang=sql / jsonlogic：保持 lang_unsupported skip（P3-1 范围只覆盖 python）", async () => {
@@ -330,8 +329,8 @@ describe("FactorService", () => {
       lang: "sql",
       dryRun: true,
     });
-    const dr = rec.definition["dryRun"] as Record<string, unknown> | undefined;
-    expect(dr?.["skipped"]).toBe(true);
-    expect(String(dr?.["reason"] ?? "")).toContain("lang_unsupported");
+    const dr = rec.definition.dryRun as Record<string, unknown> | undefined;
+    expect(dr?.skipped).toBe(true);
+    expect(String(dr?.reason ?? "")).toContain("lang_unsupported");
   });
 });

@@ -18,13 +18,13 @@
  *   }
  */
 
-import {
-  type ProviderMeta,
-  type RuleEngineProvider,
-  type RuleEvalContext,
-  type RuleEvalResult,
-  type RuleEvalSymbolOutcome,
-  type RuleSpec,
+import type {
+  ProviderMeta,
+  RuleEngineProvider,
+  RuleEvalContext,
+  RuleEvalResult,
+  RuleEvalSymbolOutcome,
+  RuleSpec,
 } from "../../types";
 
 const META: ProviderMeta = {
@@ -178,11 +178,7 @@ function evalNode(node: Json, ctx: EvalCtx): unknown {
       let acc = 0;
       let used = 0;
       for (const it of items) {
-        const v = it.factor
-          ? ctx.factors[it.factor]
-          : it.var
-            ? asNumber(ctx.vars[it.var])
-            : null;
+        const v = it.factor ? ctx.factors[it.factor] : it.var ? asNumber(ctx.vars[it.var]) : null;
         if (v == null || !Number.isFinite(v)) continue;
         acc += v * (it.w ?? 0);
         used += 1;
@@ -235,8 +231,7 @@ export class JsonLogicRuleProvider implements RuleEngineProvider {
         continue;
       }
 
-      const scoreVal =
-        dsl.score !== undefined ? asNumber(evalNode(dsl.score, evalCtx)) : null;
+      const scoreVal = dsl.score !== undefined ? asNumber(evalNode(dsl.score, evalCtx)) : null;
 
       symbolsOut.push(
         scoreVal === null

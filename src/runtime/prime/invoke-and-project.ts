@@ -51,11 +51,8 @@ export async function invokeAgentAndProject(
     goal: input.request.goal,
     invocationId: input.request.invocation_id,
     childSessionId:
-      typeof record.child_session_id === "string"
-        ? record.child_session_id
-        : undefined,
-    childTurnId:
-      typeof record.child_turn_id === "string" ? record.child_turn_id : undefined,
+      typeof record.child_session_id === "string" ? record.child_session_id : undefined,
+    childTurnId: typeof record.child_turn_id === "string" ? record.child_turn_id : undefined,
     state,
     deliveryStatus: delivery?.status,
   });

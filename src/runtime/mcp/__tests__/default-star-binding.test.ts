@@ -11,10 +11,7 @@ import { config } from "../../../config";
 import { closeDb, getDb } from "../../../db/sqlite/client";
 import { runMigrations } from "../../../db/sqlite/migrate";
 import { mcpServerConfig, mcpToolBinding, project, workspace } from "../../../db/sqlite/schema";
-import {
-  MCP_WILDCARD_TOOL,
-  syncServerDefaultStarBinding,
-} from "../default-star-binding";
+import { MCP_WILDCARD_TOOL, syncServerDefaultStarBinding } from "../default-star-binding";
 
 beforeAll(async () => {
   const tmp = join("/tmp", `qubit-star-bind-${Date.now()}-${randomUUID().slice(0, 8)}`);

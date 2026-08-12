@@ -15,12 +15,12 @@ import { and, eq } from "drizzle-orm";
 import { getDb } from "../../../db/sqlite/client";
 import { runMigrations } from "../../../db/sqlite/migrate";
 import * as schema from "../../../db/sqlite/schema";
-import { skillService } from "../skill-service";
 import {
   autoMarkRecalledSkillsAsExecuted,
   matchRecommendedTool,
   parseRecommendedToolsJson,
 } from "../auto-skill-execution-hook";
+import { skillService } from "../skill-service";
 
 const SANDBOX_ID = "sb-auto-hook-test";
 let projectId: string;

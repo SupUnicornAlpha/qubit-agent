@@ -76,8 +76,14 @@ function localParts(now: Date, timezone: string): { weekday: number; minutes: nu
   return { weekday: wd, minutes: hour * 60 + minute };
 }
 
-export function getTradingSession(market: string, override?: Partial<TradingSessionConfig>): TradingSessionConfig {
-  const key = (market.toUpperCase() as MarketCode) in DEFAULT_SESSIONS ? (market.toUpperCase() as MarketCode) : "US";
+export function getTradingSession(
+  market: string,
+  override?: Partial<TradingSessionConfig>
+): TradingSessionConfig {
+  const key =
+    (market.toUpperCase() as MarketCode) in DEFAULT_SESSIONS
+      ? (market.toUpperCase() as MarketCode)
+      : "US";
   const base = DEFAULT_SESSIONS[key];
   return {
     tradingDays: override?.tradingDays ?? base.tradingDays,

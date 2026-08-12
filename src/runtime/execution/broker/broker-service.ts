@@ -10,17 +10,17 @@ import { getDb } from "../../../db/sqlite/client";
 import { brokerAccount, brokerOrderEvent } from "../../../db/sqlite/schema";
 import type { BrokerProvider, BrokerProviderConfig } from "../../../types/broker";
 import {
-  createBrokerConnector,
-  paperFromBrokerMode,
-  type BrokerConnector,
   type BrokerBalance,
   type BrokerCapabilities,
+  type BrokerConnector,
   type BrokerFill,
   type BrokerMarginSummary,
   type BrokerModifyOrderInput,
   type BrokerOrderResult,
   type BrokerPosition,
   type BrokerRuntimeConfig,
+  createBrokerConnector,
+  paperFromBrokerMode,
 } from "../../reia/broker-connector";
 
 export type ResolvedBrokerAccount = {
@@ -149,10 +149,12 @@ export async function brokerGetOpenOrders(input: {
   return connector.getOpenOrders();
 }
 
-export async function brokerModifyOrder(input: {
-  provider: BrokerProvider;
-  accountRef?: string;
-} & BrokerModifyOrderInput): Promise<BrokerOrderResult> {
+export async function brokerModifyOrder(
+  input: {
+    provider: BrokerProvider;
+    accountRef?: string;
+  } & BrokerModifyOrderInput
+): Promise<BrokerOrderResult> {
   const account = await resolveBrokerAccount(input.provider, input.accountRef);
   if (!account) throw new Error("broker account not found");
   const connector = connectorForAccount(account);
@@ -169,7 +171,11 @@ export async function brokerModifyOrder(input: {
     eventType: "modify",
     brokerOrderId: input.brokerOrderId,
     status: "ok",
-    detailJson: { accountRef: account.accountRef, limitPrice: input.limitPrice, quantity: input.quantity },
+    detailJson: {
+      accountRef: account.accountRef,
+      limitPrice: input.limitPrice,
+      quantity: input.quantity,
+    },
     eventAt: new Date().toISOString(),
   });
   return result;
@@ -182,7 +188,8 @@ export async function brokerGetBalances(input: {
   const account = await resolveBrokerAccount(input.provider, input.accountRef);
   if (!account) throw new Error("broker account not found");
   const connector = connectorForAccount(account);
-  if (!connector.getBalances) throw new Error(`broker_capability_unavailable:${input.provider}:balances`);
+  if (!connector.getBalances)
+    throw new Error(`broker_capability_unavailable:${input.provider}:balances`);
   return connector.getBalances();
 }
 
@@ -193,7 +200,8 @@ export async function brokerGetMargin(input: {
   const account = await resolveBrokerAccount(input.provider, input.accountRef);
   if (!account) throw new Error("broker account not found");
   const connector = connectorForAccount(account);
-  if (!connector.getMargin) throw new Error(`broker_capability_unavailable:${input.provider}:margin`);
+  if (!connector.getMargin)
+    throw new Error(`broker_capability_unavailable:${input.provider}:margin`);
   return connector.getMargin();
 }
 

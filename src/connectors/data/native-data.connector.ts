@@ -4,40 +4,8 @@ import {
 } from "../../runtime/config/builtin-connector-settings";
 import { fetchAkshareBars, fetchAkshareTencentBars } from "../../runtime/market/akshare-klines";
 import { fetchBinanceBars } from "../../runtime/market/binance-klines";
-import { fetchYahooOptionChain } from "../../runtime/market/options-chain";
 import { isCryptoMarket } from "../../runtime/market/crypto-market";
 import { fetchEastMoneyBars, isChinaAShareMarket } from "../../runtime/market/eastmoney-klines";
-import {
-  fetchYahooFinanceBars,
-  parseKlinesDataSourceSetting,
-  resolveEffectiveKlinesSource,
-  symbolToYahooSymbol,
-} from "../../runtime/market/klines-data-source";
-import { fetchWindBars, windConfigFromSettings } from "../../runtime/market/wind-klines";
-import { computeDateRangeForLimit } from "../../runtime/market/klines-query";
-import {
-  buildKlinesQueryKey,
-  getCachedKlinesBars,
-  setCachedKlinesBars,
-} from "../../runtime/market/klines-request-cache";
-import {
-  type HistoricalMarketDataSource,
-  recordMarketDataSourceAttempt,
-  selectMarketDataSourcePlan,
-} from "../../runtime/market/market-data-source-control";
-import { marketDataFetch } from "../../runtime/market/market-data-network";
-import { resolveTickerMarket } from "../../runtime/market/resolve-ticker-market";
-import {
-  extractKlinesSymbols,
-  normalizeKlinesToolRequest,
-} from "../../runtime/market/normalize-klines-request";
-import { extractSymbolArgs, receivedParamKeys } from "../../runtime/market/normalize-symbol-args";
-import {
-  fetchYfinanceAssetInfo,
-  fetchYfinanceBars,
-  fetchYfinanceDividends,
-  fetchYfinanceEarnings,
-} from "../../runtime/market/yfinance-klines";
 import { fetchFutuBars, isFutuAccountConfiguredCached } from "../../runtime/market/futu-klines";
 import { resolveFutuOpenDConfig } from "../../runtime/market/futu-runtime";
 import { fetchIbBars, isIbAccountConfiguredCached } from "../../runtime/market/ib-klines";
@@ -47,22 +15,54 @@ import {
   isIfindConfiguredCached,
   refreshIfindAccountCache,
 } from "../../runtime/market/ifind-klines";
-import { fetchWithTimeout, DEFAULT_FETCH_TIMEOUT_MS } from "../../util/fetch-with-timeout";
-import { snapshotIndicators } from "../../runtime/market/technical-indicators";
+import {
+  fetchYahooFinanceBars,
+  parseKlinesDataSourceSetting,
+  resolveEffectiveKlinesSource,
+  symbolToYahooSymbol,
+} from "../../runtime/market/klines-data-source";
+import { computeDateRangeForLimit } from "../../runtime/market/klines-query";
+import {
+  buildKlinesQueryKey,
+  getCachedKlinesBars,
+  setCachedKlinesBars,
+} from "../../runtime/market/klines-request-cache";
+import { marketDataFetch } from "../../runtime/market/market-data-network";
+import {
+  type HistoricalMarketDataSource,
+  recordMarketDataSourceAttempt,
+  selectMarketDataSourcePlan,
+} from "../../runtime/market/market-data-source-control";
 import {
   queryChipDistribution,
   queryMarketOrderBook,
   queryMarketQuote,
   queryMarketTrades,
 } from "../../runtime/market/microstructure-query";
+import {
+  extractKlinesSymbols,
+  normalizeKlinesToolRequest,
+} from "../../runtime/market/normalize-klines-request";
+import { extractSymbolArgs, receivedParamKeys } from "../../runtime/market/normalize-symbol-args";
+import { fetchYahooOptionChain } from "../../runtime/market/options-chain";
+import { resolveTickerMarket } from "../../runtime/market/resolve-ticker-market";
+import { snapshotIndicators } from "../../runtime/market/technical-indicators";
+import { fetchWindBars, windConfigFromSettings } from "../../runtime/market/wind-klines";
+import {
+  fetchYfinanceAssetInfo,
+  fetchYfinanceBars,
+  fetchYfinanceDividends,
+  fetchYfinanceEarnings,
+} from "../../runtime/market/yfinance-klines";
 import type { ConnectorConfig, ConnectorMeta, HealthCheckResult } from "../../types/connector";
+import { DEFAULT_FETCH_TIMEOUT_MS } from "../../util/fetch-with-timeout";
 import {
   type AssetInfoData,
   type BarData,
+  type ChipDistributionData,
   DataConnector,
   type DividendItem,
   type EarningsItem,
-  type ChipDistributionData,
   type FetchAssetInfoParams,
   type FetchBarsParams,
   type FetchChipDistributionParams,
@@ -417,7 +417,8 @@ export class QubitNativeDataConnector extends DataConnector {
         (typeof p.underlying === "string" && p.underlying.trim()) ||
         (typeof p.ticker === "string" && p.ticker.trim()) ||
         "";
-      if (!symbol) throw new Error("missing_symbol: fetch_option_chain: symbol or underlying is required");
+      if (!symbol)
+        throw new Error("missing_symbol: fetch_option_chain: symbol or underlying is required");
       const liveSettings = await loadBuiltinConnectorSettings();
       return (await fetchYahooOptionChain({
         symbol,

@@ -5,6 +5,17 @@ import {
   type BuiltinConnectorInitConfigs,
   loadBuiltinConnectorSettings,
 } from "../config/builtin-connector-settings";
+import {
+  type BrokerMarketBridgeSourceId,
+  bridgeIdForSourceId,
+  isBrokerBridgeConfigured,
+  isBrokerMarketBridgeSourceId,
+  setBrokerBridgeHealthHints,
+} from "./broker-market-bridge";
+import type { MarketFeedClass, MarketLicenseUse } from "./contracts/market-event-v2";
+import { isFutuAccountConfiguredCached } from "./futu-klines";
+import { isIbAccountConfiguredCached } from "./ib-klines";
+import { isIfindConfiguredCached } from "./ifind-klines";
 import type { KlinesDataSourceMeta, KlinesDataSourceSetting } from "./klines-data-source";
 import {
   type MarketDataFailureKind,
@@ -13,22 +24,9 @@ import {
 } from "./market-data-errors";
 import { type MarketDataNetworkMode, resolveMarketDataNetworkRoute } from "./market-data-network";
 import type { MarketCode } from "./resolve-ticker-market";
-import type { MarketFeedClass, MarketLicenseUse } from "./contracts/market-event-v2";
-import {
-  type BrokerMarketBridgeSourceId,
-  bridgeIdForSourceId,
-  isBrokerBridgeConfigured,
-  isBrokerMarketBridgeSourceId,
-  setBrokerBridgeHealthHints,
-} from "./broker-market-bridge";
-import { isFutuAccountConfiguredCached } from "./futu-klines";
-import { isIbAccountConfiguredCached } from "./ib-klines";
-import { isIfindConfiguredCached } from "./ifind-klines";
 
 export type HistoricalMarketDataSource = Exclude<KlinesDataSourceMeta, "synthetic">;
-export type OperationalMarketDataSource =
-  | HistoricalMarketDataSource
-  | BrokerMarketBridgeSourceId;
+export type OperationalMarketDataSource = HistoricalMarketDataSource | BrokerMarketBridgeSourceId;
 
 export type MarketSourceHealth = "unknown" | "healthy" | "degraded" | "down";
 export type MarketSourceCircuit = "closed" | "open" | "half_open";
@@ -148,7 +146,23 @@ export const MARKET_DATA_SOURCE_DEFINITIONS: MarketDataSourceDefinition[] = [
     id: "yfinance",
     name: "yfinance Python",
     vendor: "Yahoo Finance",
-    markets: ["US", "HK", "CN", "JP", "UK", "DE", "FR", "CA", "AU", "KR", "TW", "SG", "IN", "FUTURES", "OPTION"],
+    markets: [
+      "US",
+      "HK",
+      "CN",
+      "JP",
+      "UK",
+      "DE",
+      "FR",
+      "CA",
+      "AU",
+      "KR",
+      "TW",
+      "SG",
+      "IN",
+      "FUTURES",
+      "OPTION",
+    ],
     timeframes: ["1m", "5m", "15m", "30m", "1h", "1d"],
     credentialMode: "none",
     priority: 55,
@@ -161,7 +175,23 @@ export const MARKET_DATA_SOURCE_DEFINITIONS: MarketDataSourceDefinition[] = [
     id: "yahoo_chart",
     name: "Yahoo Chart API",
     vendor: "Yahoo Finance",
-    markets: ["US", "HK", "CN", "JP", "UK", "DE", "FR", "CA", "AU", "KR", "TW", "SG", "IN", "FUTURES", "OPTION"],
+    markets: [
+      "US",
+      "HK",
+      "CN",
+      "JP",
+      "UK",
+      "DE",
+      "FR",
+      "CA",
+      "AU",
+      "KR",
+      "TW",
+      "SG",
+      "IN",
+      "FUTURES",
+      "OPTION",
+    ],
     timeframes: ["1m", "5m", "15m", "30m", "1h", "4h", "1d"],
     credentialMode: "none",
     priority: 40,

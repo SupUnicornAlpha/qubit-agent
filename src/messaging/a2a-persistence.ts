@@ -4,8 +4,7 @@ import { getDb } from "../db/sqlite/client";
 import { a2aMessage, agentInstance } from "../db/sqlite/schema";
 import type { A2AMessageEnvelope } from "../types/a2a";
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function isUuid(value: string): boolean {
   return UUID_RE.test(value);
@@ -31,9 +30,7 @@ export async function persistA2AMessage(message: A2AMessageEnvelope): Promise<vo
   const senderId = await resolveInstanceId(message.senderAgent);
   if (!senderId) return;
 
-  const receiverId = message.receiverAgent
-    ? await resolveInstanceId(message.receiverAgent)
-    : null;
+  const receiverId = message.receiverAgent ? await resolveInstanceId(message.receiverAgent) : null;
 
   const db = await getDb();
   await db.insert(a2aMessage).values({

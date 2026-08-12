@@ -447,7 +447,7 @@ class MockCnBrokerConnector implements BrokerConnector {
 
   constructor(
     readonly provider: Extract<BrokerProvider, "supermind" | "eastmoney_emt">,
-    readonly accountRef = `${provider}-mock`,
+    readonly accountRef = `${provider}-mock`
   ) {}
 
   async submitOrder(input: BrokerSubmitOrderInput): Promise<BrokerOrderResult> {
@@ -482,12 +482,14 @@ class MockCnBrokerConnector implements BrokerConnector {
   }
 
   async getFills(brokerOrderId: string): Promise<BrokerFill[]> {
-    return [{
-      brokerOrderId,
-      fillQty: 100,
-      fillPrice: 100,
-      filledAt: new Date().toISOString(),
-    }];
+    return [
+      {
+        brokerOrderId,
+        fillQty: 100,
+        fillPrice: 100,
+        filledAt: new Date().toISOString(),
+      },
+    ];
   }
 
   async getPositions(): Promise<BrokerPosition[]> {
@@ -541,10 +543,11 @@ class HttpBrokerConnector implements BrokerConnector {
         },
         body: body ? JSON.stringify(body) : undefined,
       },
-      BROKER_HTTP_TIMEOUT_MS,
+      BROKER_HTTP_TIMEOUT_MS
     );
     const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-    if (!res.ok) throw new Error(`broker ${method} ${path} failed: ${res.status} ${JSON.stringify(payload)}`);
+    if (!res.ok)
+      throw new Error(`broker ${method} ${path} failed: ${res.status} ${JSON.stringify(payload)}`);
     return payload;
   }
 
@@ -556,7 +559,9 @@ class HttpBrokerConnector implements BrokerConnector {
     });
     return {
       provider: this.provider,
-      brokerOrderId: String(payload.brokerOrderId ?? `${this.provider}-${Date.now()}-${randomUUID().slice(0, 8)}`),
+      brokerOrderId: String(
+        payload.brokerOrderId ?? `${this.provider}-${Date.now()}-${randomUUID().slice(0, 8)}`
+      ),
       status: (payload.status as BrokerOrderStatus | undefined) ?? "submitted",
       actualPrice: Number(payload.actualPrice ?? input.limitPrice ?? 0),
       actualQuantity: Number(payload.actualQuantity ?? input.quantity),
@@ -706,7 +711,9 @@ class HttpBrokerConnector implements BrokerConnector {
       ...(payload.maintenanceMargin == null
         ? {}
         : { maintenanceMargin: Number(payload.maintenanceMargin) }),
-      ...(payload.availableMargin == null ? {} : { availableMargin: Number(payload.availableMargin) }),
+      ...(payload.availableMargin == null
+        ? {}
+        : { availableMargin: Number(payload.availableMargin) }),
     };
   }
 
@@ -746,7 +753,7 @@ class HttpBrokerConnector implements BrokerConnector {
               : {}),
           },
         },
-        BROKER_HTTP_TIMEOUT_MS,
+        BROKER_HTTP_TIMEOUT_MS
       );
       const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       if (!res.ok) {
@@ -803,7 +810,8 @@ export function createBrokerConnector(config: BrokerRuntimeConfig): BrokerConnec
     }
     return new MockIbConnector(config.accountRef);
   }
-  if (!config.baseUrl) throw new Error(`missing broker baseUrl for ${config.provider}(${config.mode})`);
+  if (!config.baseUrl)
+    throw new Error(`missing broker baseUrl for ${config.provider}(${config.mode})`);
   return new HttpBrokerConnector({
     ...config,
     baseUrl: config.baseUrl,
@@ -811,6 +819,9 @@ export function createBrokerConnector(config: BrokerRuntimeConfig): BrokerConnec
   });
 }
 
-export function paperFromBrokerMode(mode: "mock" | "sandbox" | "live", explicit?: boolean): boolean {
+export function paperFromBrokerMode(
+  mode: "mock" | "sandbox" | "live",
+  explicit?: boolean
+): boolean {
   return paperFromMode(mode, explicit);
 }

@@ -25,11 +25,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 // 仅当外部没显式指定时才接管（允许 CI / 调试用 QUBIT_DATA_DIR=... 覆盖）。
-if (!process.env["QUBIT_DATA_DIR"]?.trim()) {
+if (!process.env.QUBIT_DATA_DIR?.trim()) {
   const dir = mkdtempSync(join(tmpdir(), "qubit-test-"));
-  process.env["QUBIT_DATA_DIR"] = dir;
+  process.env.QUBIT_DATA_DIR = dir;
   // HOME 一并指向 tmp：少数测试用 `~/.quant-agent` 衍生路径或写 HOME 下文件。
-  process.env["HOME"] = dir;
+  process.env.HOME = dir;
   console.log(`[test-setup] QUBIT_DATA_DIR -> ${dir}`);
 }
 

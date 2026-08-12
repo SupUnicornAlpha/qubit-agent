@@ -17,7 +17,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { getDb } from "../../../db/sqlite/client";
 import { runMigrations } from "../../../db/sqlite/migrate";
 import {
@@ -29,10 +29,7 @@ import {
 } from "../../../db/sqlite/schema";
 import type { ExperienceBus } from "../../experience/experience-bus";
 import { getExperienceStore } from "../../experience/experience-store";
-import {
-  approveSkillPromotion,
-  rejectSkillPromotion,
-} from "../promoter-review";
+import { approveSkillPromotion, rejectSkillPromotion } from "../promoter-review";
 import { SkillPromoter, parseSignatureFromBody } from "../skill-promoter";
 
 interface Fixture {
@@ -67,7 +64,9 @@ beforeAll(async () => {
 beforeEach(async () => {
   const db = await getDb();
   // 清空 P5 相关行
-  await db.delete(skillPromotionRunTable).where(eq(skillPromotionRunTable.projectId, fixture.projectId));
+  await db
+    .delete(skillPromotionRunTable)
+    .where(eq(skillPromotionRunTable.projectId, fixture.projectId));
   await db.delete(agentSkillTable).where(eq(agentSkillTable.projectId, fixture.projectId));
 
   // hard delete 本 project 所有 experience（包括 reflective 反馈，避免跨用例污染）
@@ -106,7 +105,6 @@ beforeEach(async () => {
   await store.update(good.id, { useCount: 6, successCount: 5, failCount: 1 });
   fixture.goodExpId = good.id;
   fixture.badExpId = bad.id;
-
 });
 
 describe("SkillPromoter.runOnce", () => {
@@ -166,7 +164,7 @@ describe("SkillPromoter.runOnce", () => {
     const p = new SkillPromoter();
     const r1 = await p.runOnce({ projectId: fixture.projectId, mode: "live", emitMetrics: false });
     expect(r1.totalPromoted).toBe(1);
-    const promotedId = r1.actions.find((a) => a.status === "promoted")!.promotedSkillId!;
+    const promotedId = r1.actions.find((a) => a.status === "promoted")?.promotedSkillId!;
     const rej = await rejectSkillPromotion(promotedId, { actor: "user", reason: "误判" });
     expect(rej.nextState).toBe("archived");
     expect(rej.reflectiveExperienceId).toBeTruthy();
@@ -181,7 +179,7 @@ describe("SkillPromoter.runOnce", () => {
   test("approveSkillPromotion：pending_review → active + 时间戳", async () => {
     const p = new SkillPromoter();
     const r = await p.runOnce({ projectId: fixture.projectId, mode: "live", emitMetrics: false });
-    const promotedId = r.actions.find((a) => a.status === "promoted")!.promotedSkillId!;
+    const promotedId = r.actions.find((a) => a.status === "promoted")?.promotedSkillId!;
     const before = Date.now();
     const ap = await approveSkillPromotion(promotedId, { actor: "user", description: "OK" });
     expect(ap.nextState).toBe("active");
@@ -189,10 +187,7 @@ describe("SkillPromoter.runOnce", () => {
     expect(ap.signature).toBe(fixture.goodSig);
 
     const db = await getDb();
-    const [row] = await db
-      .select()
-      .from(agentSkillTable)
-      .where(eq(agentSkillTable.id, promotedId));
+    const [row] = await db.select().from(agentSkillTable).where(eq(agentSkillTable.id, promotedId));
     expect(row.state).toBe("active");
     expect(row.description).toBe("OK");
     expect(new Date(row.promotionReviewAt!).getTime()).toBeGreaterThanOrEqual(before - 1000);
@@ -201,7 +196,7 @@ describe("SkillPromoter.runOnce", () => {
   test("rejectSkillPromotion 后 reflective 反馈带 signature；下次 promoter 跳过", async () => {
     const p = new SkillPromoter();
     const r = await p.runOnce({ projectId: fixture.projectId, mode: "live", emitMetrics: false });
-    const promotedId = r.actions.find((a) => a.status === "promoted")!.promotedSkillId!;
+    const promotedId = r.actions.find((a) => a.status === "promoted")?.promotedSkillId!;
     const rej = await rejectSkillPromotion(promotedId, { actor: "user", reason: "签名过于宽泛" });
     expect(rej.nextState).toBe("archived");
     expect(rej.signature).toBe(fixture.goodSig);
@@ -216,12 +211,14 @@ describe("SkillPromoter.runOnce", () => {
       limit: 10,
     });
     expect(reflects.length).toBe(1);
-    expect(reflects[0]!.metadataJson.signature).toBe(fixture.goodSig);
+    expect(reflects[0]?.metadataJson.signature).toBe(fixture.goodSig);
   });
 
   test("emitMetrics=true：触发 maintenance_run/skill_promoter event", async () => {
     const captured: { kind: string; summary: Record<string, unknown> }[] = [];
-    const handlers = new Set<(ev: { kind: string; summary: Record<string, number | string> }) => void>();
+    const handlers = new Set<
+      (ev: { kind: string; summary: Record<string, number | string> }) => void
+    >();
     const bus: ExperienceBus = {
       emit: (ev) => {
         if (ev.type === "maintenance_run") {
@@ -229,7 +226,10 @@ describe("SkillPromoter.runOnce", () => {
         }
       },
       subscribe: (_type, handler) => {
-        const h = handler as unknown as (ev: { kind: string; summary: Record<string, number | string> }) => void;
+        const h = handler as unknown as (ev: {
+          kind: string;
+          summary: Record<string, number | string>;
+        }) => void;
         handlers.add(h);
         return () => handlers.delete(h);
       },
@@ -244,9 +244,9 @@ describe("SkillPromoter.runOnce", () => {
     await new Promise((r) => setTimeout(r, 10));
     const evs = captured.filter((e) => e.kind === "skill_promoter");
     expect(evs.length).toBe(1);
-    expect(Number(evs[0]!.summary.scanned)).toBe(2);
-    expect(Number(evs[0]!.summary.qualified)).toBe(1);
-    expect(String(evs[0]!.summary.mode)).toBe("dry_run");
+    expect(Number(evs[0]?.summary.scanned)).toBe(2);
+    expect(Number(evs[0]?.summary.qualified)).toBe(1);
+    expect(String(evs[0]?.summary.mode)).toBe("dry_run");
   });
 
   test("写 skill_promotion_run 一行，actionsJson 含每候选明细", async () => {
@@ -272,6 +272,8 @@ describe("SkillPromoter.runOnce", () => {
 afterAll(async () => {
   // cleanup
   const db = await getDb();
-  await db.delete(skillPromotionRunTable).where(eq(skillPromotionRunTable.projectId, fixture.projectId));
+  await db
+    .delete(skillPromotionRunTable)
+    .where(eq(skillPromotionRunTable.projectId, fixture.projectId));
   await db.delete(agentSkillTable).where(eq(agentSkillTable.projectId, fixture.projectId));
 });

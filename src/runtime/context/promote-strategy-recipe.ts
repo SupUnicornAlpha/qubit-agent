@@ -3,8 +3,8 @@
  */
 
 import type { Experience } from "../../types/entities";
-import type { ExperienceStore } from "../experience/experience-store";
 import { getExperienceStore } from "../experience";
+import type { ExperienceStore } from "../experience/experience-store";
 import { skillService } from "../skills/skill-service";
 import { incContextMetric } from "./context-metrics";
 
@@ -58,7 +58,7 @@ export async function promoteStrategyRecipes(
     opts.existingCompositionIds ?? (await listExistingCompositionIds(opts.projectId));
 
   for (const exp of rows) {
-    const compositionId = String(exp.metadataJson?.["compositionId"] ?? "").trim();
+    const compositionId = String(exp.metadataJson?.compositionId ?? "").trim();
     if (!compositionId) {
       result.skippedLowQuality += 1;
       continue;
@@ -91,7 +91,7 @@ async function listExistingCompositionIds(projectId: string): Promise<Set<string
     const out = new Set<string>();
     for (const s of skills) {
       const meta = (s.metadataJson ?? {}) as Record<string, unknown>;
-      const cid = meta["compositionId"];
+      const cid = meta.compositionId;
       if (typeof cid === "string" && cid) out.add(cid);
     }
     return out;
@@ -100,18 +100,11 @@ async function listExistingCompositionIds(projectId: string): Promise<Set<string
   }
 }
 
-async function createSkillFromRecipe(
-  projectId: string,
-  exp: Experience,
-  compositionId: string
-) {
+async function createSkillFromRecipe(projectId: string, exp: Experience, compositionId: string) {
   const summary = exp.contentJson.summary ?? `strategy recipe ${compositionId.slice(0, 8)}`;
-  const bodyCore =
-    typeof exp.contentJson.body === "string"
-      ? exp.contentJson.body
-      : summary;
+  const bodyCore = typeof exp.contentJson.body === "string" ? exp.contentJson.body : summary;
   const bodyMd = [
-    `# Strategy Recipe`,
+    "# Strategy Recipe",
     "",
     `compositionId: \`${compositionId}\``,
     "",

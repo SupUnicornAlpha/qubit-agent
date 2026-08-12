@@ -4,12 +4,13 @@
  * 详见 docs/FACTOR_RULE_STRATEGY_DESIGN.md §6.6.5
  */
 
-import type { ResearchScopeInput } from "../../types/research-scope";
 import type { AgentRole } from "../../types/entities";
+import type { ResearchScopeInput } from "../../types/research-scope";
 import { launchAnalystTeam } from "../msa/launch-analyst-team";
 import { providerResolver } from "../provider/resolver";
 import { createAndDispatchWorkflow } from "../workflow/workflow-service";
 import { researchScenarioRegistry } from "./registry";
+import { SCENARIO_KEY_ALIASES } from "./scenario-key-aliases";
 import {
   type FieldSchema,
   type ResearchScenarioSpec,
@@ -17,7 +18,6 @@ import {
   type ScenarioLaunchInput,
   type ScenarioValidateResult,
 } from "./types";
-import { SCENARIO_KEY_ALIASES } from "./scenario-key-aliases";
 
 function validateInput(
   schema: Record<string, FieldSchema>,
@@ -282,7 +282,9 @@ export function buildAnalystLaunchInput(input: {
         .filter(Boolean)
     : [];
   const ticker = tickerSymbols.length === 1 ? tickerSymbols[0] : undefined;
-  const symbols = [...new Set([...firstStringArray(params, ["symbols", "tickers"]), ...tickerSymbols])];
+  const symbols = [
+    ...new Set([...firstStringArray(params, ["symbols", "tickers"]), ...tickerSymbols]),
+  ];
   const theme =
     firstString(params, ["theme", "strategyHint", "ruleTheme", "factorCategory", "universe"]) ??
     input.goal;

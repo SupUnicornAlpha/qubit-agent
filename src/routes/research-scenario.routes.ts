@@ -14,9 +14,7 @@ export const researchScenarioRouter = new Hono();
 /** GET /api/v1/research-scenarios?status=enabled */
 researchScenarioRouter.get("/", async (c) => {
   const statusQ = c.req.query("status") as "enabled" | "disabled" | undefined;
-  const list = await researchScenarioRegistry.list(
-    statusQ ? { status: statusQ } : undefined
-  );
+  const list = await researchScenarioRegistry.list(statusQ ? { status: statusQ } : undefined);
   return c.json({
     ok: true,
     data: list.map((s) => ({
@@ -79,9 +77,7 @@ researchScenarioRouter.post("/:key/plan-launch", async (c) => {
       scenarioKey: key,
       projectId: body.projectId,
       inputParams: body.inputParams ?? {},
-      ...(body.loopOverrides
-        ? { loopOverrides: body.loopOverrides as never }
-        : {}),
+      ...(body.loopOverrides ? { loopOverrides: body.loopOverrides as never } : {}),
     });
     return c.json({ ok: true, data: plan });
   } catch (e) {
@@ -113,11 +109,7 @@ researchScenarioRouter.post("/:key/launch", async (c) => {
   } catch (e) {
     if (e instanceof ScenarioError) {
       const status =
-        e.code === "scenario_not_found"
-          ? 404
-          : e.code === "missing_capability"
-            ? 409
-            : 400;
+        e.code === "scenario_not_found" ? 404 : e.code === "missing_capability" ? 409 : 400;
       const payload = { ok: false, code: e.code, error: e.message, details: e.details };
       if (status === 404) return c.json(payload, 404);
       if (status === 409) return c.json(payload, 409);

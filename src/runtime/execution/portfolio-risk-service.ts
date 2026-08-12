@@ -1,10 +1,7 @@
 import { queryBarsRange } from "../market/klines-query";
-import { resolveTickerMarket } from "../market/resolve-ticker-market";
 import { validatePointInTimeBars } from "../market/point-in-time-contract";
-import type {
-  PortfolioAllocationRow,
-  PortfolioCandidate,
-} from "./portfolio-allocation-service";
+import { resolveTickerMarket } from "../market/resolve-ticker-market";
+import type { PortfolioAllocationRow, PortfolioCandidate } from "./portfolio-allocation-service";
 
 export interface PortfolioRiskMetrics {
   observations: number;
@@ -60,7 +57,8 @@ function quantile(sorted: number[], probability: number): number {
 function standardDeviation(values: number[]): number {
   if (values.length < 2) return 0;
   const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
-  const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (values.length - 1);
+  const variance =
+    values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (values.length - 1);
   return Math.sqrt(Math.max(0, variance));
 }
 
@@ -68,10 +66,10 @@ function covariance(left: number[], right: number[]): number {
   if (left.length !== right.length || left.length < 2) return 0;
   const leftMean = left.reduce((sum, value) => sum + value, 0) / left.length;
   const rightMean = right.reduce((sum, value) => sum + value, 0) / right.length;
-  return left.reduce(
-    (sum, value, index) => sum + (value - leftMean) * (right[index]! - rightMean),
-    0,
-  ) / (left.length - 1);
+  return (
+    left.reduce((sum, value, index) => sum + (value - leftMean) * (right[index]! - rightMean), 0) /
+    (left.length - 1)
+  );
 }
 
 export function analyzeHistoricalPortfolioRisk(returns: number[]): PortfolioRiskMetrics | null {
@@ -106,7 +104,9 @@ export function runPortfolioStressTests(input: {
   rows: PortfolioAllocationRow[];
   candidates: PortfolioCandidate[];
 }): PortfolioStressResult[] {
-  const candidateBySymbol = new Map(input.candidates.map((candidate) => [candidate.symbol.trim().toUpperCase(), candidate]));
+  const candidateBySymbol = new Map(
+    input.candidates.map((candidate) => [candidate.symbol.trim().toUpperCase(), candidate])
+  );
   const scenarios: Array<{
     name: string;
     shock: (row: PortfolioAllocationRow, candidate?: PortfolioCandidate) => number;
@@ -153,75 +153,81 @@ export async function buildHistoricalPortfolioRisk(input: {
   const fetchBars = input.fetchBars ?? queryBarsRange;
   const returnsBySymbol = new Map<string, Map<string, number>>();
   const lineage: PortfolioRiskReport["lineage"] = [];
-  await Promise.all(input.rows.map(async (row) => {
-    const resolution = resolveTickerMarket(row.symbol);
-    try {
-      const bars = await fetchBars({
-        symbol: resolution.symbol,
-        exchange: resolution.exchange === "UNKNOWN" ? "" : resolution.exchange,
-        period: "1d",
-        startDate: start.toISOString(),
-        endDate: end.toISOString(),
-      });
-      const fetchedAt = new Date().toISOString();
-      const validated = validatePointInTimeBars(bars, {
-        provider: "qubit-data",
-        fetchedAt,
-        dataAsof: fetchedAt,
-        adjustType: "none",
-        security: {
+  await Promise.all(
+    input.rows.map(async (row) => {
+      const resolution = resolveTickerMarket(row.symbol);
+      try {
+        const bars = await fetchBars({
           symbol: resolution.symbol,
-          exchange: resolution.exchange,
-          listingStatus: "active",
-        },
-      });
-      if (!validated.valid) {
-        throw new Error(`point_in_time_contract_failed:${validated.errors.join(",")}`);
-      }
-      const validBars = validated.bars;
-      const values = new Map<string, number>();
-      for (let index = 1; index < validBars.length; index += 1) {
-        const previous = validBars[index - 1]!.close;
-        const current = validBars[index]!.close;
-        if (previous > 0 && Number.isFinite(current)) {
-          values.set(validBars[index]!.timestamp.slice(0, 10), current / previous - 1);
+          exchange: resolution.exchange === "UNKNOWN" ? "" : resolution.exchange,
+          period: "1d",
+          startDate: start.toISOString(),
+          endDate: end.toISOString(),
+        });
+        const fetchedAt = new Date().toISOString();
+        const validated = validatePointInTimeBars(bars, {
+          provider: "qubit-data",
+          fetchedAt,
+          dataAsof: fetchedAt,
+          adjustType: "none",
+          security: {
+            symbol: resolution.symbol,
+            exchange: resolution.exchange,
+            listingStatus: "active",
+          },
+        });
+        if (!validated.valid) {
+          throw new Error(`point_in_time_contract_failed:${validated.errors.join(",")}`);
         }
+        const validBars = validated.bars;
+        const values = new Map<string, number>();
+        for (let index = 1; index < validBars.length; index += 1) {
+          const previous = validBars[index - 1]?.close;
+          const current = validBars[index]?.close;
+          if (previous > 0 && Number.isFinite(current)) {
+            values.set(validBars[index]?.timestamp.slice(0, 10), current / previous - 1);
+          }
+        }
+        returnsBySymbol.set(row.symbol, values);
+        lineage.push({
+          symbol: row.symbol,
+          exchange: resolution.exchange,
+          bars: validBars.length,
+          firstAsof: validBars[0]?.timestamp ?? null,
+          lastAsof: validBars.at(-1)?.timestamp ?? null,
+          status: values.size >= (input.minimumObservations ?? 30) ? "used" : "insufficient",
+        });
+      } catch (error) {
+        lineage.push({
+          symbol: row.symbol,
+          exchange: resolution.exchange,
+          bars: 0,
+          firstAsof: null,
+          lastAsof: null,
+          status: "error",
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
-      returnsBySymbol.set(row.symbol, values);
-      lineage.push({
-        symbol: row.symbol,
-        exchange: resolution.exchange,
-        bars: validBars.length,
-        firstAsof: validBars[0]?.timestamp ?? null,
-        lastAsof: validBars.at(-1)?.timestamp ?? null,
-        status: values.size >= (input.minimumObservations ?? 30) ? "used" : "insufficient",
-      });
-    } catch (error) {
-      lineage.push({
-        symbol: row.symbol,
-        exchange: resolution.exchange,
-        bars: 0,
-        firstAsof: null,
-        lastAsof: null,
-        status: "error",
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }));
+    })
+  );
 
   const usableRows = input.rows.filter((row) => {
     const values = returnsBySymbol.get(row.symbol);
     return values && values.size >= (input.minimumObservations ?? 30);
   });
   const commonDates = usableRows.length
-    ? [...returnsBySymbol.get(usableRows[0]!.symbol)!.keys()].filter((date) =>
-        usableRows.every((row) => returnsBySymbol.get(row.symbol)!.has(date)))
+    ? [...returnsBySymbol.get(usableRows[0]?.symbol)?.keys()].filter((date) =>
+        usableRows.every((row) => returnsBySymbol.get(row.symbol)?.has(date))
+      )
     : [];
-  const portfolioReturns = commonDates.sort().map((date) =>
-    usableRows.reduce(
-      (sum, row) => sum + row.targetWeight * returnsBySymbol.get(row.symbol)!.get(date)!,
-      0,
-    ));
+  const portfolioReturns = commonDates
+    .sort()
+    .map((date) =>
+      usableRows.reduce(
+        (sum, row) => sum + row.targetWeight * returnsBySymbol.get(row.symbol)?.get(date)!,
+        0
+      )
+    );
   const correlationMatrix: Record<string, Record<string, number>> = {};
   const covarianceMatrix: Record<string, Record<string, number>> = {};
   let weightedCorrelationSum = 0;
@@ -230,13 +236,14 @@ export async function buildHistoricalPortfolioRisk(input: {
     const left = usableRows[leftIndex]!;
     correlationMatrix[left.symbol] = {};
     covarianceMatrix[left.symbol] = {};
-    const leftReturns = commonDates.map((date) => returnsBySymbol.get(left.symbol)!.get(date)!);
+    const leftReturns = commonDates.map((date) => returnsBySymbol.get(left.symbol)?.get(date)!);
     for (let rightIndex = 0; rightIndex < usableRows.length; rightIndex += 1) {
       const right = usableRows[rightIndex]!;
-      const rightReturns = commonDates.map((date) => returnsBySymbol.get(right.symbol)!.get(date)!);
+      const rightReturns = commonDates.map((date) => returnsBySymbol.get(right.symbol)?.get(date)!);
       const pairCovariance = covariance(leftReturns, rightReturns);
       const denominator = standardDeviation(leftReturns) * standardDeviation(rightReturns);
-      const pairCorrelation = denominator > 0 ? pairCovariance / denominator : leftIndex === rightIndex ? 1 : 0;
+      const pairCorrelation =
+        denominator > 0 ? pairCovariance / denominator : leftIndex === rightIndex ? 1 : 0;
       covarianceMatrix[left.symbol]![right.symbol] = round(pairCovariance, 10);
       correlationMatrix[left.symbol]![right.symbol] = round(pairCorrelation);
       if (rightIndex > leftIndex) {
@@ -248,7 +255,8 @@ export async function buildHistoricalPortfolioRisk(input: {
   }
   const metrics = analyzeHistoricalPortfolioRisk(portfolioReturns);
   const warnings: string[] = [];
-  if (usableRows.length < input.rows.length) warnings.push("some symbols were excluded from historical risk due to insufficient bars");
+  if (usableRows.length < input.rows.length)
+    warnings.push("some symbols were excluded from historical risk due to insufficient bars");
   if (!metrics) warnings.push("historical VaR/ES requires at least 30 aligned observations");
   return {
     asof: new Date().toISOString(),
@@ -256,9 +264,10 @@ export async function buildHistoricalPortfolioRisk(input: {
     metrics,
     correlationMatrix,
     covarianceMatrix,
-    weightedAverageCorrelation: weightedCorrelationWeight > 0
-      ? round(weightedCorrelationSum / weightedCorrelationWeight)
-      : null,
+    weightedAverageCorrelation:
+      weightedCorrelationWeight > 0
+        ? round(weightedCorrelationSum / weightedCorrelationWeight)
+        : null,
     stressTests: runPortfolioStressTests(input),
     lineage: lineage.sort((a, b) => a.symbol.localeCompare(b.symbol)),
     warnings,

@@ -5,8 +5,8 @@ import {
   isFsiActive,
   resolveEnabledFsiBundles,
 } from "./fsi-config";
-import { getFsiVendorDir } from "./fsi-settings";
 import { loadFsiManifest, resolveActiveFsiSkillIdsForRole } from "./fsi-manifest-loader";
+import { getFsiVendorDir } from "./fsi-settings";
 
 export async function getFsiCatalogSnapshot() {
   const manifest = await loadFsiManifest();

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { _formatStdioExitErrorMessage, prefixStdioToolError } from "../stdio-session";
 import { classifyToolError } from "../../react/nodes/tool-error-classifier";
+import { _formatStdioExitErrorMessage, prefixStdioToolError } from "../stdio-session";
 
 /*
  * F-P0-07 regression：之前 stderrBuf 用 `.slice(-1200)` 按字节截断，eval batch 2
@@ -65,9 +65,7 @@ describe("_formatStdioExitErrorMessage (F-P0-07)", () => {
   });
 
   test("phase 字符串原样嵌入 header", () => {
-    expect(_formatStdioExitErrorMessage([], 0, "tools/call")).toContain(
-      "在 tools/call 阶段"
-    );
+    expect(_formatStdioExitErrorMessage([], 0, "tools/call")).toContain("在 tools/call 阶段");
     expect(_formatStdioExitErrorMessage([], 0, "initialize")).toContain("在 initialize 阶段");
   });
 });

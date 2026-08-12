@@ -66,10 +66,7 @@ const DANGEROUS_COMMAND_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   [/\beval\b/, "eval"],
 ];
 
-function checkBlacklist(
-  slug: string,
-  blacklist: ReadonlyArray<string>
-): string | null {
+function checkBlacklist(slug: string, blacklist: ReadonlyArray<string>): string | null {
   const lower = slug.toLowerCase();
   for (const banned of blacklist) {
     if (banned.toLowerCase() === lower) return `blacklist:${banned}`;

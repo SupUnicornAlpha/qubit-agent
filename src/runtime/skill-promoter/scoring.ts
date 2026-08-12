@@ -19,7 +19,7 @@
  * 权重默认 0.4 / 0.3 / 0.2 / 0.1（PnL v0 = 0.5 中性）。
  */
 
-import type { PromoterCandidate, PromoterScore, PromoterRuleHit } from "./types";
+import type { PromoterCandidate, PromoterRuleHit, PromoterScore } from "./types";
 
 export interface PromoterScoringConfig {
   minRecall: number;

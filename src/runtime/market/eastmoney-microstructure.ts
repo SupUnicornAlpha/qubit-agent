@@ -166,18 +166,12 @@ export async function fetchEastMoneyQuote(
     ...(scaledPrice(data.f46) !== undefined ? { open: scaledPrice(data.f46)! } : {}),
     ...(scaledPrice(data.f44) !== undefined ? { high: scaledPrice(data.f44)! } : {}),
     ...(scaledPrice(data.f45) !== undefined ? { low: scaledPrice(data.f45)! } : {}),
-    ...(scaledPrice(data.f60) !== undefined
-      ? { previousClose: scaledPrice(data.f60)! }
-      : {}),
+    ...(scaledPrice(data.f60) !== undefined ? { previousClose: scaledPrice(data.f60)! } : {}),
     ...(finite(data.f47) !== undefined ? { volume: finite(data.f47)! } : {}),
     ...(finite(data.f48) !== undefined ? { turnover: finite(data.f48)! } : {}),
-    ...(scaledPrice(data.f19) !== undefined
-      ? { bidPrice: scaledPrice(data.f19)! }
-      : {}),
+    ...(scaledPrice(data.f19) !== undefined ? { bidPrice: scaledPrice(data.f19)! } : {}),
     ...(finite(data.f20) !== undefined ? { bidVolume: finite(data.f20)! } : {}),
-    ...(scaledPrice(data.f39) !== undefined
-      ? { askPrice: scaledPrice(data.f39)! }
-      : {}),
+    ...(scaledPrice(data.f39) !== undefined ? { askPrice: scaledPrice(data.f39)! } : {}),
     ...(finite(data.f40) !== undefined ? { askVolume: finite(data.f40)! } : {}),
     timestamp,
     freshnessMs: Math.max(0, Date.now() - Date.parse(timestamp)),
@@ -300,8 +294,6 @@ export async function fetchEastMoneyTrades(
   }
   const marketTimestamp = responseTimestamp(quote.f86);
   return (payload.data?.details ?? [])
-    .map((row, index) =>
-      parseEastMoneyTradeRow(row, params, index, marketTimestamp)
-    )
+    .map((row, index) => parseEastMoneyTradeRow(row, params, index, marketTimestamp))
     .filter((row): row is TradeData => row !== null);
 }

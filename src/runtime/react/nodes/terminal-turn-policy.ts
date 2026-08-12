@@ -44,9 +44,7 @@ export async function handleToolNoneAction(input: {
     controlModeGapRetryCount: state.controlModeGapRetryCount,
     cleanedReason,
     // undefined：无场景快照时保持旧行为（仅 0 工具时拦 deferred）
-    ...(sharedSnapshotEarly
-      ? { researchFloorMet: sharedSnapshotEarly.researchArtifactsOk }
-      : {}),
+    ...(sharedSnapshotEarly ? { researchFloorMet: sharedSnapshotEarly.researchArtifactsOk } : {}),
   });
   if (controlDecision.kind !== "allow") {
     emit({

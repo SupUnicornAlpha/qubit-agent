@@ -46,7 +46,8 @@ export function getA2aPorts(): A2aPorts {
     },
     async requestCancellation(taskId, meta) {
       const { requestA2ATaskCancellation } = await import("./a2a-task-cancellation");
-      const reason = [meta?.reason, meta?.detail].filter(Boolean).join(": ") || "cancelled_by_parent";
+      const reason =
+        [meta?.reason, meta?.detail].filter(Boolean).join(": ") || "cancelled_by_parent";
       await requestA2ATaskCancellation(taskId, reason);
     },
   };

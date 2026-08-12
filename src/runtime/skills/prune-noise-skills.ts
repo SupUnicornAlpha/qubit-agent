@@ -13,9 +13,7 @@ import { agentSkill } from "../../db/sqlite/schema";
 import { skillService } from "./skill-service";
 
 /** 精确 name 黑名单（跨项目） */
-const ARCHIVE_EXACT_NAMES = new Set([
-  "research:ai-infra-analyst-signals",
-]);
+const ARCHIVE_EXACT_NAMES = new Set(["research:ai-infra-analyst-signals"]);
 
 /** name 子串：FSI 运营/合规文档类（量化交易主路径用不到） */
 const FSI_NOISE_SUBSTR = [

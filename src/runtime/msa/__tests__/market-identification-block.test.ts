@@ -15,11 +15,15 @@ describe("buildMarketIdentificationBlock — 注入到 prompt 让 LLM 不靠猜"
   });
 
   test("600519 → CN/SH", () => {
-    expect(buildMarketIdentificationBlock("600519")).toMatch(/market=\*\*CN\*\* \/ exchange=\*\*SH\*\*/);
+    expect(buildMarketIdentificationBlock("600519")).toMatch(
+      /market=\*\*CN\*\* \/ exchange=\*\*SH\*\*/
+    );
   });
 
   test("AAPL → US/US", () => {
-    expect(buildMarketIdentificationBlock("AAPL")).toMatch(/market=\*\*US\*\* \/ exchange=\*\*US\*\*/);
+    expect(buildMarketIdentificationBlock("AAPL")).toMatch(
+      /market=\*\*US\*\* \/ exchange=\*\*US\*\*/
+    );
   });
 
   test("00700.HK → HK/HK explicit", () => {
@@ -35,7 +39,9 @@ describe("buildMarketIdentificationBlock — 注入到 prompt 让 LLM 不靠猜"
   });
 
   test("BTCUSDT → CRYPTO inferred", () => {
-    expect(buildMarketIdentificationBlock("BTCUSDT")).toMatch(/market=\*\*CRYPTO\*\* \/ exchange=\*\*CRYPTO\*\*/);
+    expect(buildMarketIdentificationBlock("BTCUSDT")).toMatch(
+      /market=\*\*CRYPTO\*\* \/ exchange=\*\*CRYPTO\*\*/
+    );
   });
 
   test("UNKNOWN ticker → 输出 fallback 探测提示", () => {

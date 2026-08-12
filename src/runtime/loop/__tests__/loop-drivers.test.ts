@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { a2aLoopDriver } from "../../a2a/a2a-loop-driver";
 import { normalizeLoopKind } from "../../../types/loop";
+import { a2aLoopDriver } from "../../a2a/a2a-loop-driver";
 import { parseCliLoopLine, sniffNativeSessionId } from "../loop-protocol";
 import { getLoopDriver } from "../registry";
 

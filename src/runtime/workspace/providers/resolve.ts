@@ -4,14 +4,14 @@
  */
 import type { ProviderRef, WorkspaceManifest } from "../types";
 import type { WorkspaceFs } from "../workspace-fs";
-import { createBuiltinFsMemoryProvider, type MemoryProvider } from "./fs-memory";
-import { createLocalQuantDecisionProvider } from "./local-quant";
-import { createExternalHttpMemoryProvider } from "./external-http-memory";
 import {
-  createExternalHttpDecisionProvider,
   EXTERNAL_DECISION_STUB_KIND,
   EXTERNAL_HTTP_DECISION_KIND,
+  createExternalHttpDecisionProvider,
 } from "./external-decision-stub";
+import { createExternalHttpMemoryProvider } from "./external-http-memory";
+import { type MemoryProvider, createBuiltinFsMemoryProvider } from "./fs-memory";
+import { createLocalQuantDecisionProvider } from "./local-quant";
 import type { DecisionEngineProvider, ResolvedProviders } from "./provider-types";
 
 export type { DecisionEngineProvider, ResolvedProviders } from "./provider-types";

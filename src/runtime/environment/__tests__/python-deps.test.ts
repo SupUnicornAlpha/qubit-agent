@@ -6,10 +6,10 @@
  */
 import { describe, expect, test } from "bun:test";
 import {
+  type PythonDepsError,
   diffPackages,
   installPython,
   normalizePackageName,
-  PythonDepsError,
   uninstallPython,
 } from "../python-deps";
 import type { ExpectedPackage, InstalledPackage } from "../types";
@@ -93,13 +93,13 @@ describe("diffPackages", () => {
 
 describe("install/uninstall 安全校验（不真实跑 pip）", () => {
   test("非法包名拒绝（防 shell 注入）", async () => {
-    await expect(
-      installPython({ packageName: "pandas; rm -rf /" })
-    ).rejects.toMatchObject({ code: "invalid_package_name" } as PythonDepsError);
+    await expect(installPython({ packageName: "pandas; rm -rf /" })).rejects.toMatchObject({
+      code: "invalid_package_name",
+    } as PythonDepsError);
 
-    await expect(
-      installPython({ packageName: "../etc/passwd" })
-    ).rejects.toMatchObject({ code: "invalid_package_name" });
+    await expect(installPython({ packageName: "../etc/passwd" })).rejects.toMatchObject({
+      code: "invalid_package_name",
+    });
   });
 
   test("非法 spec 拒绝", async () => {
@@ -116,8 +116,8 @@ describe("install/uninstall 安全校验（不真实跑 pip）", () => {
   });
 
   test("uninstall 也走包名校验", async () => {
-    await expect(
-      uninstallPython({ packageName: "pkg`whoami`" })
-    ).rejects.toMatchObject({ code: "invalid_package_name" });
+    await expect(uninstallPython({ packageName: "pkg`whoami`" })).rejects.toMatchObject({
+      code: "invalid_package_name",
+    });
   });
 });

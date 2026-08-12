@@ -48,13 +48,7 @@ const REQUIRED_TOOL_ALIASES: Record<string, readonly string[]> = {
     "market_news",
     "company_news",
   ],
-  screener: [
-    "screener",
-    "run_screener",
-    "stock_screen",
-    "screen_stocks",
-    "portfolio.construct",
-  ],
+  screener: ["screener", "run_screener", "stock_screen", "screen_stocks", "portfolio.construct"],
   "recommendation.record": [
     "recommendation.record",
     "recommendation_record",

@@ -9,12 +9,7 @@
  *   - 新增 categoryScores 字段，让 reporter 渲染分类汇总表
  */
 
-import {
-  AQM_THRESHOLDS,
-  aggregateAqm,
-  type MetricGrade,
-  type OverallGrade,
-} from "./thresholds";
+import { AQM_THRESHOLDS, type MetricGrade, type OverallGrade, aggregateAqm } from "./thresholds";
 
 /** Reporter 消费的标准 snapshot 形态 */
 export interface ReadinessSnapshot {

@@ -14,7 +14,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { calcPnlSeries, type MarkPriceLookup, type PnlFill } from "../pnl-calc";
+import { type MarkPriceLookup, type PnlFill, calcPnlSeries } from "../pnl-calc";
 
 const mk =
   (data: Record<string, Record<string, number>>): MarkPriceLookup =>
@@ -24,7 +24,9 @@ const mk =
     return { close, source: "test_fixture" };
   };
 
-function f(p: Partial<PnlFill> & Pick<PnlFill, "symbol" | "side" | "qty" | "price" | "tradingDay" | "ts">): PnlFill {
+function f(
+  p: Partial<PnlFill> & Pick<PnlFill, "symbol" | "side" | "qty" | "price" | "tradingDay" | "ts">
+): PnlFill {
   return {
     id: p.id ?? `${p.symbol}-${p.tradingDay}-${p.ts}-${p.side}-${p.qty}-${p.price}`,
     market: p.market ?? "US",
@@ -37,7 +39,14 @@ function f(p: Partial<PnlFill> & Pick<PnlFill, "symbol" | "side" | "qty" | "pric
 describe("calcPnlSeries", () => {
   test("场景1：单 symbol 单日多头建仓 → unrealizedDaily 等于 (mark - cost)*qty", () => {
     const fills = [
-      f({ symbol: "AAPL", side: "buy", qty: 100, price: 150, tradingDay: "2026-06-01", ts: "2026-06-01T13:30:00Z" }),
+      f({
+        symbol: "AAPL",
+        side: "buy",
+        qty: 100,
+        price: 150,
+        tradingDay: "2026-06-01",
+        ts: "2026-06-01T13:30:00Z",
+      }),
     ];
     const r = calcPnlSeries({
       fills,
@@ -62,7 +71,14 @@ describe("calcPnlSeries", () => {
   test("场景2：多日持仓 mark 波动 → unrealizedDaily 按相邻日差值", () => {
     // 2026-06-01 buy 100@150；6-02 mark=152；6-03 mark=149
     const fills = [
-      f({ symbol: "AAPL", side: "buy", qty: 100, price: 150, tradingDay: "2026-06-01", ts: "2026-06-01T13:30:00Z" }),
+      f({
+        symbol: "AAPL",
+        side: "buy",
+        qty: 100,
+        price: 150,
+        tradingDay: "2026-06-01",
+        ts: "2026-06-01T13:30:00Z",
+      }),
     ];
     const r = calcPnlSeries({
       fills,
@@ -92,8 +108,22 @@ describe("calcPnlSeries", () => {
 
   test("场景3：部分平仓 realizedDaily 按 (sell_price - avg_cost) * sold", () => {
     const fills = [
-      f({ symbol: "AAPL", side: "buy", qty: 100, price: 150, tradingDay: "2026-06-01", ts: "2026-06-01T13:30:00Z" }),
-      f({ symbol: "AAPL", side: "sell", qty: 40, price: 155, tradingDay: "2026-06-02", ts: "2026-06-02T13:30:00Z" }),
+      f({
+        symbol: "AAPL",
+        side: "buy",
+        qty: 100,
+        price: 150,
+        tradingDay: "2026-06-01",
+        ts: "2026-06-01T13:30:00Z",
+      }),
+      f({
+        symbol: "AAPL",
+        side: "sell",
+        qty: 40,
+        price: 155,
+        tradingDay: "2026-06-02",
+        ts: "2026-06-02T13:30:00Z",
+      }),
     ];
     const r = calcPnlSeries({
       fills,
@@ -117,8 +147,22 @@ describe("calcPnlSeries", () => {
   test("场景4：多→空跨 0 反向", () => {
     // buy 100@150 → sell 150@160 → 应留下空头 50，avgCost=160；realized = (160-150)*100 = 1000
     const fills = [
-      f({ symbol: "AAPL", side: "buy", qty: 100, price: 150, tradingDay: "2026-06-01", ts: "2026-06-01T13:30:00Z" }),
-      f({ symbol: "AAPL", side: "sell", qty: 150, price: 160, tradingDay: "2026-06-02", ts: "2026-06-02T13:30:00Z" }),
+      f({
+        symbol: "AAPL",
+        side: "buy",
+        qty: 100,
+        price: 150,
+        tradingDay: "2026-06-01",
+        ts: "2026-06-01T13:30:00Z",
+      }),
+      f({
+        symbol: "AAPL",
+        side: "sell",
+        qty: 150,
+        price: 160,
+        tradingDay: "2026-06-02",
+        ts: "2026-06-02T13:30:00Z",
+      }),
     ];
     const r = calcPnlSeries({
       fills,
@@ -140,8 +184,22 @@ describe("calcPnlSeries", () => {
   test("场景5：空→多跨 0 反向", () => {
     // sell 100@160 → buy 150@155 → 应留下多头 50@155；realized = (160-155)*100 = 500
     const fills = [
-      f({ symbol: "AAPL", side: "sell", qty: 100, price: 160, tradingDay: "2026-06-01", ts: "2026-06-01T13:30:00Z" }),
-      f({ symbol: "AAPL", side: "buy", qty: 150, price: 155, tradingDay: "2026-06-02", ts: "2026-06-02T13:30:00Z" }),
+      f({
+        symbol: "AAPL",
+        side: "sell",
+        qty: 100,
+        price: 160,
+        tradingDay: "2026-06-01",
+        ts: "2026-06-01T13:30:00Z",
+      }),
+      f({
+        symbol: "AAPL",
+        side: "buy",
+        qty: 150,
+        price: 155,
+        tradingDay: "2026-06-02",
+        ts: "2026-06-02T13:30:00Z",
+      }),
     ];
     const r = calcPnlSeries({
       fills,
@@ -162,7 +220,14 @@ describe("calcPnlSeries", () => {
   test("场景6：mark 三级 fallback", () => {
     // Day1 拿到 mark=150；Day2 缺 mark → fallback_prev_day=150；Day3 仍缺 → 还是 150
     const fills = [
-      f({ symbol: "AAPL", side: "buy", qty: 100, price: 150, tradingDay: "2026-06-01", ts: "2026-06-01T13:30:00Z" }),
+      f({
+        symbol: "AAPL",
+        side: "buy",
+        qty: 100,
+        price: 150,
+        tradingDay: "2026-06-01",
+        ts: "2026-06-01T13:30:00Z",
+      }),
     ];
     const r = calcPnlSeries({
       fills,
@@ -199,7 +264,14 @@ describe("calcPnlSeries", () => {
   test("场景7：增量从 priorPositions 起算", () => {
     // prior：100 股 AAPL @ 150；今日 sell 30 @ 160；mark 161
     const fills = [
-      f({ symbol: "AAPL", side: "sell", qty: 30, price: 160, tradingDay: "2026-06-03", ts: "2026-06-03T13:30:00Z" }),
+      f({
+        symbol: "AAPL",
+        side: "sell",
+        qty: 30,
+        price: 160,
+        tradingDay: "2026-06-03",
+        ts: "2026-06-03T13:30:00Z",
+      }),
     ];
     const r = calcPnlSeries({
       fills,
@@ -219,9 +291,30 @@ describe("calcPnlSeries", () => {
 
   test("场景8：多 symbol + 同日多 fill 聚合到 1 行/symbol", () => {
     const fills = [
-      f({ symbol: "AAPL", side: "buy", qty: 100, price: 150, tradingDay: "2026-06-01", ts: "2026-06-01T13:30:00Z" }),
-      f({ symbol: "AAPL", side: "buy", qty: 50, price: 152, tradingDay: "2026-06-01", ts: "2026-06-01T13:35:00Z" }),
-      f({ symbol: "MSFT", side: "buy", qty: 20, price: 400, tradingDay: "2026-06-01", ts: "2026-06-01T13:31:00Z" }),
+      f({
+        symbol: "AAPL",
+        side: "buy",
+        qty: 100,
+        price: 150,
+        tradingDay: "2026-06-01",
+        ts: "2026-06-01T13:30:00Z",
+      }),
+      f({
+        symbol: "AAPL",
+        side: "buy",
+        qty: 50,
+        price: 152,
+        tradingDay: "2026-06-01",
+        ts: "2026-06-01T13:35:00Z",
+      }),
+      f({
+        symbol: "MSFT",
+        side: "buy",
+        qty: 20,
+        price: 400,
+        tradingDay: "2026-06-01",
+        ts: "2026-06-01T13:31:00Z",
+      }),
     ];
     const r = calcPnlSeries({
       fills,
@@ -245,7 +338,14 @@ describe("calcPnlSeries", () => {
 
   test("场景9：feeProvider 注入（fill.fee=undefined）", () => {
     const fills = [
-      f({ symbol: "AAPL", side: "buy", qty: 100, price: 150, tradingDay: "2026-06-01", ts: "2026-06-01T13:30:00Z" }),
+      f({
+        symbol: "AAPL",
+        side: "buy",
+        qty: 100,
+        price: 150,
+        tradingDay: "2026-06-01",
+        ts: "2026-06-01T13:30:00Z",
+      }),
     ];
     const r = calcPnlSeries({
       fills,

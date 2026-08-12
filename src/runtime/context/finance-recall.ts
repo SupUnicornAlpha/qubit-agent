@@ -7,6 +7,7 @@
  */
 
 import type { Experience } from "../../types/entities";
+import { applyLifecycleToScore } from "../experience/lifecycle";
 import {
   ExperienceRecall,
   type RecallContext,
@@ -16,13 +17,9 @@ import {
   recencyScore,
   tokenize,
 } from "../experience/pipes/recall";
-import { applyLifecycleToScore } from "../experience/lifecycle";
 import { isPitCutoffEnabled } from "./axioms";
 import { incContextMetric } from "./context-metrics";
-import {
-  FINANCE_RECALL_PREFER_SUB_KINDS,
-  type FinanceSubKind,
-} from "./types";
+import { FINANCE_RECALL_PREFER_SUB_KINDS, type FinanceSubKind } from "./types";
 
 export interface FinanceRecallContext extends RecallContext {
   symbols?: string[];
@@ -79,7 +76,7 @@ export class FinanceRecall {
       if (!prefer.includes(exp.subKind as FinanceSubKind)) continue;
 
       const meta = exp.metadataJson ?? {};
-      const asof = typeof meta["asof"] === "string" ? meta["asof"] : null;
+      const asof = typeof meta.asof === "string" ? meta.asof : null;
 
       if (cutoff && asof && asof.slice(0, 10) > cutoff.slice(0, 10)) {
         pitFiltered += 1;
@@ -87,26 +84,22 @@ export class FinanceRecall {
       }
 
       if (exp.subKind === "market_snapshot") {
-        const decayHours =
-          typeof meta["decayHours"] === "number" ? meta["decayHours"] : 48;
+        const decayHours = typeof meta.decayHours === "number" ? meta.decayHours : 48;
         const from = new Date(exp.validFrom).getTime();
-        if (
-          Number.isFinite(from) &&
-          this.now().getTime() - from > decayHours * 3_600_000
-        ) {
+        if (Number.isFinite(from) && this.now().getTime() - from > decayHours * 3_600_000) {
           expiredSnap += 1;
           continue;
         }
       }
 
-      if (exp.subKind === "factor_archive" && !meta["factorId"]) {
+      if (exp.subKind === "factor_archive" && !meta.factorId) {
         incContextMetric("finance.orphan_archive_rate", 1);
         continue;
       }
-      if (exp.subKind === "strategy_recipe" && !meta["compositionId"]) continue;
+      if (exp.subKind === "strategy_recipe" && !meta.compositionId) continue;
       if (
         exp.subKind === "research_conclusion" &&
-        (!Array.isArray(meta["symbols"]) || meta["symbols"].length === 0)
+        (!Array.isArray(meta.symbols) || meta.symbols.length === 0)
       ) {
         continue;
       }
@@ -129,13 +122,12 @@ export class FinanceRecall {
 
     const withRef = top.filter((r) => {
       const m = r.experience.metadataJson ?? {};
-      return Boolean(m["factorId"] || m["compositionId"]);
+      return Boolean(m.factorId || m.compositionId);
     }).length;
     if (top.length > 0) {
       incContextMetric("finance.recall_hit_with_ref", withRef);
       incContextMetric("finance.recall_hits", top.length);
-      const avgOut =
-        top.reduce((s, r) => s + r.components.outcomeWeight, 0) / top.length;
+      const avgOut = top.reduce((s, r) => s + r.components.outcomeWeight, 0) / top.length;
       incContextMetric("finance.recall_outcome_weight_avg", Math.round(avgOut * 1000));
     }
 
@@ -163,13 +155,13 @@ export class FinanceRecall {
       keywordScore(haystack, tokens)
     );
     const recency = recencyScore(
-      typeof meta["asof"] === "string" ? meta["asof"] : exp.validFrom,
+      typeof meta.asof === "string" ? meta.asof : exp.validFrom,
       this.now()
     );
 
     const tier =
-      typeof meta["memoryTier"] === "string"
-        ? meta["memoryTier"]
+      typeof meta.memoryTier === "string"
+        ? meta.memoryTier
         : exp.subKind === "factor_archive" || exp.subKind === "strategy_recipe"
           ? "deep"
           : "intermediate";
@@ -181,11 +173,11 @@ export class FinanceRecall {
     const outcomeWeight = computeOutcomeWeight(exp, successRate);
 
     if (
-      typeof (meta["decisionRecord"] as { outcome?: { brierContribution?: number } } | undefined)
+      typeof (meta.decisionRecord as { outcome?: { brierContribution?: number } } | undefined)
         ?.outcome?.brierContribution === "number"
     ) {
       const brier = Number(
-        (meta["decisionRecord"] as { outcome: { brierContribution: number } }).outcome
+        (meta.decisionRecord as { outcome: { brierContribution: number } }).outcome
           .brierContribution
       );
       incContextMetric("finance.decision_brier", Math.round(brier * 1000));
@@ -196,14 +188,14 @@ export class FinanceRecall {
       const tagSyms = exp.tagsJson
         .filter((t) => t.startsWith("symbol:"))
         .map((t) => t.slice("symbol:".length).toUpperCase());
-      const metaSyms = Array.isArray(meta["symbols"])
-        ? (meta["symbols"] as unknown[]).map((s) => String(s).toUpperCase())
+      const metaSyms = Array.isArray(meta.symbols)
+        ? (meta.symbols as unknown[]).map((s) => String(s).toUpperCase())
         : [];
       const all = new Set([...tagSyms, ...metaSyms]);
       if (symbols.some((s) => all.has(s.toUpperCase()))) domainBoost += 0.6;
     }
     if (exp.subKind === "factor_archive") {
-      const ric = Math.abs(Number(meta["rankIc"] ?? meta["ic"] ?? 0));
+      const ric = Math.abs(Number(meta.rankIc ?? meta.ic ?? 0));
       if (Number.isFinite(ric)) domainBoost += Math.min(0.4, ric * 2);
     }
     domainBoost = Math.min(1, domainBoost);
@@ -238,18 +230,16 @@ export class FinanceRecall {
 export function renderFinanceRecallBlockForPrompt(results: FinanceRecallResult[]): string {
   if (results.length === 0) return "";
   const lines: string[] = ["## Memory · Finance Recall"];
-  lines.push(
-    "> 金融结构化记忆（带业务 ref / asof）。优先复用；冲突条目并列展示，勿静默丢弃。"
-  );
+  lines.push("> 金融结构化记忆（带业务 ref / asof）。优先复用；冲突条目并列展示，勿静默丢弃。");
   lines.push("");
   for (const r of results) {
     const exp = r.experience;
     const meta = exp.metadataJson ?? {};
     const kindBadge = `[${exp.kind}/${exp.subKind}]`;
     const refs: string[] = [];
-    if (meta["factorId"]) refs.push(`factorId=${meta["factorId"]}`);
-    if (meta["compositionId"]) refs.push(`compositionId=${meta["compositionId"]}`);
-    if (meta["asof"]) refs.push(`asof=${meta["asof"]}`);
+    if (meta.factorId) refs.push(`factorId=${meta.factorId}`);
+    if (meta.compositionId) refs.push(`compositionId=${meta.compositionId}`);
+    if (meta.asof) refs.push(`asof=${meta.asof}`);
     const metric = `score=${r.score.toFixed(3)} out=${r.components.outcomeWeight.toFixed(2)} q=${exp.qualityScore.toFixed(2)}`;
     lines.push(`### ${kindBadge} ${truncate(exp.contentJson.summary, 90)}`);
     lines.push(`> ${metric}${refs.length ? ` · ${refs.join(" · ")}` : ""}`);
@@ -272,7 +262,7 @@ function truncate(s: string, max: number): string {
  */
 export function computeOutcomeWeight(exp: Experience, successRateFallback: number): number {
   const meta = exp.metadataJson ?? {};
-  const dr = meta["decisionRecord"];
+  const dr = meta.decisionRecord;
   if (dr && typeof dr === "object") {
     const record = dr as {
       confidence?: number;
@@ -298,6 +288,7 @@ export function computeOutcomeWeight(exp: Experience, successRateFallback: numbe
   }
   return Math.min(
     1,
-    0.4 * exp.qualityScore + 0.6 * (Number.isFinite(successRateFallback) ? successRateFallback : 0.5)
+    0.4 * exp.qualityScore +
+      0.6 * (Number.isFinite(successRateFallback) ? successRateFallback : 0.5)
   );
 }

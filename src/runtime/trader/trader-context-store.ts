@@ -89,9 +89,7 @@ async function contextStats(
   };
 }
 
-function buildCompressionSummary(
-  rows: Array<typeof traderContextMessage.$inferSelect>
-): string {
+function buildCompressionSummary(rows: Array<typeof traderContextMessage.$inferSelect>): string {
   const lines = rows.map((r) => {
     const ts = r.createdAt.slice(0, 19);
     const head = r.title.trim() || r.kind;

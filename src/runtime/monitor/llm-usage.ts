@@ -228,14 +228,8 @@ export async function getLlmUsageSummary(input?: {
     }
     if (r.finishReason) {
       const norm = r.finishReason.toLowerCase().slice(0, 32);
-      acc.finishReasonBreakdown.set(
-        norm,
-        (acc.finishReasonBreakdown.get(norm) ?? 0) + 1,
-      );
-      totals.finishReasonBreakdown.set(
-        norm,
-        (totals.finishReasonBreakdown.get(norm) ?? 0) + 1,
-      );
+      acc.finishReasonBreakdown.set(norm, (acc.finishReasonBreakdown.get(norm) ?? 0) + 1);
+      totals.finishReasonBreakdown.set(norm, (totals.finishReasonBreakdown.get(norm) ?? 0) + 1);
     }
     /**
      * lengthRetry 标记落在 requestMetaJson；drizzle JSON 列读出来已是 object，
@@ -265,16 +259,13 @@ export async function getLlmUsageSummary(input?: {
         cachedPromptTokens: acc.cachedPromptTokens,
         reasoningTokens: acc.reasoningTokens,
         costUsd: Number(acc.costUsd.toFixed(6)),
-        avgLatencyMs:
-          acc.latCount > 0 ? Number((acc.latSum / acc.latCount).toFixed(2)) : null,
+        avgLatencyMs: acc.latCount > 0 ? Number((acc.latSum / acc.latCount).toFixed(2)) : null,
         p50FirstTokenLatencyMs: percentile(acc.ttftSamples, 0.5),
         p95FirstTokenLatencyMs: percentile(acc.ttftSamples, 0.95),
         finishReasonBreakdown: Object.fromEntries(acc.finishReasonBreakdown),
         lengthRetryCount: acc.lengthRetryCount,
         successRate:
-          acc.totalCalls > 0
-            ? Number((acc.successCount / acc.totalCalls).toFixed(4))
-            : 0,
+          acc.totalCalls > 0 ? Number((acc.successCount / acc.totalCalls).toFixed(4)) : 0,
         lastCalledAt: acc.lastCalledAt,
       })
     )
@@ -299,17 +290,13 @@ export async function getLlmUsageSummary(input?: {
       reasoningTokens: totals.reasoningTokens,
       costUsd: Number(totals.costUsd.toFixed(6)),
       avgLatencyMs:
-        totals.latCount > 0
-          ? Number((totals.latSum / totals.latCount).toFixed(2))
-          : null,
+        totals.latCount > 0 ? Number((totals.latSum / totals.latCount).toFixed(2)) : null,
       p50FirstTokenLatencyMs: percentile(totals.ttftSamples, 0.5),
       p95FirstTokenLatencyMs: percentile(totals.ttftSamples, 0.95),
       finishReasonBreakdown: Object.fromEntries(totals.finishReasonBreakdown),
       lengthRetryCount: totals.lengthRetryCount,
       successRate:
-        totals.totalCalls > 0
-          ? Number((totals.successCount / totals.totalCalls).toFixed(4))
-          : 0,
+        totals.totalCalls > 0 ? Number((totals.successCount / totals.totalCalls).toFixed(4)) : 0,
     },
     byProviderModel,
     errorTopN,
@@ -343,7 +330,7 @@ function isLengthRetryUsed(meta: unknown): boolean {
     }
   }
   if (!obj || typeof obj !== "object") return false;
-  return (obj as Record<string, unknown>)["lengthRetryUsed"] === true;
+  return (obj as Record<string, unknown>).lengthRetryUsed === true;
 }
 
 function clampInt(v: number, min: number, max: number): number {

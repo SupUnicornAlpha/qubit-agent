@@ -84,7 +84,7 @@ describe("installMcpCatalogToProject", () => {
       .from(mcpServerConfig)
       .where(eq(mcpServerConfig.name, "slack-prod"));
     expect(s).toBeDefined();
-    expect(s!.command).toBe("npx -y @x/slack");
+    expect(s?.command).toBe("npx -y @x/slack");
 
     const bindings = await db
       .select()
@@ -100,7 +100,7 @@ describe("installMcpCatalogToProject", () => {
       .from(mcpCatalogInstall)
       .where(eq(mcpCatalogInstall.id, r.installId));
     expect(a).toBeDefined();
-    expect(a!.installedBy).toBe("user");
+    expect(a?.installedBy).toBe("user");
   });
 
   test("二次装同 serverName → reusedServer + reusedBinding", async () => {
@@ -154,7 +154,7 @@ describe("installMcpCatalogToProject", () => {
       .from(mcpToolBinding)
       .where(eq(mcpToolBinding.serverName, "void-srv"));
     expect(bindings.length).toBe(1);
-    expect(bindings[0]!.toolName).toBe(MCP_WILDCARD_TOOL);
+    expect(bindings[0]?.toolName).toBe(MCP_WILDCARD_TOOL);
   });
 
   test("installedBy='auto_installer' → audit 行透传", async () => {
@@ -168,6 +168,6 @@ describe("installMcpCatalogToProject", () => {
       .select()
       .from(mcpCatalogInstall)
       .where(eq(mcpCatalogInstall.id, r.installId));
-    expect(a!.installedBy).toBe("auto_installer");
+    expect(a?.installedBy).toBe("auto_installer");
   });
 });

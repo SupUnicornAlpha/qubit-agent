@@ -1,9 +1,9 @@
+import { resolveProviders } from "./providers/resolve";
 /**
  * Workspace → Agent 启动注入包（说明书 + 记忆摘要 + 宇宙）。
  * Core 只吃文本/context；不把 FS 逻辑写进 reason loop。
  */
 import { openWorkspaceById } from "./service";
-import { resolveProviders } from "./providers/resolve";
 
 export type WorkspaceBootstrapPack = {
   workspaceId: string;

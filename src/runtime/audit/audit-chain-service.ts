@@ -44,14 +44,16 @@ function canonicalize(value: unknown): unknown {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>)
         .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, nested]) => [key, canonicalize(nested)]),
+        .map(([key, nested]) => [key, canonicalize(nested)])
     );
   }
   return value;
 }
 
 export function computeAuditEntryHash(entry: Omit<AuditChainEntry, "entryHash">): string {
-  return createHash("sha256").update(JSON.stringify(canonicalize(entry))).digest("hex");
+  return createHash("sha256")
+    .update(JSON.stringify(canonicalize(entry)))
+    .digest("hex");
 }
 
 export function verifyAuditEntries(entries: AuditChainEntry[]): {
@@ -72,15 +74,23 @@ export function verifyAuditEntries(entries: AuditChainEntry[]): {
     }
     if (entry.previousHash !== expectedPrevious) {
       return {
-        valid: false, sealedEntries, legacyUnsealedEntries, firstInvalidId: entry.id,
-        reason: "previous_hash_mismatch", headHash: expectedPrevious,
+        valid: false,
+        sealedEntries,
+        legacyUnsealedEntries,
+        firstInvalidId: entry.id,
+        reason: "previous_hash_mismatch",
+        headHash: expectedPrevious,
       };
     }
     const { entryHash, ...hashInput } = entry;
     if (computeAuditEntryHash(hashInput) !== entryHash) {
       return {
-        valid: false, sealedEntries, legacyUnsealedEntries, firstInvalidId: entry.id,
-        reason: "entry_hash_mismatch", headHash: expectedPrevious,
+        valid: false,
+        sealedEntries,
+        legacyUnsealedEntries,
+        firstInvalidId: entry.id,
+        reason: "entry_hash_mismatch",
+        headHash: expectedPrevious,
       };
     }
     expectedPrevious = entryHash;
@@ -110,7 +120,7 @@ export async function appendAuditLog(
     resourceId: string;
     detailJson: Record<string, unknown>;
     createdAt?: string;
-  },
+  }
 ): Promise<AuditChainEntry> {
   const chainKey = input.workflowRunId
     ? `workflow:${input.workflowRunId}`
@@ -124,16 +134,17 @@ export async function appendAuditLog(
           input.workflowRunId
             ? eq(auditLog.workflowRunId, input.workflowRunId)
             : eq(auditLog.traceId, input.traceId),
-          isNotNull(auditLog.entryHash),
-        ),
+          isNotNull(auditLog.entryHash)
+        )
       )
       .orderBy(desc(auditLog.createdAt), desc(auditLog.id))
       .limit(1);
     const requestedCreatedAt = input.createdAt ?? new Date().toISOString();
     const previousCreatedAt = previousRows[0]?.createdAt;
-    const createdAt = previousCreatedAt && requestedCreatedAt <= previousCreatedAt
-      ? new Date(new Date(previousCreatedAt).getTime() + 1).toISOString()
-      : requestedCreatedAt;
+    const createdAt =
+      previousCreatedAt && requestedCreatedAt <= previousCreatedAt
+        ? new Date(new Date(previousCreatedAt).getTime() + 1).toISOString()
+        : requestedCreatedAt;
     const entry: AuditChainEntry = {
       id: input.id ?? randomUUID(),
       traceId: input.traceId,
@@ -158,7 +169,7 @@ export async function appendAuditLog(
 
 export async function verifyAuditLogChain(
   db: DbClient,
-  input: { workflowRunId?: string; traceId?: string },
+  input: { workflowRunId?: string; traceId?: string }
 ) {
   const rows = await db
     .select()
@@ -168,7 +179,7 @@ export async function verifyAuditLogChain(
         ? eq(auditLog.workflowRunId, input.workflowRunId)
         : input.traceId
           ? eq(auditLog.traceId, input.traceId)
-          : undefined,
+          : undefined
     )
     .orderBy(asc(auditLog.createdAt), asc(auditLog.id));
   return { ...verifyAuditEntries(rows as AuditChainEntry[]), totalEntries: rows.length };

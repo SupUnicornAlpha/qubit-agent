@@ -1,6 +1,6 @@
 import { Hono } from "hono";
-import { runPlatformBootstrap } from "../runtime/bootstrap/packaged-setup";
 import { isPackagedRuntime } from "../runtime/app-paths";
+import { runPlatformBootstrap } from "../runtime/bootstrap/packaged-setup";
 import { checkPythonHealth } from "../runtime/sandbox/python-runtime";
 
 export const systemRouter = new Hono();
@@ -10,8 +10,8 @@ systemRouter.get("/info", (c) =>
     ok: true,
     data: {
       packaged: isPackagedRuntime(),
-      dataDir: process.env["QUBIT_DATA_DIR"] ?? null,
-      appRoot: process.env["QUBIT_APP_ROOT"] ?? null,
+      dataDir: process.env.QUBIT_DATA_DIR ?? null,
+      appRoot: process.env.QUBIT_APP_ROOT ?? null,
     },
   })
 );

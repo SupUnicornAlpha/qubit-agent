@@ -1,4 +1,5 @@
 import { createHmac } from "node:crypto";
+import { IM_WEBHOOK_TIMEOUT_MS, fetchWithTimeout } from "../../util/fetch-with-timeout";
 import type {
   IIntegrationAdapter,
   ParsedInboundMessage,
@@ -7,7 +8,6 @@ import type {
   WebhookVerifyContext,
   WebhookVerifyResult,
 } from "./types";
-import { fetchWithTimeout, IM_WEBHOOK_TIMEOUT_MS } from "../../util/fetch-with-timeout";
 
 /**
  * 飞书（Lark）自定义机器人 / 应用消息：
@@ -59,7 +59,7 @@ export const feishuAdapter: IIntegrationAdapter = {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         },
-        IM_WEBHOOK_TIMEOUT_MS,
+        IM_WEBHOOK_TIMEOUT_MS
       );
       const payload = (await res.json().catch(() => ({}))) as Record<string, any>;
       const okFlag =
@@ -92,7 +92,7 @@ export const feishuAdapter: IIntegrationAdapter = {
           content: JSON.stringify({ text }),
         }),
       },
-      IM_WEBHOOK_TIMEOUT_MS,
+      IM_WEBHOOK_TIMEOUT_MS
     );
     const payload = (await res.json().catch(() => ({}))) as Record<string, any>;
     const okFlag = res.ok && payload?.code === 0;

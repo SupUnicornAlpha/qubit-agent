@@ -13,13 +13,13 @@
  */
 import type { Database } from "bun:sqlite";
 
-import {
-  buildJudgeUserPrompt,
-  CONTENT_JUDGE_SYSTEM_PROMPT,
-  parseJudgeResponse,
-  type JudgeScore,
-} from "./content-judge-rubric";
 import type { ScenarioRecipe } from "../scenarios";
+import {
+  CONTENT_JUDGE_SYSTEM_PROMPT,
+  type JudgeScore,
+  buildJudgeUserPrompt,
+  parseJudgeResponse,
+} from "./content-judge-rubric";
 
 export interface JudgeClient {
   /** 调用 LLM，返回原始字符串 */
@@ -180,10 +180,7 @@ export async function collectContentJudge(
   input: ContentJudgeInput
 ): Promise<ContentJudgeResult> {
   const max = input.maxArtifacts ?? 5;
-  const artifacts = readArtifacts(sqlite, input.workflowRunId, input.scenario).slice(
-    0,
-    max
-  );
+  const artifacts = readArtifacts(sqlite, input.workflowRunId, input.scenario).slice(0, max);
   if (!artifacts.length) {
     return { "A-3": null, details: { judged: [], failed: [] } };
   }
@@ -202,8 +199,7 @@ export async function collectContentJudge(
   if (!judged.length) {
     return { "A-3": null, details: { judged: [], failed } };
   }
-  const avg =
-    judged.reduce((acc, j) => acc + j.score.overall, 0) / judged.length;
+  const avg = judged.reduce((acc, j) => acc + j.score.overall, 0) / judged.length;
   return {
     "A-3": Number(avg.toFixed(2)),
     details: { judged, failed },

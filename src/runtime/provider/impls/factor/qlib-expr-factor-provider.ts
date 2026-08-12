@@ -15,18 +15,18 @@
  * 不依赖任何 Python / Qlib 包；启动即可用。
  */
 
-import { queryBarsRange } from "../../../market/klines-query";
 import type { BarData } from "../../../../connectors/data/data.connector";
-import {
-  type FactorComputeProvider,
-  type FactorComputeRequest,
-  type FactorComputeResult,
-  type FactorComputeRow,
-  type ProviderMeta,
+import { queryBarsRange } from "../../../market/klines-query";
+import type {
+  FactorComputeProvider,
+  FactorComputeRequest,
+  FactorComputeResult,
+  FactorComputeRow,
+  ProviderMeta,
 } from "../../types";
-import { ExprEvalError, evalExpr, type PriceSeries } from "./qlib-expr/evaluator";
-import { ExprParseError, parse, type Ast } from "./qlib-expr/parser";
+import { ExprEvalError, type PriceSeries, evalExpr } from "./qlib-expr/evaluator";
 import { ExprLexError } from "./qlib-expr/lexer";
+import { type Ast, ExprParseError, parse } from "./qlib-expr/parser";
 
 const META: ProviderMeta = {
   kind: "factor_compute",
@@ -149,7 +149,7 @@ export class QlibExprFactorProvider implements FactorComputeProvider {
       }
 
       for (let i = 0; i < bars.length; i++) {
-        const date = bars[i]!.timestamp.slice(0, 10);
+        const date = bars[i]?.timestamp.slice(0, 10);
         const value = factorSeries[i];
         rows.push({
           symbol,
@@ -167,11 +167,7 @@ export class QlibExprFactorProvider implements FactorComputeProvider {
     };
   }
 
-  private emptyResult(
-    input: FactorComputeRequest,
-    t0: number,
-    _err?: string
-  ): FactorComputeResult {
+  private emptyResult(input: FactorComputeRequest, t0: number, _err?: string): FactorComputeResult {
     return {
       rows: [],
       meta: input.factorId

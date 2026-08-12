@@ -1,7 +1,7 @@
 import OpenAI from "openai";
+import { LLM_FETCH_TIMEOUT_MS, fetchWithTimeout } from "../../util/fetch-with-timeout";
 import type { RuntimeModelConfig } from "../config/model-config";
 import { executeWithPolicy } from "../external-call/policy";
-import { fetchWithTimeout, LLM_FETCH_TIMEOUT_MS } from "../../util/fetch-with-timeout";
 import { classifyLlmGatewayError } from "./llm-gateway-error";
 import { modelCapability, sanitizeChatCompletionsBody } from "./model-capabilities";
 import { readSseEvents } from "./sse-stream";
@@ -181,9 +181,21 @@ function splitForPseudoStreaming(text: string): string[] {
  *   3) 解析 tool_calls 时 args 可能是 stringified JSON（OpenAI）也可能是 object（Anthropic），
  *      统一在这里 normalize。
  */
-type OpenAIToolWire = { type: "function"; function: { name: string; description?: string; parameters: Record<string, unknown> } };
-type AnthropicToolWire = { name: string; description?: string; input_schema: Record<string, unknown> };
-type ResponsesToolWire = { type: "function"; name: string; description?: string; parameters: Record<string, unknown> };
+type OpenAIToolWire = {
+  type: "function";
+  function: { name: string; description?: string; parameters: Record<string, unknown> };
+};
+type AnthropicToolWire = {
+  name: string;
+  description?: string;
+  input_schema: Record<string, unknown>;
+};
+type ResponsesToolWire = {
+  type: "function";
+  name: string;
+  description?: string;
+  parameters: Record<string, unknown>;
+};
 
 function toOpenAITools(tools: LlmToolDefinition[] | undefined): OpenAIToolWire[] | undefined {
   if (!tools || tools.length === 0) return undefined;
@@ -250,19 +262,17 @@ function parseToolArguments(raw: unknown): { args: Record<string, unknown>; rawA
  *   帧 N: { index:0, function:{ arguments:'bol":"BTC"}' } }
  * 我们按 `index` 累积，最终在 stream 结束后 parse arguments 字符串。
  */
-type ToolCallAccumulator = Map<
-  number,
-  { id?: string; name?: string; argsBuf: string }
->;
+type ToolCallAccumulator = Map<number, { id?: string; name?: string; argsBuf: string }>;
 
-function accumulateOpenAIToolCallDelta(
-  acc: ToolCallAccumulator,
-  delta: unknown,
-): void {
+function accumulateOpenAIToolCallDelta(acc: ToolCallAccumulator, delta: unknown): void {
   if (!Array.isArray(delta)) return;
   for (const item of delta) {
     if (!item || typeof item !== "object") continue;
-    const obj = item as { index?: number; id?: string; function?: { name?: string; arguments?: string } };
+    const obj = item as {
+      index?: number;
+      id?: string;
+      function?: { name?: string; arguments?: string };
+    };
     const idx = typeof obj.index === "number" ? obj.index : 0;
     let cur = acc.get(idx);
     if (!cur) {
@@ -326,9 +336,7 @@ function normalizeUsage(usage: LlmTokenUsage | undefined): LlmTokenUsage | undef
   ) {
     return undefined;
   }
-  const total =
-    totalTokens ??
-    ((promptTokens ?? 0) + (completionTokens ?? 0) || undefined);
+  const total = totalTokens ?? ((promptTokens ?? 0) + (completionTokens ?? 0) || undefined);
   return {
     ...(promptTokens !== undefined ? { promptTokens } : {}),
     ...(completionTokens !== undefined ? { completionTokens } : {}),
@@ -372,7 +380,7 @@ export function estimateReasoningTokensFromChars(chars: number): number {
  */
 async function runOpenAI(input: LlmGatewayInput): Promise<LlmGatewayResult> {
   const cap = modelCapability(input.config.model);
-  if (cap.apiPath === "responses" && process.env["QUBIT_LLM_USE_RESPONSES_API"] !== "0") {
+  if (cap.apiPath === "responses" && process.env.QUBIT_LLM_USE_RESPONSES_API !== "0") {
     return runOpenAIResponses(input);
   }
   return runOpenAIChat(input);
@@ -383,7 +391,7 @@ async function runOpenAI(input: LlmGatewayInput): Promise<LlmGatewayResult> {
  * 推理模型走这里时通过 sanitize 兜底 strip 受限字段，但官方推荐应该走 responses。
  */
 async function runOpenAIChat(input: LlmGatewayInput): Promise<LlmGatewayResult> {
-  const apiKey = input.config.apiKey || process.env["OPENAI_API_KEY"];
+  const apiKey = input.config.apiKey || process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY is required for openai provider");
   }
@@ -450,21 +458,27 @@ async function runOpenAIChat(input: LlmGatewayInput): Promise<LlmGatewayResult> 
     const choiceFinish = chunk.choices[0]?.finish_reason;
     const fr = pickFinishReason(choiceFinish);
     if (fr) finishReason = fr;
-    const chunkUsage = (chunk as {
-      usage?: {
-        prompt_tokens?: number;
-        completion_tokens?: number;
-        total_tokens?: number;
-        prompt_tokens_details?: { cached_tokens?: number };
-        completion_tokens_details?: { reasoning_tokens?: number };
-      };
-    }).usage;
+    const chunkUsage = (
+      chunk as {
+        usage?: {
+          prompt_tokens?: number;
+          completion_tokens?: number;
+          total_tokens?: number;
+          prompt_tokens_details?: { cached_tokens?: number };
+          completion_tokens_details?: { reasoning_tokens?: number };
+        };
+      }
+    ).usage;
     if (chunkUsage) {
       const cached = chunkUsage.prompt_tokens_details?.cached_tokens;
       const reasoning = chunkUsage.completion_tokens_details?.reasoning_tokens;
       usage = {
-        ...(chunkUsage.prompt_tokens !== undefined ? { promptTokens: chunkUsage.prompt_tokens } : {}),
-        ...(chunkUsage.completion_tokens !== undefined ? { completionTokens: chunkUsage.completion_tokens } : {}),
+        ...(chunkUsage.prompt_tokens !== undefined
+          ? { promptTokens: chunkUsage.prompt_tokens }
+          : {}),
+        ...(chunkUsage.completion_tokens !== undefined
+          ? { completionTokens: chunkUsage.completion_tokens }
+          : {}),
         ...(chunkUsage.total_tokens !== undefined ? { totalTokens: chunkUsage.total_tokens } : {}),
         ...(cached !== undefined ? { cachedPromptTokens: cached } : {}),
         ...(reasoning !== undefined ? { reasoningTokens: reasoning } : {}),
@@ -493,14 +507,14 @@ async function runOpenAIChat(input: LlmGatewayInput): Promise<LlmGatewayResult> 
  *   ENV `QUBIT_LLM_RESPONSES_NON_STREAM="1"` 可回退非流式（debug / 老代理兜底）。
  */
 async function runOpenAIResponses(input: LlmGatewayInput): Promise<LlmGatewayResult> {
-  const apiKey = input.config.apiKey || process.env["OPENAI_API_KEY"];
+  const apiKey = input.config.apiKey || process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY is required for openai provider");
   }
   const baseUrl = (input.config.baseUrl ?? "https://api.openai.com").replace(/\/+$/, "");
   const sampling = input.sampling ?? {};
   const cap = modelCapability(input.config.model);
-  const useStream = process.env["QUBIT_LLM_RESPONSES_NON_STREAM"] !== "1";
+  const useStream = process.env.QUBIT_LLM_RESPONSES_NON_STREAM !== "1";
   /**
    * Responses 入参用 `input` 数组而不是 `messages`；system 用 role:system 即可，
    * 行为与 chat.completions 等价。
@@ -518,16 +532,16 @@ async function runOpenAIResponses(input: LlmGatewayInput): Promise<LlmGatewayRes
   /** P3-3：可选 tools。Responses 用 type:'function' 风格但字段在 top-level（不是 nested function 对象）。 */
   const respTools = toResponsesTools(input.tools);
   if (respTools) {
-    reqBody["tools"] = respTools;
+    reqBody.tools = respTools;
   }
   if (cap.reasoningEffort) {
-    reqBody["reasoning"] = { effort: sampling.reasoningEffort ?? "medium" };
+    reqBody.reasoning = { effort: sampling.reasoningEffort ?? "medium" };
   }
   if (cap.customTemperature && sampling.temperature !== undefined) {
-    reqBody["temperature"] = sampling.temperature;
+    reqBody.temperature = sampling.temperature;
   }
   if (cap.customTopP && sampling.topP !== undefined) {
-    reqBody["top_p"] = sampling.topP;
+    reqBody.top_p = sampling.topP;
   }
   const startedAt = Date.now();
   const res = await fetchWithTimeout(
@@ -542,7 +556,7 @@ async function runOpenAIResponses(input: LlmGatewayInput): Promise<LlmGatewayRes
       body: JSON.stringify(reqBody),
       ...(input.signal ? { signal: input.signal } : {}),
     },
-    LLM_FETCH_TIMEOUT_MS,
+    LLM_FETCH_TIMEOUT_MS
   );
   if (!res.ok) {
     throw new Error(`OpenAI Responses request failed: ${res.status} ${await res.text()}`);
@@ -626,7 +640,7 @@ function pickResponsesFinishReason(json: ResponsesPayload): string | undefined {
 
 async function consumeResponsesNonStream(
   res: Response,
-  startedAt: number,
+  startedAt: number
 ): Promise<LlmGatewayResult> {
   const json = (await res.json()) as ResponsesPayload;
   /** `output_text` 便捷字段；兜底再走 output[].content[].text 自己拼。 */
@@ -664,7 +678,7 @@ async function consumeResponsesNonStream(
 async function consumeResponsesStream(
   body: ReadableStream<Uint8Array>,
   input: LlmGatewayInput,
-  startedAt: number,
+  startedAt: number
 ): Promise<LlmGatewayResult> {
   let answer = "";
   let firstTokenLatencyMs: number | undefined;
@@ -690,12 +704,12 @@ async function consumeResponsesStream(
       continue;
     }
     /** Responses 同时把 type 写在 event line 与 data.type，二者通常一致 */
-    const t = (parsed["type"] as string | undefined) ?? ev.event ?? "";
+    const t = (parsed.type as string | undefined) ?? ev.event ?? "";
     if (t === "response.created") {
-      const r = parsed["response"] as Record<string, unknown> | undefined;
-      if (r && typeof r["id"] === "string") responseId = r["id"] as string;
+      const r = parsed.response as Record<string, unknown> | undefined;
+      if (r && typeof r.id === "string") responseId = r.id as string;
     } else if (t === "response.output_text.delta") {
-      const delta = parsed["delta"];
+      const delta = parsed.delta;
       if (typeof delta === "string" && delta.length > 0) {
         if (firstTokenLatencyMs === undefined) {
           firstTokenLatencyMs = Date.now() - startedAt;
@@ -708,15 +722,13 @@ async function consumeResponsesStream(
       t === "response.reasoning_text.delta"
     ) {
       /** o-series / gpt-5：推理摘要走独立事件，不进正文。 */
-      const delta = parsed["delta"];
+      const delta = parsed.delta;
       if (typeof delta === "string" && delta.length > 0) {
         emitReasoningToken(input, delta);
       }
     } else if (t === "response.output_item.added") {
-      const item = parsed["item"] as
-        | { type?: string; call_id?: string; name?: string }
-        | undefined;
-      const idx = typeof parsed["output_index"] === "number" ? (parsed["output_index"] as number) : 0;
+      const item = parsed.item as { type?: string; call_id?: string; name?: string } | undefined;
+      const idx = typeof parsed.output_index === "number" ? (parsed.output_index as number) : 0;
       if (item && item.type === "function_call") {
         const cur = respToolAcc.get(idx) ?? { argsBuf: "" };
         if (typeof item.call_id === "string") cur.id = item.call_id;
@@ -724,15 +736,15 @@ async function consumeResponsesStream(
         respToolAcc.set(idx, cur);
       }
     } else if (t === "response.function_call_arguments.delta") {
-      const idx = typeof parsed["output_index"] === "number" ? (parsed["output_index"] as number) : 0;
-      const delta = parsed["delta"];
+      const idx = typeof parsed.output_index === "number" ? (parsed.output_index as number) : 0;
+      const delta = parsed.delta;
       if (typeof delta === "string") {
         const cur = respToolAcc.get(idx) ?? { argsBuf: "" };
         cur.argsBuf += delta;
         respToolAcc.set(idx, cur);
       }
     } else if (t === "response.completed") {
-      const r = parsed["response"] as ResponsesPayload | undefined;
+      const r = parsed.response as ResponsesPayload | undefined;
       if (r) {
         if (typeof r.id === "string" && !responseId) responseId = r.id;
         const u = pickResponsesUsage(r);
@@ -743,8 +755,8 @@ async function consumeResponsesStream(
         toolCallsFromCompleted = pickResponsesToolCalls(r);
       }
     } else if (t === "response.failed" || t === "response.error" || t === "error") {
-      const err = parsed["error"] as Record<string, unknown> | undefined;
-      const msg = (err?.["message"] as string | undefined) ?? "responses stream error";
+      const err = parsed.error as Record<string, unknown> | undefined;
+      const msg = (err?.message as string | undefined) ?? "responses stream error";
       throw new Error(`OpenAI Responses stream error: ${msg}`);
     }
   }
@@ -783,7 +795,10 @@ async function consumeResponsesStream(
 }
 
 export function normalizeOpenAICompatibleBaseUrl(baseUrl: string): string {
-  return baseUrl.trim().replace(/\/+$/, "").replace(/\/chat\/completions$/i, "");
+  return baseUrl
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\/chat\/completions$/i, "");
 }
 
 export function resolveOpenAICompatibleChatCompletionsUrl(baseUrl: string): string {
@@ -854,8 +869,7 @@ async function runOpenAICompatible(input: LlmGatewayInput): Promise<LlmGatewayRe
     stream_options: { include_usage: true },
   });
   const compatNonStream =
-    process.env["QUBIT_LLM_COMPAT_NON_STREAM"] === "1" ||
-    process.env["QUBIT_LLM_COMPAT_STREAM"] === "0";
+    process.env.QUBIT_LLM_COMPAT_NON_STREAM === "1" || process.env.QUBIT_LLM_COMPAT_STREAM === "0";
   if (compatNonStream) {
     return runOpenAICompatibleNonStream(input, {
       baseUrl: normalizedBaseUrl,
@@ -907,21 +921,27 @@ async function runOpenAICompatible(input: LlmGatewayInput): Promise<LlmGatewayRe
     }
     const fr = pickFinishReason(chunk.choices[0]?.finish_reason);
     if (fr) finishReason = fr;
-    const chunkUsage = (chunk as {
-      usage?: {
-        prompt_tokens?: number;
-        completion_tokens?: number;
-        total_tokens?: number;
-        prompt_tokens_details?: { cached_tokens?: number };
-        completion_tokens_details?: { reasoning_tokens?: number };
-      };
-    }).usage;
+    const chunkUsage = (
+      chunk as {
+        usage?: {
+          prompt_tokens?: number;
+          completion_tokens?: number;
+          total_tokens?: number;
+          prompt_tokens_details?: { cached_tokens?: number };
+          completion_tokens_details?: { reasoning_tokens?: number };
+        };
+      }
+    ).usage;
     if (chunkUsage) {
       const cached = chunkUsage.prompt_tokens_details?.cached_tokens;
       const reasoning = chunkUsage.completion_tokens_details?.reasoning_tokens;
       usage = {
-        ...(chunkUsage.prompt_tokens !== undefined ? { promptTokens: chunkUsage.prompt_tokens } : {}),
-        ...(chunkUsage.completion_tokens !== undefined ? { completionTokens: chunkUsage.completion_tokens } : {}),
+        ...(chunkUsage.prompt_tokens !== undefined
+          ? { promptTokens: chunkUsage.prompt_tokens }
+          : {}),
+        ...(chunkUsage.completion_tokens !== undefined
+          ? { completionTokens: chunkUsage.completion_tokens }
+          : {}),
         ...(chunkUsage.total_tokens !== undefined ? { totalTokens: chunkUsage.total_tokens } : {}),
         ...(cached !== undefined ? { cachedPromptTokens: cached } : {}),
         ...(reasoning !== undefined ? { reasoningTokens: reasoning } : {}),
@@ -965,7 +985,7 @@ async function runOpenAICompatibleNonStream(
     ...resolved.requestBody,
     stream: false,
   };
-  delete (body as Record<string, unknown>)["stream_options"];
+  delete (body as Record<string, unknown>).stream_options;
   const res = await fetchWithTimeout(
     resolveOpenAICompatibleChatCompletionsUrl(resolved.baseUrl),
     {
@@ -1041,7 +1061,9 @@ async function runOpenAICompatibleNonStream(
   const reasoning = json.usage?.completion_tokens_details?.reasoning_tokens;
   const usage: LlmTokenUsage | undefined = json.usage
     ? {
-        ...(json.usage.prompt_tokens !== undefined ? { promptTokens: json.usage.prompt_tokens } : {}),
+        ...(json.usage.prompt_tokens !== undefined
+          ? { promptTokens: json.usage.prompt_tokens }
+          : {}),
         ...(json.usage.completion_tokens !== undefined
           ? { completionTokens: json.usage.completion_tokens }
           : {}),
@@ -1092,8 +1114,8 @@ async function runOpenAICompatibleNonStream(
  * 关闭：不传 ENV / 短 prompt → 与 P0/P1/P2 行为完全一致。
  */
 function shouldEnableAnthropicPromptCache(systemPrompt: string): boolean {
-  if (process.env["QUBIT_LLM_ANTHROPIC_PROMPT_CACHE"] === "1") return true;
-  const raw = process.env["QUBIT_LLM_ANTHROPIC_PROMPT_CACHE_MIN_CHARS"];
+  if (process.env.QUBIT_LLM_ANTHROPIC_PROMPT_CACHE === "1") return true;
+  const raw = process.env.QUBIT_LLM_ANTHROPIC_PROMPT_CACHE_MIN_CHARS;
   if (raw && raw.trim()) {
     const n = Number(raw);
     if (Number.isFinite(n) && n >= 0 && systemPrompt.length >= n) return true;
@@ -1102,7 +1124,7 @@ function shouldEnableAnthropicPromptCache(systemPrompt: string): boolean {
 }
 
 async function runAnthropic(input: LlmGatewayInput): Promise<LlmGatewayResult> {
-  const apiKey = input.config.apiKey || process.env["ANTHROPIC_API_KEY"];
+  const apiKey = input.config.apiKey || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     throw new Error("ANTHROPIC_API_KEY is required for anthropic provider");
   }
@@ -1117,7 +1139,7 @@ async function runAnthropic(input: LlmGatewayInput): Promise<LlmGatewayResult> {
    */
   const maxTokens = sampling.maxOutputTokens ?? 4096;
   const temperature = sampling.temperature ?? 0.1;
-  const useStream = process.env["QUBIT_LLM_ANTHROPIC_NON_STREAM"] !== "1";
+  const useStream = process.env.QUBIT_LLM_ANTHROPIC_NON_STREAM !== "1";
   const useCaching = shouldEnableAnthropicPromptCache(input.systemPrompt);
   /**
    * caching 启用时 system 必须是带 cache_control 的 block 数组；不启用走老的
@@ -1157,7 +1179,7 @@ async function runAnthropic(input: LlmGatewayInput): Promise<LlmGatewayResult> {
       }),
       ...(input.signal ? { signal: input.signal } : {}),
     },
-    LLM_FETCH_TIMEOUT_MS,
+    LLM_FETCH_TIMEOUT_MS
   );
   if (!res.ok) {
     throw new Error(`Anthropic request failed: ${res.status} ${await res.text()}`);
@@ -1174,7 +1196,7 @@ async function runAnthropic(input: LlmGatewayInput): Promise<LlmGatewayResult> {
 
 async function consumeAnthropicNonStream(
   res: Response,
-  startedAt: number,
+  startedAt: number
 ): Promise<LlmGatewayResult> {
   const json = (await res.json()) as {
     id?: string;
@@ -1195,7 +1217,10 @@ async function consumeAnthropicNonStream(
     stop_reason?: string;
   };
   const answer =
-    json.content?.filter((c) => c.type === "text").map((c) => c.text ?? "").join("") ?? "";
+    json.content
+      ?.filter((c) => c.type === "text")
+      .map((c) => c.text ?? "")
+      .join("") ?? "";
   /** P3-3：抽 tool_use blocks → LlmToolCallRequest[] */
   const toolCalls: LlmToolCallRequest[] | undefined = (() => {
     const blocks = json.content?.filter((c) => c.type === "tool_use") ?? [];
@@ -1217,7 +1242,9 @@ async function consumeAnthropicNonStream(
   const usage: LlmTokenUsage | undefined = rawUsage
     ? {
         ...(rawUsage.input_tokens !== undefined ? { promptTokens: rawUsage.input_tokens } : {}),
-        ...(rawUsage.output_tokens !== undefined ? { completionTokens: rawUsage.output_tokens } : {}),
+        ...(rawUsage.output_tokens !== undefined
+          ? { completionTokens: rawUsage.output_tokens }
+          : {}),
         ...(rawUsage.cache_read_input_tokens !== undefined
           ? { cachedPromptTokens: rawUsage.cache_read_input_tokens }
           : {}),
@@ -1241,7 +1268,7 @@ async function consumeAnthropicNonStream(
 async function consumeAnthropicStream(
   body: ReadableStream<Uint8Array>,
   input: LlmGatewayInput,
-  startedAt: number,
+  startedAt: number
 ): Promise<LlmGatewayResult> {
   let answer = "";
   let firstTokenLatencyMs: number | undefined;
@@ -1271,48 +1298,47 @@ async function consumeAnthropicStream(
     } catch {
       continue;
     }
-    const t = (parsed["type"] as string | undefined) ?? ev.event;
+    const t = (parsed.type as string | undefined) ?? ev.event;
     switch (t) {
       case "message_start": {
-        const msg = parsed["message"] as Record<string, unknown> | undefined;
+        const msg = parsed.message as Record<string, unknown> | undefined;
         if (msg) {
-          if (typeof msg["id"] === "string") responseId = msg["id"] as string;
-          const u = msg["usage"] as Record<string, unknown> | undefined;
+          if (typeof msg.id === "string") responseId = msg.id as string;
+          const u = msg.usage as Record<string, unknown> | undefined;
           if (u) {
-            if (typeof u["input_tokens"] === "number") promptTokens = u["input_tokens"];
-            if (typeof u["cache_read_input_tokens"] === "number") {
-              cachedPromptTokens = u["cache_read_input_tokens"];
+            if (typeof u.input_tokens === "number") promptTokens = u.input_tokens;
+            if (typeof u.cache_read_input_tokens === "number") {
+              cachedPromptTokens = u.cache_read_input_tokens;
             }
-            if (typeof u["cache_creation_input_tokens"] === "number") {
-              cacheCreationInputTokens = u["cache_creation_input_tokens"];
+            if (typeof u.cache_creation_input_tokens === "number") {
+              cacheCreationInputTokens = u.cache_creation_input_tokens;
             }
-            if (typeof u["output_tokens"] === "number") outputTokens = u["output_tokens"];
+            if (typeof u.output_tokens === "number") outputTokens = u.output_tokens;
           }
         }
         break;
       }
       case "content_block_start": {
-        const block = parsed["content_block"] as Record<string, unknown> | undefined;
-        const idx =
-          typeof parsed["index"] === "number" ? (parsed["index"] as number) : 0;
+        const block = parsed.content_block as Record<string, unknown> | undefined;
+        const idx = typeof parsed.index === "number" ? (parsed.index as number) : 0;
         if (
           block &&
-          block["type"] === "tool_use" &&
-          typeof block["id"] === "string" &&
-          typeof block["name"] === "string"
+          block.type === "tool_use" &&
+          typeof block.id === "string" &&
+          typeof block.name === "string"
         ) {
           anthToolAcc.set(idx, {
-            id: block["id"] as string,
-            name: block["name"] as string,
+            id: block.id as string,
+            name: block.name as string,
             argsBuf: "",
           });
         }
         break;
       }
       case "content_block_delta": {
-        const delta = parsed["delta"] as Record<string, unknown> | undefined;
-        if (delta && delta["type"] === "text_delta" && typeof delta["text"] === "string") {
-          const token = delta["text"] as string;
+        const delta = parsed.delta as Record<string, unknown> | undefined;
+        if (delta && delta.type === "text_delta" && typeof delta.text === "string") {
+          const token = delta.text as string;
           if (token) {
             if (firstTokenLatencyMs === undefined) {
               firstTokenLatencyMs = Date.now() - startedAt;
@@ -1322,37 +1348,36 @@ async function consumeAnthropicStream(
           }
         } else if (
           delta &&
-          (delta["type"] === "thinking_delta" || delta["type"] === "reasoning_delta") &&
-          typeof delta["thinking"] === "string"
+          (delta.type === "thinking_delta" || delta.type === "reasoning_delta") &&
+          typeof delta.thinking === "string"
         ) {
-          emitReasoningToken(input, delta["thinking"] as string);
+          emitReasoningToken(input, delta.thinking as string);
         } else if (
           delta &&
-          (delta["type"] === "thinking_delta" || delta["type"] === "reasoning_delta") &&
-          typeof delta["text"] === "string"
+          (delta.type === "thinking_delta" || delta.type === "reasoning_delta") &&
+          typeof delta.text === "string"
         ) {
           /** 部分代理把 thinking 放在 text 字段 */
-          emitReasoningToken(input, delta["text"] as string);
+          emitReasoningToken(input, delta.text as string);
         } else if (
           delta &&
-          delta["type"] === "input_json_delta" &&
-          typeof delta["partial_json"] === "string"
+          delta.type === "input_json_delta" &&
+          typeof delta.partial_json === "string"
         ) {
-          const idx =
-            typeof parsed["index"] === "number" ? (parsed["index"] as number) : 0;
+          const idx = typeof parsed.index === "number" ? (parsed.index as number) : 0;
           const cur = anthToolAcc.get(idx);
-          if (cur) cur.argsBuf += delta["partial_json"] as string;
+          if (cur) cur.argsBuf += delta.partial_json as string;
         }
         break;
       }
       case "message_delta": {
-        const delta = parsed["delta"] as Record<string, unknown> | undefined;
-        if (delta && typeof delta["stop_reason"] === "string") {
-          finishReason = delta["stop_reason"] as string;
+        const delta = parsed.delta as Record<string, unknown> | undefined;
+        if (delta && typeof delta.stop_reason === "string") {
+          finishReason = delta.stop_reason as string;
         }
-        const u = parsed["usage"] as Record<string, unknown> | undefined;
-        if (u && typeof u["output_tokens"] === "number") {
-          outputTokens = u["output_tokens"];
+        const u = parsed.usage as Record<string, unknown> | undefined;
+        if (u && typeof u.output_tokens === "number") {
+          outputTokens = u.output_tokens;
         }
         break;
       }
@@ -1431,7 +1456,7 @@ async function runOllama(input: LlmGatewayInput): Promise<LlmGatewayResult> {
       }),
       ...(input.signal ? { signal: input.signal } : {}),
     },
-    LLM_FETCH_TIMEOUT_MS,
+    LLM_FETCH_TIMEOUT_MS
   );
   if (!res.ok) {
     throw new Error(`Ollama request failed: ${res.status} ${await res.text()}`);
@@ -1471,10 +1496,10 @@ function runMock(input: LlmGatewayInput): LlmGatewayResult {
 
   const answer = [
     `【Mock 模式】收到任务：「${goal}」`,
-    ``,
-    `当前 LLM 提供商为 mock，未调用真实 AI 模型。`,
-    `请在「配置中心 → 模型配置」中填写真实 API Key（支持 OpenAI / DeepSeek / Qwen 等），`,
-    `保存后重新发送消息即可获得真实 AI 回复。`,
+    "",
+    "当前 LLM 提供商为 mock，未调用真实 AI 模型。",
+    "请在「配置中心 → 模型配置」中填写真实 API Key（支持 OpenAI / DeepSeek / Qwen 等），",
+    "保存后重新发送消息即可获得真实 AI 回复。",
   ].join("\n");
 
   for (const token of splitForPseudoStreaming(answer)) {

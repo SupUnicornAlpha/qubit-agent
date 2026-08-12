@@ -27,11 +27,8 @@ import { and, eq, gte, inArray, sql } from "drizzle-orm";
 
 import { getDb } from "../../db/sqlite/client.js";
 import { agentSkill, agentSkillRun, skillRecallLog } from "../../db/sqlite/schema.js";
-import {
-  getSelfEvolveConfig,
-  selfEvolveDisabledReason,
-} from "../config/self-evolve-config.js";
-import { getExperienceBus, type ExperienceBus } from "../experience/experience-bus.js";
+import { getSelfEvolveConfig, selfEvolveDisabledReason } from "../config/self-evolve-config.js";
+import { type ExperienceBus, getExperienceBus } from "../experience/experience-bus.js";
 import { approveSkillPromotion } from "../skill-promoter/promoter-review.js";
 
 export interface SkillBaselineObserverOptions {
@@ -133,10 +130,7 @@ export class SkillBaselineObserver {
         })
         .from(skillRecallLog)
         .where(
-          and(
-            inArray(skillRecallLog.skillId, skillIds),
-            gte(skillRecallLog.createdAt, cutoff)
-          )
+          and(inArray(skillRecallLog.skillId, skillIds), gte(skillRecallLog.createdAt, cutoff))
         )
         .all();
       const recallBySkill = new Map<string, number>();
@@ -215,7 +209,9 @@ export class SkillBaselineObserver {
           if (!meetsRecall) why.push(`recall=${recallCount}<${minRecall}`);
           if (!meetsSignaled) why.push(`signaled=${signaled}<${minSignaled}`);
           if (meetsSignaled && !meetsSuccess)
-            why.push(`successRate=${(successRate * 100).toFixed(0)}%<${(minSuccess * 100).toFixed(0)}%`);
+            why.push(
+              `successRate=${(successRate * 100).toFixed(0)}%<${(minSuccess * 100).toFixed(0)}%`
+            );
           summary.notReady += 1;
           summary.results.push({
             skillId: cand.id,

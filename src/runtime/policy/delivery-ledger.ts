@@ -2,8 +2,8 @@
  * Append-only DeliveryVerdict ledger (workflow_delivery_verdict).
  */
 
-import type { DeliveryVerdict } from "./types";
 import { getRuntimeSqlite } from "./repositories/runtime-sqlite";
+import type { DeliveryVerdict } from "./types";
 
 export async function persistDeliveryVerdict(input: {
   workflowId: string;

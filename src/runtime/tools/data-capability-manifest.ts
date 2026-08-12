@@ -1,5 +1,5 @@
-import { resolveTickerMarket, type MarketCode } from "../market/resolve-ticker-market";
 import { loadBuiltinConnectorSettings } from "../config/builtin-connector-settings";
+import { type MarketCode, resolveTickerMarket } from "../market/resolve-ticker-market";
 
 export type DataCapabilityStatus = "available" | "unconfigured" | "no_coverage";
 

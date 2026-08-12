@@ -7,14 +7,14 @@
 
 import { join } from "node:path";
 import { and, desc, eq } from "drizzle-orm";
+import { config } from "../../config";
 import type { BarData, FetchBarsParams } from "../../connectors/data/data.connector";
 import { PythonConnectorBridgeImpl } from "../../connectors/python-bridge";
-import { config } from "../../config";
 import { getDb } from "../../db/sqlite/client";
 import { brokerAccount } from "../../db/sqlite/schema";
 import type { SuperMindProviderConfig } from "../../types/broker";
-import type { BuiltinConnectorInitConfigs } from "../config/builtin-connector-settings";
 import { getPythonConnectorsDir, resolvePythonBin } from "../app-paths";
+import type { BuiltinConnectorInitConfigs } from "../config/builtin-connector-settings";
 
 let bridge: PythonConnectorBridgeImpl | null = null;
 let bridgeInit: Promise<PythonConnectorBridgeImpl> | null = null;
@@ -82,9 +82,7 @@ function connectorRunnerPath(): string {
   return join(getPythonConnectorsDir(), "connector_runner.py");
 }
 
-async function getIfindBridge(
-  creds: IfindCredentials
-): Promise<PythonConnectorBridgeImpl> {
+async function getIfindBridge(creds: IfindCredentials): Promise<PythonConnectorBridgeImpl> {
   const key = `${creds.username}:${creds.password.length}`;
   if (bridge && bridgeKey === key) return bridge;
   if (bridgeInit && bridgeKey === key) return bridgeInit;

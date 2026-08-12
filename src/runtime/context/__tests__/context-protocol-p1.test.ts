@@ -6,13 +6,13 @@ import { describe, expect, test } from "bun:test";
 import { InMemoryExperienceStore } from "../../experience/experience-store";
 import { evaluateDecay } from "../../experience/pipes/janitor";
 import { parseSlotContextParam, renderSlotContextForPrompt } from "../handoff";
+import { promoteStrategyRecipes } from "../promote-strategy-recipe";
 import {
   applyToolResultToWorkingMemory,
   createEmptyWorkingMemory,
   extractFinanceRefsFromPayload,
   renderWorkingMemoryForPrompt,
 } from "../working-memory";
-import { promoteStrategyRecipes } from "../promote-strategy-recipe";
 
 describe("WorkingMemory", () => {
   test("工具成功写入 trailStub + financeRefs", () => {
@@ -162,7 +162,7 @@ describe("promoteStrategyRecipes", () => {
       // useCount set via update
     });
     const rows = await store.query({ subKind: "strategy_recipe", scopeId: "proj-x" });
-    const good = rows.find((r) => r.metadataJson["compositionId"] === "comp-1");
+    const good = rows.find((r) => r.metadataJson.compositionId === "comp-1");
     if (good) await store.update(good.id, { useCount: 2 });
 
     const result = await promoteStrategyRecipes({

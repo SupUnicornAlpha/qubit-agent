@@ -6,11 +6,8 @@ import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "../../../db/sqlite/client";
 import { brokerAccount, brokerOrderEvent } from "../../../db/sqlite/schema";
 import type { BrokerProvider, BrokerProviderConfig } from "../../../types/broker";
+import { applyFutuAccountDefaults, ensureFutuRuntime } from "../../market/futu-runtime";
 import { brokerHealthCheck, connectorForAccount, resolveBrokerAccount } from "./broker-service";
-import {
-  applyFutuAccountDefaults,
-  ensureFutuRuntime,
-} from "../../market/futu-runtime";
 
 export async function listBrokerAccounts(provider?: BrokerProvider) {
   const db = await getDb();
@@ -46,7 +43,12 @@ export async function upsertBrokerAccount(input: {
   const existed = await db
     .select()
     .from(brokerAccount)
-    .where(and(eq(brokerAccount.provider, input.provider), eq(brokerAccount.accountRef, input.accountRef)))
+    .where(
+      and(
+        eq(brokerAccount.provider, input.provider),
+        eq(brokerAccount.accountRef, input.accountRef)
+      )
+    )
     .limit(1);
   if (existed[0]) {
     await db
@@ -60,7 +62,11 @@ export async function upsertBrokerAccount(input: {
         updatedAt: new Date().toISOString(),
       })
       .where(eq(brokerAccount.id, existed[0].id));
-    const rows = await db.select().from(brokerAccount).where(eq(brokerAccount.id, existed[0].id)).limit(1);
+    const rows = await db
+      .select()
+      .from(brokerAccount)
+      .where(eq(brokerAccount.id, existed[0].id))
+      .limit(1);
     if (input.provider === "futu" && (input.enabled ?? existed[0].enabled) !== false) {
       void ensureFutuRuntime().catch(() => undefined);
     }
@@ -85,7 +91,10 @@ export async function upsertBrokerAccount(input: {
   return rows[0];
 }
 
-export async function checkBrokerAccountHealth(input: { provider: BrokerProvider; accountRef: string }) {
+export async function checkBrokerAccountHealth(input: {
+  provider: BrokerProvider;
+  accountRef: string;
+}) {
   const db = await getDb();
   const account = await resolveBrokerAccount(input.provider, input.accountRef);
   if (!account) throw new Error("broker account not found");
@@ -109,7 +118,11 @@ export async function checkBrokerAccountHealth(input: { provider: BrokerProvider
     eventType: "health_check",
     brokerOrderId: null,
     status: health.status,
-    detailJson: { accountRef: account.accountRef, message: health.message, latencyMs: health.latencyMs },
+    detailJson: {
+      accountRef: account.accountRef,
+      message: health.message,
+      latencyMs: health.latencyMs,
+    },
     eventAt: health.checkedAt,
   });
   return health;
@@ -117,7 +130,11 @@ export async function checkBrokerAccountHealth(input: { provider: BrokerProvider
 
 export async function listBrokerEvents(provider?: BrokerProvider, limit = 100) {
   const db = await getDb();
-  const rows = await db.select().from(brokerOrderEvent).orderBy(desc(brokerOrderEvent.createdAt)).limit(limit);
+  const rows = await db
+    .select()
+    .from(brokerOrderEvent)
+    .orderBy(desc(brokerOrderEvent.createdAt))
+    .limit(limit);
   if (!provider) return rows;
   return rows.filter((row) => row.provider === provider);
 }

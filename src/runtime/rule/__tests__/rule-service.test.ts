@@ -1,10 +1,10 @@
-import { randomUUID } from "node:crypto";
 import { beforeAll, describe, expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { getDb } from "../../../db/sqlite/client";
-import * as schema from "../../../db/sqlite/schema";
 import { runMigrations } from "../../../db/sqlite/migrate";
-import { bootstrapProviders, _resetBootstrapForTests } from "../../provider/bootstrap";
-import { ruleService, RuleServiceError } from "../rule-service";
+import * as schema from "../../../db/sqlite/schema";
+import { _resetBootstrapForTests, bootstrapProviders } from "../../provider/bootstrap";
+import { RuleServiceError, ruleService } from "../rule-service";
 
 let projectId = "";
 
@@ -33,7 +33,12 @@ describe("RuleService", () => {
       appliesTo: "score",
       dsl: {
         when: { "<": [{ factor: "pe" }, 30] },
-        score: { weighted_sum: [{ factor: "mom", w: 0.7 }, { factor: "quality", w: 0.3 }] },
+        score: {
+          weighted_sum: [
+            { factor: "mom", w: 0.7 },
+            { factor: "quality", w: 0.3 },
+          ],
+        },
       },
     });
     expect(r.id).toBeTruthy();

@@ -21,12 +21,7 @@ interface ChipKline {
   turnoverRate: number;
 }
 
-function costByChip(
-  xdata: number[],
-  minPrice: number,
-  accuracy: number,
-  target: number
-): number {
+function costByChip(xdata: number[], minPrice: number, accuracy: number, target: number): number {
   let total = 0;
   for (let index = 0; index < xdata.length; index += 1) {
     const value = Number(xdata[index]?.toPrecision(12) ?? 0);
@@ -56,10 +51,7 @@ export function computeChipDistributionPoint(
       FACTOR - 1,
       Math.max(0, Math.floor((row.high - minPrice) / accuracy))
     );
-    const lowIndex = Math.min(
-      FACTOR - 1,
-      Math.max(0, Math.ceil((row.low - minPrice) / accuracy))
-    );
+    const lowIndex = Math.min(FACTOR - 1, Math.max(0, Math.ceil((row.low - minPrice) / accuracy)));
     const peakIndex = Math.min(
       FACTOR - 1,
       Math.max(0, Math.floor((average - minPrice) / accuracy))
@@ -81,25 +73,18 @@ export function computeChipDistributionPoint(
         contribution =
           Math.abs(average - row.low) < 1e-8
             ? peakFactor * turnoverRate
-            : ((currentPrice - row.low) / (average - row.low)) *
-              peakFactor *
-              turnoverRate;
+            : ((currentPrice - row.low) / (average - row.low)) * peakFactor * turnoverRate;
       } else {
         contribution =
           Math.abs(row.high - average) < 1e-8
             ? peakFactor * turnoverRate
-            : ((row.high - currentPrice) / (row.high - average)) *
-              peakFactor *
-              turnoverRate;
+            : ((row.high - currentPrice) / (row.high - average)) * peakFactor * turnoverRate;
       }
       xdata[bucket] = (xdata[bucket] ?? 0) + contribution;
     }
   }
 
-  const totalChips = xdata.reduce(
-    (sum, value) => sum + Number(value.toPrecision(12)),
-    0
-  );
+  const totalChips = xdata.reduce((sum, value) => sum + Number(value.toPrecision(12)), 0);
   const currentPrice = records[index]?.close ?? 0;
   let profitable = 0;
   for (let bucket = 0; bucket < FACTOR; bucket += 1) {
@@ -109,18 +94,8 @@ export function computeChipDistributionPoint(
   }
 
   const percentile = (percent: number) => {
-    const lower = costByChip(
-      xdata,
-      minPrice,
-      accuracy,
-      totalChips * ((1 - percent) / 2)
-    );
-    const upper = costByChip(
-      xdata,
-      minPrice,
-      accuracy,
-      totalChips * ((1 + percent) / 2)
-    );
+    const lower = costByChip(xdata, minPrice, accuracy, totalChips * ((1 - percent) / 2));
+    const upper = costByChip(xdata, minPrice, accuracy, totalChips * ((1 + percent) / 2));
     return {
       lower: Number(lower.toFixed(2)),
       upper: Number(upper.toFixed(2)),
@@ -135,9 +110,7 @@ export function computeChipDistributionPoint(
     source: "eastmoney_computed",
     date: records[index]?.date ?? "",
     winnerRate: totalChips === 0 ? 0 : profitable / totalChips,
-    averageCost: Number(
-      costByChip(xdata, minPrice, accuracy, totalChips * 0.5).toFixed(2)
-    ),
+    averageCost: Number(costByChip(xdata, minPrice, accuracy, totalChips * 0.5).toFixed(2)),
     cost90Low: range90.lower,
     cost90High: range90.upper,
     concentration90: range90.concentration,
@@ -179,18 +152,13 @@ async function fetchTencentChipKlines(
     fltt: "2",
   });
   const [quoteResponse, klineResponse] = await Promise.all([
-    marketDataFetch(
-      "eastmoney",
-      settings,
-      `${DELAY_QUOTE_ENDPOINT}?${quoteQuery.toString()}`,
-      {
-        headers: {
-          Accept: "application/json",
-          Referer: "https://quote.eastmoney.com/",
-          "User-Agent": "Mozilla/5.0 (compatible; QubitAgent/1.0)",
-        },
-      }
-    ),
+    marketDataFetch("eastmoney", settings, `${DELAY_QUOTE_ENDPOINT}?${quoteQuery.toString()}`, {
+      headers: {
+        Accept: "application/json",
+        Referer: "https://quote.eastmoney.com/",
+        "User-Agent": "Mozilla/5.0 (compatible; QubitAgent/1.0)",
+      },
+    }),
     marketDataFetch(
       "akshare_tencent",
       settings,
@@ -233,13 +201,9 @@ async function fetchTencentChipKlines(
         low: Number(parts[4]),
         turnoverRate: (volumeLots * 100 * 100) / floatShares,
       };
-      return [
-        result.open,
-        result.close,
-        result.high,
-        result.low,
-        result.turnoverRate,
-      ].every(Number.isFinite)
+      return [result.open, result.close, result.high, result.low, result.turnoverRate].every(
+        Number.isFinite
+      )
         ? result
         : null;
     })
@@ -291,12 +255,7 @@ export async function fetchEastMoneyChipDistribution(
       if (records.length === 0) throw new Error("eastmoney chip distribution returned no bars");
       return records
         .map((_, index) =>
-          computeChipDistributionPoint(
-            index,
-            records,
-            params.symbol,
-            params.exchange || "UNKNOWN"
-          )
+          computeChipDistributionPoint(index, records, params.symbol, params.exchange || "UNKNOWN")
         )
         .slice(-90);
     } catch (error) {
@@ -309,19 +268,13 @@ export async function fetchEastMoneyChipDistribution(
     if (records.length === 0) throw new Error("tencent chip fallback returned no bars");
     return records
       .map((_, index) =>
-        computeChipDistributionPoint(
-          index,
-          records,
-          params.symbol,
-          params.exchange || "UNKNOWN"
-        )
+        computeChipDistributionPoint(index, records, params.symbol, params.exchange || "UNKNOWN")
       )
       .map((row) => ({ ...row, source: "tencent_computed" }))
       .slice(-90);
   } catch (fallbackError) {
     const primary = lastError instanceof Error ? lastError.message : String(lastError);
-    const fallback =
-      fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+    const fallback = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
     throw new Error(`chip distribution unavailable: eastmoney=${primary}; tencent=${fallback}`);
   }
 }

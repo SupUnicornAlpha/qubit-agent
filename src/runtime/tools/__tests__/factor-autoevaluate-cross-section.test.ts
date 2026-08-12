@@ -14,15 +14,12 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { dispatchBuiltinTool } from "../builtin-tools";
-import { runMigrations } from "../../../db/sqlite/migrate";
 import { getDb } from "../../../db/sqlite/client";
+import { runMigrations } from "../../../db/sqlite/migrate";
 import * as schema from "../../../db/sqlite/schema";
+import { FactorServiceError, factorService } from "../../factor/factor-service";
 import { bootstrapProviders } from "../../provider/bootstrap";
-import {
-  factorService,
-  FactorServiceError,
-} from "../../factor/factor-service";
+import { dispatchBuiltinTool } from "../builtin-tools";
 
 let workspaceId: string;
 let projectId: string;

@@ -16,9 +16,9 @@ import { and, desc, eq, gte } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { agentStep, sandboxViolationLog, toolCallLog, workflowRun } from "../../db/sqlite/schema";
 import {
-  classifyToolFailureForMonitoring,
   type ToolKind,
   type ToolSummaryRow,
+  classifyToolFailureForMonitoring,
 } from "./tools-summary";
 
 export type ToolStatus = "running" | "success" | "error" | "timeout" | "sandbox_blocked";
@@ -354,12 +354,12 @@ async function querySandboxViolations(
     const action = r.attemptedAction as Record<string, unknown> | null;
     if (!action || typeof action !== "object") return true; // 缺字段时不过滤太严，否则全过滤掉
     const candidateTool =
-      typeof action["tool"] === "string"
-        ? action["tool"]
-        : typeof action["name"] === "string"
-          ? action["name"]
-          : typeof action["toolName"] === "string"
-            ? action["toolName"]
+      typeof action.tool === "string"
+        ? action.tool
+        : typeof action.name === "string"
+          ? action.name
+          : typeof action.toolName === "string"
+            ? action.toolName
             : null;
     return candidateTool == null || candidateTool === toolName;
   });

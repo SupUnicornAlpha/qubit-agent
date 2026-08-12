@@ -3,12 +3,7 @@
  */
 
 import { truncatePromptText } from "../llm/token-budget";
-import {
-  DEFAULT_SLOT_BUDGETS,
-  SYSTEM_SLOT_ORDER,
-  USER_SLOT_ORDER,
-  allAxioms,
-} from "./axioms";
+import { DEFAULT_SLOT_BUDGETS, SYSTEM_SLOT_ORDER, USER_SLOT_ORDER, allAxioms } from "./axioms";
 import { incContextMetric } from "./context-metrics";
 import type {
   ContextAxiomId,
@@ -92,14 +87,13 @@ export function assembleContextEnvelope(input: AssembleSlotsInput): ContextEnvel
   }
 
   if (input.softOmitLowPriority) {
-    const softMax =
-      Number(process.env["QUBIT_SOFT_USER_PROMPT_CHARS"] ?? "20000") || 20_000;
+    const softMax = Number(process.env.QUBIT_SOFT_USER_PROMPT_CHARS ?? "20000") || 20_000;
     slots = omitUntilUnder(slots, budget, softMax, USER_SLOT_ORDER, "omit_soft");
   }
 
   const hardMax =
     input.hardMaxUserChars ??
-    (Number(process.env["QUBIT_HARD_USER_PROMPT_CHARS"] ?? "24000") || 24_000);
+    (Number(process.env.QUBIT_HARD_USER_PROMPT_CHARS ?? "24000") || 24_000);
   slots = omitUntilUnder(slots, budget, hardMax, USER_SLOT_ORDER, "omit_hard");
 
   const userParts: string[] = [];
@@ -139,8 +133,7 @@ function omitUntilUnder(
   metricMode: "omit_soft" | "omit_hard" = "omit_soft"
 ): Partial<Record<ContextSlotId, ContextSlotContent>> {
   const next = { ...slots };
-  const total = () =>
-    order.reduce((n, id) => n + (next[id]?.text.length ?? 0), 0);
+  const total = () => order.reduce((n, id) => n + (next[id]?.text.length ?? 0), 0);
   if (total() <= softMax) return next;
 
   const byPriority = [...order].sort(
@@ -183,9 +176,7 @@ export function renderHandoffForPrompt(handoff: {
     lines.push(handoff.narrative.trim());
   }
   const hasStructured =
-    Boolean(handoff.symbols?.length) ||
-    Boolean(handoff.asof) ||
-    Boolean(handoff.claims?.length);
+    Boolean(handoff.symbols?.length) || Boolean(handoff.asof) || Boolean(handoff.claims?.length);
   if (!hasStructured && handoff.narrative?.trim()) {
     incContextMetric("handoff.unstructured", 1);
   }

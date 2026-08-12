@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { checkGoldenMarketDataReadiness } from "../agent-readiness/quality/market-data-readiness";
 import { GOLDEN_MARKET_DATASET } from "./golden-market-dataset";
 import { validatePointInTimeBars } from "./point-in-time-contract";
-import { checkGoldenMarketDataReadiness } from "../agent-readiness/quality/market-data-readiness";
 
 describe("point-in-time market data contract", () => {
   test("readiness preflight accepts the full golden suite", () => {

@@ -115,9 +115,7 @@ chatRouter.post("/sessions/:sessionId/turns", async (c) => {
     preserveGoal?: boolean;
     fsWorkspaceId?: string;
   };
-  const body = await c.req
-    .json<TurnBody>()
-    .catch(() => ({}) as TurnBody);
+  const body = await c.req.json<TurnBody>().catch(() => ({}) as TurnBody);
   const projectId = body.projectId?.trim() ?? "";
   const message = body.message?.trim() ?? "";
   if (!projectId || !message) {

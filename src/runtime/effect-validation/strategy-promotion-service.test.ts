@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import type { strategyEvalRun } from "../../db/sqlite/schema";
 import { buildStrategyVersionScorecards } from "./strategy-promotion-service";
-import { strategyEvalRun } from "../../db/sqlite/schema";
 
 function evaluation(
   strategyVersionId: string,
   evalKind: typeof strategyEvalRun.$inferSelect.evalKind,
   qualityScore: number,
   pass = true,
-  createdAt = "2026-07-13T00:00:00.000Z",
+  createdAt = "2026-07-13T00:00:00.000Z"
 ): typeof strategyEvalRun.$inferSelect {
   return {
     id: `${strategyVersionId}-${evalKind}-${createdAt}`,

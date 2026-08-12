@@ -12,8 +12,8 @@
  * 实际行为完全脱节。AGM v2 的 5 个场景必须按 UI 路径跑才有意义。
  */
 
-import type { CreateAndDispatchWorkflowInput } from "../workflow/workflow-service";
 import type { ResearchScopeInput } from "../../types/research-scope";
+import type { CreateAndDispatchWorkflowInput } from "../workflow/workflow-service";
 
 export interface AnalystRunPayload {
   /** 单标的优先（research 类）；多标/概念类用 scope.kind=explore + theme */

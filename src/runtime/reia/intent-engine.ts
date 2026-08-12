@@ -1,14 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
-import { brokerOrderEvent, executionReport, intentDeviation, intentOrder } from "../../db/sqlite/schema";
+import {
+  brokerOrderEvent,
+  executionReport,
+  intentDeviation,
+  intentOrder,
+} from "../../db/sqlite/schema";
+import { connectorForAccount, resolveBrokerAccount } from "../execution/broker/broker-service";
+import { executeWithPolicy } from "../external-call/policy";
 import type { BrokerProvider } from "./broker-connector";
 import { getBrokerConnector } from "./broker-connector";
-import {
-  connectorForAccount,
-  resolveBrokerAccount,
-} from "../execution/broker/broker-service";
-import { executeWithPolicy } from "../external-call/policy";
 
 const DEFAULT_DEVIATION_THRESHOLD = 0.015; // 1.5%
 
@@ -46,7 +48,11 @@ export async function executeIntentPaper(input: {
   deviationThreshold?: number;
 }) {
   const db = await getDb();
-  const rows = await db.select().from(intentOrder).where(eq(intentOrder.id, input.intentOrderId)).limit(1);
+  const rows = await db
+    .select()
+    .from(intentOrder)
+    .where(eq(intentOrder.id, input.intentOrderId))
+    .limit(1);
   const intent = rows[0];
   if (!intent) throw new Error("intent order not found");
 
@@ -110,7 +116,11 @@ export async function executeIntentLive(input: {
   deviationThreshold?: number;
 }) {
   const db = await getDb();
-  const rows = await db.select().from(intentOrder).where(eq(intentOrder.id, input.intentOrderId)).limit(1);
+  const rows = await db
+    .select()
+    .from(intentOrder)
+    .where(eq(intentOrder.id, input.intentOrderId))
+    .limit(1);
   const intent = rows[0];
   if (!intent) throw new Error("intent order not found");
 
@@ -126,7 +136,12 @@ export async function executeIntentLive(input: {
     eventType: "submit",
     brokerOrderId: null,
     status: "pending",
-    detailJson: { ticker: intent.ticker, quantity: intent.quantity, targetPrice: intent.targetPrice, side },
+    detailJson: {
+      ticker: intent.ticker,
+      quantity: intent.quantity,
+      targetPrice: intent.targetPrice,
+      side,
+    },
     eventAt: submittedAt,
   });
   const live = await executeWithPolicy(
@@ -161,7 +176,8 @@ export async function executeIntentLive(input: {
     slippage,
     executionTimeMs: live.executionTimeMs,
     brokerOrderId: live.brokerOrderId,
-    status: live.status === "filled" ? "filled" : live.status === "rejected" ? "rejected" : "cancelled",
+    status:
+      live.status === "filled" ? "filled" : live.status === "rejected" ? "rejected" : "cancelled",
   });
   await db.insert(brokerOrderEvent).values({
     id: randomUUID(),
@@ -212,12 +228,20 @@ export async function executeIntentLive(input: {
 
 export async function listIntentOrders(workflowRunId: string) {
   const db = await getDb();
-  return db.select().from(intentOrder).where(eq(intentOrder.workflowRunId, workflowRunId)).orderBy(desc(intentOrder.createdAt));
+  return db
+    .select()
+    .from(intentOrder)
+    .where(eq(intentOrder.workflowRunId, workflowRunId))
+    .orderBy(desc(intentOrder.createdAt));
 }
 
 export async function getIntentExecutionView(intentOrderId: string) {
   const db = await getDb();
-  const intent = await db.select().from(intentOrder).where(eq(intentOrder.id, intentOrderId)).limit(1);
+  const intent = await db
+    .select()
+    .from(intentOrder)
+    .where(eq(intentOrder.id, intentOrderId))
+    .limit(1);
   const report = await db
     .select()
     .from(executionReport)

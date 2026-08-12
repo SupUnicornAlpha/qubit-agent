@@ -20,23 +20,16 @@
  *   - 子进程 / DB 故障 → 500 + { ok:false, code:"internal" }（堆栈不外泄）
  */
 
-import { Hono, type Context } from "hono";
+import { type Context, Hono } from "hono";
+import { envInstallLogService } from "../runtime/environment/install-log-service";
+import { NpmDepsError, installNpm, uninstallNpm } from "../runtime/environment/npm-deps";
 import {
-  EnvRegistryError,
-  envRegistryService,
-} from "../runtime/environment/registry-service";
-import {
-  installPython,
   PythonDepsError,
+  installPython,
   uninstallPython,
 } from "../runtime/environment/python-deps";
-import {
-  installNpm,
-  NpmDepsError,
-  uninstallNpm,
-} from "../runtime/environment/npm-deps";
+import { EnvRegistryError, envRegistryService } from "../runtime/environment/registry-service";
 import { getEnvironmentStatus } from "../runtime/environment/status";
-import { envInstallLogService } from "../runtime/environment/install-log-service";
 import type { EnvKind } from "../runtime/environment/types";
 
 export const environmentRouter = new Hono();
@@ -48,10 +41,7 @@ environmentRouter.get("/status", async (c) => {
     const status = await getEnvironmentStatus();
     return c.json({ ok: true, data: status });
   } catch (e) {
-    return c.json(
-      { ok: false, code: "internal", error: (e as Error).message },
-      500
-    );
+    return c.json({ ok: false, code: "internal", error: (e as Error).message }, 500);
   }
 });
 
@@ -215,9 +205,7 @@ environmentRouter.get("/install-log", async (c) => {
   const limitQ = Number.parseInt(c.req.query("limit") ?? "", 10);
   const filter = {
     ...(kindQ ? { kind: kindQ as EnvKind } : {}),
-    ...(c.req.query("packageName")
-      ? { packageName: c.req.query("packageName") as string }
-      : {}),
+    ...(c.req.query("packageName") ? { packageName: c.req.query("packageName") as string } : {}),
     ...(Number.isFinite(limitQ) && limitQ > 0 ? { limit: limitQ } : {}),
   };
   const list = await envInstallLogService.list(filter);

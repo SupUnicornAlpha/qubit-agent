@@ -18,7 +18,7 @@ export function isCryptoMarket(symbol: string, exchange?: string): boolean {
  * @param quote USDT | BUSD | USD
  */
 export function symbolToBinancePair(symbol: string, exchange?: string, quote = "USDT"): string {
-  let s = symbol.trim().toUpperCase().replace(/\s/g, "");
+  const s = symbol.trim().toUpperCase().replace(/\s/g, "");
   const ex = (exchange ?? "").trim().toUpperCase();
   if (!s) return `BTC${quote}`;
 

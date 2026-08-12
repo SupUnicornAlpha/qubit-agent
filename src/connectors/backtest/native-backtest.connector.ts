@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { backtestJob } from "../../db/sqlite/schema";
-import type { ConnectorMeta } from "../../types/connector";
 import { runSmaCrossoverBacktestJob } from "../../runtime/market/backtest-job-runner";
+import type { ConnectorMeta } from "../../types/connector";
 import {
   BacktestConnector,
   type BacktestResult,
@@ -111,10 +111,17 @@ export class QubitNativeBacktestConnector extends BacktestConnector {
       return { runId, status: "failed", progress: 0, message: "job not found" };
     }
     const progress =
-      row.status === "completed" ? 1 : row.status === "running" ? 0.5 : row.status === "queued" ? 0.1 : 0;
+      row.status === "completed"
+        ? 1
+        : row.status === "running"
+          ? 0.5
+          : row.status === "queued"
+            ? 0.1
+            : 0;
     return {
       runId,
-      status: row.status === "failed" ? "failed" : row.status === "completed" ? "completed" : "running",
+      status:
+        row.status === "failed" ? "failed" : row.status === "completed" ? "completed" : "running",
       progress,
       ...(row.error ? { message: row.error } : {}),
     };

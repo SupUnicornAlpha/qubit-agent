@@ -96,7 +96,5 @@ export async function resolveEffectiveAgentDefinitions(
   const rows = await db.select().from(agentDefinition);
   const byId = new Map(rows.map((r) => [r.id, r]));
 
-  return baseDefs
-    .map((base) => applyDbOverrides(base, byId.get(base.id)))
-    .filter((d) => d.enabled);
+  return baseDefs.map((base) => applyDbOverrides(base, byId.get(base.id))).filter((d) => d.enabled);
 }

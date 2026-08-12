@@ -4,12 +4,14 @@ import { Hono } from "hono";
 import { getDb } from "../db/sqlite/client";
 import { chatSession, scheduledJob, scheduledJobRun, workflowRun } from "../db/sqlite/schema";
 import { parseAgentPlanSnapshot } from "../runtime/agent-control-mode";
+import { isBenchmarkNamespace } from "../runtime/benchmark/benchmark-namespace";
 import { computeWorkflowHeartbeat, heartbeatStreamBus } from "../runtime/heartbeat/agent-heartbeat";
 import { buildWorkflowLineage } from "../runtime/lineage/workflow-lineage-service";
 import {
   failAnalystResearchJob,
   findActiveAnalystJobsByWorkflow,
 } from "../runtime/msa/analyst-research-jobs";
+import { cancelActiveCoreTurnForWorkflow } from "../runtime/prime/cancel-active-turn";
 import { logResearchTeamInteraction } from "../runtime/research-team/interaction-log";
 import {
   listWorkflowArtifactSummary,
@@ -34,11 +36,9 @@ import {
   enqueueUserMessage,
 } from "../runtime/workflow/user-message-queue";
 import { requestWorkflowCancellation } from "../runtime/workflow/workflow-cancellation";
-import { cancelActiveCoreTurnForWorkflow } from "../runtime/prime/cancel-active-turn";
 import { requestInterrupt } from "../runtime/workflow/workflow-interrupt";
 import { createAndDispatchWorkflow } from "../runtime/workflow/workflow-service";
 import { setWorkflowState } from "../runtime/workflow/workflow-state-machine";
-import { isBenchmarkNamespace } from "../runtime/benchmark/benchmark-namespace";
 import type { AgentExecutionPath } from "../types/execution-path";
 import type { AgentLoopKind, LoopOptionsJson } from "../types/loop";
 
@@ -307,12 +307,15 @@ workflowRouter.patch("/:id", async (c) => {
       /** 模板 / SOP / 门控等流程配置与执行模式统一收敛到 loop options。 */
       loopOptionsJson?: Partial<LoopOptionsJson>;
     }>()
-    .catch(() => ({} as {
-      sessionId?: string | null;
-      goal?: string;
-      status?: (typeof workflowStatusEnum)[number];
-      loopOptionsJson?: Partial<LoopOptionsJson>;
-    }));
+    .catch(
+      () =>
+        ({}) as {
+          sessionId?: string | null;
+          goal?: string;
+          status?: (typeof workflowStatusEnum)[number];
+          loopOptionsJson?: Partial<LoopOptionsJson>;
+        }
+    );
   const db = await getDb();
   const rows = await db.select().from(workflowRun).where(eq(workflowRun.id, id)).limit(1);
   if (!rows[0]) return c.json({ error: "Not found" }, 404);
@@ -545,7 +548,7 @@ workflowRouter.post("/:id/inject-message", async (c) => {
   const workflowRunId = c.req.param("id");
   const body = await c.req
     .json<{ content?: string; targetRole?: string | null }>()
-    .catch(() => ({} as { content?: string; targetRole?: string | null }));
+    .catch(() => ({}) as { content?: string; targetRole?: string | null });
   const content = (body.content ?? "").trim();
   if (!content) {
     return c.json({ error: "content is required" }, 400);
@@ -615,7 +618,7 @@ workflowRouter.post("/:id/resume", async (c) => {
   const workflowRunId = c.req.param("id");
   const body = await c.req
     .json<{ mode?: "checkpoint" | "fresh"; note?: string }>()
-    .catch(() => ({} as { mode?: "checkpoint" | "fresh"; note?: string }));
+    .catch(() => ({}) as { mode?: "checkpoint" | "fresh"; note?: string });
   try {
     const { resumeWorkflow } = await import("../runtime/workflow/resume-service");
     const data = await resumeWorkflow({
@@ -647,11 +650,14 @@ workflowRouter.post("/:id/hitl/:requestId/resolve", async (c) => {
       response?: Record<string, unknown> | null;
       resolvedBy?: string;
     }>()
-    .catch(() => ({} as {
-      decision?: "approved" | "rejected";
-      response?: Record<string, unknown> | null;
-      resolvedBy?: string;
-    }));
+    .catch(
+      () =>
+        ({}) as {
+          decision?: "approved" | "rejected";
+          response?: Record<string, unknown> | null;
+          resolvedBy?: string;
+        }
+    );
   if (body.decision !== "approved" && body.decision !== "rejected") {
     return c.json({ error: "decision must be 'approved' or 'rejected'" }, 400);
   }
@@ -669,7 +675,7 @@ workflowRouter.post("/:id/hitl/:requestId/approve", async (c) => {
   const requestId = c.req.param("requestId");
   const body = await c.req
     .json<{ resolvedBy?: string; response?: Record<string, unknown> | null }>()
-    .catch(() => ({} as { resolvedBy?: string; response?: Record<string, unknown> | null }));
+    .catch(() => ({}) as { resolvedBy?: string; response?: Record<string, unknown> | null });
   const result = await resolveHitlRequest({
     requestId,
     decision: "approved",
@@ -683,7 +689,7 @@ workflowRouter.post("/:id/hitl/:requestId/reject", async (c) => {
   const requestId = c.req.param("requestId");
   const body = await c.req
     .json<{ resolvedBy?: string; response?: Record<string, unknown> | null }>()
-    .catch(() => ({} as { resolvedBy?: string; response?: Record<string, unknown> | null }));
+    .catch(() => ({}) as { resolvedBy?: string; response?: Record<string, unknown> | null });
   const result = await resolveHitlRequest({
     requestId,
     decision: "rejected",

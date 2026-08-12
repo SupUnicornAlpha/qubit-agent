@@ -30,10 +30,7 @@ function parseBind(url: string): string {
   }
 }
 
-export async function probeCoreHealth(
-  baseUrl: string,
-  timeoutMs = 1500
-): Promise<boolean> {
+export async function probeCoreHealth(baseUrl: string, timeoutMs = 1500): Promise<boolean> {
   const detail = await probeCoreHealthDetail(baseUrl, timeoutMs);
   return detail.ok;
 }
@@ -80,9 +77,7 @@ export async function probeCoreHealthDetail(
         has_llm_key?: unknown;
       };
       if (Array.isArray(body.degraded_reasons)) {
-        degradedReasons = body.degraded_reasons.filter(
-          (x): x is string => typeof x === "string"
-        );
+        degradedReasons = body.degraded_reasons.filter((x): x is string => typeof x === "string");
       }
       if (typeof body.llm_model === "string" && body.llm_model.trim()) {
         llmModel = body.llm_model.trim();
@@ -172,11 +167,7 @@ export function resolveCoreLlmEnv(
 ): Record<string, string> {
   const out: Record<string, string> = {};
   const searchRoots = (
-    roots ?? [
-      process.cwd(),
-      getAppRoot(),
-      env.QUBIT_DATA_DIR?.trim() || "",
-    ]
+    roots ?? [process.cwd(), getAppRoot(), env.QUBIT_DATA_DIR?.trim() || ""]
   ).filter(Boolean);
   let cfg = null as ReturnType<typeof loadModelConfigSync>;
   for (const root of searchRoots) {
@@ -185,18 +176,9 @@ export function resolveCoreLlmEnv(
   }
 
   const apiKey =
-    env.QUBIT_LLM_API_KEY?.trim() ||
-    cfg?.apiKey?.trim() ||
-    env.OPENAI_API_KEY?.trim() ||
-    "";
-  const model =
-    env.QUBIT_LLM_MODEL?.trim() ||
-    cfg?.model?.trim() ||
-    "";
-  let baseUrl =
-    env.QUBIT_LLM_BASE_URL?.trim() ||
-    cfg?.baseUrl?.trim() ||
-    "";
+    env.QUBIT_LLM_API_KEY?.trim() || cfg?.apiKey?.trim() || env.OPENAI_API_KEY?.trim() || "";
+  const model = env.QUBIT_LLM_MODEL?.trim() || cfg?.model?.trim() || "";
+  let baseUrl = env.QUBIT_LLM_BASE_URL?.trim() || cfg?.baseUrl?.trim() || "";
 
   // Ollama defaults to local OpenAI-compatible endpoint when no baseUrl set.
   if (!baseUrl && cfg?.provider === "ollama") {
@@ -213,10 +195,7 @@ export function resolveCoreLlmEnv(
     baseUrl = `${baseUrl}/v1`;
   }
 
-  let provider =
-    env.QUBIT_LLM_PROVIDER?.trim() ||
-    cfg?.provider?.trim() ||
-    "";
+  let provider = env.QUBIT_LLM_PROVIDER?.trim() || cfg?.provider?.trim() || "";
   if (!provider) {
     if (/api\.deepseek\.com/i.test(baseUrl) || /deepseek/i.test(model)) {
       provider = "deepseek";
@@ -238,7 +217,10 @@ export function resolveCoreLlmEnv(
 
 function normalizeBaseUrlForCompare(raw: string | null | undefined): string {
   if (!raw) return "";
-  let s = raw.trim().replace(/\/+$/, "").replace(/\/chat\/completions$/i, "");
+  let s = raw
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\/chat\/completions$/i, "");
   if (/api\.deepseek\.com$/i.test(s) && !/\/v\d+$/i.test(s)) s = `${s}/v1`;
   return s;
 }
@@ -250,9 +232,7 @@ export function shouldRespawnCoreForLlm(input: {
   ownedPid: number | null;
   reuseExternalCore?: boolean;
 }): { respawn: boolean; reason: string } {
-  const wantLlm = Boolean(
-    input.llmEnv.QUBIT_LLM_API_KEY || input.llmEnv.QUBIT_LLM_BASE_URL
-  );
+  const wantLlm = Boolean(input.llmEnv.QUBIT_LLM_API_KEY || input.llmEnv.QUBIT_LLM_BASE_URL);
   if (!input.health.ok || !wantLlm) {
     return { respawn: false, reason: "no_llm_refresh_needed" };
   }
@@ -326,10 +306,7 @@ export async function ensureRustCoreRunning(opts?: {
   waitMs?: number;
 }): Promise<EnsureCoreResult> {
   const url = (opts?.rustCoreUrl ?? rustCoreBaseUrl()).replace(/\/$/, "");
-  const bridgeUrl =
-    opts?.bridgeUrl ??
-    process.env.QUBIT_LEGACY_BRIDGE_URL?.trim() ??
-    "";
+  const bridgeUrl = opts?.bridgeUrl ?? process.env.QUBIT_LEGACY_BRIDGE_URL?.trim() ?? "";
 
   const llmEnv = resolveCoreLlmEnv();
   const health = await probeCoreHealthDetail(url);
@@ -389,15 +366,11 @@ export async function ensureRustCoreRunning(opts?: {
   const bind = parseBind(url);
   const env: Record<string, string> = {
     ...Object.fromEntries(
-      Object.entries(process.env).filter(
-        (e): e is [string, string] => typeof e[1] === "string"
-      )
+      Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string")
     ),
     ...llmEnv,
     QUBIT_BIND: bind,
-    RUST_LOG:
-      process.env.RUST_LOG?.trim() ||
-      "qubit_app_server=info,qubit_runtime=warn",
+    RUST_LOG: process.env.RUST_LOG?.trim() || "qubit_app_server=info,qubit_runtime=warn",
   };
   // When injecting Core LLM credentials, drop inherited OPENAI_API_KEY so a
   // hydrated stale OpenAI secret cannot override QUBIT_LLM_* inside Rust.

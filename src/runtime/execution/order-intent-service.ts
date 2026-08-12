@@ -7,18 +7,13 @@ import {
   orderIntent,
   riskReviewTicket,
 } from "../../db/sqlite/schema";
-import type {
-  OrderSide,
-  OrderType,
-  RiskDecisionResult,
-  TimeInForce,
-} from "../../types/entities";
+import type { OrderSide, OrderType, RiskDecisionResult, TimeInForce } from "../../types/entities";
 import { appendAuditLog } from "../audit/audit-chain-service";
 import { resolveExecutionEvidenceBinding } from "../market/contracts/evidence-binding";
 import { linkForecastBookEntry } from "../market/contracts/forecast-book-service";
-import { evaluatePreTradeForIntent } from "./pre-trade-risk";
-import type { DispatchMode } from "./live-trading-gate";
 import { assertTradingModuleEnabled } from "../trader/trading-module-control";
+import type { DispatchMode } from "./live-trading-gate";
+import { evaluatePreTradeForIntent } from "./pre-trade-risk";
 
 export type { DispatchMode };
 
@@ -101,20 +96,32 @@ export async function createOrderIntentWithExecution(
   if (!Number.isFinite(input.qty) || input.qty <= 0) {
     throw new Error("order_quantity_must_be_positive");
   }
-  const conditional = input.orderType === "stop" || input.orderType === "stop_limit" || input.orderType === "trailing_stop";
+  const conditional =
+    input.orderType === "stop" ||
+    input.orderType === "stop_limit" ||
+    input.orderType === "trailing_stop";
   if (
     (input.orderType === "stop" || input.orderType === "stop_limit") &&
     (input.stopPrice == null || !Number.isFinite(input.stopPrice) || input.stopPrice <= 0)
-  ) throw new Error("conditional_order_requires_positive_stop_price");
+  )
+    throw new Error("conditional_order_requires_positive_stop_price");
   if (
     input.orderType === "trailing_stop" &&
-    (input.trailingOffsetPct == null || !Number.isFinite(input.trailingOffsetPct) || input.trailingOffsetPct <= 0 || input.trailingOffsetPct >= 1)
-  ) throw new Error("trailing_stop_requires_offset_between_zero_and_one");
+    (input.trailingOffsetPct == null ||
+      !Number.isFinite(input.trailingOffsetPct) ||
+      input.trailingOffsetPct <= 0 ||
+      input.trailingOffsetPct >= 1)
+  )
+    throw new Error("trailing_stop_requires_offset_between_zero_and_one");
   if (
     (input.orderType === "limit" || conditional) &&
     (input.price == null || !Number.isFinite(input.price) || input.price <= 0)
   ) {
-    throw new Error(conditional ? "conditional_order_requires_positive_reference_price" : "limit_order_requires_positive_price");
+    throw new Error(
+      conditional
+        ? "conditional_order_requires_positive_reference_price"
+        : "limit_order_requires_positive_price"
+    );
   }
   const traceId = input.traceId ?? randomUUID();
   const accountId = input.accountId ?? BUILTIN_PAPER_TRADING_ACCOUNT_ID;
@@ -173,11 +180,12 @@ export async function createOrderIntentWithExecution(
     : conditional
       ? "waiting_trigger"
       : "active";
-  const readyTaskStatus = activationStatus === "held"
-    ? "held"
-    : activationStatus === "waiting_trigger"
-      ? "conditional_wait"
-      : "pending";
+  const readyTaskStatus =
+    activationStatus === "held"
+      ? "held"
+      : activationStatus === "waiting_trigger"
+        ? "conditional_wait"
+        : "pending";
   await db.insert(orderIntent).values({
     id: orderIntentId,
     workflowRunId: input.workflowRunId,
@@ -189,7 +197,7 @@ export async function createOrderIntentWithExecution(
     price: input.price ?? null,
     stopPrice: input.stopPrice ?? null,
     trailingOffsetPct: input.trailingOffsetPct ?? null,
-    trailingAnchorPrice: input.orderType === "trailing_stop" ? input.price ?? null : null,
+    trailingAnchorPrice: input.orderType === "trailing_stop" ? (input.price ?? null) : null,
     triggerDirection: input.triggerDirection ?? null,
     parentOrderIntentId: input.parentOrderIntentId ?? null,
     ocoGroupId: input.ocoGroupId ?? null,
@@ -379,19 +387,28 @@ export async function approveRiskReviewTicket(
   reviewer: string,
   note?: string
 ): Promise<{ ok: boolean; error?: string }> {
-  const rows = await db.select().from(riskReviewTicket).where(eq(riskReviewTicket.id, ticketId)).limit(1);
+  const rows = await db
+    .select()
+    .from(riskReviewTicket)
+    .where(eq(riskReviewTicket.id, ticketId))
+    .limit(1);
   const t = rows[0];
   if (!t) return { ok: false, error: "ticket_not_found" };
   if (t.status !== "open") return { ok: false, error: "ticket_not_open" };
 
   const now = new Date().toISOString();
-  const intents = await db.select().from(orderIntent).where(eq(orderIntent.id, t.orderIntentId)).limit(1);
+  const intents = await db
+    .select()
+    .from(orderIntent)
+    .where(eq(orderIntent.id, t.orderIntentId))
+    .limit(1);
   const intent = intents[0];
-  const approvedTaskStatus = intent?.activationStatus === "held"
-    ? "held"
-    : intent?.activationStatus === "waiting_trigger"
-      ? "conditional_wait"
-      : "pending";
+  const approvedTaskStatus =
+    intent?.activationStatus === "held"
+      ? "held"
+      : intent?.activationStatus === "waiting_trigger"
+        ? "conditional_wait"
+        : "pending";
   await db
     .update(riskReviewTicket)
     .set({
@@ -409,7 +426,12 @@ export async function approveRiskReviewTicket(
       updatedAt: now,
       lastError: null,
     })
-    .where(and(eq(executionTask.orderIntentId, t.orderIntentId), eq(executionTask.status, "awaiting_review")));
+    .where(
+      and(
+        eq(executionTask.orderIntentId, t.orderIntentId),
+        eq(executionTask.status, "awaiting_review")
+      )
+    );
   await db
     .update(orderIntent)
     .set({ lifecycleStatus: "risk_checked", lifecycleUpdatedAt: now })
@@ -432,7 +454,11 @@ export async function rejectRiskReviewTicket(
   reviewer: string,
   note?: string
 ): Promise<{ ok: boolean; error?: string }> {
-  const rows = await db.select().from(riskReviewTicket).where(eq(riskReviewTicket.id, ticketId)).limit(1);
+  const rows = await db
+    .select()
+    .from(riskReviewTicket)
+    .where(eq(riskReviewTicket.id, ticketId))
+    .limit(1);
   const t = rows[0];
   if (!t) return { ok: false, error: "ticket_not_found" };
   if (t.status !== "open") return { ok: false, error: "ticket_not_open" };
@@ -455,7 +481,12 @@ export async function rejectRiskReviewTicket(
       updatedAt: now,
       lastError: note ?? "rejected_by_reviewer",
     })
-    .where(and(eq(executionTask.orderIntentId, t.orderIntentId), eq(executionTask.status, "awaiting_review")));
+    .where(
+      and(
+        eq(executionTask.orderIntentId, t.orderIntentId),
+        eq(executionTask.status, "awaiting_review")
+      )
+    );
   await db
     .update(orderIntent)
     .set({ lifecycleStatus: "rejected", lifecycleUpdatedAt: now })

@@ -25,7 +25,8 @@ class DebateStreamBus {
     return new ReadableStream<Uint8Array>({
       start: (controller) => {
         currentController = controller;
-        const set = this.controllersByWorkflow.get(workflowRunId) ?? new Set<DebateStreamController>();
+        const set =
+          this.controllersByWorkflow.get(workflowRunId) ?? new Set<DebateStreamController>();
         set.add(controller);
         this.controllersByWorkflow.set(workflowRunId, set);
       },

@@ -225,7 +225,7 @@ export async function scanTokenAnomalyAlerts(input?: TokenAnomalyInput) {
     .from(llmCallLog)
     .where(
       and(
-        gte(llmCallLog.createdAt, baselineFrom),
+        gte(llmCallLog.createdAt, baselineFrom)
         // 排除晚于 baselineTo 的行（上周窗口内）—— 用 gte+前置过滤 + 后面用 JS 再过滤
       )
     );

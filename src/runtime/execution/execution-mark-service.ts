@@ -30,7 +30,7 @@ export async function recordExecutionMark(
     timeframe: string;
     source: string;
     fetchedAt?: string;
-  },
+  }
 ): Promise<void> {
   if (!Number.isFinite(input.price) || input.price <= 0) return;
   const fetchedAt = input.fetchedAt ?? new Date().toISOString();
@@ -44,29 +44,36 @@ export async function recordExecutionMark(
     source: input.source,
     fetchedAt,
   };
-  await db.insert(executionMarkPrice).values(values).onConflictDoUpdate({
-    target: [executionMarkPrice.market, executionMarkPrice.symbol],
-    set: {
-      price: values.price,
-      observedAt: values.observedAt,
-      timeframe: values.timeframe,
-      source: values.source,
-      fetchedAt: values.fetchedAt,
-    },
-  });
+  await db
+    .insert(executionMarkPrice)
+    .values(values)
+    .onConflictDoUpdate({
+      target: [executionMarkPrice.market, executionMarkPrice.symbol],
+      set: {
+        price: values.price,
+        observedAt: values.observedAt,
+        timeframe: values.timeframe,
+        source: values.source,
+        fetchedAt: values.fetchedAt,
+      },
+    });
 }
 
 export async function resolveExecutionMark(
   db: DbClient,
-  input: { market?: string | null; symbol: string; nowIso: string; freshnessMs?: number },
+  input: { market?: string | null; symbol: string; nowIso: string; freshnessMs?: number }
 ): Promise<ExecutionMark | null> {
   const symbol = input.symbol.trim().toUpperCase();
   const market = input.market?.trim().toUpperCase();
-  const realtime = await db.select().from(executionMarkPrice)
-    .where(and(
-      eq(executionMarkPrice.symbol, symbol),
-      market ? eq(executionMarkPrice.market, market) : undefined,
-    ))
+  const realtime = await db
+    .select()
+    .from(executionMarkPrice)
+    .where(
+      and(
+        eq(executionMarkPrice.symbol, symbol),
+        market ? eq(executionMarkPrice.market, market) : undefined
+      )
+    )
     .orderBy(desc(executionMarkPrice.fetchedAt))
     .limit(1);
   const latest = realtime[0];
@@ -81,11 +88,12 @@ export async function resolveExecutionMark(
       freshness: "realtime",
     };
   }
-  const daily = await db.select().from(dailyMarkPrice)
-    .where(and(
-      eq(dailyMarkPrice.symbol, symbol),
-      market ? eq(dailyMarkPrice.market, market) : undefined,
-    ))
+  const daily = await db
+    .select()
+    .from(dailyMarkPrice)
+    .where(
+      and(eq(dailyMarkPrice.symbol, symbol), market ? eq(dailyMarkPrice.market, market) : undefined)
+    )
     .orderBy(desc(dailyMarkPrice.tradingDay), desc(dailyMarkPrice.fetchedAt))
     .limit(1);
   const fallback = daily[0];

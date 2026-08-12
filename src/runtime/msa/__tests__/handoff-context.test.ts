@@ -46,7 +46,7 @@ describe("formatHandoffSections", () => {
     /** body 本身只保留 4000 字 */
     const bodyMatch = out.match(/### 来自 research\n\n(x+)/);
     expect(bodyMatch).not.toBeNull();
-    expect(bodyMatch![1]!.length).toBe(4000);
+    expect(bodyMatch?.[1]?.length).toBe(4000);
   });
 
   test("空 body 也保留区块（不静默丢失）", () => {

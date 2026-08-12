@@ -20,8 +20,8 @@ export function parseSkillMdFrontmatter(raw: string): {
   for (const line of fmBlock.split(/\r?\n/)) {
     const m = line.match(/^([A-Za-z0-9_-]+)\s*:\s*(.*)$/);
     if (!m) continue;
-    const key = m[1]!.trim();
-    let value = m[2]!.trim();
+    const key = m[1]?.trim();
+    let value = m[2]?.trim();
     if (
       (value.startsWith('"') && value.endsWith('"')) ||
       (value.startsWith("'") && value.endsWith("'"))

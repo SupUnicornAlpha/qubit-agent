@@ -137,9 +137,7 @@ async function reconcile(
     .select({
       strategyRuntimeId: strategyPnlSnapshot.strategyRuntimeId,
       symbol: strategyPnlSnapshot.symbol,
-      turnover: sql<number>`COALESCE(SUM(${strategyPnlSnapshot.turnoverDaily}), 0)`.as(
-        "turnover"
-      ),
+      turnover: sql<number>`COALESCE(SUM(${strategyPnlSnapshot.turnoverDaily}), 0)`.as("turnover"),
     })
     .from(strategyPnlSnapshot)
     .where(
@@ -232,7 +230,9 @@ function renderMarkdown(r: ReconcileReport): string {
     return lines.join("\n");
   }
   lines.push("");
-  lines.push("| runtime | market | symbol | reason | fill turnover | snapshot turnover | drift ratio |");
+  lines.push(
+    "| runtime | market | symbol | reason | fill turnover | snapshot turnover | drift ratio |"
+  );
   lines.push("|---|---|---|---|---:|---:|---:|");
   for (const d of r.drifts.slice(0, 50)) {
     lines.push(

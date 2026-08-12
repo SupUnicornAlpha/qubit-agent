@@ -3,11 +3,7 @@
  * See docs/agent-contracts/01-tool-contract.md
  */
 
-import {
-  type ToolArity,
-  extractSymbolArgs,
-  requireSymbols,
-} from "../market/normalize-symbol-args";
+import { type ToolArity, extractSymbolArgs, requireSymbols } from "../market/normalize-symbol-args";
 
 export type { ToolArity };
 export type ToolTimeoutClass = "light" | "market" | "team" | "mcp";
@@ -35,7 +31,7 @@ export type ToolContract = {
 };
 
 export function isToolContractEnabled(): boolean {
-  return process.env["TOOL_CONTRACT_ENABLED"] !== "0";
+  return process.env.TOOL_CONTRACT_ENABLED !== "0";
 }
 
 export function timeoutMsForClass(timeoutClass: ToolTimeoutClass, fallbackMs: number): number {

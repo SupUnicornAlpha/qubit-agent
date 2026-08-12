@@ -3,12 +3,12 @@ import {
   getForecastBookEntry,
   linkForecastBookEntry,
 } from "../market/contracts/forecast-book-service";
+import { getOrCreateMarketSnapshot } from "../market/contracts/market-snapshot-service";
 import { constructTargetPortfolio } from "../market/contracts/portfolio-construct-service";
 import {
   isResearchThesisWriteEnabled,
   writeResearchThesis,
 } from "../market/contracts/research-thesis-service";
-import { getOrCreateMarketSnapshot } from "../market/contracts/market-snapshot-service";
 import {
   coerceConfidence01,
   extractForecastBookKey,
@@ -45,7 +45,10 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): P
 
 function asStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
-  return value.map(String).map((s) => s.trim()).filter(Boolean);
+  return value
+    .map(String)
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 function parseClaims(raw: unknown): Array<{
@@ -67,9 +70,7 @@ function parseClaims(raw: unknown): Array<{
     out.push({
       claim,
       evidenceRefs: asStringArray(row.evidenceRefs ?? row.evidence_refs),
-      counterEvidenceRefs: asStringArray(
-        row.counterEvidenceRefs ?? row.counter_evidence_refs
-      ),
+      counterEvidenceRefs: asStringArray(row.counterEvidenceRefs ?? row.counter_evidence_refs),
     });
   }
   return out;
@@ -95,9 +96,7 @@ export const RESEARCH_THESIS_HANDLERS: Record<string, BuiltinToolHandler> = {
     if (!isResearchThesisWriteEnabled()) {
       throw new Error("research.thesis.write is disabled (QUBIT_RESEARCH_THESIS_WRITE=0)");
     }
-    const contract = isToolContractEnabled()
-      ? getToolContract("research.thesis.write")
-      : undefined;
+    const contract = isToolContractEnabled() ? getToolContract("research.thesis.write") : undefined;
     const canonical = contract ? applyToolContract(contract, params) : params;
 
     const symbols = resolveInstrumentScope(canonical);
@@ -113,9 +112,7 @@ export const RESEARCH_THESIS_HANDLERS: Record<string, BuiltinToolHandler> = {
     let snapshotId =
       String(canonical.snapshotId ?? canonical.snapshot_id ?? "").trim() ||
       extractSnapshotId(canonical);
-    let snapshotBinding: "explicit" | "auto" | "unbound" = snapshotId
-      ? "explicit"
-      : "auto";
+    let snapshotBinding: "explicit" | "auto" | "unbound" = snapshotId ? "explicit" : "auto";
     let snapshotWarning: string | undefined;
 
     if (!snapshotId) {
@@ -138,7 +135,7 @@ export const RESEARCH_THESIS_HANDLERS: Record<string, BuiltinToolHandler> = {
         snapshotBinding = "unbound";
         snapshotWarning =
           `snapshot 自动拉取失败（${msg}）；已用 unbound snapshotId=${snapshotId} 落库 thesis。` +
-          `后续请补 market.snapshot.get 并在 evidence 中引用真实 mkt_snapshot_*。`;
+          "后续请补 market.snapshot.get 并在 evidence 中引用真实 mkt_snapshot_*。";
       }
     }
 

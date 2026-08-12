@@ -23,8 +23,12 @@ import type { BuiltinToolHandler } from "./types";
 /** Handlers that coordinate workflow state or a team of agents. */
 export const ORCHESTRATION_HANDLERS: Record<string, BuiltinToolHandler> = {
   "tool.catalog.search": async (ctx, params) => {
-    const query = String(params.query ?? params.q ?? "").trim().toLowerCase();
-    const category = String(params.category ?? "").trim().toLowerCase();
+    const query = String(params.query ?? params.q ?? "")
+      .trim()
+      .toLowerCase();
+    const category = String(params.category ?? "")
+      .trim()
+      .toLowerCase();
     const requestedLimit = Number(params.limit ?? 8);
     const limit = Math.max(1, Math.min(Number.isFinite(requestedLimit) ? requestedLimit : 8, 20));
     // Dynamic import avoids a builtin-tools <-> catalog initialization cycle.
@@ -34,7 +38,9 @@ export const ORCHESTRATION_HANDLERS: Record<string, BuiltinToolHandler> = {
       .filter((tool) => {
         if (category && tool.category !== category) return false;
         if (!query) return true;
-        return `${tool.name} ${tool.description} ${tool.category ?? ""}`.toLowerCase().includes(query);
+        return `${tool.name} ${tool.description} ${tool.category ?? ""}`
+          .toLowerCase()
+          .includes(query);
       })
       .slice(0, limit)
       .map((tool) => ({

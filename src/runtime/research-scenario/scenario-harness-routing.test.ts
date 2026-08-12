@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { buildFocusedResearchScenarioPrompt } from "../react/nodes/reason";
+import { buildRequiredToolNextActionHint } from "../tools/required-tool-gate";
 import {
-  resolveRegistryScenarioKey,
   REQUIRED_CAPABILITY_PRIMARY_TOOL,
+  resolveRegistryScenarioKey,
 } from "./scenario-key-aliases";
 import { BUILTIN_RESEARCH_SCENARIOS } from "./scenarios-seed";
-import { buildRequiredToolNextActionHint } from "../tools/required-tool-gate";
 
 function builtinByKey(key: string) {
   return BUILTIN_RESEARCH_SCENARIOS.find((s) => s.key === key);

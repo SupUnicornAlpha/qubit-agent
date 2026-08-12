@@ -6,10 +6,7 @@
  * P2 阶段会加 backtrader / veighna_bt 作为主 Provider，本 Provider 留作降级使用。
  */
 
-import {
-  type BacktestProvider,
-  type ProviderMeta,
-} from "../../types";
+import type { BacktestProvider, ProviderMeta } from "../../types";
 
 const META: ProviderMeta = {
   kind: "backtest",

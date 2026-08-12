@@ -10,13 +10,13 @@ import {
   strategyRuntime,
   strategySignalDedup,
 } from "../../db/sqlite/schema";
-import { createOrderIntentWithExecution } from "../execution/order-intent-service";
-import { strategyPromotionService } from "../effect-validation/strategy-promotion-service";
-import { resolveInstrument } from "../market/instrument-router";
 import type { OrderSide } from "../../types/entities";
+import { strategyPromotionService } from "../effect-validation/strategy-promotion-service";
+import { createOrderIntentWithExecution } from "../execution/order-intent-service";
+import { resolveInstrument } from "../market/instrument-router";
+import { assertTradingModuleEnabled } from "../trader/trading-module-control";
 import { appendStrategyRuntimeLog } from "./strategy-runtime-log";
 import { ensureStrategyVersionForScript } from "./strategy-version-resolver";
-import { assertTradingModuleEnabled } from "../trader/trading-module-control";
 
 export interface CreateStrategyRuntimeInput {
   strategyScriptId: string;
@@ -45,14 +45,10 @@ export interface StrategyRuntimeParams {
 async function ensureInstrumentForSymbol(
   db: DbClient,
   symbol: string,
-  market: string,
+  market: string
 ): Promise<string> {
   const sym = symbol.trim().toUpperCase();
-  const existing = await db
-    .select()
-    .from(instrument)
-    .where(eq(instrument.symbol, sym))
-    .limit(1);
+  const existing = await db.select().from(instrument).where(eq(instrument.symbol, sym)).limit(1);
   if (existing[0]) return existing[0].id;
 
   const id = randomUUID();
@@ -68,7 +64,7 @@ async function ensureInstrumentForSymbol(
 
 export async function createStrategyRuntime(
   input: CreateStrategyRuntimeInput,
-  db?: DbClient,
+  db?: DbClient
 ): Promise<typeof strategyRuntime.$inferSelect> {
   assertTradingModuleEnabled();
   const client = db ?? (await getDb());
@@ -91,24 +87,20 @@ export async function createStrategyRuntime(
   const resolved = await resolveInstrument({
     market: input.market,
     symbol: input.symbol,
-    ...(input.brokerAccountId !== undefined
-      ? { brokerAccountId: input.brokerAccountId }
-      : {}),
+    ...(input.brokerAccountId !== undefined ? { brokerAccountId: input.brokerAccountId } : {}),
     lookupDefaultBroker: db == null,
   });
 
   let brokerAccountId = resolved.brokerAccountId;
-  if (
-    (executionMode === "sim" || executionMode === "live") &&
-    !brokerAccountId
-  ) {
-    const { resolveDefaultSimBrokerAccountId } =
-      await import("../execution/resolve-sim-broker-account");
+  if ((executionMode === "sim" || executionMode === "live") && !brokerAccountId) {
+    const { resolveDefaultSimBrokerAccountId } = await import(
+      "../execution/resolve-sim-broker-account"
+    );
     if (executionMode === "sim") {
       brokerAccountId = await resolveDefaultSimBrokerAccountId("futu", client);
       if (!brokerAccountId) {
         throw new Error(
-          "sim_execution_requires_broker_account: configure an enabled Futu sandbox account",
+          "sim_execution_requires_broker_account: configure an enabled Futu sandbox account"
         );
       }
     } else {
@@ -124,10 +116,7 @@ export async function createStrategyRuntime(
         .where(eq(brokerAccount.id, brokerAccountId))
         .limit(1)
     )[0];
-    if (
-      !account?.enabled ||
-      (account.mode !== "sandbox" && account.mode !== "mock")
-    ) {
+    if (!account?.enabled || (account.mode !== "sandbox" && account.mode !== "mock")) {
       throw new Error("sim_execution_requires_sandbox_or_mock_broker_account");
     }
   }
@@ -149,11 +138,7 @@ export async function createStrategyRuntime(
   });
 
   const row = (
-    await client
-      .select()
-      .from(strategyRuntime)
-      .where(eq(strategyRuntime.id, id))
-      .limit(1)
+    await client.select().from(strategyRuntime).where(eq(strategyRuntime.id, id)).limit(1)
   )[0]!;
 
   if (input.autoStart) {
@@ -163,10 +148,7 @@ export async function createStrategyRuntime(
   return row;
 }
 
-export async function startStrategyRuntime(
-  runtimeId: string,
-  db?: DbClient,
-): Promise<void> {
+export async function startStrategyRuntime(runtimeId: string, db?: DbClient): Promise<void> {
   assertTradingModuleEnabled();
   const client = db ?? (await getDb());
   const runtimeRows = await client
@@ -192,10 +174,7 @@ export async function startStrategyRuntime(
   });
 }
 
-export async function stopStrategyRuntime(
-  runtimeId: string,
-  db?: DbClient,
-): Promise<void> {
+export async function stopStrategyRuntime(runtimeId: string, db?: DbClient): Promise<void> {
   const client = db ?? (await getDb());
   const now = new Date().toISOString();
   await client
@@ -226,10 +205,7 @@ export async function listStrategyRuntimes(filter?: {
   status?: string;
 }) {
   const db = await getDb();
-  const rows = await db
-    .select()
-    .from(strategyRuntime)
-    .orderBy(desc(strategyRuntime.updatedAt));
+  const rows = await db.select().from(strategyRuntime).orderBy(desc(strategyRuntime.updatedAt));
 
   if (!filter?.workflowRunId && !filter?.sessionId && !filter?.status) return rows;
 
@@ -244,8 +220,7 @@ export async function listStrategyRuntimes(filter?: {
     const script = scripts[0];
     if (!script) continue;
     if (filter.sessionId && script.sessionId !== filter.sessionId) continue;
-    if (filter.workflowRunId && script.workflowRunId !== filter.workflowRunId)
-      continue;
+    if (filter.workflowRunId && script.workflowRunId !== filter.workflowRunId) continue;
     out.push(r);
   }
   return out;
@@ -259,7 +234,7 @@ export async function recordSignalDedup(
     /** P2-E：与 OrderSide 对齐（信号方向等同于下单方向） */
     signalType: OrderSide;
     signalBarTime: string;
-  },
+  }
 ): Promise<boolean> {
   try {
     await db.insert(strategySignalDedup).values({
@@ -283,7 +258,7 @@ export async function submitRuntimeOrder(
     qty: number;
     price: number;
     signalBarTime: string;
-  },
+  }
 ): Promise<{ orderIntentId: string }> {
   const scripts = await db
     .select()
@@ -293,19 +268,10 @@ export async function submitRuntimeOrder(
   const script = scripts[0];
   if (!script) throw new Error("strategy_script_not_found");
 
-  const { strategyVersionId, workflowRunId } =
-    await ensureStrategyVersionForScript(db, script);
-  const instrumentId = await ensureInstrumentForSymbol(
-    db,
-    runtime.symbol,
-    runtime.market,
-  );
+  const { strategyVersionId, workflowRunId } = await ensureStrategyVersionForScript(db, script);
+  const instrumentId = await ensureInstrumentForSymbol(db, runtime.symbol, runtime.market);
   const dispatchMode =
-    runtime.executionMode === "live"
-      ? "live"
-      : runtime.executionMode === "sim"
-        ? "sim"
-        : "paper";
+    runtime.executionMode === "live" ? "live" : runtime.executionMode === "sim" ? "sim" : "paper";
 
   const result = await createOrderIntentWithExecution(db, {
     workflowRunId,
@@ -340,8 +306,8 @@ export async function submitRuntimeOrder(
       .where(
         and(
           eq(strategyPositionSnapshot.strategyRuntimeId, runtime.id),
-          eq(strategyPositionSnapshot.symbol, runtime.symbol),
-        ),
+          eq(strategyPositionSnapshot.symbol, runtime.symbol)
+        )
       )
       .limit(1);
     if (existing[0]) {
@@ -369,8 +335,8 @@ export async function submitRuntimeOrder(
       .where(
         and(
           eq(strategyPositionSnapshot.strategyRuntimeId, runtime.id),
-          eq(strategyPositionSnapshot.symbol, runtime.symbol),
-        ),
+          eq(strategyPositionSnapshot.symbol, runtime.symbol)
+        )
       )
       .limit(1);
     if (existing[0]) {

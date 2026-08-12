@@ -19,14 +19,9 @@
  *     （那里走 reasonNode → LLM）
  */
 
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { asc, eq, inArray } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
-import {
-  agentInstance,
-  agentStep,
-  midtermMemory,
-  workflowRun,
-} from "../../db/sqlite/schema";
+import { agentInstance, agentStep, midtermMemory, workflowRun } from "../../db/sqlite/schema";
 import { skillService } from "../skills/skill-service";
 
 export interface ConsolidationResult {
@@ -63,17 +58,11 @@ interface AgentInstanceRow {
  * 从一个已完成的 workflow_run 中提炼 midterm 记忆。
  * 按"每个参与 agent 一条 midterm"的粒度归纳。
  */
-export async function consolidateFromWorkflow(
-  workflowId: string
-): Promise<ConsolidationResult> {
+export async function consolidateFromWorkflow(workflowId: string): Promise<ConsolidationResult> {
   const db = await getDb();
 
   // 1. 读 workflow_run
-  const wfRows = await db
-    .select()
-    .from(workflowRun)
-    .where(eq(workflowRun.id, workflowId))
-    .limit(1);
+  const wfRows = await db.select().from(workflowRun).where(eq(workflowRun.id, workflowId)).limit(1);
   const wf = wfRows[0];
   if (!wf) {
     return { workflowId, status: "skipped", midtermInserted: 0, reason: "workflow_not_found" };
@@ -235,7 +224,11 @@ export async function proposeSkillCandidate(input: ProposeSkillInput): Promise<b
     return false;
   }
 
-  const description = `（自动候选）${input.role} 在「${input.goal.slice(0, 80)}」类目标下成功跑通的 ${toolChain.length}-step 工具链：${toolChain.slice(0, 6).join(" → ")}${toolChain.length > 6 ? " → …" : ""}。等待 Curator/用户审批；审批后改 state=active 即生效。`.slice(0, 500);
+  const description =
+    `（自动候选）${input.role} 在「${input.goal.slice(0, 80)}」类目标下成功跑通的 ${toolChain.length}-step 工具链：${toolChain.slice(0, 6).join(" → ")}${toolChain.length > 6 ? " → …" : ""}。等待 Curator/用户审批；审批后改 state=active 即生效。`.slice(
+      0,
+      500
+    );
 
   const bodyMd = renderSkillCandidateBody({
     role: input.role,
@@ -286,7 +279,7 @@ function extractToolChain(steps: AgentStepRow[]): string[] {
   for (const step of steps) {
     if (step.actionType !== "tool_call") continue;
     const action = step.actionJson as Record<string, unknown> | null;
-    const tool = action?.["tool"] ?? action?.["name"];
+    const tool = action?.tool ?? action?.name;
     if (typeof tool !== "string") continue;
     // 折叠相邻重复（同一 tool 连续 N 次只记一次）
     if (chain[chain.length - 1] !== tool) chain.push(tool);
@@ -298,7 +291,12 @@ function buildSkillCandidateName(role: string, toolChain: string[]): string {
   // role:tool1-tool2-tool3（取前 3 个 tool，确保唯一且可读）
   const head = toolChain
     .slice(0, 3)
-    .map((t) => t.replace(/\./g, "_").replace(/[^a-zA-Z0-9_]/g, "").toLowerCase())
+    .map((t) =>
+      t
+        .replace(/\./g, "_")
+        .replace(/[^a-zA-Z0-9_]/g, "")
+        .toLowerCase()
+    )
     .filter(Boolean)
     .join("-");
   const cleanedRole = role.toLowerCase().replace(/[^a-z0-9]/g, "_");
@@ -315,8 +313,12 @@ function renderSkillCandidateBody(input: {
   const lines: string[] = [];
   lines.push(`# 自动候选 Skill — ${input.role}`);
   lines.push("");
-  lines.push(`> **审批前请人工核对**：以下流程由 MemoryConsolidationService 从一次成功 workflow 自动抽取。`);
-  lines.push(`> 通过 \`skill.patch({skillId, state:"active"})\` 即可启用；不合用调 \`skill.archive\`。`);
+  lines.push(
+    "> **审批前请人工核对**：以下流程由 MemoryConsolidationService 从一次成功 workflow 自动抽取。"
+  );
+  lines.push(
+    `> 通过 \`skill.patch({skillId, state:"active"})\` 即可启用；不合用调 \`skill.archive\`。`
+  );
   lines.push("");
   lines.push("## 适用场景");
   lines.push(`此 skill 由"${input.goal.slice(0, 200)}"类目标触发；当你拿到相似目标时可复用。`);
@@ -353,14 +355,14 @@ export function summarizeAgentSteps(steps: AgentStepRow[], role: string): AgentS
   for (const step of steps) {
     if (step.actionType === "tool_call") {
       const action = step.actionJson as Record<string, unknown> | null;
-      const tool = action?.["tool"] ?? action?.["name"];
+      const tool = action?.tool ?? action?.name;
       if (typeof tool === "string") {
         toolsUsed[tool] = (toolsUsed[tool] ?? 0) + 1;
       }
     }
     if (step.actionType === "final_answer") {
       const action = step.actionJson as Record<string, unknown> | null;
-      const answer = action?.["answer"] ?? action?.["text"] ?? action?.["result"];
+      const answer = action?.answer ?? action?.text ?? action?.result;
       if (typeof answer === "string" && answer.trim()) {
         finalAnswer = answer.trim();
       }
@@ -394,10 +396,14 @@ export function summarizeAgentSteps(steps: AgentStepRow[], role: string): AgentS
  * midtermMemory.memoryType enum:
  *   "strategy_iteration" | "risk_review" | "simulation_note" | "param_scan"
  */
-export function inferMemoryType(role: string, summary: AgentStepSummary): "strategy_iteration" | "risk_review" | "simulation_note" | "param_scan" {
+export function inferMemoryType(
+  role: string,
+  summary: AgentStepSummary
+): "strategy_iteration" | "risk_review" | "simulation_note" | "param_scan" {
   const r = role.toLowerCase();
   if (r.includes("risk")) return "risk_review";
-  if (r.includes("backtest") || r.includes("walk_forward") || r.includes("validator")) return "simulation_note";
+  if (r.includes("backtest") || r.includes("walk_forward") || r.includes("validator"))
+    return "simulation_note";
   if (r.includes("research") || r.includes("orchestrator")) return "strategy_iteration";
   // 分析师 / news / market_data 等都归入 strategy_iteration
   void summary;

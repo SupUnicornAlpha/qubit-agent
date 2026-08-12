@@ -56,7 +56,7 @@ export function parseLifecycle(raw: unknown): ExperienceLifecycle | null {
 
 export function inferExperienceLifecycle(exp: Experience): ExperienceLifecycle {
   const meta = exp.metadataJson ?? {};
-  const explicit = parseLifecycle(meta["lifecycle"] ?? meta["lifecycleState"]);
+  const explicit = parseLifecycle(meta.lifecycle ?? meta.lifecycleState);
   if (explicit) return explicit;
 
   if (exp.validTo != null) return "archived";

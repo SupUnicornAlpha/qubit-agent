@@ -119,13 +119,7 @@ describe("resolveTickerMarket — HK short numeric", () => {
 });
 
 describe("resolveTickerMarket — short US ticker", () => {
-  test.each([
-    ["AAPL"],
-    ["TSLA"],
-    ["MSFT"],
-    ["F"],
-    ["BRKB"],
-  ])("%s → US inferred", (sym) => {
+  test.each([["AAPL"], ["TSLA"], ["MSFT"], ["F"], ["BRKB"]])("%s → US inferred", (sym) => {
     const r = resolveTickerMarket(sym);
     expect(r.market).toBe("US");
     expect(r.exchange).toBe("US");

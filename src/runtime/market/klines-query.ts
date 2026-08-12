@@ -1,13 +1,16 @@
 import type { BarData, FetchBarsParams } from "../../connectors/data/data.connector";
 import { connectorRegistry } from "../../connectors/registry";
 import { loadBuiltinConnectorSettings } from "../config/builtin-connector-settings";
-import { parseKlinesDataSourceSetting, resolveEffectiveKlinesSource, type KlinesDataSourceMeta } from "./klines-data-source";
-import { windConfigFromSettings } from "./wind-klines";
 import {
+  type KlinesDataSourceMeta,
+  parseKlinesDataSourceSetting,
+  resolveEffectiveKlinesSource,
+} from "./klines-data-source";
+import {
+  type KlinesErrorPayload,
   buildKlinesConnectorUnavailableError,
   buildKlinesEmptyError,
   buildKlinesInvalidRequestError,
-  type KlinesErrorPayload,
 } from "./klines-error";
 import {
   buildKlinesQueryKey,
@@ -15,6 +18,7 @@ import {
   getCachedKlinesSource,
   setCachedKlinesBars,
 } from "./klines-request-cache";
+import { windConfigFromSettings } from "./wind-klines";
 
 /** Query token (case-insensitive). `1W` normalizes to daily bars spanning `limit` weeks. */
 const TIMEFRAME_TO_PERIOD: Record<string, FetchBarsParams["period"]> = {
@@ -201,9 +205,7 @@ export async function queryKlines(params: {
     endDate,
   });
   const cached = getCachedKlinesBars(queryKey);
-  const bars =
-    cached ??
-    ((await connector.execute("fetch_bars", fetchParams)) as BarData[]);
+  const bars = cached ?? ((await connector.execute("fetch_bars", fetchParams)) as BarData[]);
   const actualDataSource = getCachedKlinesSource(queryKey);
   if (!cached && bars.length > 0) {
     setCachedKlinesBars(queryKey, bars, undefined, actualDataSource);
@@ -271,9 +273,7 @@ export async function queryBarsRange(params: {
     endDate: params.endDate,
   });
   const cached = getCachedKlinesBars(queryKey, params.workflowRunId);
-  const raw =
-    cached ??
-    ((await connector.execute("fetch_bars", fetchParams)) as BarData[]);
+  const raw = cached ?? ((await connector.execute("fetch_bars", fetchParams)) as BarData[]);
   const sorted = [...raw].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
   if (!cached && sorted.length > 0) {
     setCachedKlinesBars(queryKey, sorted, params.workflowRunId);

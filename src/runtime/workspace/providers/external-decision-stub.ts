@@ -20,8 +20,8 @@
  */
 import type { ProviderRef } from "../types";
 import type { WorkspaceFs } from "../workspace-fs";
+import { type HttpProviderConfig, httpJson, readHttpProviderConfig } from "./http-client";
 import type { DecisionEngineProvider } from "./provider-types";
-import { httpJson, readHttpProviderConfig, type HttpProviderConfig } from "./http-client";
 
 export const EXTERNAL_HTTP_DECISION_KIND = "external.http_decision";
 /** @deprecated 请改用 external.http_decision；仍指向同一工厂 */
@@ -114,7 +114,5 @@ export function createExternalHttpDecisionProvider(ref: ProviderRef): DecisionEn
 
 /** @deprecated 使用 createExternalHttpDecisionProvider */
 export function createExternalDecisionStub(ref?: ProviderRef): DecisionEngineProvider {
-  return createExternalHttpDecisionProvider(
-    ref ?? { kind: EXTERNAL_DECISION_STUB_KIND }
-  );
+  return createExternalHttpDecisionProvider(ref ?? { kind: EXTERNAL_DECISION_STUB_KIND });
 }

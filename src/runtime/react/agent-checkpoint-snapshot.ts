@@ -3,9 +3,9 @@ import { desc, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { agentCheckpointSnapshot } from "../../db/sqlite/schema";
 import type { A2AMessageEnvelope } from "../../types/a2a";
-import type { RuntimeAgentDefinition } from "../types";
 import type { WorkingMemory } from "../context/types";
 import { ensureWorkingMemory } from "../context/working-memory";
+import type { RuntimeAgentDefinition } from "../types";
 import { type AgentGraphState, createInitialGraphState } from "./state";
 
 /**
@@ -238,7 +238,7 @@ export function restoreStateFromSnapshot(
     contextMemory: (snap.contextMemory as Record<string, unknown>) ?? {},
     workingMemory: ensureWorkingMemory(
       (snap.workingMemory as WorkingMemory | undefined) ??
-        ((snap.contextMemory as Record<string, unknown> | undefined)?.["working"] as
+        ((snap.contextMemory as Record<string, unknown> | undefined)?.working as
           | WorkingMemory
           | undefined)
     ),

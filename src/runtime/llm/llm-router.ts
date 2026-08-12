@@ -15,17 +15,17 @@
  * - 全局 process.env fallback 保证用户不配 DB 也能跑（向后兼容）
  */
 
+import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { llmProviderConfig } from "../../db/sqlite/schema";
-import { eq } from "drizzle-orm";
-import { loadModelConfig, type RuntimeModelConfig } from "../config/model-config";
-import { runLlmGateway, type LlmGatewayInput, type LlmTokenUsage } from "./gateway";
+import { type RuntimeModelConfig, loadModelConfig } from "../config/model-config";
+import { type LlmGatewayInput, type LlmTokenUsage, runLlmGateway } from "./gateway";
 import {
+  LlmGatewayError,
+  type LlmGatewayErrorJson,
   classifyLlmGatewayError,
   isFallbackEligibleLlmGatewayError,
   isRetryableLlmGatewayError,
-  LlmGatewayError,
-  type LlmGatewayErrorJson,
 } from "./llm-gateway-error";
 
 export type LlmProvider = RuntimeModelConfig["provider"];
@@ -76,9 +76,7 @@ export function parseAgentLlmProviderString(raw: string | undefined | null): {
 }
 
 /** 从 DB.llm_provider_config 按 providerId 查具体配置，转成 RuntimeModelConfig */
-export async function loadProviderFromDb(
-  providerId: string
-): Promise<RuntimeModelConfig | null> {
+export async function loadProviderFromDb(providerId: string): Promise<RuntimeModelConfig | null> {
   if (!providerId) return null;
   const db = await getDb();
   const rows = await db
@@ -108,7 +106,7 @@ export async function loadProviderFromDb(
     (row.apiKeySecret && row.apiKeySecret.length > 0
       ? row.apiKeySecret
       : row.apiKeyRef
-        ? process.env[row.apiKeyRef] ?? ""
+        ? (process.env[row.apiKeyRef] ?? "")
         : "") ?? "";
 
   const config: RuntimeModelConfig = {
@@ -171,7 +169,10 @@ export async function resolveLlmForAgent(def: {
   id?: string;
   role?: string;
   llmProvider?: string | null;
-}): Promise<{ config: RuntimeModelConfig; source: "agent_db" | "agent_inline" | "default" | "mock" }> {
+}): Promise<{
+  config: RuntimeModelConfig;
+  source: "agent_db" | "agent_inline" | "default" | "mock";
+}> {
   const agentProvider = def.llmProvider ?? null;
 
   // 1. DB lookup
@@ -184,7 +185,7 @@ export async function resolveLlmForAgent(def: {
     const parsed = parseAgentLlmProviderString(agentProvider);
     if (parsed.provider && parsed.model) {
       const envKey = providerEnvKey(parsed.provider);
-      const apiKey = envKey ? process.env[envKey] ?? "" : "";
+      const apiKey = envKey ? (process.env[envKey] ?? "") : "";
       if (apiKey || parsed.provider === "ollama" || parsed.provider === "mock") {
         return {
           config: { provider: parsed.provider, model: parsed.model, apiKey },
@@ -378,10 +379,10 @@ async function runGatewayWithTransportRetry(
       await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
     }
   }
-  throw classifyLlmGatewayError(
-    lastError ?? new Error("unreachable: transport retry exhausted"),
-    { provider: config.provider, model: config.model }
-  );
+  throw classifyLlmGatewayError(lastError ?? new Error("unreachable: transport retry exhausted"), {
+    provider: config.provider,
+    model: config.model,
+  });
 }
 
 /** 把 LlmGatewayResult 投影成 InvokeWithFallbackResult 的公共字段（兼顾 exactOptional）。 */
@@ -393,7 +394,7 @@ function projectResult(
     lengthRetryUsed: boolean;
     transportAttempts?: number;
     lastError?: LlmGatewayErrorJson;
-  },
+  }
 ): InvokeWithFallbackResult {
   return {
     answer: result.answer,
@@ -421,7 +422,7 @@ function projectResult(
  */
 async function invokeOnceWithLengthRetry(
   config: RuntimeModelConfig,
-  input: Omit<LlmGatewayInput, "config">,
+  input: Omit<LlmGatewayInput, "config">
 ): Promise<{
   result: Awaited<ReturnType<typeof runLlmGateway>>;
   lengthRetryUsed: boolean;
@@ -430,7 +431,7 @@ async function invokeOnceWithLengthRetry(
 }> {
   const firstAttempt = await runGatewayWithTransportRetry(config, input);
   const first = firstAttempt.result;
-  if (process.env["QUBIT_LLM_LENGTH_RETRY_DISABLED"] === "1") {
+  if (process.env.QUBIT_LLM_LENGTH_RETRY_DISABLED === "1") {
     return {
       result: first,
       lengthRetryUsed: false,
@@ -509,9 +510,15 @@ async function invokeOnceWithLengthRetry(
       : second.firstTokenLatencyMs !== undefined
         ? { firstTokenLatencyMs: second.firstTokenLatencyMs }
         : {}),
-    ...(second.responseId ? { responseId: second.responseId } : first.responseId ? { responseId: first.responseId } : {}),
+    ...(second.responseId
+      ? { responseId: second.responseId }
+      : first.responseId
+        ? { responseId: first.responseId }
+        : {}),
     ...(second.finishReason ? { finishReason: second.finishReason } : {}),
-    ...(mergeUsage(first.usage, second.usage) ? { usage: mergeUsage(first.usage, second.usage)! } : {}),
+    ...(mergeUsage(first.usage, second.usage)
+      ? { usage: mergeUsage(first.usage, second.usage)! }
+      : {}),
   };
   return {
     result: merged,
@@ -527,7 +534,7 @@ async function invokeOnceWithLengthRetry(
 
 function mergeUsage(
   a: LlmTokenUsage | undefined,
-  b: LlmTokenUsage | undefined,
+  b: LlmTokenUsage | undefined
 ): LlmTokenUsage | undefined {
   if (!a && !b) return undefined;
   if (!a) return b;
@@ -538,10 +545,7 @@ function mergeUsage(
   const completionTokens = sum(a.completionTokens, b.completionTokens);
   const totalTokens = sum(a.totalTokens, b.totalTokens);
   const cachedPromptTokens = sum(a.cachedPromptTokens, b.cachedPromptTokens);
-  const cacheCreationInputTokens = sum(
-    a.cacheCreationInputTokens,
-    b.cacheCreationInputTokens,
-  );
+  const cacheCreationInputTokens = sum(a.cacheCreationInputTokens, b.cacheCreationInputTokens);
   const reasoningTokens = sum(a.reasoningTokens, b.reasoningTokens);
   return {
     ...(promptTokens !== undefined ? { promptTokens } : {}),

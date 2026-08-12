@@ -85,9 +85,7 @@ export async function requestSkillRevision(
     visibility: "project_shared",
     contentJson: {
       summary: `请求修订 skill ${input.baseSkillId}`,
-      body:
-        (input.reason ?? "").trim() ||
-        `requestedBy=${input.requestedBy}（无 reason）`,
+      body: (input.reason ?? "").trim() || `requestedBy=${input.requestedBy}（无 reason）`,
     },
     tagsJson: ["p6", "skill_evolver", `requestedBy:${input.requestedBy}`],
     metadataJson: meta as unknown as Record<string, unknown>,

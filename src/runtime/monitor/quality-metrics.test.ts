@@ -80,7 +80,12 @@ describe("parseBreakdownJson", () => {
   test("空对象与异常输入降级为空 breakdown 骨架", () => {
     expect(parseBreakdownJson("{}")).toEqual({ byTool: {}, byMcp: {}, bySkill: {}, errorTopN: [] });
     expect(parseBreakdownJson(null)).toEqual({ byTool: {}, byMcp: {}, bySkill: {}, errorTopN: [] });
-    expect(parseBreakdownJson("not json")).toEqual({ byTool: {}, byMcp: {}, bySkill: {}, errorTopN: [] });
+    expect(parseBreakdownJson("not json")).toEqual({
+      byTool: {},
+      byMcp: {},
+      bySkill: {},
+      errorTopN: [],
+    });
   });
 
   test("已 parse 的对象直接透传四个字段", () => {

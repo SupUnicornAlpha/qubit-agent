@@ -25,9 +25,7 @@ import { agentInstance, agentStep, toolCallLog } from "../../db/sqlite/schema";
 const ERROR_MESSAGE_MAX_LEN = 2000;
 
 function truncateError(message: string): string {
-  return message.length > ERROR_MESSAGE_MAX_LEN
-    ? message.slice(0, ERROR_MESSAGE_MAX_LEN)
-    : message;
+  return message.length > ERROR_MESSAGE_MAX_LEN ? message.slice(0, ERROR_MESSAGE_MAX_LEN) : message;
 }
 
 export interface StartExternalLoopInstanceInput {
@@ -37,7 +35,7 @@ export interface StartExternalLoopInstanceInput {
 
 /** 创建一条 running 的 agent_instance；返回新 instanceId（uuid）。 */
 export async function startExternalLoopInstance(
-  input: StartExternalLoopInstanceInput,
+  input: StartExternalLoopInstanceInput
 ): Promise<string> {
   const db = await getDb();
   const id = randomUUID();
@@ -68,7 +66,7 @@ export interface MarkExternalLoopInstanceErrorInput {
 
 /** spawn / runtime / exit !=0 都走这条；errorMessage 自动截断到 2000 字。 */
 export async function markExternalLoopInstanceError(
-  input: MarkExternalLoopInstanceErrorInput,
+  input: MarkExternalLoopInstanceErrorInput
 ): Promise<void> {
   const db = await getDb();
   await db
@@ -90,9 +88,7 @@ export interface AppendExternalLoopStepInput {
 }
 
 /** 写一条 phase='external' 的 agent_step；返回新 stepId（uuid）。 */
-export async function appendExternalLoopStep(
-  input: AppendExternalLoopStepInput,
-): Promise<string> {
+export async function appendExternalLoopStep(input: AppendExternalLoopStepInput): Promise<string> {
   const db = await getDb();
   const id = randomUUID();
   await db.insert(agentStep).values({
@@ -129,7 +125,7 @@ export interface RecordExternalLoopToolCallInput {
  * - 写失败仅 warn 不抛：监控类副作用不挡主流程
  */
 export async function recordExternalLoopToolCall(
-  input: RecordExternalLoopToolCallInput,
+  input: RecordExternalLoopToolCallInput
 ): Promise<void> {
   try {
     const db = await getDb();
@@ -150,7 +146,7 @@ export async function recordExternalLoopToolCall(
     });
   } catch (e) {
     console.warn(
-      `[external-loop-state] tool_call_log insert failed (tool=${input.toolName}): ${(e as Error).message}`,
+      `[external-loop-state] tool_call_log insert failed (tool=${input.toolName}): ${(e as Error).message}`
     );
   }
 }

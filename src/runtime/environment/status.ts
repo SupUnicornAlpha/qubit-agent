@@ -10,7 +10,7 @@
 
 import { config } from "../../config";
 import { resolvePythonBin } from "../app-paths";
-import { listConnectorProbes, type ConnectorProbe } from "./connector-probes";
+import { type ConnectorProbe, listConnectorProbes } from "./connector-probes";
 import { buildNpmDiff } from "./npm-deps";
 import { buildPythonDiff } from "./python-deps";
 import type { ExpectedPackage, PackageDiff } from "./types";
@@ -28,7 +28,10 @@ export interface EnvironmentStatus {
   generatedAt: string;
 }
 
-function classify(diff: PackageDiff): { hasMissingRequired: boolean; hasMismatchRequired: boolean } {
+function classify(diff: PackageDiff): {
+  hasMissingRequired: boolean;
+  hasMismatchRequired: boolean;
+} {
   const isReq = (p: ExpectedPackage) => !p.optional;
   return {
     hasMissingRequired: diff.missing.some(isReq),

@@ -62,9 +62,7 @@ export function resolveToolExecutionRoute(toolName: string): ToolExecutionRoute 
 }
 
 /** act / reason 共用的 targetKind 标签 */
-export function toolRouteToTargetKind(
-  route: ToolExecutionRouteKind
-): "mcp" | "tool" | "connector" {
+export function toolRouteToTargetKind(route: ToolExecutionRouteKind): "mcp" | "tool" | "connector" {
   if (route === "mcp") return "mcp";
   if (route === "connector") return "connector";
   return "tool";

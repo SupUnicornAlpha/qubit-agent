@@ -5,14 +5,14 @@ import { workflowHitlRequest, workflowRun } from "../../db/sqlite/schema";
 import type { LoopOptionsJson } from "../../types/loop";
 import { parseLoopOptionsJson } from "../../types/loop";
 import { dispatchTaskToRole } from "../agent-pool";
-// P2-A Batch 2：续跑改走 dispatchTaskToRole（由 agent-pool 按 path 决定），
-// 不再直接调 graphRunner.resumeRoleTask；保留 import 注释作为历史指引。
-import { stepStreamBus } from "../react/event-stream";
-import type { StepStreamEvent } from "../react/state";
 import {
   findPendingAnalystJobByWorkflow,
   resumeAnalystResearchJob,
 } from "../msa/analyst-research-jobs";
+// P2-A Batch 2：续跑改走 dispatchTaskToRole（由 agent-pool 按 path 决定），
+// 不再直接调 graphRunner.resumeRoleTask；保留 import 注释作为历史指引。
+import { stepStreamBus } from "../react/event-stream";
+import type { StepStreamEvent } from "../react/state";
 import { setWorkflowState } from "./workflow-state-machine";
 
 export type HitlScope = "chat_orchestrator" | "team_orchestrator";
@@ -444,11 +444,7 @@ export function buildHitlResumePromptBlock(input: {
   );
   const response = approval.response ?? {};
   let humanDecision = "用户已批准按原计划继续。";
-  if (
-    response.fields &&
-    typeof response.fields === "object" &&
-    !Array.isArray(response.fields)
-  ) {
+  if (response.fields && typeof response.fields === "object" && !Array.isArray(response.fields)) {
     const entries = Object.entries(response.fields as Record<string, unknown>)
       .filter(([, v]) => typeof v === "string" && String(v).trim())
       .map(([k, v]) => `${k}=${String(v).trim()}`);
@@ -459,9 +455,7 @@ export function buildHitlResumePromptBlock(input: {
   if (typeof response.text === "string" && response.text.trim()) {
     const textPart = `用户补充指引：${response.text.trim().slice(0, 1000)}`;
     humanDecision =
-      humanDecision === "用户已批准按原计划继续。"
-        ? textPart
-        : `${humanDecision}\n${textPart}`;
+      humanDecision === "用户已批准按原计划继续。" ? textPart : `${humanDecision}\n${textPart}`;
   } else if (Array.isArray(response.values)) {
     const labels = response.values
       .filter((value): value is string => typeof value === "string")
@@ -1270,9 +1264,7 @@ export async function resolveHitlRequest(input: {
   const taskId = randomUUID();
   const hitlPayload = row.payloadJson as Record<string, unknown>;
   const primeCoreInboxId =
-    typeof hitlPayload.primeCoreInboxId === "string"
-      ? hitlPayload.primeCoreInboxId
-      : undefined;
+    typeof hitlPayload.primeCoreInboxId === "string" ? hitlPayload.primeCoreInboxId : undefined;
   const dispatchResult = await dispatchTaskToRole({
     workflowId: row.workflowRunId,
     role: "orchestrator",

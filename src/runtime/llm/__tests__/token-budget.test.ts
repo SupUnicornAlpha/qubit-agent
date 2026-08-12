@@ -9,8 +9,8 @@
  */
 import { describe, expect, test } from "bun:test";
 import {
-  KNOWN_MODEL_CONTEXT_WINDOWS,
   DEFAULT_CONTEXT_WINDOW,
+  KNOWN_MODEL_CONTEXT_WINDOWS,
   compactObservations,
   computePromptBudget,
   estimateTokens,
@@ -45,7 +45,7 @@ describe("estimateTokens (P1-6)", () => {
     expect(estimateTokensOfJson({ a: 1, b: "hello" })).toBeGreaterThan(0);
     /** circular → 不抛错，返回 0 */
     const a: Record<string, unknown> = {};
-    a["self"] = a;
+    a.self = a;
     expect(estimateTokensOfJson(a)).toBe(0);
   });
 });
@@ -108,21 +108,15 @@ describe("getContextWindow (P1-6)", () => {
 
 describe("computePromptBudget (P1-6)", () => {
   test("128K window + 8K maxOutput → 81600 token 可用预算", () => {
-    expect(
-      computePromptBudget({ contextWindow: 128_000, maxOutputTokens: 8_000 })
-    ).toBe(81_600);
+    expect(computePromptBudget({ contextWindow: 128_000, maxOutputTokens: 8_000 })).toBe(81_600);
   });
 
   test("200K window + 8K maxOutput → 132000", () => {
-    expect(
-      computePromptBudget({ contextWindow: 200_000, maxOutputTokens: 8_000 })
-    ).toBe(132_000);
+    expect(computePromptBudget({ contextWindow: 200_000, maxOutputTokens: 8_000 })).toBe(132_000);
   });
 
   test("1M window + 8K maxOutput → 692000", () => {
-    expect(
-      computePromptBudget({ contextWindow: 1_000_000, maxOutputTokens: 8_000 })
-    ).toBe(692_000);
+    expect(computePromptBudget({ contextWindow: 1_000_000, maxOutputTokens: 8_000 })).toBe(692_000);
   });
 
   test("safetyRatio 可配置", () => {
@@ -136,9 +130,7 @@ describe("computePromptBudget (P1-6)", () => {
   });
 
   test("非常小的 window 不能为负数", () => {
-    expect(
-      computePromptBudget({ contextWindow: 8_000, maxOutputTokens: 8_000 })
-    ).toBe(0);
+    expect(computePromptBudget({ contextWindow: 8_000, maxOutputTokens: 8_000 })).toBe(0);
   });
 });
 

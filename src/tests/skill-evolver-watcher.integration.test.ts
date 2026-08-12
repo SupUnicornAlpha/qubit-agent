@@ -9,9 +9,9 @@
  */
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import { mkdir, rm } from "node:fs/promises";
-import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { config } from "../config";
 import { closeDb, getDb } from "../db/sqlite/client";
@@ -164,8 +164,8 @@ describe("GET /api/v1/monitor/memory/skill-evolutions/diff", () => {
     expect(data.child.parentSkillId).toBe(baseSkillId);
     expect(data.child.source).toBe("evolved");
     expect(data.parent).toBeTruthy();
-    expect(data.parent!.id).toBe(baseSkillId);
-    expect(String(data.parent!.bodyMd)).toContain("调 tool A");
+    expect(data.parent?.id).toBe(baseSkillId);
+    expect(String(data.parent?.bodyMd)).toContain("调 tool A");
     expect(String(data.child.bodyMd)).toContain("常见失败模式");
   });
 
@@ -245,7 +245,7 @@ describe("GET /api/v1/monitor/memory/skill-promotions（P6 字段增强）", () 
     const data = body.data as { items: Array<Record<string, unknown>> };
     const evolved = data.items.find((r) => r.id === evolvedSkillId);
     expect(evolved).toBeTruthy();
-    expect(evolved!.source).toBe("evolved");
-    expect(evolved!.parentSkillId).toBe(baseSkillId);
+    expect(evolved?.source).toBe("evolved");
+    expect(evolved?.parentSkillId).toBe(baseSkillId);
   });
 });

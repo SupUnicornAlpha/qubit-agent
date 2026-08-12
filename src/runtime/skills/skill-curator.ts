@@ -21,8 +21,8 @@ import { and, desc, eq, ne, sql } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { agentSkill, skillCuratorRun, skillRecallLog } from "../../db/sqlite/schema";
 import type { AgentSkill, SkillCuratorMode } from "../../types/entities";
-import { invokeWithFallback } from "../llm/llm-router";
 import { loadModelConfig } from "../config/model-config";
+import { invokeWithFallback } from "../llm/llm-router";
 import { skillService } from "./skill-service";
 
 const STALE_THRESHOLD_DAYS = 30;
@@ -223,7 +223,12 @@ export class SkillCurator {
   async applyAutoTransitions(
     projectId: string,
     mode: SkillCuratorMode
-  ): Promise<{ totalChecked: number; markedStale: number; archived: number; actions: CuratorActionItem[] }> {
+  ): Promise<{
+    totalChecked: number;
+    markedStale: number;
+    archived: number;
+    actions: CuratorActionItem[];
+  }> {
     const db = await getDb();
     const all = (await db
       .select()
@@ -254,7 +259,10 @@ export class SkillCurator {
     const qualityBySkillId = new Map(
       qualityRows.map((row) => [
         row.skillId,
-        { recallCount: Number(row.recallCount ?? 0), executedCount: Number(row.executedCount ?? 0) },
+        {
+          recallCount: Number(row.recallCount ?? 0),
+          executedCount: Number(row.executedCount ?? 0),
+        },
       ])
     );
 
@@ -282,7 +290,8 @@ export class SkillCurator {
       }
 
       const quality = qualityBySkillId.get(s.id);
-      const executedRate = quality && quality.recallCount > 0 ? quality.executedCount / quality.recallCount : 0;
+      const executedRate =
+        quality && quality.recallCount > 0 ? quality.executedCount / quality.recallCount : 0;
       if (
         automaticallyManaged &&
         quality &&
@@ -368,7 +377,11 @@ export class SkillCurator {
             await skillService.archive(action.skillId, `curator_llm: ${action.reason}`);
             archived += 1;
           }
-        } else if (action.kind === "consolidate" && action.primarySkillId && action.duplicateSkillIds) {
+        } else if (
+          action.kind === "consolidate" &&
+          action.primarySkillId &&
+          action.duplicateSkillIds
+        ) {
           const primary = await skillService.findById(action.primarySkillId);
           if (!primary || primary.state === "archived" || primary.pinned) continue;
           for (const dupId of action.duplicateSkillIds) {
@@ -432,9 +445,7 @@ export function buildCuratorReviewPrompt(skills: AgentSkill[]): string {
   for (const s of skills) {
     const successRate =
       s.useCount > 0 ? Math.round((s.successCount / Math.max(1, s.useCount)) * 100) : 0;
-    lines.push(
-      `- id: ${s.id}`
-    );
+    lines.push(`- id: ${s.id}`);
     lines.push(`  name: ${s.name}`);
     lines.push(`  category: ${s.category}`);
     lines.push(`  state: ${s.state}`);
@@ -489,14 +500,14 @@ export function parseCuratorYaml(rawYaml: string): CuratorActionItem[] {
       const rest = line.slice(2).trim();
       const m = rest.match(/^(\w[\w_-]*):\s*(.*)$/);
       if (m && current) {
-        applyField(current, m[1]!, m[2]!.trim());
+        applyField(current, m[1]!, m[2]?.trim());
       }
       continue;
     }
     if (!current) continue;
     const m = line.match(/^(\w[\w_-]*):\s*(.*)$/);
     if (m) {
-      applyField(current, m[1]!, m[2]!.trim());
+      applyField(current, m[1]!, m[2]?.trim());
     }
   }
   flush();
@@ -507,7 +518,11 @@ function applyField(target: Partial<CuratorActionItem>, key: string, value: stri
   const k = key.replace(/_(\w)/g, (_, c) => c.toUpperCase());
   const stripped = value.replace(/^['"]/, "").replace(/['"]$/, "");
   if (key === "kind") {
-    if (["archive", "consolidate", "rename", "mark_stale", "propose_archive", "none"].includes(stripped)) {
+    if (
+      ["archive", "consolidate", "rename", "mark_stale", "propose_archive", "none"].includes(
+        stripped
+      )
+    ) {
       target.kind = stripped as CuratorActionItem["kind"];
     }
     return;

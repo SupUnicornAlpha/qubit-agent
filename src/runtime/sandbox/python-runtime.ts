@@ -63,7 +63,7 @@ export function getPythonBin(): string {
 }
 
 function classifyBin(bin: string): PythonHealthReport["binKind"] {
-  if (process.env["QUBIT_PYTHON"]?.trim() === bin) return "explicit";
+  if (process.env.QUBIT_PYTHON?.trim() === bin) return "explicit";
   if (bin.includes("python-venv")) return "venv";
   return "system";
 }
@@ -107,17 +107,17 @@ async function runProbe(bin: string): Promise<{
    */
   const reqJson = JSON.stringify([...REQUIRED_DEPS, ...OPTIONAL_DEPS]);
   const code =
-    `import json,sys\n` +
+    "import json,sys\n" +
     `mods=${reqJson}\n` +
     `out={"version":sys.version.split()[0],"deps":{}}\n` +
-    `for m in mods:\n` +
-    `  try:\n` +
-    `    mod=__import__(m)\n` +
+    "for m in mods:\n" +
+    "  try:\n" +
+    "    mod=__import__(m)\n" +
     `    v=getattr(mod,'__version__',None)\n` +
     `    out["deps"][m]={"ok":True,"version":v}\n` +
-    `  except Exception as e:\n` +
+    "  except Exception as e:\n" +
     `    out["deps"][m]={"ok":False,"error":str(e)[:200]}\n` +
-    `print(json.dumps(out))`;
+    "print(json.dumps(out))";
 
   let proc: ReturnType<typeof Bun.spawn>;
   try {

@@ -33,7 +33,7 @@ const grade = { weightedScore: 1 } as SnapshotGrade;
 
 function completeScorecard() {
   return scoreRunEnvelope({
-    ...L0_CASES[0]!.envelope,
+    ...L0_CASES[0]?.envelope,
     suite: "L1",
     workflowRunId: "benchmark-run",
     scenarioKey: benchmarkCase.scenarioKey,
@@ -105,7 +105,7 @@ describe("benchmark upgrade gate", () => {
       contract: _contract,
       capability: _capability,
       ...withoutTelemetry
-    } = L0_CASES[0]!.envelope;
+    } = L0_CASES[0]?.envelope;
     const result = evaluateUpgradeGate({
       benchmarkCase,
       snapshot: snapshot(),

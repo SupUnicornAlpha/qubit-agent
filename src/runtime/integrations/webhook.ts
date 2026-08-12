@@ -1,3 +1,4 @@
+import { IM_WEBHOOK_TIMEOUT_MS, fetchWithTimeout } from "../../util/fetch-with-timeout";
 import type {
   IIntegrationAdapter,
   ParsedInboundMessage,
@@ -6,7 +7,6 @@ import type {
   WebhookVerifyContext,
   WebhookVerifyResult,
 } from "./types";
-import { fetchWithTimeout, IM_WEBHOOK_TIMEOUT_MS } from "../../util/fetch-with-timeout";
 
 /**
  * 通用 outbound Webhook：

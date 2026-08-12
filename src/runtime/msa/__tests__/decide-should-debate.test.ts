@@ -8,7 +8,7 @@
  * 这个测试锁定三段优先级的边界条件，防止后续重构倒退。
  */
 import { describe, expect, test } from "bun:test";
-import { decideShouldDebate, type OrchestratorDecision } from "../analyst-team-pipeline";
+import { type OrchestratorDecision, decideShouldDebate } from "../analyst-team-pipeline";
 
 const baseOrch: OrchestratorDecision = {
   signal: "hold",

@@ -8,10 +8,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const tmpDir = join(
-  tmpdir(),
-  `qubit-readiness-collector-${process.pid}-${Date.now()}`
-);
+const tmpDir = join(tmpdir(), `qubit-readiness-collector-${process.pid}-${Date.now()}`);
 rmSync(tmpDir, { recursive: true, force: true });
 mkdirSync(join(tmpDir, "db"), { recursive: true });
 process.env.QUBIT_DATA_DIR = tmpDir;

@@ -548,11 +548,10 @@ export class SkillService {
         lastUsedAt: now,
         updatedAt: now,
       };
-      if (input.outcome === "success")
-        setters["successCount"] = sql`${agentSkill.successCount} + 1`;
-      if (input.outcome === "fail") setters["failCount"] = sql`${agentSkill.failCount} + 1`;
+      if (input.outcome === "success") setters.successCount = sql`${agentSkill.successCount} + 1`;
+      if (input.outcome === "fail") setters.failCount = sql`${agentSkill.failCount} + 1`;
       // active → 复活：被 Curator 标 stale 的 skill 再次被用 → 重新激活
-      if (skill.state === "stale") setters["state"] = "active";
+      if (skill.state === "stale") setters.state = "active";
       await db.update(agentSkill).set(setters).where(eq(agentSkill.id, skillRowId));
     }
 

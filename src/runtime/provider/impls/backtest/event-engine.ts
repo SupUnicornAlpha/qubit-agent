@@ -15,6 +15,7 @@
  *   - equityCurve / trades / metrics
  */
 
+import { computePerformanceMetrics } from "../../../backtest/performance-metrics";
 import type {
   BacktestCosts,
   BacktestEquityPoint,
@@ -121,61 +122,11 @@ function computeMetrics(
   trades: BacktestTrade[],
   initialCapital: number
 ): BacktestMetrics {
-  if (equityCurve.length < 2) {
-    return {
-      totalReturn: 0,
-      annualReturn: 0,
-      annualVol: 0,
-      sharpe: 0,
-      maxDrawdown: 0,
-      winRate: 0,
-      tradeCount: trades.length,
-      turnover: 0,
-    };
-  }
-  const finalEq = equityCurve[equityCurve.length - 1]!.equity;
-  const totalReturn = finalEq / initialCapital - 1;
-  // 日收益
-  const rets: number[] = [];
-  for (let i = 1; i < equityCurve.length; i++) {
-    const a = equityCurve[i - 1]!.equity;
-    const b = equityCurve[i]!.equity;
-    if (a > 0) rets.push(b / a - 1);
-  }
-  const mean = rets.reduce((s, x) => s + x, 0) / Math.max(1, rets.length);
-  let varAcc = 0;
-  for (const r of rets) varAcc += (r - mean) ** 2;
-  const std = Math.sqrt(varAcc / Math.max(1, rets.length - 1));
-  const annualReturn = mean * 252;
-  const annualVol = std * Math.sqrt(252);
-  const sharpe = annualVol > 1e-9 ? annualReturn / annualVol : 0;
-
-  let peak = equityCurve[0]!.equity;
-  let maxDd = 0;
-  for (const p of equityCurve) {
-    if (p.equity > peak) peak = p.equity;
-    const dd = peak > 0 ? (peak - p.equity) / peak : 0;
-    if (dd > maxDd) maxDd = dd;
-  }
-  const wins = rets.filter((r) => r > 0).length;
-  const winRate = rets.length ? wins / rets.length : 0;
-
-  // turnover = Σ|notional| / (avg equity) / years
-  let traded = 0;
-  for (const t of trades) traded += t.qty * t.price;
-  const avgEquity = equityCurve.reduce((s, p) => s + p.equity, 0) / equityCurve.length;
-  const years = Math.max(1 / 252, equityCurve.length / 252);
-  const turnover = avgEquity > 0 ? traded / avgEquity / years : 0;
-
+  const metrics = computePerformanceMetrics({ equityCurve, trades, initialCapital });
   return {
-    totalReturn,
-    annualReturn,
-    annualVol,
-    sharpe,
-    maxDrawdown: maxDd,
-    winRate,
-    tradeCount: trades.length,
-    turnover,
+    ...metrics,
+    // 兼容既有展示：这里的胜率是净值日收益为正的比例，不是假装精确的 round-trip 胜率。
+    winRate: metrics.positivePeriodRate,
   };
 }
 
@@ -280,9 +231,8 @@ export function runEventEngine(input: EngineInput): BacktestResult {
           const fee = Math.max(notional * commissionRate, costs.minCommission ?? 0);
           cash -= notional + fee;
           const newQty = (cur?.qty ?? 0) + qty;
-          const newAvg = newQty > 0
-            ? ((cur?.qty ?? 0) * (cur?.avgPrice ?? 0) + qty * fillPx) / newQty
-            : 0;
+          const newAvg =
+            newQty > 0 ? ((cur?.qty ?? 0) * (cur?.avgPrice ?? 0) + qty * fillPx) / newQty : 0;
           positions.set(sym, { symbol: sym, qty: newQty, avgPrice: newAvg });
           trades.push({ date, symbol: sym, side: "buy", qty, price: fillPx, commission: fee });
         } else {

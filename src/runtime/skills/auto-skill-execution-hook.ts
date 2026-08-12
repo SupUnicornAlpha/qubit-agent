@@ -29,8 +29,8 @@ import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { agentSkill, skillRecallLog } from "../../db/sqlite/schema";
 import type { AgentSkillOutcome } from "../../types/entities";
-import { skillService } from "./skill-service";
 import { isBenchmarkWorkflow } from "../benchmark/benchmark-namespace";
+import { skillService } from "./skill-service";
 
 export interface AutoMarkInput {
   workflowRunId: string;

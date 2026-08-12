@@ -1,4 +1,10 @@
-import type { ConnectorMeta, ConnectorOrder, ConnectorFill, ConnectorOrderIntent, ConnectorPosition } from "../../types/connector";
+import type {
+  ConnectorFill,
+  ConnectorMeta,
+  ConnectorOrder,
+  ConnectorOrderIntent,
+  ConnectorPosition,
+} from "../../types/connector";
 import { BaseConnector } from "../base.connector";
 
 /**
@@ -29,11 +35,17 @@ export abstract class ExecutionConnector extends BaseConnector {
         return this.modifyOrder(p.brokerOrderId, p.params) as unknown as TOutput;
       }
       case "get_order":
-        return this.getOrder((payload as { brokerOrderId: string }).brokerOrderId) as unknown as TOutput;
+        return this.getOrder(
+          (payload as { brokerOrderId: string }).brokerOrderId
+        ) as unknown as TOutput;
       case "get_positions":
-        return this.getPositions((payload as { accountId: string }).accountId) as unknown as TOutput;
+        return this.getPositions(
+          (payload as { accountId: string }).accountId
+        ) as unknown as TOutput;
       case "get_fills":
-        return this.getFills((payload as { brokerOrderId: string }).brokerOrderId) as unknown as TOutput;
+        return this.getFills(
+          (payload as { brokerOrderId: string }).brokerOrderId
+        ) as unknown as TOutput;
       default:
         throw new Error(`ExecutionConnector: unknown operation "${operation}"`);
     }

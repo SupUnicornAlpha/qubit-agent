@@ -83,10 +83,7 @@ beforeAll(async () => {
     .insert(workflowRun)
     .values({ id: workflowRunId, projectId, goal: "g", mode: "research" })
     .run();
-  await db
-    .insert(agentInstance)
-    .values({ id: instId, definitionId, workflowRunId })
-    .run();
+  await db.insert(agentInstance).values({ id: instId, definitionId, workflowRunId }).run();
   await db
     .insert(agentStep)
     .values({
@@ -128,7 +125,9 @@ beforeAll(async () => {
     await db
       .select()
       .from(toolGapLog)
-      .where(and(eq(toolGapLog.projectId, projectId), eq(toolGapLog.gapSignature, "tool:get_weather")))
+      .where(
+        and(eq(toolGapLog.projectId, projectId), eq(toolGapLog.gapSignature, "tool:get_weather"))
+      )
   )[0]!;
   openGapId = row.id;
 });
@@ -148,8 +147,8 @@ describe("GET /api/v1/monitor/memory/tool-gaps", () => {
     expect(data.items.length).toBeGreaterThanOrEqual(1);
     const found = data.items.find((r) => r.gapSignature === "tool:get_weather");
     expect(found).toBeTruthy();
-    expect(found!.status).toBe("open");
-    expect(found!.detectionKind).toBe("unknown_tool");
+    expect(found?.status).toBe("open");
+    expect(found?.detectionKind).toBe("unknown_tool");
   });
 
   test("kind=reflective_mention 过滤 → 列表空（fixture 中无）", async () => {
@@ -165,9 +164,7 @@ describe("GET /api/v1/monitor/memory/tool-gaps", () => {
 
   test("非法 status → 400", async () => {
     const res = await app.request(
-      new Request(
-        `http://t/api/v1/monitor/memory/tool-gaps?projectId=${projectId}&status=banana`
-      )
+      new Request(`http://t/api/v1/monitor/memory/tool-gaps?projectId=${projectId}&status=banana`)
     );
     expect(res.status).toBe(400);
   });

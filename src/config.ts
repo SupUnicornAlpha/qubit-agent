@@ -25,15 +25,15 @@ const ConfigSchema = z.object({
   /** When false, Bun will not spawn qubit-app-server (assume external). */
   spawnRustCore: z.boolean().default(true),
   teamExecutionPath: z.enum(["inprocess", "a2a"]).default("a2a"),
-  memory: z.object({
-    sessionTtlHours: z.coerce.number().default(24),
-    external: z.object({
-      enabled: z.boolean().default(false),
-      writeMode: z
-        .enum(["dual_write", "external_only", "native_only"])
-        .default("native_only"),
-    }),
-  }).default({ external: {} }),
+  memory: z
+    .object({
+      sessionTtlHours: z.coerce.number().default(24),
+      external: z.object({
+        enabled: z.boolean().default(false),
+        writeMode: z.enum(["dual_write", "external_only", "native_only"]).default("native_only"),
+      }),
+    })
+    .default({ external: {} }),
   /**
    * FSI 内容包：运行时以 content-packs/anthropic-fsi/settings.json 为准；
    * 此处仅保留占位，实际逻辑见 src/runtime/fsi/fsi-config.ts
@@ -45,22 +45,22 @@ export type Config = z.infer<typeof ConfigSchema>;
 
 function loadConfig(): Config {
   return ConfigSchema.parse({
-    port: process.env["PORT"],
-    host: process.env["HOST"],
-    env: process.env["NODE_ENV"],
-    dataDir: process.env["QUBIT_DATA_DIR"],
-    logLevel: process.env["LOG_LEVEL"],
-    riskSigningKey: process.env["QUBIT_RISK_SIGNING_KEY"],
-    agentExecutionPath: process.env["QUBIT_AGENT_EXECUTION_PATH"],
-    coreBackend: process.env["QUBIT_CORE_BACKEND"],
-    rustCoreUrl: process.env["QUBIT_RUST_CORE_URL"],
-    spawnRustCore: process.env["QUBIT_SKIP_CORE_SPAWN"] === "1" ? false : undefined,
-    teamExecutionPath: process.env["QUBIT_TEAM_EXECUTION_PATH"],
+    port: process.env.PORT,
+    host: process.env.HOST,
+    env: process.env.NODE_ENV,
+    dataDir: process.env.QUBIT_DATA_DIR,
+    logLevel: process.env.LOG_LEVEL,
+    riskSigningKey: process.env.QUBIT_RISK_SIGNING_KEY,
+    agentExecutionPath: process.env.QUBIT_AGENT_EXECUTION_PATH,
+    coreBackend: process.env.QUBIT_CORE_BACKEND,
+    rustCoreUrl: process.env.QUBIT_RUST_CORE_URL,
+    spawnRustCore: process.env.QUBIT_SKIP_CORE_SPAWN === "1" ? false : undefined,
+    teamExecutionPath: process.env.QUBIT_TEAM_EXECUTION_PATH,
     memory: {
-      sessionTtlHours: process.env["MEMORY_SESSION_TTL_HOURS"],
+      sessionTtlHours: process.env.MEMORY_SESSION_TTL_HOURS,
       external: {
-        enabled: process.env["MEMORY_EXTERNAL_ENABLED"] === "true",
-        writeMode: process.env["MEMORY_WRITE_MODE"],
+        enabled: process.env.MEMORY_EXTERNAL_ENABLED === "true",
+        writeMode: process.env.MEMORY_WRITE_MODE,
       },
     },
   });

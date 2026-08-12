@@ -1,7 +1,7 @@
 import { getDb } from "../../../db/sqlite/client";
 import { agentStep } from "../../../db/sqlite/schema";
-import type { AgentGraphState, StepStreamEvent } from "../state";
 import { stripToolCallSentinels } from "../../tools/tool-call-format";
+import type { AgentGraphState, StepStreamEvent } from "../state";
 
 export async function observeNode(
   state: AgentGraphState,
@@ -58,4 +58,3 @@ export async function observeNode(
     observations: [...state.observations, observation],
   };
 }
-

@@ -195,11 +195,12 @@ export function resolveResearchScope(input: {
 }): NormalizedResearchScope {
   const scope = input.scope;
   const instrument: ResearchInstrumentKind =
-    scope?.instrument === "option" || scope?.instrument === "future" || scope?.instrument === "crypto"
+    scope?.instrument === "option" ||
+    scope?.instrument === "future" ||
+    scope?.instrument === "crypto"
       ? scope.instrument
       : "equity";
-  const positionSide: ResearchPositionSide =
-    scope?.positionSide === "short" ? "short" : "long";
+  const positionSide: ResearchPositionSide = scope?.positionSide === "short" ? "short" : "long";
   const exchange = scope?.exchange?.trim() || undefined;
   const parseSymbols = (raw: string) =>
     parseSymbolList(raw, { preserveCryptoPair: instrument === "crypto" });
@@ -224,9 +225,7 @@ export function resolveResearchScope(input: {
 
   if (kind === "sector") {
     sector = (scope?.sector ?? "").trim() || undefined;
-    const peers = [
-      ...new Set((scope?.peers ?? []).flatMap((s) => parseSymbols(String(s ?? "")))),
-    ];
+    const peers = [...new Set((scope?.peers ?? []).flatMap((s) => parseSymbols(String(s ?? ""))))];
     if (peers.length > 0) {
       symbols = [...new Set([...symbols, ...peers])];
     }
@@ -261,7 +260,9 @@ export function resolveResearchScope(input: {
 
   const option = scope?.option;
   if (instrument === "option") {
-    const underlying = (option?.underlying ?? symbols[0] ?? input.ticker ?? "").trim().toUpperCase();
+    const underlying = (option?.underlying ?? symbols[0] ?? input.ticker ?? "")
+      .trim()
+      .toUpperCase();
     if (underlying && !symbols.includes(underlying)) {
       symbols = [underlying, ...symbols];
     }
@@ -277,9 +278,7 @@ export function resolveResearchScope(input: {
    *   - 其他模式 → 沿用第一个 symbol / ticker / "UNKNOWN" 兜底
    */
   const primarySymbol =
-    symbols[0] ??
-    (input.ticker?.trim().toUpperCase() ||
-      (kind === "explore" ? "" : "UNKNOWN"));
+    symbols[0] ?? (input.ticker?.trim().toUpperCase() || (kind === "explore" ? "" : "UNKNOWN"));
 
   const displayLabel = buildDisplayLabel({
     kind,
@@ -348,7 +347,9 @@ function buildDisplayLabel(p: {
   }
   if (p.kind === "sector" && p.sector) {
     const peers =
-      p.symbols.length > 0 ? `（${p.symbols.slice(0, 6).join(", ")}${p.symbols.length > 6 ? "…" : ""}）` : "";
+      p.symbols.length > 0
+        ? `（${p.symbols.slice(0, 6).join(", ")}${p.symbols.length > 6 ? "…" : ""}）`
+        : "";
     return `板块·${p.sector}${peers}·${side}`;
   }
   if (p.symbols.length > 1) {

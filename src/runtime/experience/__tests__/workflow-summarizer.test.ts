@@ -9,19 +9,15 @@
  *   - sampleRate 决定是否跑
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { InMemoryExperienceStore, getExperienceBus, setExperienceBusForTesting } from "..";
 import {
-  InMemoryExperienceStore,
-  getExperienceBus,
-  setExperienceBusForTesting,
-} from "..";
-import {
+  type SummarizerLlmCallFn,
+  type SummarizerLoader,
+  type SummarizerWorkflowContext,
   _resetSummarizerBudgetForTesting,
   buildSummaryPrompt,
   parseSummaryJson,
   startWorkflowSummarizerPipe,
-  type SummarizerLoader,
-  type SummarizerLlmCallFn,
-  type SummarizerWorkflowContext,
 } from "../pipes/workflow-summarizer";
 
 /**
@@ -82,11 +78,11 @@ describe("parseSummaryJson", () => {
   test("fenced json block 正确解析全部字段", () => {
     const p = parseSummaryJson(SAMPLE_LLM_RESPONSE);
     expect(p).not.toBeNull();
-    expect(p!.goalRecap).toContain("沪深 300");
-    expect(p!.keyFindings).toHaveLength(2);
-    expect(p!.artifacts.length).toBeGreaterThan(0);
-    expect(p!.lessons.length).toBeGreaterThan(0);
-    expect(p!.followups.length).toBeGreaterThan(0);
+    expect(p?.goalRecap).toContain("沪深 300");
+    expect(p?.keyFindings).toHaveLength(2);
+    expect(p?.artifacts.length).toBeGreaterThan(0);
+    expect(p?.lessons.length).toBeGreaterThan(0);
+    expect(p?.followups.length).toBeGreaterThan(0);
   });
 
   test("裸 json（无 fence）也能解析", () => {

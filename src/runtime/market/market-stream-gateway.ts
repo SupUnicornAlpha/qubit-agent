@@ -5,20 +5,16 @@ import type {
   TradeData,
 } from "../../connectors/data/data.connector";
 import { connectorRegistry } from "../../connectors/registry";
-import { symbolToBinancePair } from "./crypto-market";
-import { computeDateRangeForLimit, timeframeToPeriod } from "./klines-query";
-import {
-  queryMarketOrderBook,
-  queryMarketQuote,
-  queryMarketTrades,
-} from "./microstructure-query";
-import { resolveTickerMarket } from "./resolve-ticker-market";
-import { MarketBarAggregator } from "./market-stream-aggregator";
+import { selectBrokerMarketBridge } from "./broker-market-bridge";
 import {
   marketEventMirrorJournal,
   safeMirrorMarketStreamEvent,
 } from "./contracts/market-event-mirror";
-import { selectBrokerMarketBridge } from "./broker-market-bridge";
+import { symbolToBinancePair } from "./crypto-market";
+import { computeDateRangeForLimit, timeframeToPeriod } from "./klines-query";
+import { MarketBarAggregator } from "./market-stream-aggregator";
+import { queryMarketOrderBook, queryMarketQuote, queryMarketTrades } from "./microstructure-query";
+import { resolveTickerMarket } from "./resolve-ticker-market";
 
 export type MarketStreamEventKind =
   | "status"
@@ -96,12 +92,9 @@ function normalized(input: MarketStreamSubscription): Required<MarketStreamSubsc
 }
 
 function subscriptionKey(input: Required<MarketStreamSubscription>): string {
-  return [
-    input.symbol,
-    input.exchange,
-    input.timeframe,
-    [...input.channels].sort().join(","),
-  ].join("|");
+  return [input.symbol, input.exchange, input.timeframe, [...input.channels].sort().join(",")].join(
+    "|"
+  );
 }
 
 function normalizedSymbol(value: unknown): string {
@@ -118,7 +111,7 @@ function normalizedSymbol(value: unknown): string {
  */
 export function bridgePayloadMatchesSubscription(
   input: Required<MarketStreamSubscription>,
-  payload: unknown,
+  payload: unknown
 ): boolean {
   if (!payload || typeof payload !== "object") return true;
   const record = payload as Record<string, unknown>;
@@ -133,9 +126,7 @@ function socketText(data: unknown): string {
   if (typeof data === "string") return data;
   if (data instanceof ArrayBuffer) return new TextDecoder().decode(data);
   if (ArrayBuffer.isView(data)) {
-    return new TextDecoder().decode(
-      new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
-    );
+    return new TextDecoder().decode(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
   }
   return String(data ?? "");
 }
@@ -202,8 +193,7 @@ class BinanceStreamSession extends BaseSession {
     }
     if (this.input.channels.includes("trade")) streams.push(`${pair}@trade`);
     const base = (
-      process.env.QUBIT_BINANCE_WS_URL ??
-      "wss://data-stream.binance.vision/stream"
+      process.env.QUBIT_BINANCE_WS_URL ?? "wss://data-stream.binance.vision/stream"
     ).replace(/\/+$/, "");
     this.socket = new WebSocket(`${base}?streams=${streams.join("/")}`);
     this.socket.addEventListener("open", () => {
@@ -228,10 +218,7 @@ class BinanceStreamSession extends BaseSession {
     }
     const data = envelope.data ?? {};
     const providerEventAt = Number(data.E ?? Date.now());
-    if (
-      this.lastProviderEventAt > 0 &&
-      providerEventAt - this.lastProviderEventAt > 15_000
-    ) {
+    if (this.lastProviderEventAt > 0 && providerEventAt - this.lastProviderEventAt > 15_000) {
       this.hooks.gap();
       this.emit("status", "binance_ws", {
         status: "gap_detected",
@@ -489,8 +476,7 @@ class BridgeStreamSession extends BaseSession {
           this.lastProviderSequence !== null &&
           sequence > this.lastProviderSequence + 1;
         const timeGap =
-          this.lastProviderEventAt > 0 &&
-          providerEventAt - this.lastProviderEventAt > 30_000;
+          this.lastProviderEventAt > 0 && providerEventAt - this.lastProviderEventAt > 30_000;
         if (sequenceGap || timeGap) {
           this.hooks.gap();
           this.emit("status", `${this.provider}_bridge`, {
@@ -510,14 +496,16 @@ class BridgeStreamSession extends BaseSession {
             !bridgePayloadMatchesSubscription(this.input, payload.data)
           ) {
             this.hooks.error(
-              new Error(
-                `${this.provider} bridge ignored a cross-symbol ${payload.kind} payload`,
-              ),
+              new Error(`${this.provider} bridge ignored a cross-symbol ${payload.kind} payload`)
             );
             return;
           }
           this.emit(payload.kind, `${this.provider}_bridge`, payload.data);
-          if (this.input.channels.includes("bar") && payload.data && typeof payload.data === "object") {
+          if (
+            this.input.channels.includes("bar") &&
+            payload.data &&
+            typeof payload.data === "object"
+          ) {
             const record = payload.data as Record<string, unknown>;
             const price =
               payload.kind === "quote" ? Number(record.lastPrice) : Number(record.price);
@@ -525,10 +513,7 @@ class BridgeStreamSession extends BaseSession {
               const aggregated = this.aggregator.update({
                 price,
                 volume: payload.kind === "trade" ? Number(record.volume ?? 0) : 0,
-                turnover:
-                  payload.kind === "trade"
-                    ? price * Number(record.volume ?? 0)
-                    : 0,
+                turnover: payload.kind === "trade" ? price * Number(record.volume ?? 0) : 0,
                 timestamp: String(record.timestamp ?? new Date().toISOString()),
               });
               if (aggregated) {
@@ -725,9 +710,7 @@ class MarketStreamGateway {
       !process.env.QUBIT_FUTU_MARKET_WS_URL?.trim() &&
       (resolution.market === "CN" || resolution.market === "HK" || resolution.market === "US")
     ) {
-      void import("./futu-runtime")
-        .then((m) => m.ensureFutuRuntime())
-        .catch(() => undefined);
+      void import("./futu-runtime").then((m) => m.ensureFutuRuntime()).catch(() => undefined);
     }
     const bridge = selectBrokerMarketBridge({ market: resolution.market });
     if (bridge) {
@@ -755,19 +738,21 @@ class MarketStreamGateway {
     ) {
       return;
     }
-    const timestamp = typeof record.timestamp === "string" ? Date.parse(record.timestamp) : NaN;
+    const timestamp =
+      typeof record.timestamp === "string" ? Date.parse(record.timestamp) : Number.NaN;
     const latency = Number.isFinite(explicit)
       ? Math.max(0, explicit)
       : Number.isFinite(timestamp)
         ? Math.max(0, Date.now() - timestamp)
-        : NaN;
+        : Number.NaN;
     if (!Number.isFinite(latency)) return;
     this.latencySamples.push(latency);
     if (this.latencySamples.length > 256) this.latencySamples.shift();
     const sorted = [...this.latencySamples].sort((left, right) => left - right);
     const total = sorted.reduce((sum, value) => sum + value, 0);
     this.metrics.averageLatencyMs = total / sorted.length;
-    this.metrics.p95LatencyMs = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))] ?? null;
+    this.metrics.p95LatencyMs =
+      sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))] ?? null;
     if (latency > 30_000) this.metrics.staleEvents += 1;
   }
 }

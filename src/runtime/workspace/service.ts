@@ -1,14 +1,14 @@
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { defaultDataDir } from "../app-paths";
 import { slugifyWorkspaceName } from "./path-safety";
+import type { WorkspaceManifest } from "./types";
 import {
-  buildInitialManifest,
-  createWorkspaceFs,
   QUBIT_MD_TEMPLATE,
   type WorkspaceFs,
+  buildInitialManifest,
+  createWorkspaceFs,
 } from "./workspace-fs";
-import type { WorkspaceManifest } from "./types";
 
 export function defaultWorkspacesRoot(dataDir?: string): string {
   return join(dataDir ?? defaultDataDir(), "workspaces");
@@ -51,9 +51,7 @@ export async function discoverWorkspaces(dataDir?: string): Promise<DiscoverHit[
       if (manifest?.id && manifest?.name) {
         hits.push({ rootPath, manifest });
       }
-    } catch {
-      continue;
-    }
+    } catch {}
   }
   hits.sort((a, b) => a.manifest.name.localeCompare(b.manifest.name));
   return hits;

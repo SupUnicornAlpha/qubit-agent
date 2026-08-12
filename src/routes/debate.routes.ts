@@ -1,9 +1,9 @@
-import { Hono } from "hono";
 import { desc, eq } from "drizzle-orm";
+import { Hono } from "hono";
 import { getDb } from "../db/sqlite/client";
 import { debateSession, debateTurn, debateVerdict } from "../db/sqlite/schema";
-import { debateStreamBus } from "../runtime/debate/debate-stream";
 import { loadDebateConfig, saveDebateConfig } from "../runtime/config/debate-config";
+import { debateStreamBus } from "../runtime/debate/debate-stream";
 
 export const debateRouter = new Hono();
 

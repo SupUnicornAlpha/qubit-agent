@@ -20,29 +20,29 @@ import {
   mergeSystemPrompt,
   readPackFiles,
 } from "../../agent/agent-pack-service";
+import { assembleContextEnvelope } from "../../context/assemble-context-prompt";
+import { allAxioms, isContextProtocolEnabled } from "../../context/axioms";
+import { incContextMetric } from "../../context/context-metrics";
+import { FinanceRecall, renderFinanceRecallBlockForPrompt } from "../../context/finance-recall";
+import { renderSlotContextForPrompt } from "../../context/handoff";
+import { isFinanceSubKind } from "../../context/types";
+import {
+  isWorkingMemoryEmpty,
+  maybeFoldWorkingMemory,
+  renderWorkingMemoryForPrompt,
+} from "../../context/working-memory";
+import { getTurnBindingByWorkflow } from "../../conversation/turn-binding";
 import {
   ExperienceRecall,
   getExperienceBus,
   getExperienceStore,
   renderRecallBlockForPrompt,
 } from "../../experience";
-import { isFinanceSubKind } from "../../context/types";
-import { allAxioms, isContextProtocolEnabled } from "../../context/axioms";
-import { assembleContextEnvelope } from "../../context/assemble-context-prompt";
-import { incContextMetric } from "../../context/context-metrics";
-import { FinanceRecall, renderFinanceRecallBlockForPrompt } from "../../context/finance-recall";
-import { renderSlotContextForPrompt } from "../../context/handoff";
-import { getTurnBindingByWorkflow } from "../../conversation/turn-binding";
-import {
-  isWorkingMemoryEmpty,
-  maybeFoldWorkingMemory,
-  renderWorkingMemoryForPrompt,
-} from "../../context/working-memory";
 import { enrichSystemPromptWithFsi } from "../../fsi/fsi-prompt-enricher";
 import { agentLlmConfigToSampling } from "../../llm/agent-llm-config";
 import type { LlmTokenUsage } from "../../llm/gateway";
-import { invokeWithFallback, resolveLlmForAgent } from "../../llm/llm-router";
 import { LlmGatewayError, type LlmGatewayErrorJson } from "../../llm/llm-gateway-error";
+import { invokeWithFallback, resolveLlmForAgent } from "../../llm/llm-router";
 import {
   compactObservations,
   computePromptBudget,
@@ -52,30 +52,26 @@ import {
   truncatePromptText,
 } from "../../llm/token-budget";
 import {
-  loadWorkflowTokenBudgetStatus,
   type WorkflowTokenBudgetStatus,
+  loadWorkflowTokenBudgetStatus,
 } from "../../llm/workflow-token-budget";
+import {
+  intersectCapabilityWithEffectiveTools,
+  resolveEffectiveAgentTools,
+} from "../../orchestration/resolve-effective-tools";
 import {
   buildSuggestedCallChainBlock,
   buildTopologySpecialistExecutionContract,
   shouldForceTopologySpecialistSynthesis,
 } from "../../orchestration/topology-dispatch";
-import {
-  intersectCapabilityWithEffectiveTools,
-  resolveEffectiveAgentTools,
-} from "../../orchestration/resolve-effective-tools";
-import { resolveRegistryScenarioKey } from "../../research-scenario/scenario-key-aliases";
 import { resolveScenarioRecipe } from "../../policy/scenario-recipe";
+import { resolveRegistryScenarioKey } from "../../research-scenario/scenario-key-aliases";
+import { renderSkillsBlockForPrompt, skillService } from "../../skills/skill-service";
 import { listAuthorizedCapabilities } from "../../tools/capability-gate";
 import {
   buildRuntimeCapabilityManifestForRuntime,
   renderRuntimeCapabilityManifest,
 } from "../../tools/data-capability-manifest";
-import {
-  listWorkflowArtifactsForContext,
-  renderWorkflowArtifactContext,
-} from "../../tools/workflow-artifact-ledger";
-import { renderSkillsBlockForPrompt, skillService } from "../../skills/skill-service";
 import {
   assembleAgentSystemPrompt,
   buildNativeQubitToolDefinition,
@@ -83,17 +79,21 @@ import {
   parseToolCallFromReason,
   selectRelevantToolsForPrompt,
 } from "../../tools/tool-call-format";
+import {
+  listWorkflowArtifactsForContext,
+  renderWorkflowArtifactContext,
+} from "../../tools/workflow-artifact-ledger";
 import { buildChatHitlSelfCheckPromptBlock } from "../../workflow/hitl-hint-parse";
 import { buildHitlResumePromptBlock } from "../../workflow/hitl-service";
-import {
-  getWorkflowCancellationSignal,
-  isWorkflowCancellationRequested,
-  WorkflowCancelledError,
-} from "../../workflow/workflow-cancellation";
 import {
   buildWorkflowProcessPrompt,
   resolveEffectiveWorkflowProcessConfig,
 } from "../../workflow/process-config";
+import {
+  WorkflowCancelledError,
+  getWorkflowCancellationSignal,
+  isWorkflowCancellationRequested,
+} from "../../workflow/workflow-cancellation";
 import type { AgentGraphState, IterationContext, StepStreamEvent } from "../state";
 
 export interface ReasonStepMeta {
@@ -181,7 +181,7 @@ export function buildFocusedResearchScenarioPrompt(scenarioKey: string | null): 
 }
 
 const OPTIONAL_CONTEXT_TIMEOUT_MS = Number(
-  process.env["QUBIT_REASON_OPTIONAL_CONTEXT_TIMEOUT_MS"] ?? "2500"
+  process.env.QUBIT_REASON_OPTIONAL_CONTEXT_TIMEOUT_MS ?? "2500"
 );
 
 async function withOptionalContextTimeout<T>(
@@ -359,11 +359,11 @@ export function formatReasonClockContext(now: Date = new Date()): string {
     day: "2-digit",
   }).format(now);
   return [
-    `**系统时钟（权威 as-of，禁止臆造）**：`,
+    "**系统时钟（权威 as-of，禁止臆造）**：",
     `- UTC now: ${utcIso}（UTC 日 ${utcDate}）`,
     `- Asia/Shanghai: ${shanghai}（交易日历日 ${shanghaiDate}）`,
     `- 拉行情前先确定时间窗：优先显式传 startDate+endDate；缺省用 endDate=${shanghaiDate}（或 UTC ${utcDate}）+ limit≈250 根日线。`,
-    `- 用户说“现在/今天/近期”一律相对上述 as-of，不得用训练记忆里的旧日期。`,
+    "- 用户说“现在/今天/近期”一律相对上述 as-of，不得用训练记忆里的旧日期。",
   ].join("\n");
 }
 
@@ -553,7 +553,7 @@ export async function reasonNode(
   ]
     .filter(Boolean)
     .join(" ");
-  const configuredMaxPromptTools = Number(process.env["QUBIT_MAX_PROMPT_TOOLS"] ?? "16");
+  const configuredMaxPromptTools = Number(process.env.QUBIT_MAX_PROMPT_TOOLS ?? "16");
   const directMcpTools = mcpServers.flatMap(
     (server) => server.tools?.map((tool) => `mcp:${server.name}:${tool.name}`) ?? []
   );
@@ -565,7 +565,7 @@ export async function reasonNode(
       : 16
   );
   const nativeToolCalling =
-    hasTools && promptTools.length > 0 && process.env["QUBIT_NATIVE_TOOL_CALLING_DISABLED"] !== "1";
+    hasTools && promptTools.length > 0 && process.env.QUBIT_NATIVE_TOOL_CALLING_DISABLED !== "1";
 
   // M11: 召回相关 skill。失败不阻塞推理（skill 表可能在新 workspace 还没建）。
   let recalledSkillsBlock = "";
@@ -811,7 +811,7 @@ export async function reasonNode(
     .filter(Boolean)
     .join("\n");
   const configuredPerCallPromptLimit = Number(
-    process.env["QUBIT_MAX_PROMPT_TOKENS_PER_CALL"] ?? "18000"
+    process.env.QUBIT_MAX_PROMPT_TOKENS_PER_CALL ?? "18000"
   );
   const llmCfg =
     state.agentDefinition.llmConfig &&
@@ -820,14 +820,14 @@ export async function reasonNode(
       ? (state.agentDefinition.llmConfig as Record<string, unknown>)
       : {};
   const roleBudget = resolveRolePromptBudget(state.agentDefinition.role, {
-    ...(typeof llmCfg["maxPromptTokens"] === "number"
-      ? { maxPromptTokens: llmCfg["maxPromptTokens"] as number }
+    ...(typeof llmCfg.maxPromptTokens === "number"
+      ? { maxPromptTokens: llmCfg.maxPromptTokens as number }
       : {}),
-    ...(typeof llmCfg["maxCharsPerObservation"] === "number"
-      ? { maxCharsPerObservation: llmCfg["maxCharsPerObservation"] as number }
+    ...(typeof llmCfg.maxCharsPerObservation === "number"
+      ? { maxCharsPerObservation: llmCfg.maxCharsPerObservation as number }
       : {}),
-    ...(typeof llmCfg["keepRecentObservations"] === "number"
-      ? { keepRecent: llmCfg["keepRecentObservations"] as number }
+    ...(typeof llmCfg.keepRecentObservations === "number"
+      ? { keepRecent: llmCfg.keepRecentObservations as number }
       : {}),
   });
   const perCallPromptLimit = Math.min(
@@ -840,10 +840,10 @@ export async function reasonNode(
   const fixedPromptTokens =
     estimateTokens(fixedSnippet) + Math.min(12_000, Math.floor(perCallPromptLimit * 0.6));
   const agentContextWindow =
-    typeof llmCfg["contextWindow"] === "number" &&
-    Number.isFinite(llmCfg["contextWindow"]) &&
-    (llmCfg["contextWindow"] as number) > 0
-      ? (llmCfg["contextWindow"] as number)
+    typeof llmCfg.contextWindow === "number" &&
+    Number.isFinite(llmCfg.contextWindow) &&
+    (llmCfg.contextWindow as number) > 0
+      ? (llmCfg.contextWindow as number)
       : null;
   const contextWindow = getContextWindow(
     modelConfig.model,
@@ -854,7 +854,7 @@ export async function reasonNode(
    * 防止 length-retry 自动翻倍后超 window。
    */
   const sampledMaxOut = (() => {
-    const v = llmCfg["maxOutputTokens"];
+    const v = llmCfg.maxOutputTokens;
     if (typeof v === "number" && Number.isFinite(v) && v > 0) return Math.max(v, 8_192);
     return 8_192;
   })();
@@ -875,7 +875,7 @@ export async function reasonNode(
   });
   const previousObservations = compactedResult.observations;
   if (
-    process.env["DEBUG_TOKEN_BUDGET"] ||
+    process.env.DEBUG_TOKEN_BUDGET ||
     compactedResult.actions.droppedEarly > 0 ||
     compactedResult.actions.truncatedPerItem > 0
   ) {
@@ -926,8 +926,8 @@ export async function reasonNode(
    * drain 后累加到 contextMemory.injectedUserMessages）。作为高优先级实时指引拼进
    * userPrompt——只展示最近 3 条，避免无界增长污染上下文。
    */
-  const injectedUserMessages = Array.isArray(state.contextMemory["injectedUserMessages"])
-    ? (state.contextMemory["injectedUserMessages"] as string[])
+  const injectedUserMessages = Array.isArray(state.contextMemory.injectedUserMessages)
+    ? (state.contextMemory.injectedUserMessages as string[])
     : [];
   if (injectedUserMessages.length > 0) {
     const recent = injectedUserMessages.slice(-3);

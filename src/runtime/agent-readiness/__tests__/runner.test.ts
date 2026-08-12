@@ -6,7 +6,7 @@
  *
  * 这里不验证 createAndDispatchWorkflow 链路（那是 workflow-service 自己的测试范畴）。
  */
-import { mkdirSync, rmSync, existsSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 

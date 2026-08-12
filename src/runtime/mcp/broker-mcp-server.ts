@@ -4,11 +4,7 @@
  */
 import { Buffer } from "node:buffer";
 import { runMigrations } from "../../db/sqlite/migrate";
-import {
-  BROKER_PROVIDERS,
-  isBrokerProvider,
-  type BrokerProvider,
-} from "../../types/broker";
+import { BROKER_PROVIDERS, type BrokerProvider, isBrokerProvider } from "../../types/broker";
 import { checkBrokerAccountHealth } from "../execution/broker/broker-admin";
 import {
   brokerCancelOrder,
@@ -139,7 +135,8 @@ const TOOLS = [
   },
   {
     name: "broker_capabilities",
-    description: "Read the normalized connector capability matrix before attempting a privileged operation.",
+    description:
+      "Read the normalized connector capability matrix before attempting a privileged operation.",
     inputSchema: {
       type: "object",
       properties: {
@@ -150,7 +147,8 @@ const TOOLS = [
   },
   {
     name: "broker_reconcile_positions",
-    description: "Run read-only internal-vs-broker position reconciliation. Remediation remains approval-gated.",
+    description:
+      "Run read-only internal-vs-broker position reconciliation. Remediation remains approval-gated.",
     inputSchema: {
       type: "object",
       properties: {
@@ -254,7 +252,11 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
       const brokerOrderId = String(args.brokerOrderId ?? "");
       if (!brokerOrderId) throw new Error("brokerOrderId is required");
       const accountRef = typeof args.accountRef === "string" ? args.accountRef : undefined;
-      return brokerGetOrder({ provider, ...(accountRef !== undefined ? { accountRef } : {}), brokerOrderId });
+      return brokerGetOrder({
+        provider,
+        ...(accountRef !== undefined ? { accountRef } : {}),
+        brokerOrderId,
+      });
     }
     case "broker_list_open_orders": {
       const provider = providerFromArgs(args);
@@ -307,7 +309,10 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
     case "broker_capabilities": {
       const provider = providerFromArgs(args);
       const accountRef = typeof args.accountRef === "string" ? args.accountRef : undefined;
-      return brokerGetCapabilities({ provider, ...(accountRef !== undefined ? { accountRef } : {}) });
+      return brokerGetCapabilities({
+        provider,
+        ...(accountRef !== undefined ? { accountRef } : {}),
+      });
     }
     case "broker_reconcile_positions": {
       const provider = providerFromArgs(args);

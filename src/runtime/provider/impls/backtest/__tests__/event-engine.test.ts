@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { runEventEngine, type BarPoint, type EngineInput } from "../event-engine";
+import { type BarPoint, type EngineInput, runEventEngine } from "../event-engine";
 
 function makeFlatBars(symbols: string[], dates: string[], prices: number[][]) {
   // prices[d][s] → close
@@ -7,7 +7,7 @@ function makeFlatBars(symbols: string[], dates: string[], prices: number[][]) {
   for (let d = 0; d < dates.length; d++) {
     const m = new Map<string, BarPoint>();
     for (let s = 0; s < symbols.length; s++) {
-      const px = prices[d]![s]!;
+      const px = prices[d]?.[s]!;
       m.set(symbols[s]!, { open: px, high: px * 1.01, low: px * 0.99, close: px, volume: 1000 });
     }
     bars.set(dates[d]!, m);
@@ -75,9 +75,27 @@ describe("EventEngine — 横截面 topN", () => {
     ]);
     const signals = new Map<string, Map<string, number | null>>();
     // day1 选 A
-    signals.set("2026-01-05", new Map([["A", 1], ["B", 0]]));
-    signals.set("2026-01-06", new Map([["A", 1], ["B", 0]]));
-    signals.set("2026-01-07", new Map([["A", 1], ["B", 0]]));
+    signals.set(
+      "2026-01-05",
+      new Map([
+        ["A", 1],
+        ["B", 0],
+      ])
+    );
+    signals.set(
+      "2026-01-06",
+      new Map([
+        ["A", 1],
+        ["B", 0],
+      ])
+    );
+    signals.set(
+      "2026-01-07",
+      new Map([
+        ["A", 1],
+        ["B", 0],
+      ])
+    );
 
     const r = runEventEngine({
       dates,
@@ -117,11 +135,41 @@ describe("EventEngine — 横截面 topN", () => {
     ]);
     const signals = new Map<string, Map<string, number | null>>();
     // 1 月信号是 A，2 月信号变 B
-    signals.set("2026-01-28", new Map([["A", 1], ["B", 0]]));
-    signals.set("2026-01-29", new Map([["A", 1], ["B", 0]]));
-    signals.set("2026-01-30", new Map([["A", 1], ["B", 0]]));
-    signals.set("2026-02-02", new Map([["A", 0], ["B", 1]]));
-    signals.set("2026-02-03", new Map([["A", 0], ["B", 1]]));
+    signals.set(
+      "2026-01-28",
+      new Map([
+        ["A", 1],
+        ["B", 0],
+      ])
+    );
+    signals.set(
+      "2026-01-29",
+      new Map([
+        ["A", 1],
+        ["B", 0],
+      ])
+    );
+    signals.set(
+      "2026-01-30",
+      new Map([
+        ["A", 1],
+        ["B", 0],
+      ])
+    );
+    signals.set(
+      "2026-02-02",
+      new Map([
+        ["A", 0],
+        ["B", 1],
+      ])
+    );
+    signals.set(
+      "2026-02-03",
+      new Map([
+        ["A", 0],
+        ["B", 1],
+      ])
+    );
 
     const r = runEventEngine({
       dates,
@@ -152,10 +200,34 @@ describe("EventEngine — 横截面 topN", () => {
     ]);
     const signals = new Map<string, Map<string, number | null>>();
     // 每天来回切：A, B, A, B
-    signals.set("2026-01-05", new Map([["A", 1], ["B", 0]]));
-    signals.set("2026-01-06", new Map([["A", 0], ["B", 1]]));
-    signals.set("2026-01-07", new Map([["A", 1], ["B", 0]]));
-    signals.set("2026-01-08", new Map([["A", 0], ["B", 1]]));
+    signals.set(
+      "2026-01-05",
+      new Map([
+        ["A", 1],
+        ["B", 0],
+      ])
+    );
+    signals.set(
+      "2026-01-06",
+      new Map([
+        ["A", 0],
+        ["B", 1],
+      ])
+    );
+    signals.set(
+      "2026-01-07",
+      new Map([
+        ["A", 1],
+        ["B", 0],
+      ])
+    );
+    signals.set(
+      "2026-01-08",
+      new Map([
+        ["A", 0],
+        ["B", 1],
+      ])
+    );
 
     const r = runEventEngine({
       dates,
@@ -185,9 +257,27 @@ describe("EventEngine — 横截面 topN", () => {
     ]);
     const signals = new Map<string, Map<string, number | null>>();
     // 正向：A 分高 → reverse 后选 B
-    signals.set("2026-01-05", new Map([["A", 1], ["B", 0]]));
-    signals.set("2026-01-06", new Map([["A", 1], ["B", 0]]));
-    signals.set("2026-01-07", new Map([["A", 1], ["B", 0]]));
+    signals.set(
+      "2026-01-05",
+      new Map([
+        ["A", 1],
+        ["B", 0],
+      ])
+    );
+    signals.set(
+      "2026-01-06",
+      new Map([
+        ["A", 1],
+        ["B", 0],
+      ])
+    );
+    signals.set(
+      "2026-01-07",
+      new Map([
+        ["A", 1],
+        ["B", 0],
+      ])
+    );
 
     const rRev = runEventEngine({
       dates,

@@ -51,23 +51,23 @@ export function parseLlmConfigJson(raw: unknown): AgentLlmConfig {
    * temperature 合法区间：[0, 2]（OpenAI 公开范围；Anthropic 是 [0,1]，超界让上游
    * 报 400 而不是这里 silently clip，避免"配置写了但行为没生效"的迷惑）。
    */
-  if (isFiniteNumber(obj["temperature"]) && obj["temperature"] >= 0 && obj["temperature"] <= 2) {
-    out.temperature = obj["temperature"];
+  if (isFiniteNumber(obj.temperature) && obj.temperature >= 0 && obj.temperature <= 2) {
+    out.temperature = obj.temperature;
   }
-  if (isFiniteNumber(obj["topP"]) && obj["topP"] >= 0 && obj["topP"] <= 1) {
-    out.topP = obj["topP"];
-  } else if (isFiniteNumber(obj["top_p"]) && obj["top_p"] >= 0 && obj["top_p"] <= 1) {
+  if (isFiniteNumber(obj.topP) && obj.topP >= 0 && obj.topP <= 1) {
+    out.topP = obj.topP;
+  } else if (isFiniteNumber(obj.top_p) && obj.top_p >= 0 && obj.top_p <= 1) {
     /** 兼容 snake_case 写法（对应 OpenAI 字段名） */
-    out.topP = obj["top_p"];
+    out.topP = obj.top_p;
   }
-  if (isPositiveInt(obj["maxOutputTokens"])) {
-    out.maxOutputTokens = obj["maxOutputTokens"];
-  } else if (isPositiveInt(obj["max_tokens"])) {
-    out.maxOutputTokens = obj["max_tokens"];
-  } else if (isPositiveInt(obj["max_output_tokens"])) {
-    out.maxOutputTokens = obj["max_output_tokens"];
+  if (isPositiveInt(obj.maxOutputTokens)) {
+    out.maxOutputTokens = obj.maxOutputTokens;
+  } else if (isPositiveInt(obj.max_tokens)) {
+    out.maxOutputTokens = obj.max_tokens;
+  } else if (isPositiveInt(obj.max_output_tokens)) {
+    out.maxOutputTokens = obj.max_output_tokens;
   }
-  const re = obj["reasoningEffort"] ?? obj["reasoning_effort"];
+  const re = obj.reasoningEffort ?? obj.reasoning_effort;
   if (typeof re === "string" && ALLOWED_REASONING_EFFORT.has(re)) {
     /**
      * `re` 已被 `ALLOWED_REASONING_EFFORT.has` 收窄为 'low'|'medium'|'high'

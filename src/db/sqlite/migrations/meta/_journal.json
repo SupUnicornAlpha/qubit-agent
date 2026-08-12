@@ -750,6 +750,13 @@
       "when": 1815177600000,
       "tag": "0107_sandbox_python_environment",
       "breakpoints": true
+    },
+    {
+      "idx": 107,
+      "version": "7",
+      "when": 1815264000000,
+      "tag": "0108_genome_multidimensional_fitness",
+      "breakpoints": true
     }
   ]
 }

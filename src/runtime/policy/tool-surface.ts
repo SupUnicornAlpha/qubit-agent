@@ -2,10 +2,10 @@
  * ToolSurfaceResolver — single entry for scenario tool-surface narrowing.
  */
 
-import { applyMissingArtifactToolFilter, applyStallToolFilter } from "./tool-filters";
-import type { ScenarioRuntimeSnapshot } from "./scenario-snapshot";
-import type { ScenarioRecipe } from "./types";
 import { toolMatchesRequiredCapability } from "../tools/data-gap";
+import type { ScenarioRuntimeSnapshot } from "./scenario-snapshot";
+import { applyMissingArtifactToolFilter, applyStallToolFilter } from "./tool-filters";
+import type { ScenarioRecipe } from "./types";
 
 const DEFAULT_STALL_TOOLS = [
   "market.readiness",

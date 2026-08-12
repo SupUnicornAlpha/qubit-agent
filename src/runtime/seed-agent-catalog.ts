@@ -4,14 +4,11 @@
  */
 
 import type { AgentRole } from "../types/entities";
-import type { AgentOutput } from "./types";
 import { RECOMMENDED_MCP_NAMES } from "./seed-recommended-mcp-servers";
+import type { AgentOutput } from "./types";
 
 /** 量化平台通用 MCP（math / 合约计算；financex 默认禁用，不自动灌入白名单） */
-export const QUANT_MCP = [
-  RECOMMENDED_MCP_NAMES.MATHJS,
-  RECOMMENDED_MCP_NAMES.TRADINGCALC,
-] as const;
+export const QUANT_MCP = [RECOMMENDED_MCP_NAMES.MATHJS, RECOMMENDED_MCP_NAMES.TRADINGCALC] as const;
 
 /**
  * Wave-1（2026-06-10）：3 个零-key 公开金融 MCP，按角色定向派发。
@@ -168,8 +165,7 @@ export type BuiltinAgentGroupSpec = {
 export const DEFAULT_ORCHESTRATION_GROUP: BuiltinAgentGroupSpec = {
   id: "grp-default-analyst-team",
   name: "默认编排团队（10 Agent）",
-  description:
-    "Orchestrator 统筹：数据层 → 四维分析师 MSA → 策略/回测 → 统一风控（规则+组合）。",
+  description: "Orchestrator 统筹：数据层 → 四维分析师 MSA → 策略/回测 → 统一风控（规则+组合）。",
   memberDefinitionIds: [
     "def-orchestrator",
     "def-market-data",
@@ -227,12 +223,7 @@ export const STRATEGY_PIPELINE_GROUP: BuiltinAgentGroupSpec = {
   description:
     "Orchestrator + research/backtest/risk：因子配方走 compose→backtest.run；" +
     "需要可运行 Strategy API 源码时，Orchestrator 用 agent.invoke(callee_spec_id=def-strategy-coder) 按需唤起策略编码 subagent（不进固定编组，画布活动后才入图）。",
-  memberDefinitionIds: [
-    "def-orchestrator",
-    "def-research",
-    "def-backtest",
-    "def-risk",
-  ],
+  memberDefinitionIds: ["def-orchestrator", "def-research", "def-backtest", "def-risk"],
   memberRoles: ["orchestrator", "research", "backtest", "risk"],
   pipelineKind: "sequential_research",
 };
@@ -245,20 +236,14 @@ export const STRATEGY_PIPELINE_GROUP: BuiltinAgentGroupSpec = {
 export const FACTOR_RESEARCH_GROUP: BuiltinAgentGroupSpec = {
   id: "grp-factor-research",
   name: "因子研究",
-  description:
-    "围绕目标因子类别生成候选因子、计算因子值、评估 IC/IR、入库为可复用因子。",
+  description: "围绕目标因子类别生成候选因子、计算因子值、评估 IC/IR、入库为可复用因子。",
   memberDefinitionIds: [
     "def-orchestrator",
     "def-research",
     "def-analyst-fundamental",
     "def-analyst-technical",
   ],
-  memberRoles: [
-    "orchestrator",
-    "research",
-    "analyst_fundamental",
-    "analyst_technical",
-  ],
+  memberRoles: ["orchestrator", "research", "analyst_fundamental", "analyst_technical"],
   /**
    * 注意：本编组只做"候选因子 + 同行评审"，**不跑 backtest**（无 def-backtest 成员）。
    * 因此 pipelineKind 是 sequential_research 而非 factor_discovery
@@ -301,12 +286,7 @@ export const STOCK_SCREENING_GROUP: BuiltinAgentGroupSpec = {
     "def-analyst-fundamental",
     "def-analyst-sentiment",
   ],
-  memberRoles: [
-    "orchestrator",
-    "research",
-    "analyst_fundamental",
-    "analyst_sentiment",
-  ],
+  memberRoles: ["orchestrator", "research", "analyst_fundamental", "analyst_sentiment"],
   pipelineKind: "sequential_research",
 };
 
@@ -338,12 +318,7 @@ export const PORTFOLIO_MANAGEMENT_GROUP: BuiltinAgentGroupSpec = {
   id: "grp-portfolio-management",
   name: "PM 组合管理",
   description: "多策略权重分配、再平衡方案、暴露报告。",
-  memberDefinitionIds: [
-    "def-orchestrator",
-    "def-research",
-    "def-risk",
-    "def-backtest",
-  ],
+  memberDefinitionIds: ["def-orchestrator", "def-research", "def-risk", "def-backtest"],
   memberRoles: ["orchestrator", "research", "risk", "backtest"],
   pipelineKind: "sequential_research",
 };
@@ -393,11 +368,7 @@ export const POSTMORTEM_GROUP: BuiltinAgentGroupSpec = {
   id: "grp-postmortem",
   name: "复盘归因",
   description: "因子归因 / 行业归因 / 事件归因，输出复盘报告。",
-  memberDefinitionIds: [
-    "def-orchestrator",
-    "def-research",
-    "def-analyst-macro",
-  ],
+  memberDefinitionIds: ["def-orchestrator", "def-research", "def-analyst-macro"],
   memberRoles: ["orchestrator", "research", "analyst_macro"],
   pipelineKind: "sequential_research",
 };
@@ -407,11 +378,7 @@ export const NEWS_EVENT_RADAR_GROUP: BuiltinAgentGroupSpec = {
   id: "grp-news-event-radar",
   name: "事件雷达",
   description: "扫描新闻流，识别可交易事件，输出影响评估与预警。",
-  memberDefinitionIds: [
-    "def-orchestrator",
-    "def-news-event",
-    "def-analyst-sentiment",
-  ],
+  memberDefinitionIds: ["def-orchestrator", "def-news-event", "def-analyst-sentiment"],
   memberRoles: ["orchestrator", "news_event", "analyst_sentiment"],
   pipelineKind: "event_radar",
 };
@@ -457,7 +424,12 @@ export const QUANT_SKILLS = {
 const Q = QUANT_SKILLS;
 
 export const ROLE_SKILLS: Partial<Record<AgentRole, string[]>> = {
-  orchestrator: skills(S.compsAnalysis, S.thesisTracker, Q.factorIcIrReport, Q.technicalMacdKdjVolume),
+  orchestrator: skills(
+    S.compsAnalysis,
+    S.thesisTracker,
+    Q.factorIcIrReport,
+    Q.technicalMacdKdjVolume
+  ),
   market_data: skills(S.cleanDataXls),
   news_event: skills(
     "sentiment-analysis",

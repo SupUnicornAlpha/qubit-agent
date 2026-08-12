@@ -15,9 +15,7 @@ describe("parseEastMoneyTradeRow", () => {
   });
 
   test("rejects malformed rows", () => {
-    expect(
-      parseEastMoneyTradeRow("bad", { symbol: "000001", exchange: "SZ" }, 0)
-    ).toBeNull();
+    expect(parseEastMoneyTradeRow("bad", { symbol: "000001", exchange: "SZ" }, 0)).toBeNull();
   });
 
   test("uses the provider trading date instead of the local calendar date", () => {

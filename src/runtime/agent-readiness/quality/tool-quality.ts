@@ -16,10 +16,10 @@
  */
 import type { Database } from "bun:sqlite";
 
-import { getScenarioExpectation } from "./scenario-expectations";
-import type { ScenarioRecipe } from "../scenarios";
 import { toolMatchesRequiredCapability } from "../../tools/data-gap";
 import { listAuthorizedToolsFromSqlite } from "../../tools/required-tool-gate";
+import type { ScenarioRecipe } from "../scenarios";
+import { getScenarioExpectation } from "./scenario-expectations";
 
 export interface ToolQualityInput {
   workflowRunId: string;
@@ -97,7 +97,9 @@ function readDataGapWaivers(sqlite: Database, workflowRunId: string): Set<string
 function newsProviderConfigured(sqlite: Database): boolean | null {
   if (!tableExists(sqlite, "builtin_connector_settings")) return null;
   const row = sqlite
-    .prepare(`SELECT config_json AS configJson FROM builtin_connector_settings WHERE id = 'default'`)
+    .prepare(
+      `SELECT config_json AS configJson FROM builtin_connector_settings WHERE id = 'default'`
+    )
     .get() as { configJson?: string } | undefined;
   if (!row?.configJson) return null;
   try {
@@ -173,8 +175,7 @@ function isAbnormalRequest(raw: string | null | undefined): boolean {
   if (typeof obj !== "object" || obj === null) return false;
   const r = obj as Record<string, unknown>;
   if (typeof r.qty === "number" && (Number.isNaN(r.qty) || r.qty <= 0)) return true;
-  if (typeof r.quantity === "number" && (Number.isNaN(r.quantity) || r.quantity <= 0))
-    return true;
+  if (typeof r.quantity === "number" && (Number.isNaN(r.quantity) || r.quantity <= 0)) return true;
   if (typeof r.price === "number" && (Number.isNaN(r.price) || r.price < 0)) return true;
   for (const key of ["symbol", "ticker"]) {
     const v = r[key];

@@ -373,8 +373,14 @@ describe("SkillAttributor.attribute", () => {
     // 手动塞两行历史 attribution（不同 workflow）
     const w2 = `wf2_${randomUUID()}`;
     const w3 = `wf3_${randomUUID()}`;
-    await db.insert(workflowRun).values({ id: w2, projectId: fixture.projectId, goal: "g", mode: "live" }).run();
-    await db.insert(workflowRun).values({ id: w3, projectId: fixture.projectId, goal: "g", mode: "live" }).run();
+    await db
+      .insert(workflowRun)
+      .values({ id: w2, projectId: fixture.projectId, goal: "g", mode: "live" })
+      .run();
+    await db
+      .insert(workflowRun)
+      .values({ id: w3, projectId: fixture.projectId, goal: "g", mode: "live" })
+      .run();
     for (const [wfId, day, pnl] of [
       [w2, d1, 30],
       [w3, d2, -10],

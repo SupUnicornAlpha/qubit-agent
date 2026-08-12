@@ -20,6 +20,9 @@ import {
   factorDefinition as factorDefTable,
   factorEvaluation as factorEvalTable,
 } from "../../db/sqlite/schema";
+import { generateGbmTicks } from "../../util/synthesize-gbm";
+import { queryBarsRange } from "../market/klines-query";
+import { type PriceSeries, evalQlibExpr, parseQlibExpr } from "../provider";
 import { providerResolver } from "../provider/resolver";
 import type {
   FactorComputeProvider,
@@ -30,13 +33,6 @@ import type {
   ProviderScope,
 } from "../provider/types";
 import { factorValueStore } from "./factor-value-store";
-import { queryBarsRange } from "../market/klines-query";
-import {
-  parseQlibExpr,
-  evalQlibExpr,
-  type PriceSeries,
-} from "../provider";
-import { generateGbmTicks } from "../../util/synthesize-gbm";
 
 // ─── 类型 ───────────────────────────────────────────────────────────────────
 
@@ -190,7 +186,16 @@ const DEFAULT_UNIVERSE_SYMBOLS: Record<string, string[]> = {
   "US:sp500": ["AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "BRK-B", "JPM"],
   "US:nasdaq100": ["AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "AVGO", "TSLA"],
   HK: ["0700.HK", "9988.HK", "3690.HK", "0939.HK", "1299.HK", "0388.HK", "2318.HK", "0005.HK"],
-  "HK:hsi": ["0700.HK", "9988.HK", "3690.HK", "0939.HK", "1299.HK", "0388.HK", "2318.HK", "0005.HK"],
+  "HK:hsi": [
+    "0700.HK",
+    "9988.HK",
+    "3690.HK",
+    "0939.HK",
+    "1299.HK",
+    "0388.HK",
+    "2318.HK",
+    "0005.HK",
+  ],
 };
 
 function normalizeFactorComputeSymbols(symbols?: string[], universe?: string | null): string[] {
@@ -253,7 +258,8 @@ export class FactorService {
         dupRow.universe === requestedUniverse;
       if (isAgentPath && sameDefinition) return this.get(dupRow.id);
       if (isAgentPath) factorName = `${input.name}_${randomUUID().slice(0, 8)}`;
-      else throw new FactorServiceError("duplicate_name", `factor_name_already_exists: ${input.name}`);
+      else
+        throw new FactorServiceError("duplicate_name", `factor_name_already_exists: ${input.name}`);
     }
 
     // 让 Provider 做 syntax 校验（best effort，不打断 draft 注册）
@@ -336,9 +342,7 @@ export class FactorService {
     if (input.autoRegisteredVia && workflowRunId) {
       void (async () => {
         try {
-          const { logResearchTeamInteraction } = await import(
-            "../research-team/interaction-log"
-          );
+          const { logResearchTeamInteraction } = await import("../research-team/interaction-log");
           await logResearchTeamInteraction({
             workflowRunId,
             fromRole: (input.agentRole ?? "research") as never,
@@ -409,11 +413,7 @@ export class FactorService {
 
   async get(id: string): Promise<FactorRecord> {
     const db = await getDb();
-    const rows = await db
-      .select()
-      .from(factorDefTable)
-      .where(eq(factorDefTable.id, id))
-      .limit(1);
+    const rows = await db.select().from(factorDefTable).where(eq(factorDefTable.id, id)).limit(1);
     const r = rows[0];
     if (!r) throw new FactorServiceError("factor_not_found", `factor_not_found: ${id}`);
     return this.rowToRecord(r);
@@ -454,8 +454,7 @@ export class FactorService {
     if (filter.projectId) conds.push(eq(factorDefTable.projectId, filter.projectId));
     if (filter.category) conds.push(eq(factorDefTable.category, filter.category));
     if (filter.status) conds.push(eq(factorDefTable.status, filter.status));
-    if (filter.workflowRunId)
-      conds.push(eq(factorDefTable.workflowRunId, filter.workflowRunId));
+    if (filter.workflowRunId) conds.push(eq(factorDefTable.workflowRunId, filter.workflowRunId));
     if (filter.createdBy) conds.push(eq(factorDefTable.createdBy, filter.createdBy));
     if (filter.agentInstanceId)
       conds.push(eq(factorDefTable.agentInstanceId, filter.agentInstanceId));
@@ -604,9 +603,7 @@ export class FactorService {
               ...(typeof result.rankIc === "number" ? { rankIc: result.rankIc } : {}),
               ...(typeof result.ir === "number" ? { ir: result.ir } : {}),
               asof,
-              ...(typeof result.sampleSize === "number"
-                ? { sampleSize: result.sampleSize }
-                : {}),
+              ...(typeof result.sampleSize === "number" ? { sampleSize: result.sampleSize } : {}),
               memoryTier: "deep",
             },
             sourceRunId: f.workflowRunId,
@@ -614,7 +611,7 @@ export class FactorService {
         }
       } catch (err) {
         console.warn(
-          `[factor.evaluate] finance archive write skipped:`,
+          "[factor.evaluate] finance archive write skipped:",
           err instanceof Error ? err.message : err
         );
       }
@@ -629,9 +626,12 @@ export class FactorService {
    * 与 evaluate 的差异：调用方只提供 factorId + 区间，service 负责拉所有数据。
    * 适合 Agent / CLI 一键评估场景。
    */
-  async autoEvaluate(
-    input: FactorAutoEvaluateInput
-  ): Promise<FactorEvalResult & { evaluationId: string; meta: { horizonDays: number; decayHorizons: number[] } }> {
+  async autoEvaluate(input: FactorAutoEvaluateInput): Promise<
+    FactorEvalResult & {
+      evaluationId: string;
+      meta: { horizonDays: number; decayHorizons: number[] };
+    }
+  > {
     const f = await this.get(input.factorId);
     const horizon = input.horizonDays ?? f.horizon ?? 5;
     const decayHorizons =
@@ -676,7 +676,9 @@ export class FactorService {
         "validation_failed",
         `cross_section_too_few_symbols: factor=${f.id} 当前 factor_value 只覆盖 ${symbols.length} 只 symbols (${symbols
           .slice(0, 5)
-          .join(",")}); IC/RankIC 是横截面指标，至少需要 3 只 symbols（推荐 ≥ 10）。请重跑 factor.compute 并传入 ≥3 只 symbols（如 ["AAPL","MSFT","NVDA","GOOG","META"]）再评估。`
+          .join(
+            ","
+          )}); IC/RankIC 是横截面指标，至少需要 3 只 symbols（推荐 ≥ 10）。请重跑 factor.compute 并传入 ≥3 只 symbols（如 ["AAPL","MSFT","NVDA","GOOG","META"]）再评估。`
       );
     }
 
@@ -806,14 +808,10 @@ export class FactorService {
     scope: ProviderScope | undefined
   ): Promise<FactorComputeProvider> {
     const opts =
-      explicitKey ?? factorProviderKey
+      (explicitKey ?? factorProviderKey)
         ? { providerKey: explicitKey ?? factorProviderKey }
         : undefined;
-    return providerResolver.resolve<"factor_compute">(
-      "factor_compute",
-      scope ?? {},
-      opts ?? {}
-    );
+    return providerResolver.resolve<"factor_compute">("factor_compute", scope ?? {}, opts ?? {});
   }
 
   private async resolveEval(
@@ -960,11 +958,7 @@ function summarizeDryRunValues(
  * qlib_expr dry-run：用内置 parser+evaluator 跑 3 个合成 GBM 序列。
  * 与历史行为完全一致（评估报告 P3-1 只迁移代码结构、不改 qlib 路径语义）。
  */
-function runQlibExprDryRun(
-  expr: string,
-  minRows: number,
-  minVariance: number
-): DryRunResult {
+function runQlibExprDryRun(expr: string, minRows: number, minVariance: number): DryRunResult {
   let ast;
   try {
     ast = parseQlibExpr(expr);
@@ -1067,9 +1061,7 @@ async function runPythonExprDryRun(
    * 这样 LLM 写「`close[-1] / close[-21] - 1`」单行也能 dry-run；
    * 写多行 + 自己设 factor_values 也能 dry-run。
    */
-  const code = /\bfactor_values\s*=/.test(expr)
-    ? expr
-    : `factor_values = list(${expr})`;
+  const code = /\bfactor_values\s*=/.test(expr) ? expr : `factor_values = list(${expr})`;
 
   const runPythonSandbox: PythonSandboxRunner =
     testSandboxRunner ?? (await import("../sandbox/python-sandbox")).runPythonSandbox;

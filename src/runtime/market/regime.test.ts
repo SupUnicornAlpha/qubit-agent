@@ -22,9 +22,7 @@ describe("detectRegimeFromBars", () => {
   });
 
   test("classifies a calm rising series", () => {
-    const result = detectRegimeFromBars(
-      bars(Array.from({ length: 12 }, (_, i) => 100 + i * 0.4))
-    );
+    const result = detectRegimeFromBars(bars(Array.from({ length: 12 }, (_, i) => 100 + i * 0.4)));
     expect(result.regime).toBe("uptrend_calm");
     expect(result.features.return10).toBeGreaterThan(0.03);
   });

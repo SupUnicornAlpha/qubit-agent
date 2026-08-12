@@ -83,7 +83,12 @@ export interface PromoterActionRecord {
   qualified: boolean;
   /** 写入的 agent_skill.id；dry_run 或 skipped 时 null */
   promotedSkillId: string | null;
-  status: "promoted" | "skipped_duplicate" | "skipped_insufficient" | "skipped_rejected" | "dry_run";
+  status:
+    | "promoted"
+    | "skipped_duplicate"
+    | "skipped_insufficient"
+    | "skipped_rejected"
+    | "dry_run";
   ruleHits: PromoterRuleHit[];
 }
 

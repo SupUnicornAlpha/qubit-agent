@@ -43,7 +43,7 @@ export async function getSkillRecallSummary(input?: {
   const whereExpr = input?.definitionId
     ? and(
         gte(skillRecallLog.createdAt, sinceIso),
-        eq(skillRecallLog.definitionId, input.definitionId),
+        eq(skillRecallLog.definitionId, input.definitionId)
       )
     : gte(skillRecallLog.createdAt, sinceIso);
 
@@ -64,7 +64,12 @@ export async function getSkillRecallSummary(input?: {
 
   const grouped = new Map<
     string,
-    SkillRecallSummaryRow & { scoreSum: number; scoreCount: number; rankSum: number; rankCount: number }
+    SkillRecallSummaryRow & {
+      scoreSum: number;
+      scoreCount: number;
+      rankSum: number;
+      rankCount: number;
+    }
   >();
   for (const r of rows) {
     let g = grouped.get(r.skillId);

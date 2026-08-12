@@ -13,9 +13,7 @@ process.env.HOME = tmpDir;
 
 const { afterAll, beforeAll, describe, expect, test } = await import("bun:test");
 const { runMigrations } = await import("../../../../db/sqlite/migrate");
-const { getDb, closeDb, getSqliteForTesting } = await import(
-  "../../../../db/sqlite/client"
-);
+const { getDb, closeDb, getSqliteForTesting } = await import("../../../../db/sqlite/client");
 const schema = await import("../../../../db/sqlite/schema");
 const { collectToolQuality } = await import("../tool-quality");
 

@@ -145,10 +145,7 @@ export function attachMemoryMetrics(bus: ExperienceBus): MetricsHandle {
         c.inc("self_evolve.pnl_attributor.fills_scanned", numOf(s.fillsScanned));
         c.inc("self_evolve.pnl_attributor.snapshots_written", numOf(s.snapshotsWritten));
         c.inc("self_evolve.pnl_attributor.errors", numOf(s.errors));
-        c.inc(
-          "self_evolve.pnl_attributor.skill_attribution_rows",
-          numOf(s.skillAttributionRows)
-        );
+        c.inc("self_evolve.pnl_attributor.skill_attribution_rows", numOf(s.skillAttributionRows));
         c.inc("self_evolve.pnl_attributor.skill_runs_updated", numOf(s.skillRunsUpdated));
       } else if (ev.kind === "analyst_accuracy") {
         const s = ev.summary;
@@ -157,10 +154,7 @@ export function attachMemoryMetrics(bus: ExperienceBus): MetricsHandle {
         c.inc("self_evolve.analyst_accuracy.placeholders_inserted", numOf(s.placeholdersInserted));
         c.inc("self_evolve.analyst_accuracy.evaluated", numOf(s.evaluated));
         c.inc("self_evolve.analyst_accuracy.skipped_no_mark", numOf(s.skippedNoMark));
-        c.inc(
-          "self_evolve.analyst_accuracy.skipped_no_future_mark",
-          numOf(s.skippedNoFutureMark)
-        );
+        c.inc("self_evolve.analyst_accuracy.skipped_no_future_mark", numOf(s.skippedNoFutureMark));
         c.inc("self_evolve.analyst_accuracy.failures", numOf(s.failures));
       } else if (ev.kind === "mark_price_fetcher") {
         const s = ev.summary;
@@ -222,10 +216,7 @@ export function attachMemoryMetrics(bus: ExperienceBus): MetricsHandle {
           "self_evolve.auto_installer.proposals_skipped_existing",
           numOf(s.proposalsSkippedExisting)
         );
-        c.inc(
-          "self_evolve.auto_installer.proposals_no_candidate",
-          numOf(s.proposalsNoCandidate)
-        );
+        c.inc("self_evolve.auto_installer.proposals_no_candidate", numOf(s.proposalsNoCandidate));
         c.inc("self_evolve.auto_installer.auto_installed", numOf(s.autoInstalled));
         c.inc("self_evolve.auto_installer.auto_install_failed", numOf(s.autoInstallFailed));
       } else if (ev.kind === "skill_baseline_observer") {

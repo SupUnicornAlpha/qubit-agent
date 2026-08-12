@@ -1,8 +1,6 @@
 /** Shared URL / SSRF helpers for official internet builtins. */
 
-export type ParsedPublicHttpUrl =
-  | { ok: true; url: URL }
-  | { ok: false; error: string };
+export type ParsedPublicHttpUrl = { ok: true; url: URL } | { ok: false; error: string };
 
 export function parsePublicHttpUrl(raw: string): ParsedPublicHttpUrl {
   const trimmed = raw.trim();

@@ -1,9 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  coerceSymbolList,
-  defaultDateWindow,
-  unwrapToolArgs,
-} from "../unwrap-tool-args";
+import { coerceSymbolList, defaultDateWindow, unwrapToolArgs } from "../unwrap-tool-args";
 
 describe("unwrap-tool-args", () => {
   test("flattens nested arguments with top-level win", () => {
@@ -18,10 +14,7 @@ describe("unwrap-tool-args", () => {
 
   test("coerceSymbolList accepts singular ticker", () => {
     expect(coerceSymbolList({ symbol: "US:AAPL" })).toEqual(["AAPL"]);
-    expect(coerceSymbolList({ symbols: ["600519.SH", "AAPL"] })).toEqual([
-      "600519.SH",
-      "AAPL",
-    ]);
+    expect(coerceSymbolList({ symbols: ["600519.SH", "AAPL"] })).toEqual(["600519.SH", "AAPL"]);
   });
 
   test("defaultDateWindow returns ISO dates", () => {

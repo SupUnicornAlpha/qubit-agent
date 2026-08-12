@@ -37,12 +37,16 @@ function parseArgs(argv: string[]): CliArgs {
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   if (!args.projectId) {
-    console.error("Usage: bun run run-skill-curator.ts --projectId=<id> [--mode=dry_run|live] [--no-llm]");
+    console.error(
+      "Usage: bun run run-skill-curator.ts --projectId=<id> [--mode=dry_run|live] [--no-llm]"
+    );
     process.exit(2);
   }
 
   await runMigrations();
-  console.log(`[curator] running on project=${args.projectId} mode=${args.mode} useLlm=${args.useLlm}`);
+  console.log(
+    `[curator] running on project=${args.projectId} mode=${args.mode} useLlm=${args.useLlm}`
+  );
   const result = await skillCurator.run({
     projectId: args.projectId,
     mode: args.mode,

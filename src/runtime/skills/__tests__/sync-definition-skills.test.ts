@@ -1,14 +1,13 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
-import { runMigrations } from "../../../db/sqlite/migrate";
 import { getDb } from "../../../db/sqlite/client";
+import { runMigrations } from "../../../db/sqlite/migrate";
 import * as schema from "../../../db/sqlite/schema";
-import { skillService } from "../skill-service";
 import { getFsiContentRoot } from "../../fsi/fsi-config";
+import { skillService } from "../skill-service";
 import {
-  syncDefinitionSkillsForProject,
   _deleteSyncedSkillsForProject,
+  syncDefinitionSkillsForProject,
 } from "../sync-definition-skills";
 
 const NOW = "2026-06-05T00:00:00.000Z";
@@ -63,7 +62,7 @@ describe("syncDefinitionSkillsForProject", () => {
       topK: 3,
     });
     expect(hits.length).toBeGreaterThan(0);
-    expect(hits[0]!.skill.name).toContain("comps");
+    expect(hits[0]?.skill.name).toContain("comps");
   });
 
   /**
@@ -80,7 +79,7 @@ describe("syncDefinitionSkillsForProject", () => {
     const peadHit = hits.find((h) => h.skill.name === "quant:alpha-pead-drift");
     expect(peadHit, "PEAD quant skill 应被召回").toBeDefined();
     /** description 应该非空（来自 frontmatter） */
-    expect(peadHit!.skill.description?.length ?? 0).toBeGreaterThan(20);
+    expect(peadHit?.skill.description?.length ?? 0).toBeGreaterThan(20);
   });
 
   test("Wave-1：内置 quant skill 至少 11 条全部入库，可按名查到", async () => {
@@ -110,7 +109,7 @@ describe("syncDefinitionSkillsForProject", () => {
     await syncDefinitionSkillsForProject(projectId);
     const first = await skillService.findByName(projectId, "quant:alpha-pead-drift");
     expect(first).toBeTruthy();
-    const firstId = first!.id;
+    const firstId = first?.id;
 
     await syncDefinitionSkillsForProject(projectId);
     const second = await skillService.findByName(projectId, "quant:alpha-pead-drift");

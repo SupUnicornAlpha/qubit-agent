@@ -1,5 +1,5 @@
-import { BaseConnector } from "../base.connector";
 import type { ConnectorConfig, ConnectorMeta, HealthCheckResult } from "../../types/connector";
+import { BaseConnector } from "../base.connector";
 import type { FetchNewsParams, NewsData } from "./data.connector";
 
 function cfgStr(config: ConnectorConfig, key: string): string | undefined {
@@ -100,7 +100,7 @@ export class QubitNativeNewsConnector extends BaseConnector {
     this.newsApiKey = cfgStr(config, "newsApiKey");
     this.newsFetchPath = cfgStr(config, "newsFetchPath") ?? "/";
     this.newsTimeoutMs = cfgNum(config, "newsTimeoutMs") ?? 15_000;
-    const swe = config["syntheticWhenEmpty"];
+    const swe = config.syntheticWhenEmpty;
     if (typeof swe === "boolean") this.syntheticWhenEmpty = swe;
     else this.syntheticWhenEmpty = cfgStr(config, "syntheticWhenEmpty") === "true";
   }
@@ -233,10 +233,7 @@ export class QubitNativeNewsConnector extends BaseConnector {
         .filter((item) => this.isWithinRequestedWindow(item, p.startDate, p.endDate));
       if (mapped.length > 0) return mapped;
     } catch (e) {
-      console.warn(
-        "[qubit-news] public RSS/web fetch failed:",
-        e instanceof Error ? e.message : e
-      );
+      console.warn("[qubit-news] public RSS/web fetch failed:", e instanceof Error ? e.message : e);
     }
 
     if (!this.syntheticWhenEmpty) return [];
@@ -245,8 +242,7 @@ export class QubitNativeNewsConnector extends BaseConnector {
       {
         id: "stub-1",
         title: `[stub] News for ${symbols.join(",") || keywords.join(",")}`,
-        content:
-          "Synthetic news row from QubitNativeNewsConnector; network feeds unavailable.",
+        content: "Synthetic news row from QubitNativeNewsConnector; network feeds unavailable.",
         publishedAt: now,
         source: "qubit-native",
         symbols,
@@ -277,11 +273,7 @@ export class QubitNativeNewsConnector extends BaseConnector {
     return out;
   }
 
-  private isWithinRequestedWindow(
-    item: NewsData,
-    startDate?: string,
-    endDate?: string
-  ): boolean {
+  private isWithinRequestedWindow(item: NewsData, startDate?: string, endDate?: string): boolean {
     const publishedMs = Date.parse(item.publishedAt);
     if (!Number.isFinite(publishedMs)) return false;
     const startMs = startDate ? Date.parse(`${startDate.slice(0, 10)}T00:00:00.000Z`) : Number.NaN;
@@ -294,7 +286,7 @@ export class QubitNativeNewsConnector extends BaseConnector {
   private extractEvent(payload: unknown): { events: Array<Record<string, unknown>> } {
     const text =
       payload && typeof payload === "object" && "text" in (payload as object)
-        ? String((payload as Record<string, unknown>)["text"] ?? "")
+        ? String((payload as Record<string, unknown>).text ?? "")
         : String(payload ?? "");
     if (!text.trim()) {
       return { events: [] };
@@ -314,7 +306,7 @@ export class QubitNativeNewsConnector extends BaseConnector {
   private scoreSentiment(payload: unknown): { score: number; label: string } {
     const text =
       payload && typeof payload === "object" && "text" in (payload as object)
-        ? String((payload as Record<string, unknown>)["text"] ?? "")
+        ? String((payload as Record<string, unknown>).text ?? "")
         : "";
     if (!text.trim()) {
       return { score: 0, label: "neutral" };

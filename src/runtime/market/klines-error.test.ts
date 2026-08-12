@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildKlinesEmptyError, KLINES_ERROR_TYPE, wrapKlinesThrownError } from "./klines-error";
+import { KLINES_ERROR_TYPE, buildKlinesEmptyError, wrapKlinesThrownError } from "./klines-error";
 
 describe("klines-error", () => {
   test("buildKlinesEmptyError", () => {

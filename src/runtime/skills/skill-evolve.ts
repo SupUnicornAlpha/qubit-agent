@@ -19,8 +19,8 @@ import { desc, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { agentSkill, skillEvolutionRun } from "../../db/sqlite/schema";
 import type { AgentSkill } from "../../types/entities";
-import { invokeWithFallback } from "../llm/llm-router";
 import { loadModelConfig } from "../config/model-config";
+import { invokeWithFallback } from "../llm/llm-router";
 import { skillService } from "./skill-service";
 
 const DEFAULT_ITERATIONS = 3;
@@ -138,7 +138,7 @@ export class SkillEvolver {
 
     try {
       let bestBody = base.bodyMd;
-      let bestDesc = base.description;
+      const bestDesc = base.description;
       let bestScore = baselineScore;
       let bestRecord: CandidateRecord | null = null;
 
@@ -150,7 +150,12 @@ export class SkillEvolver {
           if (llmAvailable && cfg) {
             try {
               candidateBody = await this.mutateViaLlm({
-                base: { description: bestDesc, bodyMd: bestBody, name: base.name, category: base.category },
+                base: {
+                  description: bestDesc,
+                  bodyMd: bestBody,
+                  name: base.name,
+                  category: base.category,
+                },
                 instruction: strategy.instruction,
                 llmConfig: cfg,
               });
@@ -306,15 +311,15 @@ export class SkillEvolver {
       `**Skill name**: ${input.base.name}`,
       `**Category**: ${input.base.category}`,
       `**Description**: ${input.base.description}`,
-      ``,
-      `**当前 bodyMd**:`,
-      `---`,
+      "",
+      "**当前 bodyMd**:",
+      "---",
       input.base.bodyMd,
-      `---`,
-      ``,
+      "---",
+      "",
       `**突变策略**: ${input.instruction}`,
-      ``,
-      `请直接输出改进后的完整 bodyMd（保留 Markdown 结构）。`,
+      "",
+      "请直接输出改进后的完整 bodyMd（保留 Markdown 结构）。",
     ].join("\n");
 
     const result = await invokeWithFallback(input.llmConfig, {
@@ -364,8 +369,10 @@ export function scoreSkillBodyDetailed(input: { description: string; bodyMd: str
   const acceptanceHints = ["验收", "判据", "门槛", "失败", "fallback", "回退", "acceptance"];
   const failureHints = ["common pitfalls", "常见", "陷阱", "排错", "踩坑"];
   let acceptanceScore = 0;
-  for (const h of acceptanceHints) if (body.toLowerCase().includes(h.toLowerCase())) acceptanceScore += 0.25;
-  for (const h of failureHints) if (body.toLowerCase().includes(h.toLowerCase())) acceptanceScore += 0.25;
+  for (const h of acceptanceHints)
+    if (body.toLowerCase().includes(h.toLowerCase())) acceptanceScore += 0.25;
+  for (const h of failureHints)
+    if (body.toLowerCase().includes(h.toLowerCase())) acceptanceScore += 0.25;
   acceptanceScore = Math.min(1, acceptanceScore);
   breakdown.acceptance = acceptanceScore;
 
@@ -404,7 +411,7 @@ function offlineMutate(body: string, strategyKey: string): string {
       if (/常见失败|common pitfalls/i.test(body)) return body;
       return (
         body.trim() +
-        "\n\n## 常见失败模式与回退\n- 当某步连续 ≥ 2 次失败 → 调 skill.patch 添加该失败模式与回退\n- 若工具返回空 → 跳到下一个候选信号源\n- 若 LLM 解析 JSON 失败 → 把 system_prompt 中 \"必须输出 JSON\" 这条加粗\n"
+        '\n\n## 常见失败模式与回退\n- 当某步连续 ≥ 2 次失败 → 调 skill.patch 添加该失败模式与回退\n- 若工具返回空 → 跳到下一个候选信号源\n- 若 LLM 解析 JSON 失败 → 把 system_prompt 中 "必须输出 JSON" 这条加粗\n'
       );
     case "sharpen_when_to_use":
       if (/## 适用场景/i.test(body)) return body;

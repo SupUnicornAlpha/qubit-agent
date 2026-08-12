@@ -139,7 +139,9 @@ export async function fetchBinanceTicker(
   const baseUrl = resolveBinanceBaseUrl(settings);
   const pair = symbolToBinancePair(symbol, exchange);
   const url = `${baseUrl}/api/v3/ticker/bookTicker?symbol=${encodeURIComponent(pair)}`;
-  const res = await marketDataFetch("binance_crypto", networkSettings(settings), url, { headers: { Accept: "application/json" } });
+  const res = await marketDataFetch("binance_crypto", networkSettings(settings), url, {
+    headers: { Accept: "application/json" },
+  });
   const json = (await res.json()) as {
     symbol?: string;
     bidPrice?: string;
@@ -175,12 +177,9 @@ export async function fetchBinanceOrderBook(
   const pair = symbolToBinancePair(params.symbol, params.exchange);
   const depth = Math.max(5, Math.min(Math.floor(params.depth ?? 20), 100));
   const url = `${baseUrl}/api/v3/depth?symbol=${encodeURIComponent(pair)}&limit=${depth}`;
-  const response = await marketDataFetch(
-    "binance_crypto",
-    networkSettings(settings),
-    url,
-    { headers: { Accept: "application/json" } }
-  );
+  const response = await marketDataFetch("binance_crypto", networkSettings(settings), url, {
+    headers: { Accept: "application/json" },
+  });
   const payload = (await response.json()) as {
     bids?: Array<[string, string]>;
     asks?: Array<[string, string]>;
@@ -210,12 +209,9 @@ export async function fetchBinanceTrades(
   const pair = symbolToBinancePair(params.symbol, params.exchange);
   const limit = Math.max(1, Math.min(Math.floor(params.limit ?? 50), 1000));
   const url = `${baseUrl}/api/v3/trades?symbol=${encodeURIComponent(pair)}&limit=${limit}`;
-  const response = await marketDataFetch(
-    "binance_crypto",
-    networkSettings(settings),
-    url,
-    { headers: { Accept: "application/json" } }
-  );
+  const response = await marketDataFetch("binance_crypto", networkSettings(settings), url, {
+    headers: { Accept: "application/json" },
+  });
   const payload = (await response.json()) as Array<{
     id?: number;
     price?: string;
@@ -225,15 +221,17 @@ export async function fetchBinanceTrades(
   }>;
   if (!response.ok) throw new Error(`binance trades HTTP ${response.status}`);
   return (Array.isArray(payload) ? payload : [])
-    .map((trade, index): TradeData => ({
-      id: `binance:${pair}:${trade.id ?? index}`,
-      symbol: params.symbol,
-      exchange: params.exchange || "CRYPTO",
-      source: "binance_crypto",
-      price: Number(trade.price),
-      volume: Number(trade.qty),
-      side: trade.isBuyerMaker ? "sell" : "buy",
-      timestamp: new Date(trade.time ?? Date.now()).toISOString(),
-    }))
+    .map(
+      (trade, index): TradeData => ({
+        id: `binance:${pair}:${trade.id ?? index}`,
+        symbol: params.symbol,
+        exchange: params.exchange || "CRYPTO",
+        source: "binance_crypto",
+        price: Number(trade.price),
+        volume: Number(trade.qty),
+        side: trade.isBuyerMaker ? "sell" : "buy",
+        timestamp: new Date(trade.time ?? Date.now()).toISOString(),
+      })
+    )
     .filter((trade) => Number.isFinite(trade.price) && Number.isFinite(trade.volume));
 }

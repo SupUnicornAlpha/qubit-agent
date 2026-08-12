@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   formatMcpBridgeToolName,
-  isMcpToolQuarantined,
   isMcpBridgeToolName,
+  isMcpToolQuarantined,
   parseMcpBridgeToolName,
   resolveMcpInvokeTarget,
 } from "../bridge-mcp";

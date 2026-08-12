@@ -63,7 +63,8 @@ function normalizeUnderlying(raw: string): string {
 
 function toContract(row: YahooOptionContract, right: "call" | "put"): OptionContract | null {
   const strike = numberOrNull(row.strike);
-  const contractSymbol = typeof row.contractSymbol === "string" ? row.contractSymbol.trim().toUpperCase() : "";
+  const contractSymbol =
+    typeof row.contractSymbol === "string" ? row.contractSymbol.trim().toUpperCase() : "";
   if (!contractSymbol || strike == null) return null;
   return {
     contractSymbol,
@@ -78,7 +79,8 @@ function toContract(row: YahooOptionContract, right: "call" | "put"): OptionCont
     openInterest: numberOrNull(row.openInterest),
     impliedVolatility: numberOrNull(row.impliedVolatility),
     inTheMoney: row.inTheMoney === true,
-    expiration: typeof row.expiration === "number" ? new Date(row.expiration * 1000).toISOString() : null,
+    expiration:
+      typeof row.expiration === "number" ? new Date(row.expiration * 1000).toISOString() : null,
   };
 }
 
@@ -93,17 +95,21 @@ export async function fetchYahooOptionChain(input: {
 }): Promise<OptionChain> {
   const underlying = normalizeUnderlying(input.symbol);
   if (!underlying) throw new Error("options_chain: underlying symbol is required");
-  const url = new URL(`https://query1.finance.yahoo.com/v7/finance/options/${encodeURIComponent(underlying)}`);
+  const url = new URL(
+    `https://query1.finance.yahoo.com/v7/finance/options/${encodeURIComponent(underlying)}`
+  );
   if (input.expiry?.trim()) {
     const expiryMs = Date.parse(input.expiry);
-    if (!Number.isFinite(expiryMs)) throw new Error("options_chain: expiry must be an ISO date/time");
+    if (!Number.isFinite(expiryMs))
+      throw new Error("options_chain: expiry must be an ISO date/time");
     url.searchParams.set("date", String(Math.floor(expiryMs / 1000)));
   }
   const response = await marketDataFetch("yahoo_chart", input.settings, url, {
     headers: { Accept: "application/json", "User-Agent": "QubitAgent/1.0" },
   });
   const text = await response.text();
-  if (!response.ok) throw new Error(`options_chain: Yahoo HTTP ${response.status}: ${text.slice(0, 180)}`);
+  if (!response.ok)
+    throw new Error(`options_chain: Yahoo HTTP ${response.status}: ${text.slice(0, 180)}`);
   let payload: YahooOptionPayload;
   try {
     payload = JSON.parse(text) as YahooOptionPayload;
@@ -115,13 +121,19 @@ export async function fetchYahooOptionChain(input: {
   const result = payload.optionChain?.result?.[0];
   if (!result) throw new Error(`options_chain: no chain available for ${underlying}`);
   const options = result.options?.[0] ?? {};
-  const expirations = (result.expirationDates ?? []).map((epoch) => new Date(epoch * 1000).toISOString());
+  const expirations = (result.expirationDates ?? []).map((epoch) =>
+    new Date(epoch * 1000).toISOString()
+  );
   return {
     underlying,
     source: "yahoo_chart",
     fetchedAt: new Date().toISOString(),
     expirations,
-    calls: (options.calls ?? []).map((row) => toContract(row, "call")).filter((row): row is OptionContract => row !== null),
-    puts: (options.puts ?? []).map((row) => toContract(row, "put")).filter((row): row is OptionContract => row !== null),
+    calls: (options.calls ?? [])
+      .map((row) => toContract(row, "call"))
+      .filter((row): row is OptionContract => row !== null),
+    puts: (options.puts ?? [])
+      .map((row) => toContract(row, "put"))
+      .filter((row): row is OptionContract => row !== null),
   };
 }

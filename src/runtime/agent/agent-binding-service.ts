@@ -109,7 +109,10 @@ export interface AgentDefinitionBindingResult {
   overridesAfter: Record<string, boolean>;
 }
 
-const FIELD_TO_COLUMN: Record<keyof Omit<AgentDefinitionBindingInput, "clearOverride">, UserBindableField> = {
+const FIELD_TO_COLUMN: Record<
+  keyof Omit<AgentDefinitionBindingInput, "clearOverride">,
+  UserBindableField
+> = {
   mcpServers: "mcp_servers_json",
   tools: "tools_json",
   skills: "skills_json",
@@ -193,8 +196,8 @@ export async function setAgentDefinitionBindings(
     return { definitionId, changedFields: [], overridesAfter };
   }
 
-  set["userOverridesJson"] = overridesAfter;
-  set["updatedAt"] = new Date().toISOString();
+  set.userOverridesJson = overridesAfter;
+  set.updatedAt = new Date().toISOString();
   await db.update(agentDefinition).set(set).where(eq(agentDefinition.id, definitionId));
 
   return { definitionId, changedFields: changed, overridesAfter };

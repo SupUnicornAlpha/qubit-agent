@@ -2,11 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  loadModelConfig,
-  resolveEmbeddingRuntimeOptions,
-  saveModelConfig,
-} from "./model-config";
+import { loadModelConfig, resolveEmbeddingRuntimeOptions, saveModelConfig } from "./model-config";
 
 const dirs: string[] = [];
 

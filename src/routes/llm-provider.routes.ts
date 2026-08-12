@@ -9,11 +9,11 @@
  *   - POST :id/test 简单连通性测试（最小可用版：dry-run，不真实调 LLM）
  */
 
-import { Hono } from "hono";
+import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
+import { Hono } from "hono";
 import { getDb } from "../db/sqlite/client";
 import { llmProviderConfig } from "../db/sqlite/schema";
-import { randomUUID } from "node:crypto";
 import {
   inferProviderFromModelName,
   parseAgentLlmProviderString,
@@ -132,7 +132,11 @@ llmProviderRouter.get("/", async (c) => {
 llmProviderRouter.get("/:id", async (c) => {
   const id = c.req.param("id");
   const db = await getDb();
-  const rows = await db.select().from(llmProviderConfig).where(eq(llmProviderConfig.id, id)).limit(1);
+  const rows = await db
+    .select()
+    .from(llmProviderConfig)
+    .where(eq(llmProviderConfig.id, id))
+    .limit(1);
   const row = rows[0];
   if (!row) return c.json({ ok: false, error: "not_found" }, 404);
   // 不把 apiKeySecret 明文回吐给前端，仅暴露"是否已配置"
@@ -150,7 +154,8 @@ llmProviderRouter.get("/:id", async (c) => {
 llmProviderRouter.post("/", async (c) => {
   try {
     const body = await c.req.json<CreatePayload>();
-    if (!body.providerId?.trim()) return c.json({ ok: false, error: "providerId is required" }, 400);
+    if (!body.providerId?.trim())
+      return c.json({ ok: false, error: "providerId is required" }, 400);
     if (!body.modelName?.trim()) return c.json({ ok: false, error: "modelName is required" }, 400);
     const db = await getDb();
     const existing = await db
@@ -199,7 +204,8 @@ llmProviderRouter.patch("/:id", async (c) => {
     if (body.modelName !== undefined) next.modelName = body.modelName.trim();
     if (body.baseUrl !== undefined) next.baseUrl = body.baseUrl;
     if (body.contextWindow !== undefined) next.contextWindow = body.contextWindow;
-    if (body.supportsFunctionCalling !== undefined) next.supportsFunctionCalling = body.supportsFunctionCalling;
+    if (body.supportsFunctionCalling !== undefined)
+      next.supportsFunctionCalling = body.supportsFunctionCalling;
     if (body.enabled !== undefined) next.enabled = body.enabled;
 
     // apiKey / apiKeyRef 变化时重写。
@@ -242,7 +248,11 @@ llmProviderRouter.delete("/:id", async (c) => {
 llmProviderRouter.post("/:id/test", async (c) => {
   const id = c.req.param("id");
   const db = await getDb();
-  const rows = await db.select().from(llmProviderConfig).where(eq(llmProviderConfig.id, id)).limit(1);
+  const rows = await db
+    .select()
+    .from(llmProviderConfig)
+    .where(eq(llmProviderConfig.id, id))
+    .limit(1);
   const row = rows[0];
   if (!row) return c.json({ ok: false, error: "not_found" }, 404);
   if (!row.enabled) return c.json({ ok: false, error: "provider_disabled" }, 400);

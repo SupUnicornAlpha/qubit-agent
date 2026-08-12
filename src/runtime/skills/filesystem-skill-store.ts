@@ -1,5 +1,5 @@
 import type { Dirent } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { basename, extname, join, relative } from "node:path";
 import { getGlobalSkillsDir } from "../app-paths";
 import { parseSkillMdFrontmatter } from "../plugins/parse-skill-md";
@@ -25,11 +25,17 @@ export type FilesystemSkillHit = {
 };
 
 function normalize(value: string): string {
-  return value.trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
 }
 
 function terms(value: string): string[] {
-  return normalize(value).split(/\s+/).filter((term) => term.length > 1);
+  return normalize(value)
+    .split(/\s+/)
+    .filter((term) => term.length > 1);
 }
 
 function fallbackDescription(body: string, name: string): string {
@@ -68,7 +74,9 @@ async function readOneSkill(root: string, path: string): Promise<FilesystemSkill
 }
 
 /** Read `*.md` and `<folder>/SKILL.md`; absent roots are a normal empty state. */
-export async function listFilesystemSkills(root = getGlobalSkillsDir()): Promise<FilesystemSkill[]> {
+export async function listFilesystemSkills(
+  root = getGlobalSkillsDir()
+): Promise<FilesystemSkill[]> {
   let entries: Dirent<string>[];
   try {
     entries = await readdir(root, { withFileTypes: true });
@@ -84,7 +92,9 @@ export async function listFilesystemSkills(root = getGlobalSkillsDir()): Promise
     }
   }
   const skills = await Promise.all(candidates.map((path) => readOneSkill(root, path)));
-  return skills.filter((skill): skill is FilesystemSkill => skill !== null).sort((a, b) => a.name.localeCompare(b.name));
+  return skills
+    .filter((skill): skill is FilesystemSkill => skill !== null)
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function scoreSkill(skill: FilesystemSkill, query: string, declaredRefs: Set<string>): number {
@@ -119,9 +129,7 @@ export async function searchFilesystemSkills(input: {
     score: scoreSkill(skill, input.query ?? "", declaredRefs),
   }));
   const queryTerms = terms(input.query ?? "");
-  const filtered = queryTerms.length
-    ? ranked.filter(({ score }) => score > 0.2)
-    : ranked;
+  const filtered = queryTerms.length ? ranked.filter(({ score }) => score > 0.2) : ranked;
   return filtered
     .sort((a, b) => b.score - a.score || a.skill.name.localeCompare(b.skill.name))
     .slice(0, Math.max(1, Math.min(Number(input.topK ?? 5) || 5, 20)))

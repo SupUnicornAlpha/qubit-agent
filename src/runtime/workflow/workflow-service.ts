@@ -1,14 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
+import { config } from "../../config";
 import { getDb } from "../../db/sqlite/client";
 import { chatMessageWorkflowLink, workflowRun } from "../../db/sqlite/schema";
-import { config } from "../../config";
 import type { AgentExecutionPath } from "../../types/execution-path";
 import type { AgentLoopKind, LoopOptionsJson } from "../../types/loop";
 import { normalizeLoopKind, parseLoopOptionsJson } from "../../types/loop";
+import { dispatchTaskToRole } from "../agent-pool";
 import { clearWorkflowCheckpointForNewTurn } from "./checkpoint-turn";
 import { clearWorkflowCancellation } from "./workflow-cancellation";
-import { dispatchTaskToRole } from "../agent-pool";
 import { setWorkflowState } from "./workflow-state-machine";
 
 export interface CreateAndDispatchWorkflowInput {

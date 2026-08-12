@@ -1,4 +1,5 @@
 import { createHmac } from "node:crypto";
+import { IM_WEBHOOK_TIMEOUT_MS, fetchWithTimeout } from "../../util/fetch-with-timeout";
 import type {
   IIntegrationAdapter,
   ParsedInboundMessage,
@@ -7,7 +8,6 @@ import type {
   WebhookVerifyContext,
   WebhookVerifyResult,
 } from "./types";
-import { fetchWithTimeout, IM_WEBHOOK_TIMEOUT_MS } from "../../util/fetch-with-timeout";
 
 /**
  * 钉钉 / DingTalk：
@@ -54,7 +54,7 @@ export const dingtalkAdapter: IIntegrationAdapter = {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ msgtype: "text", text: { content: text } }),
         },
-        IM_WEBHOOK_TIMEOUT_MS,
+        IM_WEBHOOK_TIMEOUT_MS
       );
       const payload = (await res.json().catch(() => ({}))) as Record<string, any>;
       const okFlag = res.ok && (payload?.errcode === 0 || payload?.errcode === undefined);
@@ -84,7 +84,7 @@ export const dingtalkAdapter: IIntegrationAdapter = {
           msg: { msgtype: "text", text: { content: text } },
         }),
       },
-      IM_WEBHOOK_TIMEOUT_MS,
+      IM_WEBHOOK_TIMEOUT_MS
     );
     const payload = (await res.json().catch(() => ({}))) as Record<string, any>;
     const okFlag = res.ok && payload?.errcode === 0;

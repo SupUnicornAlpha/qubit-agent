@@ -4,15 +4,12 @@
 
 import type { Database } from "bun:sqlite";
 import {
-  loadScenarioRuntimeSnapshot,
-  type ScenarioRuntimeSnapshot,
-} from "../scenario-snapshot";
-import { ensureRuntimeSqlite, getRuntimeSqlite } from "./runtime-sqlite";
-import {
-  loadA2aFactsForWorkflow,
   type A2aTaskFact,
   type ChildEvidenceFact,
+  loadA2aFactsForWorkflow,
 } from "../../a2a/evidence-aggregate";
+import { type ScenarioRuntimeSnapshot, loadScenarioRuntimeSnapshot } from "../scenario-snapshot";
+import { ensureRuntimeSqlite, getRuntimeSqlite } from "./runtime-sqlite";
 
 export type { A2aTaskFact, ChildEvidenceFact };
 

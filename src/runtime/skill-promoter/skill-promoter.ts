@@ -378,8 +378,8 @@ export function deriveTitle(summary: string | undefined, signature: string): str
   const base = (summary ?? "").trim();
   if (base.length > 0) {
     const cleaned = base
-      .split("\n")[0]!
-      .replace(/[\u200B-\u200D\uFEFF]/g, "")
+      .split("\n")[0]
+      ?.replace(/[\u200B-\u200D\uFEFF]/g, "")
       .trim();
     return cleaned.slice(0, 80);
   }

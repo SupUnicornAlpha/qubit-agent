@@ -244,8 +244,8 @@ async function reflectOnceInternal(
     const producedIds: string[] = [];
     const cap = Math.min(MAX_REFLECTIVE_PER_RUN, lessons.length);
     const writeScope = ctx.fsWorkspaceId?.trim()
-      ? ({ scope: "workspace" as const, scopeId: ctx.fsWorkspaceId.trim() })
-      : ({ scope: "project" as const, scopeId: ctx.projectId });
+      ? { scope: "workspace" as const, scopeId: ctx.fsWorkspaceId.trim() }
+      : { scope: "project" as const, scopeId: ctx.projectId };
     for (let i = 0; i < cap; i++) {
       const lesson = lessons[i];
       if (!lesson) continue;

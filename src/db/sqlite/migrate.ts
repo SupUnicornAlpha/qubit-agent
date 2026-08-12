@@ -14,10 +14,10 @@
  * 而不是被一连串 "no such table" 误导。
  */
 
+import { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Database } from "bun:sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { config } from "../../config";
 import { getBundledMigrationsDir } from "../../runtime/app-paths";
@@ -67,14 +67,14 @@ export class MigrationDriftError extends Error {
     const base =
       direction === "missing"
         ? `_journal.json has ${expected} entries but __drizzle_migrations only ${actual} rows. ` +
-          `DDL 未真正 apply（drizzle.migrate 可能被静默跳过）。`
+          "DDL 未真正 apply（drizzle.migrate 可能被静默跳过）。"
         : `__drizzle_migrations has ${actual} rows but bundled _journal.json only ${expected} entries. ` +
-          `典型成因：Tauri sidecar bundle 比当前数据库老 —— 需重新构建 bundle 或回滚 DB。`;
+          "典型成因：Tauri sidecar bundle 比当前数据库老 —— 需重新构建 bundle 或回滚 DB。";
     super(
       `migration_drift[${direction}]: ${base} ` +
         `journal=${migrationsDir}/meta/_journal.json；` +
-        `修复（缺 migration）：QUBIT_DATA_DIR=... bun run db:migrate；` +
-        `修复（bundle 落后）：重新构建 Tauri sidecar 或临时用 \`bun run dev\` 跑源码 backend。`
+        "修复（缺 migration）：QUBIT_DATA_DIR=... bun run db:migrate；" +
+        "修复（bundle 落后）：重新构建 Tauri sidecar 或临时用 `bun run dev` 跑源码 backend。"
     );
     this.name = "MigrationDriftError";
   }

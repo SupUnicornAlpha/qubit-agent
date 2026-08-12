@@ -88,14 +88,16 @@ export function parseJudgeResponse(raw: string): JudgeScore | null {
     ).toFixed(2)
   );
   const issuesRaw = Array.isArray(o.issues) ? o.issues : [];
-  const issues = issuesRaw
-    .filter((i): i is string => typeof i === "string")
-    .slice(0, 5);
+  const issues = issuesRaw.filter((i): i is string => typeof i === "string").slice(0, 5);
   return { scores, issues, overall };
 }
 
 /** 给定场景 + 产物，构造 judge 输入字符串（保证产物 ≤2K token） */
-export function buildJudgeUserPrompt(scenario: string, artifactKind: string, artifact: unknown): string {
+export function buildJudgeUserPrompt(
+  scenario: string,
+  artifactKind: string,
+  artifact: unknown
+): string {
   let serialized = "";
   try {
     serialized = JSON.stringify(artifact, null, 2);

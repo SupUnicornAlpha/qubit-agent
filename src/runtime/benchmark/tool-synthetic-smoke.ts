@@ -39,7 +39,8 @@ export function runGlobalToolSyntheticSmoke(input?: {
     const contractCovered = Boolean(getToolContract(entry.name));
     if (entry.kind === "connector") {
       const connector = resolveConnectorForTool(entry.name);
-      const ok = Boolean(connector) && (!CRITICAL_CONTRACT_TOOLS.has(entry.name) || contractCovered);
+      const ok =
+        Boolean(connector) && (!CRITICAL_CONTRACT_TOOLS.has(entry.name) || contractCovered);
       results.push({
         name: entry.name,
         kind: "connector",

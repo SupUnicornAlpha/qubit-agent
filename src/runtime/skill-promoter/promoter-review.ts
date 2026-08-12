@@ -10,7 +10,7 @@
  * 分模块的好处：worker、routes、test 都可以单独调；不绑死 Hono。
  */
 
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { agentSkill as agentSkillTable } from "../../db/sqlite/schema";
 import type { ExperienceStore } from "../experience/experience-store";
@@ -118,9 +118,8 @@ export async function rejectSkillPromotion(
       contentJson: {
         summary: `驳回 promoted skill "${row.name}"`,
         body:
-          (opts.reason && opts.reason.trim().length > 0
-            ? opts.reason.trim()
-            : "（无理由说明）") + `\n\nsignature: ${signature}\nskillId: ${skillId}`,
+          (opts.reason && opts.reason.trim().length > 0 ? opts.reason.trim() : "（无理由说明）") +
+          `\n\nsignature: ${signature}\nskillId: ${skillId}`,
       },
       tagsJson: ["promoter", "reject", `actor:${opts.actor ?? "user"}`],
       metadataJson: { signature, rejectedSkillId: skillId, actor: opts.actor ?? "user" },

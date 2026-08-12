@@ -22,8 +22,8 @@
  *   - 不写 logs 表：所有运行轨迹通过 Bus → metrics 流出，前端走 GET /monitor/pnl/* 看快照。
  */
 
-import { runMigrations } from "../db/sqlite/migrate";
 import { getDb } from "../db/sqlite/client";
+import { runMigrations } from "../db/sqlite/migrate";
 import {
   type PnlAttributorRunSummary,
   createPnlAttributor,
@@ -130,7 +130,9 @@ function renderMarkdown(summary: PnlAttributorRunSummary, elapsedMs: number): st
     lines.push("");
     lines.push("## Skill Layer");
     lines.push(`- attribution rows upserted: ${summary.skillAttribution.attributionRowsUpserted}`);
-    lines.push(`- items skipped (no executed skill): ${summary.skillAttribution.itemsSkippedNoSkill}`);
+    lines.push(
+      `- items skipped (no executed skill): ${summary.skillAttribution.itemsSkippedNoSkill}`
+    );
     lines.push(`- skill_run.pnlDelta updated: ${summary.skillAttribution.skillRunsUpdated}`);
     lines.push(`- skills recomputed: ${summary.skillAttribution.skillsRecomputed}`);
   } else {
@@ -143,7 +145,9 @@ function renderMarkdown(summary: PnlAttributorRunSummary, elapsedMs: number): st
     lines.push(`- placeholders inserted: ${summary.analystAccuracy.sync.placeholdersInserted}`);
     lines.push(`- evaluated: ${summary.analystAccuracy.evaluate.evaluated}`);
     lines.push(`- skipped (no mark): ${summary.analystAccuracy.evaluate.skippedNoMark}`);
-    lines.push(`- skipped (no future mark): ${summary.analystAccuracy.evaluate.skippedNoFutureMark}`);
+    lines.push(
+      `- skipped (no future mark): ${summary.analystAccuracy.evaluate.skippedNoFutureMark}`
+    );
     if (summary.analystAccuracy.evaluate.failures.length > 0) {
       lines.push(`- failures: ${summary.analystAccuracy.evaluate.failures.length}`);
     }

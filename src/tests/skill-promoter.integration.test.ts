@@ -10,14 +10,14 @@
  */
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import { mkdir, rm } from "node:fs/promises";
-import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
+import { eq } from "drizzle-orm";
 import { config } from "../config";
 import { closeDb, getDb } from "../db/sqlite/client";
 import { runMigrations } from "../db/sqlite/migrate";
 import { agentSkill, project, workspace } from "../db/sqlite/schema";
-import { eq } from "drizzle-orm";
 
 async function jsonOf(res: Response) {
   return (await res.json()) as Record<string, unknown>;
@@ -192,7 +192,7 @@ describe("POST approve/reject", () => {
 
   test("不存在的 skillId reject → 400", async () => {
     const res = await app.request(
-      new Request(`http://test/api/v1/monitor/memory/skill-promotions/sk_does_not_exist/reject`, {
+      new Request("http://test/api/v1/monitor/memory/skill-promotions/sk_does_not_exist/reject", {
         method: "POST",
       })
     );

@@ -56,7 +56,7 @@ export async function loadManifestDefaults(
   manifestJson: Record<string, unknown>
 ): Promise<{ enabled?: boolean; enabledBundles?: string[] }> {
   if (cachedManifestDefaults !== undefined) return cachedManifestDefaults ?? {};
-  const d = manifestJson["defaults"];
+  const d = manifestJson.defaults;
   if (!d || typeof d !== "object") {
     cachedManifestDefaults = {};
     return {};
@@ -75,18 +75,13 @@ export async function resolveFsiPackSettings(manifestJson?: Record<string, unkno
 }> {
   const manifestDefaults = manifestJson
     ? await loadManifestDefaults(manifestJson)
-    : cachedManifestDefaults ?? {};
+    : (cachedManifestDefaults ?? {});
   const file = await loadPackSettings();
 
-  const enabled =
-    file.enabled ??
-    manifestDefaults.enabled ??
-    true;
+  const enabled = file.enabled ?? manifestDefaults.enabled ?? true;
 
-  const enabledBundles =
-    file.enabledBundles ??
-    manifestDefaults.enabledBundles ??
-    ["quant-research"];
+  const enabledBundles = file.enabledBundles ??
+    manifestDefaults.enabledBundles ?? ["quant-research"];
 
   return {
     enabled,

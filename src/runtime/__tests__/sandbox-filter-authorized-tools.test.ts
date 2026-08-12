@@ -14,7 +14,10 @@ import type { RuntimeAgentDefinition } from "../types";
  * 否则 prompt 说可用、act 又拒，反而更糟。
  */
 
-function makeDef(policyId: string, overrides: Partial<RuntimeAgentDefinition> = {}): RuntimeAgentDefinition {
+function makeDef(
+  policyId: string,
+  overrides: Partial<RuntimeAgentDefinition> = {}
+): RuntimeAgentDefinition {
   return {
     id: `def-${policyId}`,
     role: "market_data",
@@ -33,11 +36,14 @@ function makeDef(policyId: string, overrides: Partial<RuntimeAgentDefinition> = 
   };
 }
 
-async function seedPolicy(id: string, p: {
-  tools?: string[];
-  mcps?: string[];
-  connectors?: string[];
-}): Promise<void> {
+async function seedPolicy(
+  id: string,
+  p: {
+    tools?: string[];
+    mcps?: string[];
+    connectors?: string[];
+  }
+): Promise<void> {
   const db = await getDb();
   await db
     .insert(sandboxPolicy)

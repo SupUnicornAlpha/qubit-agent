@@ -10,10 +10,10 @@
  */
 
 import { join } from "node:path";
+import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { brokerAccount } from "../../db/sqlite/schema";
 import type { FutuProviderConfig } from "../../types/broker";
-import { and, desc, eq } from "drizzle-orm";
 import { getPythonConnectorsDir } from "../app-paths";
 import { getPythonBin } from "../sandbox/python-runtime";
 
@@ -61,7 +61,11 @@ let tradeManaged: ManagedProc | null = null;
 let quoteManaged: ManagedProc | null = null;
 let ensureInflight: Promise<FutuRuntimeStatus> | null = null;
 
-function parseTradeUrl(baseUrl: string | null | undefined): { host: string; port: number; url: string } {
+function parseTradeUrl(baseUrl: string | null | undefined): {
+  host: string;
+  port: number;
+  url: string;
+} {
   const raw = (baseUrl?.trim() || FUTU_DEFAULT_TRADE_BASE_URL).replace(/\/$/, "");
   try {
     const u = new URL(raw);
@@ -86,7 +90,10 @@ function quoteUrlFromEnvOrDefault(): string {
 function quoteListen(url: string): { host: string; port: number } {
   try {
     const u = new URL(url.replace(/^ws/i, "http"));
-    return { host: u.hostname || "127.0.0.1", port: u.port ? Number(u.port) : FUTU_DEFAULT_QUOTE_PORT };
+    return {
+      host: u.hostname || "127.0.0.1",
+      port: u.port ? Number(u.port) : FUTU_DEFAULT_QUOTE_PORT,
+    };
   } catch {
     return { host: "127.0.0.1", port: FUTU_DEFAULT_QUOTE_PORT };
   }
@@ -181,7 +188,17 @@ async function spawnQuoteBridge(opend: FutuOpenDConfig): Promise<ManagedProc> {
   const pythonBin = getPythonBin();
   const cwd = getPythonConnectorsDir();
   const proc = Bun.spawn(
-    [pythonBin, "-m", "market_bridge.server", "--provider", "futu", "--host", host, "--port", String(port)],
+    [
+      pythonBin,
+      "-m",
+      "market_bridge.server",
+      "--provider",
+      "futu",
+      "--host",
+      host,
+      "--port",
+      String(port),
+    ],
     {
       cwd,
       stdout: "ignore",
@@ -252,7 +269,8 @@ export async function getFutuRuntimeStatus(): Promise<FutuRuntimeStatus> {
     process.env.QUBIT_FUTU_MARKET_WS_URL?.trim() ||
     process.env.QUBIT_BROKER_MARKET_WS_URL_FUTU?.trim() ||
     null;
-  const quoteUrl = envWs || (isProcAlive(quoteManaged) ? quoteManaged!.url : FUTU_DEFAULT_QUOTE_WS_URL);
+  const quoteUrl =
+    envWs || (isProcAlive(quoteManaged) ? quoteManaged?.url : FUTU_DEFAULT_QUOTE_WS_URL);
 
   const tradeHealthy = await probeTradeHealth(tradeUrl);
   const tradeRunning = tradeHealthy || isProcAlive(tradeManaged);
@@ -277,19 +295,19 @@ export async function getFutuRuntimeStatus(): Promise<FutuRuntimeStatus> {
     trade: {
       running: tradeRunning,
       healthy: tradeHealthy,
-      pid: isProcAlive(tradeManaged) ? (tradeManaged!.proc.pid ?? null) : null,
+      pid: isProcAlive(tradeManaged) ? (tradeManaged?.proc.pid ?? null) : null,
       url: tradeUrl,
       lastError: tradeManaged?.lastError ?? null,
       startedAt: tradeManaged?.startedAt ?? null,
     },
     quote: {
       running: quoteRunning,
-      pid: isProcAlive(quoteManaged) ? (quoteManaged!.proc.pid ?? null) : null,
+      pid: isProcAlive(quoteManaged) ? (quoteManaged?.proc.pid ?? null) : null,
       url: quoteUrl,
       lastError: quoteManaged?.lastError ?? null,
       startedAt: quoteManaged?.startedAt ?? null,
     },
-    marketWsUrl: envWs || (isProcAlive(quoteManaged) ? quoteManaged!.url : null),
+    marketWsUrl: envWs || (isProcAlive(quoteManaged) ? quoteManaged?.url : null),
     message,
   };
 }

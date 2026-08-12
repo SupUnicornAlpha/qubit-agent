@@ -71,7 +71,7 @@ export class AcpCaller {
         }
 
         if (attempt < maxAttempts) {
-          const delay = backoffMs * Math.pow(backoffMultiplier, attempt - 1);
+          const delay = backoffMs * backoffMultiplier ** (attempt - 1);
           await Bun.sleep(delay);
         }
       }

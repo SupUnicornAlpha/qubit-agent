@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { generateGbmTicks, GBM_MIN_LENGTH } from "../synthesize-gbm";
+import { GBM_MIN_LENGTH, generateGbmTicks } from "../synthesize-gbm";
 
 describe("synthesize-gbm", () => {
   test("同 symbol 应产生确定性序列（可重复）", () => {
@@ -11,7 +11,7 @@ describe("synthesize-gbm", () => {
   test("不同 symbol 应产生不同 seed → 序列不一致", () => {
     const a = generateGbmTicks("AAPL", 60);
     const b = generateGbmTicks("TSLA", 60);
-    const firstCloseDiff = a[0]!.close !== b[0]!.close;
+    const firstCloseDiff = a[0]?.close !== b[0]?.close;
     expect(firstCloseDiff).toBe(true);
   });
 
@@ -36,6 +36,6 @@ describe("synthesize-gbm", () => {
   test("空字符串 symbol 也能稳定输出", () => {
     const ticks = generateGbmTicks("", 50);
     expect(ticks.length).toBe(50);
-    expect(ticks[0]!.close).toBeGreaterThan(0);
+    expect(ticks[0]?.close).toBeGreaterThan(0);
   });
 });

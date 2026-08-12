@@ -119,10 +119,7 @@ const REASONING_OPENAI_PREFIXES: readonly string[] = [
  *   传 temperature 等会被服务端拒绝，需 strip。
  * - 后续可扩展 qwq / qwen3-32b-reasoning 等。
  */
-const REASONING_OPENAI_COMPAT_PREFIXES: readonly string[] = [
-  "deepseek-r1",
-  "deepseek-reasoner",
-];
+const REASONING_OPENAI_COMPAT_PREFIXES: readonly string[] = ["deepseek-r1", "deepseek-reasoner"];
 
 /** 给定模型名返回能力 profile（小写不敏感） */
 export function modelCapability(model: string | undefined | null): ModelCapabilityProfile {
@@ -153,7 +150,10 @@ export function modelCapability(model: string | undefined | null): ModelCapabili
  *
  * 不可变：返回值是浅拷贝，原入参不会被修改。
  */
-export function sanitizeChatCompletionsBody<T extends object>(model: string | undefined | null, body: T): T {
+export function sanitizeChatCompletionsBody<T extends object>(
+  model: string | undefined | null,
+  body: T
+): T {
   const cap = modelCapability(model);
   if (cap.customTemperature && cap.customTopP && cap.penalties) {
     /** 全 passthrough，无需拷贝 —— 也不修改原对象 */
@@ -166,14 +166,14 @@ export function sanitizeChatCompletionsBody<T extends object>(model: string | un
    */
   const next = { ...body } as Record<string, unknown>;
   if (!cap.customTemperature && "temperature" in next) {
-    delete next["temperature"];
+    delete next.temperature;
   }
   if (!cap.customTopP && "top_p" in next) {
-    delete next["top_p"];
+    delete next.top_p;
   }
   if (!cap.penalties) {
-    if ("frequency_penalty" in next) delete next["frequency_penalty"];
-    if ("presence_penalty" in next) delete next["presence_penalty"];
+    if ("frequency_penalty" in next) delete next.frequency_penalty;
+    if ("presence_penalty" in next) delete next.presence_penalty;
   }
   return next as T;
 }

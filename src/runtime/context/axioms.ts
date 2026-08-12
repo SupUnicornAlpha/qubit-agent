@@ -4,10 +4,7 @@
 
 import type { ContextAxiomId, ContextSlotBudget, ContextSlotId } from "./types";
 
-export const CONTEXT_AXIOMS: Record<
-  ContextAxiomId,
-  { title: string; summary: string }
-> = {
+export const CONTEXT_AXIOMS: Record<ContextAxiomId, { title: string; summary: string }> = {
   A1: {
     title: "结构化交接",
     summary: "Handoff 字段优先；辩论隔离，不当 finance 真相",
@@ -36,29 +33,29 @@ export const CONTEXT_AXIOMS: Record<
 
 /** CONTEXT_PROTOCOL_V1=0 关闭；缺省开启 */
 export function isContextProtocolEnabled(): boolean {
-  return process.env["CONTEXT_PROTOCOL_V1"] !== "0";
+  return process.env.CONTEXT_PROTOCOL_V1 !== "0";
 }
 
 /** 回测/仿真建议开；缺省跟协议总闸 */
 export function isPitCutoffEnabled(): boolean {
-  if (process.env["CONTEXT_AXIOM_PIT"] === "0") return false;
-  if (process.env["CONTEXT_AXIOM_PIT"] === "1") return true;
+  if (process.env.CONTEXT_AXIOM_PIT === "0") return false;
+  if (process.env.CONTEXT_AXIOM_PIT === "1") return true;
   return isContextProtocolEnabled();
 }
 
 export function isFinanceMemoryStrict(): boolean {
   // 缺省严格；显式 FINANCE_MEMORY_STRICT=0 关闭
-  return process.env["FINANCE_MEMORY_STRICT"] !== "0";
+  return process.env.FINANCE_MEMORY_STRICT !== "0";
 }
 
 /** P2：market_snapshot 默认关；FINANCE_MARKET_SNAPSHOT_WRITE=1 开启 */
 export function isMarketSnapshotWriteEnabled(): boolean {
-  return process.env["FINANCE_MARKET_SNAPSHOT_WRITE"] === "1";
+  return process.env.FINANCE_MARKET_SNAPSHOT_WRITE === "1";
 }
 
 /** P2：WorkingMemory LLM/规则折叠默认关；CONTEXT_WORKING_SUMMARIZE=1 开启 */
 export function isWorkingMemorySummarizeEnabled(): boolean {
-  return process.env["CONTEXT_WORKING_SUMMARIZE"] === "1";
+  return process.env.CONTEXT_WORKING_SUMMARIZE === "1";
 }
 
 /** 05 §4.2 默认槽位预算 */

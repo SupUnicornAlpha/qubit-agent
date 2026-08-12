@@ -12,22 +12,19 @@ import { defaultDataDir } from "../../app-paths";
 import { computeDateRangeForLimit, queryKlines } from "../klines-query";
 import { marketSourceDefinition } from "../market-data-source-control";
 import { resolveTickerMarket } from "../resolve-ticker-market";
+import { assessPriceDivergence, assessUpstreamIndependence } from "./data-quality-gate";
 import {
   type DataQualityVerdict,
+  MARKET_EVENT_SCHEMA_VERSION,
   type MarketAssetClass,
   type MarketEventSource,
   type MarketFeedClass,
   type MarketLicenseUse,
   type MarketSnapshot,
-  MARKET_EVENT_SCHEMA_VERSION,
   MarketSnapshotSchema,
   evaluateTradability,
   hashPayload,
 } from "./market-event-v2";
-import {
-  assessPriceDivergence,
-  assessUpstreamIndependence,
-} from "./data-quality-gate";
 
 export type SnapshotPurpose = MarketSnapshot["purpose"];
 
@@ -215,9 +212,7 @@ function buildQualityVerdict(input: {
 
   // Only trading-purpose + L3 feed may keep trading_allowed.
   const tradingCandidate =
-    input.purpose === "trading" &&
-    feedClass === "L3_trading" &&
-    licenseUse === "trading_allowed";
+    input.purpose === "trading" && feedClass === "L3_trading" && licenseUse === "trading_allowed";
   if (!tradingCandidate && licenseUse === "trading_allowed") {
     licenseUse = input.purpose === "observe" ? "observe_only" : "research_only";
   }
@@ -227,7 +222,7 @@ function buildQualityVerdict(input: {
 
   const lastTs = input.bars.at(-1)?.timestamp;
   const asOfMs = Date.parse(input.asOf);
-  const lastMs = lastTs ? Date.parse(lastTs) : NaN;
+  const lastMs = lastTs ? Date.parse(lastTs) : Number.NaN;
   const freshnessMs =
     Number.isFinite(asOfMs) && Number.isFinite(lastMs) ? Math.max(0, asOfMs - lastMs) : null;
   // Intraday trading feeds: 30s; daily research bars: 2d.
@@ -306,8 +301,7 @@ export function buildMarketSnapshotRecord(input: {
   });
   const snapshotId = snapshotIdFromFingerprint(canonical);
   const primary = input.instruments[0]!;
-  const primaryBars =
-    input.barsByInstrument[instrumentKey(primary.symbol, primary.venue)] ?? [];
+  const primaryBars = input.barsByInstrument[instrumentKey(primary.symbol, primary.venue)] ?? [];
   const qualityVerdict = buildQualityVerdict({
     instrument: primary,
     sources: input.sources,
@@ -443,10 +437,12 @@ export async function getOrCreateMarketSnapshot(
     sourcesByProvider.set(source.provider, source);
   }
 
-  if (instruments.every((i) => (barsByInstrument[instrumentKey(i.symbol, i.venue)] ?? []).length === 0)) {
-    throw new Error(
-      `market_snapshot_empty:${errors.join(";") || "no bars returned for universe"}`
-    );
+  if (
+    instruments.every(
+      (i) => (barsByInstrument[instrumentKey(i.symbol, i.venue)] ?? []).length === 0
+    )
+  ) {
+    throw new Error(`market_snapshot_empty:${errors.join(";") || "no bars returned for universe"}`);
   }
 
   const sources = [...sourcesByProvider.values()];

@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { config } from "../../config";
 import type {
   BarData,
   ChipDistributionData,
@@ -6,10 +7,9 @@ import type {
   FetchChipDistributionParams,
 } from "../../connectors/data/data.connector";
 import { PythonConnectorBridgeImpl } from "../../connectors/python-bridge";
-import { config } from "../../config";
 import { getPythonConnectorsDir, resolvePythonBin } from "../app-paths";
-import { isChinaAShareMarket } from "./eastmoney-klines";
 import type { BuiltinConnectorInitConfigs } from "../config/builtin-connector-settings";
+import { isChinaAShareMarket } from "./eastmoney-klines";
 import { marketDataProxyForPython } from "./market-data-network";
 
 let bridge: PythonConnectorBridgeImpl | null = null;
@@ -73,7 +73,7 @@ export async function probeAkshareAvailable(): Promise<boolean> {
 export async function fetchAkshareBars(
   params: FetchBarsParams,
   settings: BuiltinConnectorInitConfigs = {},
-  upstream: "eastmoney" | "tencent" = "eastmoney",
+  upstream: "eastmoney" | "tencent" = "eastmoney"
 ): Promise<BarData[]> {
   if (!isChinaAShareMarket(params.symbol, params.exchange || "")) {
     throw new Error("akshare: only China A-share / BJ symbols are supported");
@@ -89,7 +89,7 @@ export async function fetchAkshareBars(
     upstream,
     proxyUrl: marketDataProxyForPython(
       settings,
-      upstream === "tencent" ? "akshare_tencent" : "akshare",
+      upstream === "tencent" ? "akshare_tencent" : "akshare"
     ),
   })) as BarData[];
 
@@ -107,7 +107,7 @@ export async function fetchAkshareBars(
 
 export function fetchAkshareTencentBars(
   params: FetchBarsParams,
-  settings: BuiltinConnectorInitConfigs = {},
+  settings: BuiltinConnectorInitConfigs = {}
 ): Promise<BarData[]> {
   return fetchAkshareBars(params, settings, "tencent");
 }

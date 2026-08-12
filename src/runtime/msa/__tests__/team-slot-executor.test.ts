@@ -1,9 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import {
-  mapDispatchResultsToWaveResults,
-  slotReactOutToSlotResult,
-} from "../team-slot-executor";
 import type { SlotDispatchResult } from "../team-slot-a2a";
+import { mapDispatchResultsToWaveResults, slotReactOutToSlotResult } from "../team-slot-executor";
 
 describe("team-slot-executor (batch 2)", () => {
   test("slotReactOutToSlotResult analyst", () => {

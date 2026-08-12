@@ -1,5 +1,5 @@
-import type { AgentGraphState } from "../state";
 import { createEmptyWorkingMemory, ensureWorkingMemory } from "../../context/working-memory";
+import type { AgentGraphState } from "../state";
 
 export async function perceiveNode(state: AgentGraphState): Promise<Partial<AgentGraphState>> {
   const memoryContext = {
@@ -13,4 +13,3 @@ export async function perceiveNode(state: AgentGraphState): Promise<Partial<Agen
     workingMemory: ensureWorkingMemory(state.workingMemory) ?? createEmptyWorkingMemory(),
   };
 }
-

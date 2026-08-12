@@ -13,18 +13,15 @@ import {
   sandboxPolicy,
 } from "../db/sqlite/schema";
 import type { AgentRole } from "../types/entities";
+import { type UserBindableField, parseUserOverrides } from "./agent/agent-binding-service";
 import { getDataDir, syncWorkspacePromptFromCanonical } from "./agent/agent-pack-service";
 import { cleanupRedundantAgentDefinitions } from "./agent/delete-agent-definition";
 import { purgeRetiredBuiltinDefinitions } from "./agent/purge-retired-builtin-definitions";
+import { buildDefaultSandboxPoliciesFromDefinitions } from "./config/workspace-config";
 import { isFsiActive, shouldApplyFsiAgentMappings } from "./fsi/fsi-config";
 import { mergeFsiSkillsForRole } from "./fsi/fsi-prompt-enricher";
 import { runFsiSeedIntegration, seedFsiSandboxPresets } from "./fsi/seed-fsi-integration";
 import { syncOrchestratorTopologyToolsForGroup } from "./orchestration/sync-orchestrator-topology-tools";
-import {
-  parseUserOverrides,
-  type UserBindableField,
-} from "./agent/agent-binding-service";
-import { buildDefaultSandboxPoliciesFromDefinitions } from "./config/workspace-config";
 import {
   BUILTIN_AGENT_GROUPS,
   type BuiltinAgentGroupSpec,
@@ -405,11 +402,7 @@ function buildBuiltinGroupRelationsJson(
     type: "orchestration_pipeline",
     phases: layout.phases,
   };
-  return [
-    { type: "topology_canvas", nodePositions: layout.nodePositions },
-    pipeline,
-    ...edges,
-  ];
+  return [{ type: "topology_canvas", nodePositions: layout.nodePositions }, pipeline, ...edges];
 }
 
 function relationsNeedsRefresh(
@@ -449,12 +442,7 @@ export const BUILTIN_GROUP_LAYOUTS: Record<string, GroupRelationsLayout> = {
       {
         id: "msa",
         label: "四维分析",
-        roles: [
-          "analyst_fundamental",
-          "analyst_technical",
-          "analyst_sentiment",
-          "analyst_macro",
-        ],
+        roles: ["analyst_fundamental", "analyst_technical", "analyst_sentiment", "analyst_macro"],
       },
       { id: "deepen", label: "策略深化", roles: ["research", "backtest"] },
       { id: "risk", label: "风控闸门", roles: ["risk"] },
@@ -474,12 +462,7 @@ export const BUILTIN_GROUP_LAYOUTS: Record<string, GroupRelationsLayout> = {
       {
         id: "msa",
         label: "四维分析",
-        roles: [
-          "analyst_macro",
-          "analyst_fundamental",
-          "analyst_technical",
-          "analyst_sentiment",
-        ],
+        roles: ["analyst_macro", "analyst_fundamental", "analyst_technical", "analyst_sentiment"],
       },
     ],
     analystChain: [
@@ -747,7 +730,9 @@ export async function ensureBuiltinAgentGroups(
       `[Seed] Builtin agent groups: reset=${reset}, preserved=${preserved} (user-modified members), total=${total}${force ? " [force]" : ""}.`
     );
   } else {
-    console.log(`[Seed] Builtin agent groups refreshed: ${reset}/${total}${force ? " [force]" : ""}.`);
+    console.log(
+      `[Seed] Builtin agent groups refreshed: ${reset}/${total}${force ? " [force]" : ""}.`
+    );
   }
   return { total, reset, preserved };
 }

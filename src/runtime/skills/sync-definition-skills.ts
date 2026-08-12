@@ -8,8 +8,8 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { agentDefinition, agentSkill, project } from "../../db/sqlite/schema";
 import { resolveFsiSkillBody } from "../fsi/fsi-skill-resolver";
-import { syncBuiltinQuantSkillsForProject } from "./seed-builtin-quant-skills";
 import { pruneNoiseSkillsForProject } from "./prune-noise-skills";
+import { syncBuiltinQuantSkillsForProject } from "./seed-builtin-quant-skills";
 import { skillService } from "./skill-service";
 
 const FRONTMATTER_DESC_RE =
@@ -30,7 +30,7 @@ function skillNameFromRef(ref: string): string {
 function descriptionFromSkillMd(rawBody: string, skillId: string): string {
   const fm = rawBody.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (fm) {
-    const m = fm[1]!.match(FRONTMATTER_DESC_RE);
+    const m = fm[1]?.match(FRONTMATTER_DESC_RE);
     const block = (m?.[1] ?? m?.[2] ?? "").trim();
     if (block) {
       return block
@@ -41,7 +41,10 @@ function descriptionFromSkillMd(rawBody: string, skillId: string): string {
         .slice(0, 500);
     }
   }
-  const first = rawBody.replace(/^#+\s*/, "").split("\n").find((l) => l.trim());
+  const first = rawBody
+    .replace(/^#+\s*/, "")
+    .split("\n")
+    .find((l) => l.trim());
   return (first ?? skillId).trim().slice(0, 500);
 }
 
@@ -130,9 +133,7 @@ export async function syncDefinitionSkillsForProject(projectId: string): Promise
       console.log(`[Seed:skills] pruned ${pruned} noise skill(s) for project ${projectId}`);
     }
   } catch (err) {
-    console.warn(
-      `[Seed:skills] prune failed for project ${projectId}: ${(err as Error).message}`
-    );
+    console.warn(`[Seed:skills] prune failed for project ${projectId}: ${(err as Error).message}`);
   }
   return n;
 }

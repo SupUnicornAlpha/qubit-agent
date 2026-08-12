@@ -31,7 +31,13 @@ describe("attachMarketGovernanceTools", () => {
 describe("applyStallToolFilter", () => {
   test("after factor.list, only strategy write tools remain", () => {
     const filtered = applyStallToolFilter({
-      tools: ["factor.list", "strategy.create_version", "strategy.compose", "update_plan", "backtest.run"],
+      tools: [
+        "factor.list",
+        "strategy.create_version",
+        "strategy.compose",
+        "update_plan",
+        "backtest.run",
+      ],
       notAttemptedCapabilities: ["strategy"],
       attemptedTools: ["factor.list"],
     });
@@ -60,12 +66,7 @@ describe("applyStallToolFilter", () => {
 
   test("after strategy.create_version, keeps only order tools for live trading", () => {
     const filtered = applyStallToolFilter({
-      tools: [
-        "strategy.create_version",
-        "order.create_intent",
-        "evaluate_risk",
-        "submit_order",
-      ],
+      tools: ["strategy.create_version", "order.create_intent", "evaluate_risk", "submit_order"],
       notAttemptedCapabilities: ["order", "risk"],
       attemptedTools: ["strategy.create_version"],
     });

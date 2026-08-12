@@ -17,7 +17,7 @@ function validateValue(
   path: string,
   errors: string[]
 ): unknown {
-  const t = schema["type"];
+  const t = schema.type;
   if (typeof t === "string") {
     const actual = schemaType(value);
     if (actual !== t) {
@@ -28,7 +28,7 @@ function validateValue(
 
   if (t === "object" && value && typeof value === "object" && !Array.isArray(value)) {
     const obj = { ...(value as Record<string, unknown>) };
-    const required = schema["required"];
+    const required = schema.required;
     if (Array.isArray(required)) {
       for (const key of required) {
         if (typeof key === "string" && !(key in obj)) {
@@ -36,14 +36,14 @@ function validateValue(
         }
       }
     }
-    const props = schema["properties"] as Record<string, JsonSchema> | undefined;
+    const props = schema.properties as Record<string, JsonSchema> | undefined;
     if (props) {
       for (const [key, sub] of Object.entries(props)) {
         if (!(key in obj)) continue;
         obj[key] = validateValue(obj[key], sub, `${path}.${key}`, errors);
       }
     }
-    if (schema["additionalProperties"] === false) {
+    if (schema.additionalProperties === false) {
       for (const key of Object.keys(obj)) {
         if (props && key in props) continue;
         delete obj[key];
@@ -53,8 +53,8 @@ function validateValue(
   }
 
   if (t === "array" && Array.isArray(value)) {
-    const items = schema["items"] as JsonSchema | undefined;
-    const maxItems = schema["maxItems"];
+    const items = schema.items as JsonSchema | undefined;
+    const maxItems = schema.maxItems;
     let arr = value;
     if (typeof maxItems === "number" && arr.length > maxItems) {
       errors.push(`${path}: array length ${arr.length} exceeds maxItems ${maxItems}`);
@@ -67,8 +67,8 @@ function validateValue(
   }
 
   if (t === "number" && typeof value === "number") {
-    const min = schema["minimum"];
-    const max = schema["maximum"];
+    const min = schema.minimum;
+    const max = schema.maximum;
     let n = value;
     if (typeof min === "number" && n < min) {
       errors.push(`${path}: ${n} < minimum ${min}`);
@@ -82,8 +82,8 @@ function validateValue(
   }
 
   if (t === "string" && typeof value === "string") {
-    const maxLength = schema["maxLength"];
-    const en = schema["enum"];
+    const maxLength = schema.maxLength;
+    const en = schema.enum;
     if (Array.isArray(en) && !en.includes(value)) {
       errors.push(`${path}: value not in enum`);
     }
@@ -91,7 +91,7 @@ function validateValue(
       errors.push(`${path}: string exceeds maxLength ${maxLength}`);
       return [...value].slice(0, maxLength).join("");
     }
-    const pattern = schema["pattern"];
+    const pattern = schema.pattern;
     if (typeof pattern === "string") {
       try {
         const re = new RegExp(pattern);

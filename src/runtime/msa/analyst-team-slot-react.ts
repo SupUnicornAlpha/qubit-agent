@@ -32,18 +32,18 @@ import { getDb } from "../../db/sqlite/client";
 import { agentDefinition, agentInstance } from "../../db/sqlite/schema";
 import type { TaskAssignPayload } from "../../types/a2a";
 import type { AgentRole, AnalystSignalValue } from "../../types/entities";
+import type { NormalizedResearchScope } from "../../types/research-scope";
 import { buildContextHandoffV1 } from "../context/handoff";
+import { validateFsiRoleOutput } from "../fsi/fsi-output-validator";
 import { parseLlmConfigJson } from "../llm/agent-llm-config";
 import { invokeWithFallback, resolveLlmForAgent } from "../llm/llm-router";
-import { resolveExecutionKind } from "../prime/execution-kind";
-import { resolveRoleReasoner } from "./role-reasoner";
 import { resolveEnabledMcpServerNames } from "../mcp/resolve-enabled-mcp-servers";
-import type { RuntimeAgentDefinition } from "../types";
-import type { RawAnalystSignal } from "./signal-fusion";
-import { validateFsiRoleOutput } from "../fsi/fsi-output-validator";
-import type { NormalizedResearchScope } from "../../types/research-scope";
+import { resolveExecutionKind } from "../prime/execution-kind";
 import { stripToolCallSentinels } from "../tools/tool-call-format";
+import type { RuntimeAgentDefinition } from "../types";
 import { formatResearchScopePreamble } from "./analyst-team-scope";
+import { resolveRoleReasoner } from "./role-reasoner";
+import type { RawAnalystSignal } from "./signal-fusion";
 
 /**
  * 单 slot 在 ReAct 内核里允许的最大轮数，当前收口到 6：
@@ -77,7 +77,6 @@ export function pickAnalystReactDepth(input: {
     case "event_radar":
     case "factor_discovery":
       return "minimal";
-    case "msa_fusion":
     default:
       return "standard";
   }
@@ -122,7 +121,9 @@ async function loadRuntimeDefinition(
     tools: (d.toolsJson as string[]) ?? [],
     mcpServers: (d.mcpServersJson as string[]) ?? [],
     skills: (d.skillsJson as string[]) ?? [],
-    subscriptions: (d.subscriptionsJson as RuntimeAgentDefinition["subscriptions"]) ?? ["TASK_ASSIGN"],
+    subscriptions: (d.subscriptionsJson as RuntimeAgentDefinition["subscriptions"]) ?? [
+      "TASK_ASSIGN",
+    ],
     llmProvider: d.llmProvider,
     ...(llmConfig ? { llmConfig } : {}),
     maxIterations: Math.min(d.maxIterations ?? cap, cap),
@@ -199,7 +200,12 @@ export function extractSignalJsonFromText(text: string): Record<string, unknown>
     if (!raw) continue;
     try {
       const obj = JSON.parse(raw) as unknown;
-      if (obj && typeof obj === "object" && !Array.isArray(obj) && "signal" in (obj as Record<string, unknown>)) {
+      if (
+        obj &&
+        typeof obj === "object" &&
+        !Array.isArray(obj) &&
+        "signal" in (obj as Record<string, unknown>)
+      ) {
         return obj as Record<string, unknown>;
       }
     } catch {
@@ -238,17 +244,17 @@ function parseJsonSignalFromText(
     const validated = await validateFsiRoleOutput(role, parsed);
     const p = validated.sanitized;
 
-    const rawSignal = p["signal"];
+    const rawSignal = p.signal;
     if (!["buy", "sell", "hold"].includes(rawSignal as string)) return null;
     const signal = rawSignal as AnalystSignalValue;
 
-    const rawConfidence = p["confidence"];
+    const rawConfidence = p.confidence;
     if (typeof rawConfidence !== "number" || !Number.isFinite(rawConfidence)) return null;
     const confidence = Math.max(0, Math.min(1, rawConfidence));
 
     const reasoning =
-      typeof p["reasoning"] === "string" && p["reasoning"].trim().length > 0
-        ? p["reasoning"]
+      typeof p.reasoning === "string" && p.reasoning.trim().length > 0
+        ? p.reasoning
         : text.slice(0, 500);
 
     /**

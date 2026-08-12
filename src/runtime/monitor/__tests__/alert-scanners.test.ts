@@ -5,10 +5,7 @@
  * DB 扫描函数 (scanMcp* / scanToken*) 走集成验证，不在此 mock。
  */
 import { describe, expect, test } from "bun:test";
-import {
-  evaluateMcpCircuitOpenAlert,
-  evaluateTokenAnomalyAlert,
-} from "../alert-scanners";
+import { evaluateMcpCircuitOpenAlert, evaluateTokenAnomalyAlert } from "../alert-scanners";
 
 describe("evaluateMcpCircuitOpenAlert", () => {
   const now = new Date("2026-05-26T08:00:00Z");
@@ -33,11 +30,7 @@ describe("evaluateMcpCircuitOpenAlert", () => {
   });
 
   test("openedAt 缺失 → 不告警（数据不可信）", () => {
-    const d = evaluateMcpCircuitOpenAlert(
-      { circuitState: "open", openedAt: null },
-      now,
-      5
-    );
+    const d = evaluateMcpCircuitOpenAlert({ circuitState: "open", openedAt: null }, now, 5);
     expect(d.shouldAlert).toBe(false);
     expect(d.reason).toBe("openedAt missing");
   });
@@ -64,11 +57,7 @@ describe("evaluateMcpCircuitOpenAlert", () => {
   });
 
   test("openedAt 不可 parse → 不告警", () => {
-    const d = evaluateMcpCircuitOpenAlert(
-      { circuitState: "open", openedAt: "not a date" },
-      now,
-      5
-    );
+    const d = evaluateMcpCircuitOpenAlert({ circuitState: "open", openedAt: "not a date" }, now, 5);
     expect(d.shouldAlert).toBe(false);
     expect(d.reason).toBe("openedAt unparsable");
   });

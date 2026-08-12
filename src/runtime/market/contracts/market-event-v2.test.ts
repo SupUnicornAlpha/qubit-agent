@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import quoteFixture from "./fixtures/market-event-quote.fixture.json";
 import verdictFixture from "./fixtures/data-quality-verdict.fixture.json";
+import quoteFixture from "./fixtures/market-event-quote.fixture.json";
 import snapshotFixture from "./fixtures/market-snapshot.fixture.json";
 import thesisFixture from "./fixtures/research-thesis.fixture.json";
 import {
@@ -34,9 +34,9 @@ describe("Market Event Contract v2 (D0)", () => {
     };
 
     expect(evaluateTradability(base).tradable).toBe(true);
-    expect(
-      evaluateTradability({ ...base, licenseUse: "research_only" }).useClass
-    ).toBe("research_only");
+    expect(evaluateTradability({ ...base, licenseUse: "research_only" }).useClass).toBe(
+      "research_only"
+    );
     expect(evaluateTradability({ ...base, freshness: "stale" }).tradable).toBe(false);
     expect(evaluateTradability({ ...base, consistency: "divergent" }).tradable).toBe(false);
   });

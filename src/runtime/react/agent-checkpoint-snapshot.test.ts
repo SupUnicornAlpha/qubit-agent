@@ -367,10 +367,11 @@ describe("agent-checkpoint-snapshot", () => {
     expect(loaded).not.toBeNull();
     if (!loaded) return;
 
-    const { state: restored, resumeIteration, resumePhase } = restoreStateFromSnapshot(
-      loaded,
-      fullDef
-    );
+    const {
+      state: restored,
+      resumeIteration,
+      resumePhase,
+    } = restoreStateFromSnapshot(loaded, fullDef);
     // 决策字段全量还原
     expect(resumeIteration).toBe(4);
     expect(resumePhase).toBe("observe");

@@ -163,8 +163,7 @@ export async function dispatchTeamAgentTask(
   const dataAvailable =
     targetRole === "market_data" &&
     taskEvidence?.verified === true &&
-    (taskEvidence.kind === "market_data" ||
-      String(taskEvidence.kind ?? "").includes("market"));
+    (taskEvidence.kind === "market_data" || String(taskEvidence.kind ?? "").includes("market"));
   const controlPlaneCode =
     typeof taskError?.code === "string" ? taskError.code.trim().toLowerCase() : "";
   const isControlPlaneStop =
@@ -210,10 +209,7 @@ export async function dispatchTeamAgentTask(
     dataAvailability: timedOut ? "unknown" : dataAvailable ? "available" : "not_applicable",
   };
   if (result !== undefined) output.result = result;
-  if (
-    (hasVerifiedEvidence || isControlPlaneStop) &&
-    task?.status !== "completed"
-  ) {
+  if ((hasVerifiedEvidence || isControlPlaneStop) && task?.status !== "completed") {
     output.partialEvidence = true;
   }
   if (timedOut) {

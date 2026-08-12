@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, isNull, lte, or, lt } from "drizzle-orm";
+import { and, asc, eq, isNull, lt, lte, or } from "drizzle-orm";
 import type { DbClient } from "../../db/sqlite/client";
 import { getDb } from "../../db/sqlite/client";
 import {
@@ -8,9 +8,9 @@ import {
   orderIntent,
   riskReviewTicket,
 } from "../../db/sqlite/schema";
+import { processConditionalOrders } from "./conditional-order-service";
 import { dispatchExecutionTask } from "./execution-dispatcher";
 import { pollPendingBrokerOrders } from "./execution-dispatcher-poll";
-import { processConditionalOrders } from "./conditional-order-service";
 
 const DEFAULT_TICK_MS = 1500;
 const RETRY_DELAY_MS = 30_000;
@@ -54,7 +54,10 @@ async function expireStaleRiskReviews(db: DbClient, nowIso: string): Promise<voi
         updatedAt: nowIso,
       })
       .where(
-        and(eq(executionTask.orderIntentId, t.orderIntentId), eq(executionTask.status, "awaiting_review"))
+        and(
+          eq(executionTask.orderIntentId, t.orderIntentId),
+          eq(executionTask.status, "awaiting_review")
+        )
       );
     await db
       .update(orderIntent)

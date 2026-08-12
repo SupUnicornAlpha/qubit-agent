@@ -108,4 +108,3 @@ export interface RuntimeRoleHandler {
   onMessage: (ctx: RuntimeHandlerContext, msg: A2AMessageEnvelope) => Promise<void>;
   onShutdown?: (ctx: RuntimeHandlerContext) => Promise<void>;
 }
-

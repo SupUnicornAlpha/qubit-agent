@@ -3,8 +3,8 @@
  * v2（2026-06-08）按 A/B/C/D 类分块输出，schemaVersion = 2.0。
  */
 import { describe, expect, test } from "bun:test";
-import { renderJsonReport, renderMarkdownReport } from "../reporters";
 import type { ReadinessSnapshot } from "../grader";
+import { renderJsonReport, renderMarkdownReport } from "../reporters";
 
 const FULL_AQM_GREEN: ReadinessSnapshot = {
   workflowRunId: "wf-rep-1",
@@ -61,10 +61,22 @@ describe("renderMarkdownReport v2", () => {
     expect(md).toContain("C 类 · LLM 调用质量");
     expect(md).toContain("D 类 · 编排质量");
     for (const id of [
-      "A-1", "A-2", "A-3", "A-4", "A-5",
-      "B-1", "B-2", "B-3", "B-7",
-      "C-1", "C-2", "C-3-total", "C-5",
-      "D-1", "D-2", "D-3",
+      "A-1",
+      "A-2",
+      "A-3",
+      "A-4",
+      "A-5",
+      "B-1",
+      "B-2",
+      "B-3",
+      "B-7",
+      "C-1",
+      "C-2",
+      "C-3-total",
+      "C-5",
+      "D-1",
+      "D-2",
+      "D-3",
     ]) {
       expect(md).toContain(id);
     }

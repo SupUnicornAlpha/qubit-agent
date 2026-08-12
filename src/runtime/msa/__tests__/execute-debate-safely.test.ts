@@ -130,7 +130,7 @@ describe("executeDebateSafely · 失败兜底（F-P0-02 关键回归）", () => 
 
     expect(out).toBeUndefined();
     expect(logCalls.length).toBe(1);
-    expect(String(logCalls[0]!.contentText)).toContain("raw string error");
+    expect(String(logCalls[0]?.contentText)).toContain("raw string error");
   });
 
   test("LLM timeout 模拟（runDebateSession 抛 'timeout'）→ 兜底", async () => {

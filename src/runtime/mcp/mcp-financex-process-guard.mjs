@@ -4,9 +4,7 @@
 const origExit = process.exit;
 process.exit = function guardedExit(code) {
   if (code === 1) {
-    console.error(
-      "[mcp-financex-guard] suppressed process.exit(1) — keeping stdio session alive"
-    );
+    console.error("[mcp-financex-guard] suppressed process.exit(1) — keeping stdio session alive");
     return;
   }
   return origExit.call(process, code);

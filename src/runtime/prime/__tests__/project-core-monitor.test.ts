@@ -3,9 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-process.env.QUBIT_DATA_DIR = mkdtempSync(
-  join(tmpdir(), `prime-monitor-${Date.now()}-`)
-);
+process.env.QUBIT_DATA_DIR = mkdtempSync(join(tmpdir(), `prime-monitor-${Date.now()}-`));
 
 const { getDb } = await import("../../../db/sqlite/client");
 const { runMigrations } = await import("../../../db/sqlite/migrate");
@@ -21,11 +19,9 @@ const {
   workspace,
 } = await import("../../../db/sqlite/schema");
 const { eq } = await import("drizzle-orm");
-const {
-  beginCoreMonitorTurn,
-  finalizeCoreMonitorTurn,
-  recordCoreMonitorToolCall,
-} = await import("../project-core-monitor");
+const { beginCoreMonitorTurn, finalizeCoreMonitorTurn, recordCoreMonitorToolCall } = await import(
+  "../project-core-monitor"
+);
 
 describe("project-core-monitor", () => {
   test("writes agent_step + tool_call_log + llm_call_log", async () => {
@@ -136,18 +132,12 @@ describe("project-core-monitor", () => {
     expect(tools[0]?.toolName).toBe("market.resolve_symbol");
     expect(tools[0]?.status).toBe("success");
 
-    const llms = await db
-      .select()
-      .from(llmCallLog)
-      .where(eq(llmCallLog.workflowRunId, workflowId));
+    const llms = await db.select().from(llmCallLog).where(eq(llmCallLog.workflowRunId, workflowId));
     expect(llms.length).toBe(1);
     expect(llms[0]?.model).toBe("test-model");
     expect(llms[0]?.totalTokens).toBe(15);
 
-    const steps = await db
-      .select()
-      .from(agentStep)
-      .where(eq(agentStep.workflowRunId, workflowId));
+    const steps = await db.select().from(agentStep).where(eq(agentStep.workflowRunId, workflowId));
     expect(steps.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -243,18 +233,12 @@ describe("project-core-monitor", () => {
       turn: { iteration: 1, answer_text: "3" },
     });
 
-    const tools = await db
-      .select()
-      .from(toolCallLog)
-      .where(eq(toolCallLog.id, "tc_mcp_1"));
+    const tools = await db.select().from(toolCallLog).where(eq(toolCallLog.id, "tc_mcp_1"));
     expect(tools.length).toBe(1);
     expect(tools[0]?.toolKind).toBe("mcp");
     expect(tools[0]?.status).toBe("success");
 
-    const mcps = await db
-      .select()
-      .from(mcpCallLog)
-      .where(eq(mcpCallLog.id, "tc_mcp_1"));
+    const mcps = await db.select().from(mcpCallLog).where(eq(mcpCallLog.id, "tc_mcp_1"));
     expect(mcps.length).toBe(1);
     expect(mcps[0]?.serverName).toBe("mathjs");
     expect(mcps[0]?.toolName).toBe("add");

@@ -14,15 +14,12 @@
  *   同时校验 memberRoles 长度 == memberDefinitionIds 长度（一一对齐）。
  */
 import { describe, expect, test } from "bun:test";
-import {
-  BUILTIN_AGENT_GROUPS,
-  type BuiltinAgentGroupSpec,
-} from "../seed-agent-catalog";
-import {
-  SEED_AGENT_DEFINITIONS,
-  RETIRED_BUILTIN_DEFINITION_IDS,
-} from "../seed-agent-definitions-data";
 import type { AgentRole } from "../../types/entities";
+import { BUILTIN_AGENT_GROUPS, type BuiltinAgentGroupSpec } from "../seed-agent-catalog";
+import {
+  RETIRED_BUILTIN_DEFINITION_IDS,
+  SEED_AGENT_DEFINITIONS,
+} from "../seed-agent-definitions-data";
 
 /**
  * 退役 role 名单（M9.P5 起从 catalog 中应清除；AgentRole type 联合仍保留
@@ -156,9 +153,7 @@ describe("P0-01 / P1-04：pipeline_kind + outputs 卫生（migration 0073）", (
 
   test("event_radar 编组必须至少有一个角色产出 'events'（否则该模式无意义）", () => {
     for (const g of BUILTIN_AGENT_GROUPS.filter((x) => x.pipelineKind === "event_radar")) {
-      const memberDefs = SEED_AGENT_DEFINITIONS.filter((d) =>
-        g.memberDefinitionIds.includes(d.id)
-      );
+      const memberDefs = SEED_AGENT_DEFINITIONS.filter((d) => g.memberDefinitionIds.includes(d.id));
       const hasEvents = memberDefs.some((d) => (d.outputs ?? []).includes("events"));
       if (!hasEvents) {
         throw new Error(`${g.id} pipelineKind=event_radar 但成员无人产出 events`);
@@ -168,15 +163,9 @@ describe("P0-01 / P1-04：pipeline_kind + outputs 卫生（migration 0073）", (
 
   test("factor_discovery 编组必须至少有 'factor_candidates' + 'backtest_results' 各一个", () => {
     for (const g of BUILTIN_AGENT_GROUPS.filter((x) => x.pipelineKind === "factor_discovery")) {
-      const memberDefs = SEED_AGENT_DEFINITIONS.filter((d) =>
-        g.memberDefinitionIds.includes(d.id)
-      );
-      const hasFactor = memberDefs.some((d) =>
-        (d.outputs ?? []).includes("factor_candidates")
-      );
-      const hasBacktest = memberDefs.some((d) =>
-        (d.outputs ?? []).includes("backtest_results")
-      );
+      const memberDefs = SEED_AGENT_DEFINITIONS.filter((d) => g.memberDefinitionIds.includes(d.id));
+      const hasFactor = memberDefs.some((d) => (d.outputs ?? []).includes("factor_candidates"));
+      const hasBacktest = memberDefs.some((d) => (d.outputs ?? []).includes("backtest_results"));
       if (!hasFactor || !hasBacktest) {
         throw new Error(
           `${g.id} pipelineKind=factor_discovery 但成员缺 factor_candidates=${hasFactor} / backtest_results=${hasBacktest}`
@@ -187,12 +176,8 @@ describe("P0-01 / P1-04：pipeline_kind + outputs 卫生（migration 0073）", (
 
   test("msa_fusion 编组必须至少有 2 个 signal 产出者（否则无投票意义）", () => {
     for (const g of BUILTIN_AGENT_GROUPS.filter((x) => x.pipelineKind === "msa_fusion")) {
-      const memberDefs = SEED_AGENT_DEFINITIONS.filter((d) =>
-        g.memberDefinitionIds.includes(d.id)
-      );
-      const signalCount = memberDefs.filter((d) =>
-        (d.outputs ?? []).includes("signal")
-      ).length;
+      const memberDefs = SEED_AGENT_DEFINITIONS.filter((d) => g.memberDefinitionIds.includes(d.id));
+      const signalCount = memberDefs.filter((d) => (d.outputs ?? []).includes("signal")).length;
       if (signalCount < 2) {
         throw new Error(
           `${g.id} pipelineKind=msa_fusion 但仅 ${signalCount} 个 signal 产出者（需 ≥2）`

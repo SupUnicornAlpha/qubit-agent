@@ -100,7 +100,11 @@ export async function purgeAllTraderWorkflowsOnce(): Promise<number> {
 
   const db = await getDb();
   const cancelled = await cancelTraderWorkflows(db);
-  writeFileSync(flag, `${new Date().toISOString()}\n${cancelled.length} workflows cancelled\n`, "utf8");
+  writeFileSync(
+    flag,
+    `${new Date().toISOString()}\n${cancelled.length} workflows cancelled\n`,
+    "utf8"
+  );
   if (cancelled.length > 0) {
     console.log(`[QUBIT] Purged ${cancelled.length} legacy trader workflow(s).`);
   }

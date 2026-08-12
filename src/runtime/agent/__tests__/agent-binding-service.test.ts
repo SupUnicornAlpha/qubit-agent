@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
+  USER_BINDABLE_FIELDS,
   isUserBindableField,
   parseUserOverrides,
   shouldPreserveField,
-  USER_BINDABLE_FIELDS,
 } from "../agent-binding-service";
 
 /*

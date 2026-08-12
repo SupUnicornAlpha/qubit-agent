@@ -5,7 +5,8 @@ import { agentInstance, agentStep, workflowRun } from "../../db/sqlite/schema";
 import type { TaskAssignPayload } from "../../types/a2a";
 import { parseLoopOptionsJson } from "../../types/loop";
 import type { AgentLoopKind } from "../../types/loop";
-import { runReactLoop } from "./run-react-loop";
+import { assertTsReactAllowed } from "../prime/ts-react-residual";
+import { listWorkflowArtifactReferences } from "../tools/workflow-artifact-ledger";
 import type { RuntimeAgentDefinition } from "../types";
 import { HitlAwaitingApprovalError } from "../workflow/hitl-service";
 import { setWorkflowState } from "../workflow/workflow-state-machine";
@@ -15,9 +16,8 @@ import {
 } from "./agent-checkpoint-snapshot";
 import { stepStreamBus } from "./event-stream";
 import { resolveForceReactLoop } from "./react-loop-policy";
+import { runReactLoop } from "./run-react-loop";
 import { type AgentGraphState, type StepStreamEvent, createInitialGraphState } from "./state";
-import { listWorkflowArtifactReferences } from "../tools/workflow-artifact-ledger";
-import { assertTsReactAllowed } from "../prime/ts-react-residual";
 
 export type ExecuteAgentReactParams = {
   runId: string;

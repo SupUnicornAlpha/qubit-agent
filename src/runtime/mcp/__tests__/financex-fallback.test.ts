@@ -12,9 +12,9 @@
  */
 import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
 import {
-  tryFinancexFallback,
   FINANCEX_FALLBACK_TOOLS,
   resolveFinancexFallbackToolName,
+  tryFinancexFallback,
 } from "../financex-fallback";
 
 /** 通过 mock.module 替换底层数据源 */
@@ -170,12 +170,12 @@ describe("tryFinancexFallback 数据路径 (mock queryBarsRange)", () => {
       originalError: new Error("circuit open"),
     });
     expect(r).not.toBeNull();
-    const out = r!.output as Record<string, unknown>;
-    expect(out["symbol"]).toBe("AAPL");
-    expect(out["price"]).toBe(104.0); // latest close
-    expect(out["bar_date"]).toBe("2026-06-06");
+    const out = r?.output as Record<string, unknown>;
+    expect(out.symbol).toBe("AAPL");
+    expect(out.price).toBe(104.0); // latest close
+    expect(out.bar_date).toBe("2026-06-06");
     expect(mockBarsCalled).toBe(true);
-    expect(out["__mcp_fallback"]).toMatchObject({
+    expect(out.__mcp_fallback).toMatchObject({
       original_server: "mcp-financex",
       original_tool: "get_quote",
       reason: "circuit_open",
@@ -191,11 +191,11 @@ describe("tryFinancexFallback 数据路径 (mock queryBarsRange)", () => {
       reason: "tool_error",
     });
     expect(r).not.toBeNull();
-    const out = r!.output as { quotes: Array<{ symbol: string; price: number }>; count: number };
+    const out = r?.output as { quotes: Array<{ symbol: string; price: number }>; count: number };
     expect(Array.isArray(out.quotes)).toBe(true);
     expect(out.count).toBe(2);
-    expect(out.quotes[0]!.symbol).toBe("AAPL");
-    expect(out.quotes[1]!.symbol).toBe("MSFT");
+    expect(out.quotes[0]?.symbol).toBe("AAPL");
+    expect(out.quotes[1]?.symbol).toBe("MSFT");
   });
 
   test("get_stock_quote 别名也能在 financex 不可用时返回行情", async () => {
@@ -219,7 +219,7 @@ describe("tryFinancexFallback 数据路径 (mock queryBarsRange)", () => {
       reason: "circuit_open",
     });
     expect(r).not.toBeNull();
-    const out = r!.output as { error?: string };
+    const out = r?.output as { error?: string };
     expect(out.error).toBe("no_bars");
   });
 
@@ -231,7 +231,7 @@ describe("tryFinancexFallback 数据路径 (mock queryBarsRange)", () => {
       reason: "tool_error",
     });
     expect(r).not.toBeNull();
-    const out = r!.output as { error?: string };
+    const out = r?.output as { error?: string };
     expect(out.error).toMatch(/yahoo 403/);
   });
 
@@ -248,7 +248,7 @@ describe("tryFinancexFallback 数据路径 (mock queryBarsRange)", () => {
       reason: "tool_error",
     });
     expect(r).not.toBeNull();
-    const out = r!.output as {
+    const out = r?.output as {
       symbol: string;
       bars: Array<{ close: number }>;
       count: number;
@@ -268,14 +268,14 @@ describe("tryFinancexFallback 数据路径 (mock queryBarsRange)", () => {
       reason: "tool_error",
     });
     expect(r).not.toBeNull();
-    const out = r!.output as {
+    const out = r?.output as {
       symbol: string;
       headlines: Array<{ headline: string; source: string | null }>;
       sector: string | null;
     };
     expect(out.symbol).toBe("AAPL");
     expect(out.headlines.length).toBeGreaterThan(0);
-    expect(out.headlines[0]!.headline).toMatch(/AAPL beats/);
+    expect(out.headlines[0]?.headline).toMatch(/AAPL beats/);
     expect(out.sector).toBe("Technology");
     expect(mockNewsCalled).toBe(true);
   });

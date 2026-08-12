@@ -11,7 +11,7 @@
  *   arglist := expr (',' expr)*
  */
 
-import { tokenize, type Token } from "./lexer";
+import { type Token, tokenize } from "./lexer";
 
 export type Ast =
   | { type: "num"; value: number }
@@ -131,7 +131,7 @@ export function parse(input: string): Ast {
   const p = new Parser(toks);
   const ast = p.parseExpr();
   // 验证 EOF
-  if (toks[toks.length - 1]!.type !== "eof") {
+  if (toks[toks.length - 1]?.type !== "eof") {
     // 不应发生
     throw new ExprParseError(0, "internal_lexer_error");
   }

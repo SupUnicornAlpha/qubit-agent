@@ -20,7 +20,9 @@ function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
 }
 
-export async function loadExecutionSafetyConfig(rootDir = process.cwd()): Promise<ExecutionSafetyConfig> {
+export async function loadExecutionSafetyConfig(
+  rootDir = process.cwd()
+): Promise<ExecutionSafetyConfig> {
   const dir = join(rootDir, ".qubit");
   const path = join(dir, "execution-safety.json");
   if (!existsSync(path)) {
@@ -33,8 +35,14 @@ export async function loadExecutionSafetyConfig(rootDir = process.cwd()): Promis
     const parsed = JSON.parse(raw) as Partial<ExecutionSafetyConfig>;
     return {
       dryRunOnly: Boolean(parsed.dryRunOnly ?? DEFAULT_CONFIG.dryRunOnly),
-      requireDoubleConfirm: Boolean(parsed.requireDoubleConfirm ?? DEFAULT_CONFIG.requireDoubleConfirm),
-      confirmTokenTtlSec: clamp(Number(parsed.confirmTokenTtlSec ?? DEFAULT_CONFIG.confirmTokenTtlSec), 30, 3600),
+      requireDoubleConfirm: Boolean(
+        parsed.requireDoubleConfirm ?? DEFAULT_CONFIG.requireDoubleConfirm
+      ),
+      confirmTokenTtlSec: clamp(
+        Number(parsed.confirmTokenTtlSec ?? DEFAULT_CONFIG.confirmTokenTtlSec),
+        30,
+        3600
+      ),
       finalRiskScoreThreshold: clamp(
         Number(parsed.finalRiskScoreThreshold ?? DEFAULT_CONFIG.finalRiskScoreThreshold),
         0,
@@ -54,7 +62,11 @@ export async function saveExecutionSafetyConfig(
   const next: ExecutionSafetyConfig = {
     dryRunOnly: input.dryRunOnly ?? current.dryRunOnly,
     requireDoubleConfirm: input.requireDoubleConfirm ?? current.requireDoubleConfirm,
-    confirmTokenTtlSec: clamp(Number(input.confirmTokenTtlSec ?? current.confirmTokenTtlSec), 30, 3600),
+    confirmTokenTtlSec: clamp(
+      Number(input.confirmTokenTtlSec ?? current.confirmTokenTtlSec),
+      30,
+      3600
+    ),
     finalRiskScoreThreshold: clamp(
       Number(input.finalRiskScoreThreshold ?? current.finalRiskScoreThreshold),
       0,

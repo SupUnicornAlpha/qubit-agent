@@ -119,9 +119,7 @@ describe("terminal turn decision", () => {
 describe("looksLikeDeferredToolIntent", () => {
   test("matches the fake-complete f22 announcement", () => {
     expect(
-      looksLikeDeferredToolIntent(
-        "先建计划，并立即并行补齐**行情快照 + 新闻事件**两类基础证据。"
-      )
+      looksLikeDeferredToolIntent("先建计划，并立即并行补齐**行情快照 + 新闻事件**两类基础证据。")
     ).toBe(true);
   });
 

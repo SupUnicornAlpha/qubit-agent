@@ -4,7 +4,7 @@
  * v2（2026-06-08）: AQM 加权聚合（A=40%/B=30%/C=20%/D=10%）；LEGACY 不进聚合。
  */
 import { describe, expect, test } from "bun:test";
-import { gradeSnapshot, type ReadinessSnapshot } from "../grader";
+import { type ReadinessSnapshot, gradeSnapshot } from "../grader";
 
 function makeSnap(
   metrics: Record<string, number | null>,

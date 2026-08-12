@@ -66,16 +66,14 @@ export interface MacdSeries {
   histogram: number[];
 }
 
-export function computeMacd(
-  values: number[],
-  fast = 12,
-  slow = 26,
-  signalPeriod = 9
-): MacdSeries {
+export function computeMacd(values: number[], fast = 12, slow = 26, signalPeriod = 9): MacdSeries {
   const emaFast = computeEma(values, fast);
   const emaSlow = computeEma(values, slow);
   const macd = values.map((_, i) => (emaFast[i] ?? 0) - (emaSlow[i] ?? 0));
-  const signal = computeEma(macd.map((v) => (Number.isFinite(v) ? v : 0)), signalPeriod);
+  const signal = computeEma(
+    macd.map((v) => (Number.isFinite(v) ? v : 0)),
+    signalPeriod
+  );
   const histogram = macd.map((m, i) => m - (signal[i] ?? 0));
   return { macd, signal, histogram };
 }
@@ -124,8 +122,7 @@ export function snapshotIndicators(bars: BarData[], symbol: string): IndicatorSn
   const n = closes.length;
   const last = n > 0 ? (closes[n - 1] ?? 0) : 0;
   const close20Ago = n >= 21 ? closes[n - 21] : undefined;
-  const ret20 =
-    close20Ago !== undefined && close20Ago > 0 ? (last - close20Ago) / close20Ago : 0;
+  const ret20 = close20Ago !== undefined && close20Ago > 0 ? (last - close20Ago) / close20Ago : 0;
   const sma20Arr = computeSma(closes, 20);
   const sma60Arr = computeSma(closes, 60);
   const rsi = computeRsi(closes, 14);
@@ -144,9 +141,12 @@ export function snapshotIndicators(bars: BarData[], symbol: string): IndicatorSn
     macdSignal:
       lastIdx >= 0 && Number.isFinite(macd.signal[lastIdx]) ? (macd.signal[lastIdx] ?? null) : null,
     bollinger: {
-      upper: lastIdx >= 0 && Number.isFinite(bb.upper[lastIdx]) ? (bb.upper[lastIdx] ?? null) : null,
-      middle: lastIdx >= 0 && Number.isFinite(bb.middle[lastIdx]) ? (bb.middle[lastIdx] ?? null) : null,
-      lower: lastIdx >= 0 && Number.isFinite(bb.lower[lastIdx]) ? (bb.lower[lastIdx] ?? null) : null,
+      upper:
+        lastIdx >= 0 && Number.isFinite(bb.upper[lastIdx]) ? (bb.upper[lastIdx] ?? null) : null,
+      middle:
+        lastIdx >= 0 && Number.isFinite(bb.middle[lastIdx]) ? (bb.middle[lastIdx] ?? null) : null,
+      lower:
+        lastIdx >= 0 && Number.isFinite(bb.lower[lastIdx]) ? (bb.lower[lastIdx] ?? null) : null,
     },
   };
 }

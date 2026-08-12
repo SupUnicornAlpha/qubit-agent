@@ -3,16 +3,16 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  clearResearchThesisCatalogForTests,
-  getResearchThesisById,
-  writeResearchThesis,
-} from "./research-thesis-service";
-import {
   clearForecastBookCatalogForTests,
   ensureForecastBookForThesis,
   getForecastBookEntry,
   linkForecastBookEntry,
 } from "./forecast-book-service";
+import {
+  clearResearchThesisCatalogForTests,
+  getResearchThesisById,
+  writeResearchThesis,
+} from "./research-thesis-service";
 
 afterEach(() => {
   clearResearchThesisCatalogForTests();

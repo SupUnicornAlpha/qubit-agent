@@ -13,7 +13,19 @@ describe("component challenger governance", () => {
   });
 
   test("never routes live traffic to challenger", () => {
-    expect(resolveShadowVariant({ allocationKey: "run-1", challengerTrafficPct: 1, executionMode: "live" })).toBe("control");
-    expect(["control", "challenger"]).toContain(resolveShadowVariant({ allocationKey: "run-2", challengerTrafficPct: 0.1, executionMode: "paper" }));
+    expect(
+      resolveShadowVariant({
+        allocationKey: "run-1",
+        challengerTrafficPct: 1,
+        executionMode: "live",
+      })
+    ).toBe("control");
+    expect(["control", "challenger"]).toContain(
+      resolveShadowVariant({
+        allocationKey: "run-2",
+        challengerTrafficPct: 0.1,
+        executionMode: "paper",
+      })
+    );
   });
 });

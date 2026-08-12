@@ -1,3 +1,4 @@
+import { scanAllSystemAlerts } from "./alert-scanners";
 /**
  * 监控 V2 P2 — 监控聚合与告警扫描的后台 worker。
  *
@@ -15,11 +16,7 @@
  * 注意：所有阶段都包 try/catch，单个阶段失败不阻塞其它阶段；
  * 失败仅 console.warn，不抛出主进程。监控基础设施失败 ≠ 业务失败。
  */
-import {
-  cancelInactiveWorkflows,
-  createStuckWorkflowAlerts,
-} from "./alert-service";
-import { scanAllSystemAlerts } from "./alert-scanners";
+import { cancelInactiveWorkflows, createStuckWorkflowAlerts } from "./alert-service";
 import { aggregateAgentRuntimeMetrics } from "./quality-metrics";
 
 /** 默认 5 分钟一次（avoid 跟整点对齐，因为整点很多用户手动触发） */
@@ -77,7 +74,9 @@ export class MonitorAggregatorWorker {
         result.aggregateMetrics = { ok: true };
       } catch (e) {
         result.aggregateMetrics = { ok: false, error: errToStr(e) };
-        console.warn(`[monitorAggregator] aggregateMetrics failed: ${result.aggregateMetrics.error}`);
+        console.warn(
+          `[monitorAggregator] aggregateMetrics failed: ${result.aggregateMetrics.error}`
+        );
       }
 
       // 2) 卡死工作流（沿用现有 stuck 阈值 120 分钟）
@@ -108,7 +107,9 @@ export class MonitorAggregatorWorker {
         result.inactiveCancelled = { ok: true, cancelled: r.cancelled };
       } catch (e) {
         result.inactiveCancelled = { ok: false, error: errToStr(e) };
-        console.warn(`[monitorAggregator] inactiveCancelled failed: ${result.inactiveCancelled.error}`);
+        console.warn(
+          `[monitorAggregator] inactiveCancelled failed: ${result.inactiveCancelled.error}`
+        );
       }
 
       const summary = formatTickSummary(result);
@@ -153,12 +154,10 @@ function errToStr(e: unknown): string {
 function formatTickSummary(r: MonitorAggregatorTickResult): string {
   const parts: string[] = [];
   if (r.aggregateMetrics.ok) parts.push("agg");
-  if (r.stuckAlerts.ok)
-    parts.push(`stuck=${r.stuckAlerts.created ?? 0}`);
+  if (r.stuckAlerts.ok) parts.push(`stuck=${r.stuckAlerts.created ?? 0}`);
   if (r.systemAlerts.ok)
     parts.push(`mcp=${r.systemAlerts.mcpCreated ?? 0} token=${r.systemAlerts.tokenCreated ?? 0}`);
-  if (r.inactiveCancelled.ok)
-    parts.push(`inactive=${r.inactiveCancelled.cancelled ?? 0}`);
+  if (r.inactiveCancelled.ok) parts.push(`inactive=${r.inactiveCancelled.cancelled ?? 0}`);
   return parts.join(" ");
 }
 

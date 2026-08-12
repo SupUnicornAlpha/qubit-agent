@@ -37,9 +37,7 @@ export function classifyWorkflowArtifactKind(toolName: string): WorkflowArtifact
   if (/fetch_(?:fundamentals|financial_data)|fetch_earnings|fetch_dividends/.test(tool)) {
     return "FundamentalSnapshot";
   }
-  if (
-    /fetch_(?:quote|ticks|klines|bars)|get_quote|fetch_price_data|snapshot\.get/.test(tool)
-  ) {
+  if (/fetch_(?:quote|ticks|klines|bars)|get_quote|fetch_price_data|snapshot\.get/.test(tool)) {
     return "MarketSnapshot";
   }
   if (/news|sentiment|filing/.test(tool)) return "NewsEvidence";

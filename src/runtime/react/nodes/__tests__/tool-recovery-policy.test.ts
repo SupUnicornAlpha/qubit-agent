@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { buildToolRecoveryPlan } from "../tool-recovery-policy";
 import {
   recordWorkflowToolFailure,
   resetToolGovernanceCacheForTest,
 } from "../../../tools/tool-governance-policy";
+import { buildToolRecoveryPlan } from "../tool-recovery-policy";
 
 describe("buildToolRecoveryPlan", () => {
   test("allows exactly one retry for a first transient failure", () => {

@@ -74,12 +74,9 @@ async function main() {
 
   const bridgeHost = config.host === "localhost" ? "127.0.0.1" : config.host;
   const bridgeUrl = `http://${bridgeHost}:${config.port}/api/v1/prime-bridge`;
-  process.env.QUBIT_LEGACY_BRIDGE_URL =
-    process.env.QUBIT_LEGACY_BRIDGE_URL?.trim() || bridgeUrl;
+  process.env.QUBIT_LEGACY_BRIDGE_URL = process.env.QUBIT_LEGACY_BRIDGE_URL?.trim() || bridgeUrl;
 
-  const { ensureRustCoreRunning, stopOwnedRustCore } = await import(
-    "./runtime/prime/spawn-core"
-  );
+  const { ensureRustCoreRunning, stopOwnedRustCore } = await import("./runtime/prime/spawn-core");
   const { attachPrimeCore, resolveAttachMode } = await import("./runtime/prime/attach");
   const attachMode = resolveAttachMode(config.coreBackend);
 
@@ -112,10 +109,10 @@ async function main() {
   // Block silent TS ReAct fallback when debugging / defaulting to Rust Core.
   if (attachMode === "rust" && (!attach.healthy || attach.activeBackend !== "rust")) {
     console.error(
-      `[QUBIT] FATAL: QUBIT_CORE_BACKEND=rust but Core is not healthy ` +
+      "[QUBIT] FATAL: QUBIT_CORE_BACKEND=rust but Core is not healthy " +
         `(active=${attach.activeBackend}, reason=${attach.reason}). ` +
-        `Refusing to fall back to TS. Build/start qubit-app-server or set ` +
-        `QUBIT_CORE_BACKEND=ts / QUBIT_CORE_STRICT=0 explicitly.`
+        "Refusing to fall back to TS. Build/start qubit-app-server or set " +
+        "QUBIT_CORE_BACKEND=ts / QUBIT_CORE_STRICT=0 explicitly."
     );
     process.exit(1);
   }

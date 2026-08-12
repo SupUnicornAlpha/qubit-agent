@@ -3,22 +3,39 @@ import { evaluateConditionalTrigger } from "./conditional-order-service";
 
 describe("evaluateConditionalTrigger", () => {
   test("triggers sell and buy stops in the correct direction", () => {
-    expect(evaluateConditionalTrigger({
-      orderType: "stop", side: "sell", markPrice: 94, stopPrice: 95,
-    }).triggered).toBe(true);
-    expect(evaluateConditionalTrigger({
-      orderType: "stop", side: "sell", markPrice: 96, stopPrice: 95,
-    }).triggered).toBe(false);
-    expect(evaluateConditionalTrigger({
-      orderType: "stop_limit", side: "buy", markPrice: 101, stopPrice: 100,
-    }).triggered).toBe(true);
-    expect(evaluateConditionalTrigger({
-      orderType: "stop_limit",
-      side: "sell",
-      markPrice: 110,
-      stopPrice: 110,
-      triggerDirection: "above",
-    }).triggered).toBe(true);
+    expect(
+      evaluateConditionalTrigger({
+        orderType: "stop",
+        side: "sell",
+        markPrice: 94,
+        stopPrice: 95,
+      }).triggered
+    ).toBe(true);
+    expect(
+      evaluateConditionalTrigger({
+        orderType: "stop",
+        side: "sell",
+        markPrice: 96,
+        stopPrice: 95,
+      }).triggered
+    ).toBe(false);
+    expect(
+      evaluateConditionalTrigger({
+        orderType: "stop_limit",
+        side: "buy",
+        markPrice: 101,
+        stopPrice: 100,
+      }).triggered
+    ).toBe(true);
+    expect(
+      evaluateConditionalTrigger({
+        orderType: "stop_limit",
+        side: "sell",
+        markPrice: 110,
+        stopPrice: 110,
+        triggerDirection: "above",
+      }).triggered
+    ).toBe(true);
   });
 
   test("raises a sell trailing anchor and triggers only after drawdown", () => {

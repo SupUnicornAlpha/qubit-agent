@@ -42,9 +42,19 @@ describe("China broker providers", () => {
       requestedUrl = String(input);
       requestedHeaders = new Headers(init?.headers);
       const path = new URL(requestedUrl).pathname;
-      const payload = path === "/orders/open"
-        ? { orders: [{ brokerOrderId: "open-1", status: "submitted", actualPrice: 3.2, actualQuantity: 100 }] }
-        : { positions: [] };
+      const payload =
+        path === "/orders/open"
+          ? {
+              orders: [
+                {
+                  brokerOrderId: "open-1",
+                  status: "submitted",
+                  actualPrice: 3.2,
+                  actualQuantity: 100,
+                },
+              ],
+            }
+          : { positions: [] };
       return new Response(JSON.stringify(payload), {
         status: 200,
         headers: { "content-type": "application/json" },

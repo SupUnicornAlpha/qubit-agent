@@ -65,9 +65,7 @@ describe("research-arg-normalize", () => {
   });
 
   test("resolveInstrumentScope and resolveThesisDirection from narrative", () => {
-    expect(
-      resolveInstrumentScope({ narrative: "偏多持有 002415.SZ" })
-    ).toContain("002415.SZ");
+    expect(resolveInstrumentScope({ narrative: "偏多持有 002415.SZ" })).toContain("002415.SZ");
     expect(resolveThesisDirection({ narrative: "看空回调" })).toBe("short");
     expect(resolveThesisDirection({ narrative: "观望为主" })).toBe("neutral");
   });

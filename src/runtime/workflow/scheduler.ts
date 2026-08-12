@@ -1,12 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gte, lte } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
-import { alertEvent, communicationMessageLog, scheduledJob, scheduledJobRun } from "../../db/sqlite/schema";
-import { runAutoExecution, type ScheduledExecutionPayload } from "../reia/auto-execution";
-import { scanPositionReconciliation } from "../execution/position-reconciliation-service";
-import { isBrokerProvider, type BrokerProvider } from "../../types/broker";
-import { createAndDispatchWorkflow } from "./workflow-service";
+import {
+  alertEvent,
+  communicationMessageLog,
+  scheduledJob,
+  scheduledJobRun,
+} from "../../db/sqlite/schema";
+import { type BrokerProvider, isBrokerProvider } from "../../types/broker";
 import type { AgentLoopKind, LoopOptionsJson } from "../../types/loop";
+import { scanPositionReconciliation } from "../execution/position-reconciliation-service";
+import { type ScheduledExecutionPayload, runAutoExecution } from "../reia/auto-execution";
+import { createAndDispatchWorkflow } from "./workflow-service";
 
 const DEFAULT_TICK_MS = 60_000;
 const DEFAULT_TRIGGER_LOOKBACK_MINUTES = 30;
@@ -39,19 +44,19 @@ export interface PositionReconciliationJobPayload {
 
 export function parseScheduledJobKind(raw: unknown): ScheduledJobKind {
   if (!raw || typeof raw !== "object") return "workflow";
-  return (raw as Record<string, unknown>)["kind"] === "position_reconciliation"
+  return (raw as Record<string, unknown>).kind === "position_reconciliation"
     ? "position_reconciliation"
     : "workflow";
 }
 
 export function parsePositionReconciliationJobPayload(
-  raw: unknown,
+  raw: unknown
 ): PositionReconciliationJobPayload | null {
   if (parseScheduledJobKind(raw) !== "position_reconciliation") return null;
   const payload = raw as Record<string, unknown>;
-  const provider = String(payload["provider"] ?? "");
+  const provider = String(payload.provider ?? "");
   if (!isBrokerProvider(provider)) return null;
-  const accountRef = typeof payload["accountRef"] === "string" ? payload["accountRef"].trim() : "";
+  const accountRef = typeof payload.accountRef === "string" ? payload.accountRef.trim() : "";
   return {
     kind: "position_reconciliation",
     provider,
@@ -99,19 +104,19 @@ export function computeNextRunAt(cronExpr: string, from = new Date()): string {
 function parseScheduledPayload(raw: unknown): ScheduledExecutionPayload | null {
   if (!raw || typeof raw !== "object") return null;
   const payload = raw as Record<string, unknown>;
-  const ticker = typeof payload["ticker"] === "string" ? payload["ticker"] : "";
-  const direction = payload["direction"];
-  const quantity = Number(payload["quantity"]);
-  const targetPrice = Number(payload["targetPrice"]);
+  const ticker = typeof payload.ticker === "string" ? payload.ticker : "";
+  const direction = payload.direction;
+  const quantity = Number(payload.quantity);
+  const targetPrice = Number(payload.targetPrice);
   if (!ticker || !["long", "short", "close"].includes(String(direction))) return null;
   if (!Number.isFinite(quantity) || quantity <= 0) return null;
   if (!Number.isFinite(targetPrice) || targetPrice <= 0) return null;
-  const rationale = typeof payload["rationale"] === "string" ? payload["rationale"] : undefined;
-  const expectedReturn = Number.isFinite(Number(payload["expectedReturn"]))
-    ? Number(payload["expectedReturn"])
+  const rationale = typeof payload.rationale === "string" ? payload.rationale : undefined;
+  const expectedReturn = Number.isFinite(Number(payload.expectedReturn))
+    ? Number(payload.expectedReturn)
     : undefined;
-  const expectedRisk = Number.isFinite(Number(payload["expectedRisk"]))
-    ? Number(payload["expectedRisk"])
+  const expectedRisk = Number.isFinite(Number(payload.expectedRisk))
+    ? Number(payload.expectedRisk)
     : undefined;
   return {
     ticker,
@@ -121,28 +126,28 @@ function parseScheduledPayload(raw: unknown): ScheduledExecutionPayload | null {
     ...(rationale !== undefined ? { rationale } : {}),
     ...(expectedReturn !== undefined ? { expectedReturn } : {}),
     ...(expectedRisk !== undefined ? { expectedRisk } : {}),
-    brokerProvider: payload["brokerProvider"] === "ib" ? "ib" : "futu",
+    brokerProvider: payload.brokerProvider === "ib" ? "ib" : "futu",
   };
 }
 
 function parseTradingGate(raw: unknown): TradingGateConfig {
   const payload = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const tradingDays =
-    Array.isArray(payload["tradingDays"]) && payload["tradingDays"].every((v) => Number.isInteger(v))
-      ? (payload["tradingDays"] as number[])
+    Array.isArray(payload.tradingDays) && payload.tradingDays.every((v) => Number.isInteger(v))
+      ? (payload.tradingDays as number[])
       : [1, 2, 3, 4, 5];
-  const tradingStart = typeof payload["tradingStart"] === "string" ? payload["tradingStart"] : "09:30";
-  const tradingEnd = typeof payload["tradingEnd"] === "string" ? payload["tradingEnd"] : "16:00";
-  const timezone = typeof payload["timezone"] === "string" ? payload["timezone"] : "Asia/Shanghai";
+  const tradingStart = typeof payload.tradingStart === "string" ? payload.tradingStart : "09:30";
+  const tradingEnd = typeof payload.tradingEnd === "string" ? payload.tradingEnd : "16:00";
+  const timezone = typeof payload.timezone === "string" ? payload.timezone : "Asia/Shanghai";
   return { tradingDays, tradingStart, tradingEnd, timezone };
 }
 
 function parseTriggerGate(raw: unknown): TriggerGateConfig {
   const payload = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const triggerDriven =
-    typeof payload["triggerDriven"] === "boolean" ? Boolean(payload["triggerDriven"]) : true;
-  const sources = Array.isArray(payload["triggerSources"])
-    ? payload["triggerSources"].filter((s): s is TriggerSource =>
+    typeof payload.triggerDriven === "boolean" ? Boolean(payload.triggerDriven) : true;
+  const sources = Array.isArray(payload.triggerSources)
+    ? payload.triggerSources.filter((s): s is TriggerSource =>
         ["news", "event", "kline"].includes(String(s))
       )
     : (["news", "event", "kline"] as TriggerSource[]);
@@ -151,18 +156,18 @@ function parseTriggerGate(raw: unknown): TriggerGateConfig {
     triggerSources: sources.length ? sources : ["news", "event", "kline"],
     newsLookbackMinutes: Math.max(
       1,
-      Number(payload["newsLookbackMinutes"] ?? DEFAULT_TRIGGER_LOOKBACK_MINUTES)
+      Number(payload.newsLookbackMinutes ?? DEFAULT_TRIGGER_LOOKBACK_MINUTES)
     ),
     eventLookbackMinutes: Math.max(
       1,
-      Number(payload["eventLookbackMinutes"] ?? DEFAULT_TRIGGER_LOOKBACK_MINUTES)
+      Number(payload.eventLookbackMinutes ?? DEFAULT_TRIGGER_LOOKBACK_MINUTES)
     ),
     klineLookbackMinutes: Math.max(
       1,
-      Number(payload["klineLookbackMinutes"] ?? DEFAULT_TRIGGER_LOOKBACK_MINUTES)
+      Number(payload.klineLookbackMinutes ?? DEFAULT_TRIGGER_LOOKBACK_MINUTES)
     ),
-    klineKeywords: Array.isArray(payload["klineKeywords"])
-      ? payload["klineKeywords"].map(String).filter(Boolean)
+    klineKeywords: Array.isArray(payload.klineKeywords)
+      ? payload.klineKeywords.map(String).filter(Boolean)
       : ["kline", "price_break", "volatility_spike", "candlestick"],
   };
 }
@@ -199,7 +204,12 @@ async function isTriggerMatched(
     const rows = await db
       .select()
       .from(communicationMessageLog)
-      .where(and(eq(communicationMessageLog.direction, "inbound"), gte(communicationMessageLog.createdAt, since)))
+      .where(
+        and(
+          eq(communicationMessageLog.direction, "inbound"),
+          gte(communicationMessageLog.createdAt, since)
+        )
+      )
       .orderBy(desc(communicationMessageLog.createdAt))
       .limit(1);
     if (rows[0]) return { matched: true, reason: "news trigger matched" };
@@ -226,13 +236,14 @@ async function isTriggerMatched(
       .limit(20);
     const keywords = gate.klineKeywords.map((s) => s.toLowerCase());
     const matched = rows.some((row) => {
-      const haystack = `${row.alertType} ${row.title} ${JSON.stringify(row.detailsJson ?? {})}`.toLowerCase();
+      const haystack =
+        `${row.alertType} ${row.title} ${JSON.stringify(row.detailsJson ?? {})}`.toLowerCase();
       return keywords.some((k) => haystack.includes(k));
     });
     if (matched) return { matched: true, reason: "kline trigger matched" };
   }
 
-  const ticker = typeof payload["ticker"] === "string" ? payload["ticker"] : "";
+  const ticker = typeof payload.ticker === "string" ? payload.ticker : "";
   return {
     matched: false,
     reason: ticker
@@ -241,7 +252,9 @@ async function isTriggerMatched(
   };
 }
 
-async function evaluateJobGate(job: typeof scheduledJob.$inferSelect): Promise<{ allowed: boolean; reason: string }> {
+async function evaluateJobGate(
+  job: typeof scheduledJob.$inferSelect
+): Promise<{ allowed: boolean; reason: string }> {
   const now = new Date();
   const payload = (job.payloadJson ?? {}) as Record<string, unknown>;
   if (parseScheduledJobKind(payload) === "position_reconciliation") {
@@ -263,7 +276,7 @@ export async function executeScheduledJobAction(
   dependencies: {
     scanPositions?: typeof scanPositionReconciliation;
     dispatchWorkflow?: typeof createAndDispatchWorkflow;
-  } = {},
+  } = {}
 ): Promise<{
   workflowRunId?: string;
   intentOrderId?: string;
@@ -284,13 +297,13 @@ export async function executeScheduledJobAction(
   }
 
   const goal =
-    typeof payload["goal"] === "string" && payload["goal"].trim()
-      ? String(payload["goal"])
+    typeof payload.goal === "string" && payload.goal.trim()
+      ? String(payload.goal)
       : `Scheduled job ${job.name} @ ${triggerAtIso}`;
-  const mode = (payload["mode"] as "research" | "backtest" | "simulation" | "live") ?? "research";
-  const loopKind = payload["loopKind"] as AgentLoopKind | undefined;
-  const loopOptionsJson = payload["loopOptionsJson"] as LoopOptionsJson | undefined;
-  const executionPath = payload["executionPath"] as
+  const mode = (payload.mode as "research" | "backtest" | "simulation" | "live") ?? "research";
+  const loopKind = payload.loopKind as AgentLoopKind | undefined;
+  const loopOptionsJson = payload.loopOptionsJson as LoopOptionsJson | undefined;
+  const executionPath = payload.executionPath as
     | import("../../types/execution-path").AgentExecutionPath
     | undefined;
   const created = await (dependencies.dispatchWorkflow ?? createAndDispatchWorkflow)({

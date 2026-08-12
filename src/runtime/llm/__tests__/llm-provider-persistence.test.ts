@@ -17,12 +17,12 @@
 
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { runMigrations } from "../../../db/sqlite/migrate";
-import { getDb } from "../../../db/sqlite/client";
-import { llmProviderConfig } from "../../../db/sqlite/schema";
-import { hydrateLlmProviderEnv, loadProviderFromDb } from "../llm-router";
-import { llmProviderRouter } from "../../../routes/llm-provider.routes";
 import { Hono } from "hono";
+import { getDb } from "../../../db/sqlite/client";
+import { runMigrations } from "../../../db/sqlite/migrate";
+import { llmProviderConfig } from "../../../db/sqlite/schema";
+import { llmProviderRouter } from "../../../routes/llm-provider.routes";
+import { hydrateLlmProviderEnv, loadProviderFromDb } from "../llm-router";
 
 /** 测试用的随机 providerId 前缀，避免与其他测试 / 真实数据冲突 */
 const TEST_PREFIX = "test-persist-";
@@ -41,9 +41,9 @@ beforeEach(async () => {
     }
   }
   // 清掉测试期间可能残留的 env，确保"重启场景"干净
-  delete process.env["OPENAI_API_KEY"];
-  delete process.env["DEEPSEEK_API_KEY"];
-  delete process.env["ANTHROPIC_API_KEY"];
+  delete process.env.OPENAI_API_KEY;
+  delete process.env.DEEPSEEK_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
 });
 
 describe("LlmProvider 持久化 — 修复重启后缺 apiKey", () => {
@@ -64,13 +64,13 @@ describe("LlmProvider 持久化 — 修复重启后缺 apiKey", () => {
     expect(res.status).toBe(200);
 
     // 模拟"进程重启"：清空 process.env 中的 envKey
-    delete process.env["OPENAI_API_KEY"];
+    delete process.env.OPENAI_API_KEY;
 
     const cfg = await loadProviderFromDb(providerId);
     expect(cfg).not.toBeNull();
-    expect(cfg!.apiKey).toBe("sk-test-secret-12345");
-    expect(cfg!.provider).toBe("openai");
-    expect(cfg!.model).toBe("gpt-4o-mini");
+    expect(cfg?.apiKey).toBe("sk-test-secret-12345");
+    expect(cfg?.provider).toBe("openai");
+    expect(cfg?.model).toBe("gpt-4o-mini");
   });
 
   test("GET 列表中 apiKeyConfigured 在 process.env 被清空时仍为 true", async () => {
@@ -89,7 +89,7 @@ describe("LlmProvider 持久化 — 修复重启后缺 apiKey", () => {
     });
 
     // 模拟重启
-    delete process.env["DEEPSEEK_API_KEY"];
+    delete process.env.DEEPSEEK_API_KEY;
 
     const listRes = await app.request("/api/v1/llm-providers");
     const list = (await listRes.json()) as {
@@ -98,7 +98,7 @@ describe("LlmProvider 持久化 — 修复重启后缺 apiKey", () => {
     };
     const ours = list.data.find((r) => r.providerId === providerId);
     expect(ours).toBeDefined();
-    expect(ours!.apiKeyConfigured).toBe(true);
+    expect(ours?.apiKeyConfigured).toBe(true);
   });
 
   test("hydrateLlmProviderEnv 把 secret 还原到 process.env", async () => {
@@ -117,12 +117,12 @@ describe("LlmProvider 持久化 — 修复重启后缺 apiKey", () => {
     });
 
     // 模拟重启：env 为空
-    delete process.env["ANTHROPIC_API_KEY"];
-    expect(process.env["ANTHROPIC_API_KEY"]).toBeUndefined();
+    delete process.env.ANTHROPIC_API_KEY;
+    expect(process.env.ANTHROPIC_API_KEY).toBeUndefined();
 
     const r = await hydrateLlmProviderEnv();
     expect(r.hydrated).toBeGreaterThanOrEqual(1);
-    expect(process.env["ANTHROPIC_API_KEY"]).toBe("sk-ant-from-db");
+    expect(process.env.ANTHROPIC_API_KEY).toBe("sk-ant-from-db");
   });
 
   test("hydrateLlmProviderEnv 不覆盖 OS-level 已注入的同名 env", async () => {
@@ -141,11 +141,11 @@ describe("LlmProvider 持久化 — 修复重启后缺 apiKey", () => {
     });
 
     // 模拟 user 通过 shell export 注入新 key —— DB 里的旧 secret 不应覆盖它
-    process.env["OPENAI_API_KEY"] = "sk-from-shell-new";
+    process.env.OPENAI_API_KEY = "sk-from-shell-new";
 
     const r = await hydrateLlmProviderEnv();
     expect(r.skippedExistingEnv).toBeGreaterThanOrEqual(1);
-    expect(process.env["OPENAI_API_KEY"]).toBe("sk-from-shell-new");
+    expect(process.env.OPENAI_API_KEY).toBe("sk-from-shell-new");
   });
 
   test("loadProviderFromDb 在 env 缺失且无 secret 时返回空 apiKey（不再返回 envKey 名字）", async () => {
@@ -167,12 +167,12 @@ describe("LlmProvider 持久化 — 修复重启后缺 apiKey", () => {
       supportsFunctionCalling: true,
       enabled: true,
     });
-    delete process.env["OPENAI_API_KEY"];
+    delete process.env.OPENAI_API_KEY;
 
     const cfg = await loadProviderFromDb(providerId);
     expect(cfg).not.toBeNull();
-    expect(cfg!.apiKey).toBe("");
-    expect(cfg!.apiKey).not.toBe("OPENAI_API_KEY"); // 显式断言不是 envKey 名字
+    expect(cfg?.apiKey).toBe("");
+    expect(cfg?.apiKey).not.toBe("OPENAI_API_KEY"); // 显式断言不是 envKey 名字
   });
 
   test("PATCH 留空 apiKey 字段时不影响已配置的 secret（避免误清空）", async () => {
@@ -200,12 +200,12 @@ describe("LlmProvider 持久化 — 修复重启后缺 apiKey", () => {
     });
     expect(patchRes.status).toBe(200);
 
-    delete process.env["OPENAI_API_KEY"];
+    delete process.env.OPENAI_API_KEY;
 
     const cfg = await loadProviderFromDb(providerId);
     expect(cfg).not.toBeNull();
-    expect(cfg!.apiKey).toBe("sk-original-secret");
-    expect(cfg!.model).toBe("gpt-4o");
+    expect(cfg?.apiKey).toBe("sk-original-secret");
+    expect(cfg?.model).toBe("gpt-4o");
   });
 
   test("PATCH 传 apiKey 新值会覆盖旧 secret", async () => {
@@ -230,9 +230,9 @@ describe("LlmProvider 持久化 — 修复重启后缺 apiKey", () => {
       body: JSON.stringify({ apiKey: "sk-v2-new" }),
     });
 
-    delete process.env["OPENAI_API_KEY"];
+    delete process.env.OPENAI_API_KEY;
 
     const cfg = await loadProviderFromDb(providerId);
-    expect(cfg!.apiKey).toBe("sk-v2-new");
+    expect(cfg?.apiKey).toBe("sk-v2-new");
   });
 });

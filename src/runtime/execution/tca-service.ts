@@ -32,7 +32,11 @@ export interface TcaObservation {
 export function classifyRejection(reason: string | null): RejectionCategory | null {
   if (!reason) return null;
   const normalized = reason.toLowerCase();
-  if (normalized.includes("risk") || normalized.includes("notional") || normalized.includes("review")) {
+  if (
+    normalized.includes("risk") ||
+    normalized.includes("notional") ||
+    normalized.includes("review")
+  ) {
     return "risk";
   }
   if (normalized.includes("broker") || normalized.includes("rejected")) return "broker";
@@ -59,18 +63,18 @@ export function summarizeTca(observations: TcaObservation[]) {
       0.95
     ),
     averageSubmitLatencyMs: average(
-      observations.flatMap((item) => (item.submitLatencyMs == null ? [] : [item.submitLatencyMs])),
+      observations.flatMap((item) => (item.submitLatencyMs == null ? [] : [item.submitLatencyMs]))
     ),
     p95SubmitLatencyMs: percentile(
       observations.flatMap((item) => (item.submitLatencyMs == null ? [] : [item.submitLatencyMs])),
-      0.95,
+      0.95
     ),
     averageFillLatencyMs: average(
-      observations.flatMap((item) => (item.fillLatencyMs == null ? [] : [item.fillLatencyMs])),
+      observations.flatMap((item) => (item.fillLatencyMs == null ? [] : [item.fillLatencyMs]))
     ),
     p95TotalLatencyMs: percentile(
       observations.flatMap((item) => (item.totalLatencyMs == null ? [] : [item.totalLatencyMs])),
-      0.95,
+      0.95
     ),
     rejectedOrderCount: observations.filter((item) => item.rejected).length,
     rejectionRatePct:
@@ -126,8 +130,10 @@ export async function buildProjectTcaReport(input: { projectId: string; since?: 
     const submittedAt = earliestIso(orders.map((order) => order.submittedAt));
     const filledAt = earliestIso(fills.map((item) => item.filledAt));
     const rejected =
-      intent.lifecycleStatus === "rejected" || task?.status === "rejected" || task?.status === "failed";
-    const rejectionReason = rejected ? task?.lastError ?? "rejected_without_reason" : null;
+      intent.lifecycleStatus === "rejected" ||
+      task?.status === "rejected" ||
+      task?.status === "failed";
+    const rejectionReason = rejected ? (task?.lastError ?? "rejected_without_reason") : null;
     observations.push({
       orderIntentId: intent.id,
       side: intent.side,

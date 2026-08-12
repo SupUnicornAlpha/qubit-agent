@@ -6,11 +6,11 @@
 
 import { Hono } from "hono";
 import {
-  factorService,
-  FactorServiceError,
   type FactorCategory,
   type FactorLang,
+  FactorServiceError,
   type FactorStatus,
+  factorService,
 } from "../runtime/factor/factor-service";
 import type { FactorComputeRow } from "../runtime/provider/types";
 
@@ -31,21 +31,17 @@ function asError(e: unknown) {
  */
 factorRouter.get("/", async (c) => {
   try {
+    const projectId = c.req.query("project_id");
+    const workflowRunId = c.req.query("workflow_run_id");
+    const createdBy = c.req.query("created_by");
+    const agentInstanceId = c.req.query("agent_instance_id");
     const data = await factorService.list({
-      ...(c.req.query("project_id") ? { projectId: c.req.query("project_id")! } : {}),
-      ...(c.req.query("category")
-        ? { category: c.req.query("category") as FactorCategory }
-        : {}),
-      ...(c.req.query("status")
-        ? { status: c.req.query("status") as FactorStatus }
-        : {}),
-      ...(c.req.query("workflow_run_id")
-        ? { workflowRunId: c.req.query("workflow_run_id")! }
-        : {}),
-      ...(c.req.query("created_by") ? { createdBy: c.req.query("created_by")! } : {}),
-      ...(c.req.query("agent_instance_id")
-        ? { agentInstanceId: c.req.query("agent_instance_id")! }
-        : {}),
+      ...(projectId ? { projectId } : {}),
+      ...(c.req.query("category") ? { category: c.req.query("category") as FactorCategory } : {}),
+      ...(c.req.query("status") ? { status: c.req.query("status") as FactorStatus } : {}),
+      ...(workflowRunId ? { workflowRunId } : {}),
+      ...(createdBy ? { createdBy } : {}),
+      ...(agentInstanceId ? { agentInstanceId } : {}),
     });
     return c.json({ ok: true, data });
   } catch (e) {
@@ -207,11 +203,20 @@ factorRouter.get("/:id/values", async (c) => {
   try {
     const symbolsQ = c.req.query("symbols");
     const latestNQ = c.req.query("latestN");
+    const startDate = c.req.query("startDate");
+    const endDate = c.req.query("endDate");
     const data = await factorService.loadValues({
       factorId: id,
-      ...(symbolsQ ? { symbols: symbolsQ.split(",").map((s) => s.trim()).filter(Boolean) } : {}),
-      ...(c.req.query("startDate") ? { startDate: c.req.query("startDate")! } : {}),
-      ...(c.req.query("endDate") ? { endDate: c.req.query("endDate")! } : {}),
+      ...(symbolsQ
+        ? {
+            symbols: symbolsQ
+              .split(",")
+              .map((s) => s.trim())
+              .filter(Boolean),
+          }
+        : {}),
+      ...(startDate ? { startDate } : {}),
+      ...(endDate ? { endDate } : {}),
       ...(latestNQ && Number(latestNQ) > 0 ? { latestN: Math.floor(Number(latestNQ)) } : {}),
     });
     return c.json({ ok: true, data });

@@ -1,18 +1,18 @@
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 /**
  * npm-deps 单测：listInstalledNpm 扫盘、diffNpm 分桶、安全校验。
  *
  * 不跑真实 bun add：那需要联网拉包；端到端通过 routes 集成测验证。
  */
-import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { config } from "../../../config";
 import {
+  type NpmDepsError,
   diffNpm,
   installNpm,
   listInstalledNpm,
-  NpmDepsError,
   uninstallNpm,
 } from "../npm-deps";
 import type { ExpectedPackage, InstalledPackage } from "../types";
@@ -22,8 +22,7 @@ const TEST_DIR = `${config.dataDir}/mcp-bin/node_modules`;
 
 beforeAll(() => {
   expect(
-    config.dataDir.startsWith(join(tmpdir(), "qubit-test-")) ||
-      config.dataDir.startsWith("/tmp/")
+    config.dataDir.startsWith(join(tmpdir(), "qubit-test-")) || config.dataDir.startsWith("/tmp/")
   ).toBe(true);
   rmSync(TEST_DIR, { recursive: true, force: true });
   mkdirSync(TEST_DIR, { recursive: true });
@@ -102,13 +101,13 @@ describe("diffNpm 分桶", () => {
 
 describe("install/uninstall 安全校验", () => {
   test("非法包名拒绝（防 shell 注入）", async () => {
-    await expect(
-      installNpm({ packageName: "mcp-foo; rm -rf /" })
-    ).rejects.toMatchObject({ code: "invalid_package_name" } as NpmDepsError);
+    await expect(installNpm({ packageName: "mcp-foo; rm -rf /" })).rejects.toMatchObject({
+      code: "invalid_package_name",
+    } as NpmDepsError);
 
-    await expect(
-      installNpm({ packageName: "git+https://x" })
-    ).rejects.toMatchObject({ code: "invalid_package_name" });
+    await expect(installNpm({ packageName: "git+https://x" })).rejects.toMatchObject({
+      code: "invalid_package_name",
+    });
   });
 
   test("非法版本拒绝", async () => {

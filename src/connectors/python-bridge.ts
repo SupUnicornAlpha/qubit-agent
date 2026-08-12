@@ -49,20 +49,17 @@ export class PythonConnectorBridgeImpl extends BaseConnector {
     this.scriptPath = opts.scriptPath;
     this.connectorName = opts.connectorName;
     this.meta = opts.meta;
-    this.pythonBin = opts.pythonBin ?? process.env["QUBIT_PYTHON"] ?? "python3";
+    this.pythonBin = opts.pythonBin ?? process.env.QUBIT_PYTHON ?? "python3";
     this.cwd = opts.cwd;
   }
 
   protected async onInit(config: ConnectorConfig): Promise<void> {
-    this.process = Bun.spawn(
-      [this.pythonBin, this.scriptPath, "--connector", this.connectorName],
-      {
-        stdin: "pipe",
-        stdout: "pipe",
-        stderr: "pipe",
-        ...(this.cwd ? { cwd: this.cwd } : {}),
-      }
-    );
+    this.process = Bun.spawn([this.pythonBin, this.scriptPath, "--connector", this.connectorName], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      ...(this.cwd ? { cwd: this.cwd } : {}),
+    });
 
     this._pipeStderr();
     this._readStdout();
@@ -73,20 +70,14 @@ export class PythonConnectorBridgeImpl extends BaseConnector {
   }
 
   protected async onHealthcheck() {
-    const result = await this._call<{ healthy: boolean; message?: string }>(
-      "healthcheck",
-      {}
-    );
+    const result = await this._call<{ healthy: boolean; message?: string }>("healthcheck", {});
     return {
       status: result.healthy ? ("healthy" as const) : ("unhealthy" as const),
       ...(result.message ? { message: result.message } : {}),
     };
   }
 
-  protected async onExecute<TOutput>(
-    operation: string,
-    payload: unknown
-  ): Promise<TOutput> {
+  protected async onExecute<TOutput>(operation: string, payload: unknown): Promise<TOutput> {
     return this._call<TOutput>("execute", { operation, payload });
   }
 

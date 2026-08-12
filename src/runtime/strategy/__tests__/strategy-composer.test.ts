@@ -18,15 +18,15 @@
  * 这里采用更轻的方式：构造因子但直接用 ruleService 验证组合的核心 picks 输出。
  */
 
-import { randomUUID } from "node:crypto";
 import { beforeAll, describe, expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { getDb } from "../../../db/sqlite/client";
-import * as schema from "../../../db/sqlite/schema";
 import { runMigrations } from "../../../db/sqlite/migrate";
-import { bootstrapProviders, _resetBootstrapForTests } from "../../provider/bootstrap";
+import * as schema from "../../../db/sqlite/schema";
 import { factorService } from "../../factor/factor-service";
+import { _resetBootstrapForTests, bootstrapProviders } from "../../provider/bootstrap";
 import { ruleService } from "../../rule/rule-service";
-import { strategyComposer, StrategyComposerError } from "../strategy-composer";
+import { StrategyComposerError, strategyComposer } from "../strategy-composer";
 
 let projectId = "";
 let strategyVersionId = "";
@@ -332,7 +332,7 @@ describe("StrategyComposer.execute()", () => {
       weightMethod: "manual",
       factorWeights: { [f1.name]: 3, [f2.name]: 1 },
     });
-    expect(comp.params["factorWeights"]).toBeTruthy();
+    expect(comp.params.factorWeights).toBeTruthy();
     // execute 跑得动（即便 factor compute 是空）
     const res = await strategyComposer.execute({
       compositionId: comp.id,

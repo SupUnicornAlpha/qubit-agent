@@ -29,16 +29,8 @@ import {
   workflowRun,
   workspace,
 } from "../../../db/sqlite/schema";
-import {
-  detectReflectiveMention,
-  detectRepeatedFail,
-  detectUnknownTool,
-} from "../detectors";
-import {
-  makeConceptSignature,
-  makeMcpSignature,
-  makeToolSignature,
-} from "../signature";
+import { detectReflectiveMention, detectRepeatedFail, detectUnknownTool } from "../detectors";
+import { makeConceptSignature, makeMcpSignature, makeToolSignature } from "../signature";
 
 interface Fixture {
   workspaceId: string;
@@ -76,10 +68,7 @@ beforeAll(async () => {
       { id: f.otherProjectId, workspaceId: f.workspaceId, name: "p2", marketScope: "US" },
     ])
     .run();
-  await db
-    .insert(sandboxPolicy)
-    .values({ id: f.sandboxPolicyId, name: "permissive-test" })
-    .run();
+  await db.insert(sandboxPolicy).values({ id: f.sandboxPolicyId, name: "permissive-test" }).run();
   await db
     .insert(agentDefinition)
     .values({
@@ -154,7 +143,11 @@ async function seedToolCall(
       retryCount: 0,
       toolName,
       toolKind,
-      requestJson: { reasonText: "test", targetKind: toolKind === "mcp" ? "mcp" : "tool", mcp: opts?.mcp ?? null },
+      requestJson: {
+        reasonText: "test",
+        targetKind: toolKind === "mcp" ? "mcp" : "tool",
+        mcp: opts?.mcp ?? null,
+      },
       responseJson: opts?.responseJson ?? null,
       status,
       latencyMs: 10,
@@ -215,7 +208,7 @@ describe("detectUnknownTool", () => {
     await seedToolCall("xx_tool", "builtin", "error", "找不到 xx_tool 工具");
     const r = await detectUnknownTool({ projectId: fx.projectId, ...window });
     expect(r.signals.length).toBe(1);
-    expect(r.signals[0]!.signature).toBe("tool:xx_tool");
+    expect(r.signals[0]?.signature).toBe("tool:xx_tool");
   });
 
   test("status=success → 不出 signal", async () => {
@@ -236,7 +229,7 @@ describe("detectUnknownTool", () => {
     });
     const r = await detectUnknownTool({ projectId: fx.projectId, ...window });
     expect(r.signals.length).toBe(1);
-    expect(r.signals[0]!.signature).toBe("mcp:slack/post_message");
+    expect(r.signals[0]?.signature).toBe("mcp:slack/post_message");
   });
 
   test("project 隔离：不属于本 project 的 tool_call 不出 signal", async () => {
@@ -278,7 +271,7 @@ describe("detectRepeatedFail", () => {
       repeatedFailThreshold: 2,
     });
     expect(r.signals.length).toBe(1);
-    expect(r.signals[0]!.signature).toBe("tool:flaky3");
+    expect(r.signals[0]?.signature).toBe("tool:flaky3");
   });
 });
 
@@ -289,8 +282,8 @@ describe("detectReflectiveMention", () => {
     await seedReflective("本轮反思：需要一个实时期权链工具，否则无法做对冲。");
     const r = await detectReflectiveMention({ projectId: fx.projectId, ...window });
     expect(r.signals.length).toBeGreaterThanOrEqual(1);
-    expect(r.signals[0]!.kind).toBe("reflective_mention");
-    expect(r.signals[0]!.signature.startsWith("concept:")).toBe(true);
+    expect(r.signals[0]?.kind).toBe("reflective_mention");
+    expect(r.signals[0]?.signature.startsWith("concept:")).toBe(true);
   });
 
   test("英文 'need a tool to X' → 命中", async () => {

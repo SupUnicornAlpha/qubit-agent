@@ -16,11 +16,10 @@ strategyRuntimeRouter.get("/champion-challenger/compare", async (c) => {
   const projectId = c.req.query("projectId")?.trim();
   if (!projectId) return c.json({ ok: false, error: "projectId is required" }, 400);
   const minimumScoreUplift = Number(c.req.query("minimumScoreUplift") ?? 0.03);
+  const challengerStrategyVersionId = c.req.query("challengerStrategyVersionId");
   const data = await strategyPromotionService.compareVersions({
     projectId,
-    ...(c.req.query("challengerStrategyVersionId")
-      ? { challengerStrategyVersionId: c.req.query("challengerStrategyVersionId") }
-      : {}),
+    ...(challengerStrategyVersionId ? { challengerStrategyVersionId } : {}),
     minimumScoreUplift: Number.isFinite(minimumScoreUplift) ? minimumScoreUplift : 0.03,
   });
   return c.json({ ok: true, data });
@@ -104,9 +103,7 @@ strategyRuntimeRouter.post("/:id/evaluate-paper", async (c) => {
 
 strategyRuntimeRouter.post("/:id/approve-live", async (c) => {
   try {
-    const body = await c.req
-      .json<{ reviewer?: string }>()
-      .catch((): { reviewer?: string } => ({}));
+    const body = await c.req.json<{ reviewer?: string }>().catch((): { reviewer?: string } => ({}));
     const data = await strategyPromotionService.approveRuntime(
       c.req.param("id"),
       body.reviewer ?? "user"

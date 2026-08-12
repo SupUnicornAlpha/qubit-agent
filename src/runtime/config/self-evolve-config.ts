@@ -59,7 +59,12 @@ function parseMode(v: string | undefined, def: AutoInstallMode): AutoInstallMode
   return def;
 }
 
-function parseNumber(v: string | undefined, def: number, min = 0, max = Number.MAX_SAFE_INTEGER): number {
+function parseNumber(
+  v: string | undefined,
+  def: number,
+  min = 0,
+  max = Number.MAX_SAFE_INTEGER
+): number {
   if (v == null) return def;
   const n = Number(v);
   if (!Number.isFinite(n)) return def;
@@ -67,32 +72,21 @@ function parseNumber(v: string | undefined, def: number, min = 0, max = Number.M
 }
 
 function loadFromEnv(): SelfEvolveConfig {
-  const enabled = parseBool(process.env["SELF_EVOLVE_ENABLED"], DEFAULT_CONFIG.enabled);
+  const enabled = parseBool(process.env.SELF_EVOLVE_ENABLED, DEFAULT_CONFIG.enabled);
   return {
     enabled,
-    autoInstallMode: parseMode(
-      process.env["AUTO_INSTALL_MODE"],
-      DEFAULT_CONFIG.autoInstallMode
-    ),
+    autoInstallMode: parseMode(process.env.AUTO_INSTALL_MODE, DEFAULT_CONFIG.autoInstallMode),
     // pnl-aware reason 默认随总闸（避免单独配置；想关给个 false 的 PNL_AWARE_REASON_ENABLED 即可）
-    pnlAwareReasonEnabled: parseBool(
-      process.env["PNL_AWARE_REASON_ENABLED"],
-      enabled ? true : false
-    ),
+    pnlAwareReasonEnabled: parseBool(process.env.PNL_AWARE_REASON_ENABLED, enabled ? true : false),
     minScoreForAuto: parseNumber(
-      process.env["AUTO_INSTALL_MIN_SCORE"],
+      process.env.AUTO_INSTALL_MIN_SCORE,
       DEFAULT_CONFIG.minScoreForAuto,
       0,
       1
     ),
-    reasonPnlTopN: parseNumber(
-      process.env["REASON_PNL_TOP_N"],
-      DEFAULT_CONFIG.reasonPnlTopN,
-      1,
-      20
-    ),
+    reasonPnlTopN: parseNumber(process.env.REASON_PNL_TOP_N, DEFAULT_CONFIG.reasonPnlTopN, 1, 20),
     reasonPnlWindowDays: parseNumber(
-      process.env["REASON_PNL_WINDOW_DAYS"],
+      process.env.REASON_PNL_WINDOW_DAYS,
       DEFAULT_CONFIG.reasonPnlWindowDays,
       1,
       90
@@ -113,7 +107,7 @@ export function setSelfEvolveConfigForTest(override: Partial<SelfEvolveConfig> |
     _cached = null;
     return;
   }
-  _cached = { ...(getSelfEvolveConfig()), ...override };
+  _cached = { ...getSelfEvolveConfig(), ...override };
 }
 
 /**

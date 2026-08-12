@@ -12,11 +12,11 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { dispatchBuiltinTool } from "../builtin-tools";
-import { runMigrations } from "../../../db/sqlite/migrate";
 import { getDb } from "../../../db/sqlite/client";
+import { runMigrations } from "../../../db/sqlite/migrate";
 import * as schema from "../../../db/sqlite/schema";
 import { bootstrapProviders } from "../../provider/bootstrap";
+import { dispatchBuiltinTool } from "../builtin-tools";
 
 let workspaceId: string;
 let projectId: string;
@@ -85,15 +85,15 @@ describe("strategy.create_version (P0-1.b)", () => {
       .from(schema.strategy)
       .where(eq(schema.strategy.id, res.strategyId));
     expect(stratRows[0]).toBeDefined();
-    expect(stratRows[0]!.projectId).toBe(projectId);
+    expect(stratRows[0]?.projectId).toBe(projectId);
 
     const versionRows = await db
       .select()
       .from(schema.strategyVersion)
       .where(eq(schema.strategyVersion.id, res.strategyVersionId));
     expect(versionRows[0]).toBeDefined();
-    expect(versionRows[0]!.strategyId).toBe(res.strategyId);
-    expect(versionRows[0]!.workflowRunId).toBe(workflowRunId);
+    expect(versionRows[0]?.strategyId).toBe(res.strategyId);
+    expect(versionRows[0]?.workflowRunId).toBe(workflowRunId);
   });
 
   test("name 重复 → 复用同一个 strategy，但 versionTag 自增 v2", async () => {
@@ -178,10 +178,10 @@ describe("order.create_intent (P0-1.c)", () => {
       .from(schema.orderIntent)
       .where(eq(schema.orderIntent.id, res.orderIntentId));
     expect(orderRows[0]).toBeDefined();
-    expect(orderRows[0]!.workflowRunId).toBe(workflowRunId);
-    expect(orderRows[0]!.strategyVersionId).toBe(sv.strategyVersionId);
-    expect(orderRows[0]!.qty).toBe(1);
-    expect(orderRows[0]!.side).toBe("buy");
+    expect(orderRows[0]?.workflowRunId).toBe(workflowRunId);
+    expect(orderRows[0]?.strategyVersionId).toBe(sv.strategyVersionId);
+    expect(orderRows[0]?.qty).toBe(1);
+    expect(orderRows[0]?.side).toBe("buy");
   });
 
   test("limit 单缺 price → 抛错", async () => {

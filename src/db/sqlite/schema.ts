@@ -1476,6 +1476,7 @@ export const geneGeneration = sqliteTable("gene_generation", {
   populationSize: integer("population_size").notNull(),
   mutationRate: real("mutation_rate").notNull().default(0.1),
   bestSharpe: real("best_sharpe"),
+  bestFitness: real("best_fitness"),
   createdAt: createdAt(),
 });
 
@@ -1503,6 +1504,9 @@ export const strategyGenome = sqliteTable("strategy_genome", {
   sharpeRatio: real("sharpe_ratio"),
   maxDrawdown: real("max_drawdown"),
   totalReturn: real("total_return"),
+  /** 多目标适应度；NULL 表示尚未通过完整绩效评估，不得参与父本选择。 */
+  fitnessScore: real("fitness_score"),
+  evaluationJson: text("evaluation_json", { mode: "json" }),
   backtestRunId: text("backtest_run_id").references(() => backtestRun.id),
   parentAId: text("parent_a_id"),
   parentBId: text("parent_b_id"),

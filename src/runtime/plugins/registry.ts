@@ -14,6 +14,7 @@ import {
   listProjectInstalls,
   uninstallProjectCatalogInstall,
 } from "../mcp/market-service";
+import { seedBrokerMcpServer } from "../seed-broker-mcp";
 import { skillService } from "../skills/skill-service";
 import { importAgentSkillPath } from "./import-agent-skills";
 import { importClaudePluginDir } from "./import-claude";
@@ -24,12 +25,7 @@ import {
   getOfficialPluginPack,
   listOfficialPluginPacks,
 } from "./official-packs";
-import type {
-  PluginListItem,
-  PluginManifest,
-  PluginOriginFormat,
-} from "./types";
-import { seedBrokerMcpServer } from "../seed-broker-mcp";
+import type { PluginListItem, PluginManifest, PluginOriginFormat } from "./types";
 
 function riskToSafety(risk: string | null | undefined): "low" | "medium" | "high" {
   if (risk === "high") return "high";
@@ -61,14 +57,13 @@ function projectMcpAsPlugin(row: typeof mcpCatalogInstall.$inferSelect): PluginL
 }
 
 function projectSkillAsPlugin(row: typeof skillMarketInstall.$inferSelect): PluginListItem {
-  const originFormat: PluginOriginFormat =
-    row.registry.startsWith("import:codex")
-      ? "codex_plugin"
-      : row.registry.startsWith("import:claude")
-        ? "claude_plugin"
-        : row.registry.startsWith("import:agent_skills") || row.registry === "manual"
-          ? "agent_skills"
-          : "mcp";
+  const originFormat: PluginOriginFormat = row.registry.startsWith("import:codex")
+    ? "codex_plugin"
+    : row.registry.startsWith("import:claude")
+      ? "claude_plugin"
+      : row.registry.startsWith("import:agent_skills") || row.registry === "manual"
+        ? "agent_skills"
+        : "mcp";
   return {
     id: `skill-install:${row.id}`,
     name: row.skillName,
@@ -241,7 +236,9 @@ async function upsertManualMcpServer(input: {
   const existing = await db
     .select()
     .from(mcpServerConfig)
-    .where(and(eq(mcpServerConfig.projectId, input.projectId), eq(mcpServerConfig.name, input.name)))
+    .where(
+      and(eq(mcpServerConfig.projectId, input.projectId), eq(mcpServerConfig.name, input.name))
+    )
     .limit(1);
   if (existing[0]) {
     await db
@@ -342,7 +339,9 @@ export async function installPlugin(input: {
   serverName?: string;
   externalSkillId?: string;
   installedBy?: string;
-}): Promise<{ ok: true; item: PluginListItem; warnings?: string[] } | { ok: false; error: string }> {
+}): Promise<
+  { ok: true; item: PluginListItem; warnings?: string[] } | { ok: false; error: string }
+> {
   if (
     input.targetId === FUTU_CONNECTOR_PLUGIN_ID ||
     (input.kind === "connector" && input.targetId.includes("futu"))
@@ -368,7 +367,9 @@ export async function installPlugin(input: {
         );
       }
       if (!runtime.marketWsUrl) {
-        warnings.push("行情 WS 未设置：请安装 websockets/futu-api 后 POST /market/stream/bridges/futu/ensure");
+        warnings.push(
+          "行情 WS 未设置：请安装 websockets/futu-api 后 POST /market/stream/bridges/futu/ensure"
+        );
       }
     } catch (e) {
       warnings.push(`ensure futu runtime: ${(e as Error).message}`);

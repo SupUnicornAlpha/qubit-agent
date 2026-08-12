@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
-  assertTsReactAllowed,
-  isTsReactAllowedUnderRust,
   TS_REACT_CALL_SITES,
   TS_REACT_OUT_OF_SCOPE,
+  assertTsReactAllowed,
+  isTsReactAllowedUnderRust,
 } from "../ts-react-residual";
 
 describe("ts react residual / hard guard", () => {

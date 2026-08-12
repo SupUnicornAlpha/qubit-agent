@@ -36,9 +36,24 @@ describe("market data source control plane", () => {
 
   test("auto routes each market to capable sources in priority order", async () => {
     const settings = { "qubit-data": { klinesDataSource: "auto" } };
-    const cn = await selectMarketDataSourcePlan({ market: "CN", timeframe: "1d", mode: "auto", settings });
-    const us = await selectMarketDataSourcePlan({ market: "US", timeframe: "1d", mode: "auto", settings });
-    const crypto = await selectMarketDataSourcePlan({ market: "CRYPTO", timeframe: "1d", mode: "auto", settings });
+    const cn = await selectMarketDataSourcePlan({
+      market: "CN",
+      timeframe: "1d",
+      mode: "auto",
+      settings,
+    });
+    const us = await selectMarketDataSourcePlan({
+      market: "US",
+      timeframe: "1d",
+      mode: "auto",
+      settings,
+    });
+    const crypto = await selectMarketDataSourcePlan({
+      market: "CRYPTO",
+      timeframe: "1d",
+      mode: "auto",
+      settings,
+    });
     // Futu / IB / iFinD may lead when local credentials are present.
     const cnHead = cn.filter((id) =>
       ["futu_bridge", "supermind_bridge", "eastmoney", "akshare_tencent"].includes(id)

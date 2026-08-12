@@ -73,9 +73,7 @@ export interface AnalystSignalFusionOutput {
  * 从 analyst_accuracy_log 查询每个分析师角色的历史准确率，
  * 返回动态权重（基础权重 1.0，±0.5 范围内调整）。
  */
-async function loadDynamicWeights(
-  definitionIds: string[]
-): Promise<Record<string, number>> {
+async function loadDynamicWeights(definitionIds: string[]): Promise<Record<string, number>> {
   const db = await getDb();
   const weights: Record<string, number> = {};
 
@@ -86,12 +84,7 @@ async function loadDynamicWeights(
         correct: sql<number>`SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END)`,
       })
       .from(analystAccuracyLog)
-      .where(
-        and(
-          eq(analystAccuracyLog.definitionId, defId),
-          sql`is_correct IS NOT NULL`
-        )
-      );
+      .where(and(eq(analystAccuracyLog.definitionId, defId), sql`is_correct IS NOT NULL`));
 
     const row = rows[0];
     const total = Number(row?.total ?? 0);
@@ -245,7 +238,8 @@ export async function fuseSignals(params: {
   // fusedConfidence blends directional strength and agreement
   const directionalStrength = Math.min(1.0, Math.abs(avgScore));
   const agreementRatio = agreementSum / signals.length;
-  const fusedConfidence = Math.round((directionalStrength * 0.5 + agreementRatio * 0.5) * 100) / 100;
+  const fusedConfidence =
+    Math.round((directionalStrength * 0.5 + agreementRatio * 0.5) * 100) / 100;
 
   const debateTriggered = fusedConfidence < DEBATE_CONFIDENCE_THRESHOLD;
 

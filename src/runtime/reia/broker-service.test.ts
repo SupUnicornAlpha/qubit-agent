@@ -1,10 +1,10 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
-import { runMigrations } from "../../db/sqlite/migrate";
 import { closeDb } from "../../db/sqlite/client";
-import { paperFromBrokerMode } from "./broker-connector";
-import { resolveBrokerAccount } from "../execution/broker/broker-service";
+import { runMigrations } from "../../db/sqlite/migrate";
 import { upsertBrokerAccount } from "../execution/broker/broker-admin";
+import { resolveBrokerAccount } from "../execution/broker/broker-service";
+import { paperFromBrokerMode } from "./broker-connector";
 
 describe("broker-service", () => {
   beforeAll(async () => {

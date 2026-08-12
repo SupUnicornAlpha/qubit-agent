@@ -194,7 +194,7 @@ export class SkillAttributor {
     const perSkillShareById = new Map<string, number>();
     let perSkillShareScalar: number; // 写 agent_pnl_attribution.perSkillShare 用（real 字段）
     if (isV1) {
-      const weights = skillIds.map((_, i) => Math.pow(recencyDecayLambda, N - 1 - i));
+      const weights = skillIds.map((_, i) => recencyDecayLambda ** (N - 1 - i));
       const sumW = weights.reduce((a, b) => a + b, 0) || 1;
       skillIds.forEach((sid, i) => {
         perSkillShareById.set(sid, (item.pnlAttributed * weights[i]!) / sumW);
@@ -231,9 +231,9 @@ export class SkillAttributor {
        */
       const metadataJson: Record<string, unknown> = { skill_count: skillIds.length };
       if (isV1) {
-        metadataJson["recencyDecayLambda"] = recencyDecayLambda;
-        metadataJson["skillIdsOrderedByFirstTouch"] = skillIds;
-        metadataJson["perSkillShareByIdJson"] = Object.fromEntries(
+        metadataJson.recencyDecayLambda = recencyDecayLambda;
+        metadataJson.skillIdsOrderedByFirstTouch = skillIds;
+        metadataJson.perSkillShareByIdJson = Object.fromEntries(
           Array.from(perSkillShareById.entries()).map(([k, v]) => [k, round6(v)])
         );
       }
@@ -473,7 +473,10 @@ export class SkillAttributor {
       )
       .all();
     if (rows.length === 0) return [];
-    const agg = new Map<string, { pnlSum: number; winCount: number; loseCount: number; sampleCount: number }>();
+    const agg = new Map<
+      string,
+      { pnlSum: number; winCount: number; loseCount: number; sampleCount: number }
+    >();
     for (const r of rows) {
       if (r.pnlDelta == null) continue;
       const cur = agg.get(r.skillId) ?? { pnlSum: 0, winCount: 0, loseCount: 0, sampleCount: 0 };

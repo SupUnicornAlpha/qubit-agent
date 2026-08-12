@@ -37,12 +37,19 @@ const SAFE_NPM_NAME = /^(@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i;
 const SAFE_NPM_VERSION = /^[0-9A-Za-z.+-]{1,64}$/;
 
 export class NpmDepsError extends Error {
-  constructor(public readonly code: NpmDepsErrorCode, message?: string) {
+  constructor(
+    public readonly code: NpmDepsErrorCode,
+    message?: string
+  ) {
     super(message ?? code);
     this.name = "NpmDepsError";
   }
 }
-export type NpmDepsErrorCode = "invalid_package_name" | "invalid_version" | "timeout" | "install_failed";
+export type NpmDepsErrorCode =
+  | "invalid_package_name"
+  | "invalid_version"
+  | "timeout"
+  | "install_failed";
 
 interface RunResult {
   exitCode: number;
@@ -329,11 +336,7 @@ async function ensureMcpBinDirReady(): Promise<string> {
   if (!existsSync(pj)) {
     await Bun.write(
       pj,
-      JSON.stringify(
-        { name: "qubit-mcp-bin", private: true, version: "0.0.0" },
-        null,
-        2
-      )
+      JSON.stringify({ name: "qubit-mcp-bin", private: true, version: "0.0.0" }, null, 2)
     );
   }
   return dir;

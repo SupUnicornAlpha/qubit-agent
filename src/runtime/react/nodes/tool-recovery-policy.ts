@@ -1,9 +1,6 @@
 import { getToolCatalogMap } from "../../tools/tool-catalog";
+import { inferMarketScope, isToolNegativelyCached } from "../../tools/tool-governance-policy";
 import { resolveConnectorForTool } from "../../tools/tool-routes";
-import {
-  inferMarketScope,
-  isToolNegativelyCached,
-} from "../../tools/tool-governance-policy";
 import type { ToolErrorClass } from "./tool-error-classifier";
 
 export interface ToolRecoveryPlan {
@@ -80,17 +77,14 @@ function findAlternatives(
   const failed = catalog.get(failedTool);
   if (!failed?.category) return [];
   return availableTools
-    .filter(
-      (name) => {
-        const connector = resolveConnectorForTool(name);
-        const targetName = connector ? `${connector}/${name}` : name;
-        return (
-          name !== failedTool &&
-          (!workflowId ||
-            !isToolNegativelyCached(workflowId, targetName, inferMarketScope(params)))
-        );
-      }
-    )
+    .filter((name) => {
+      const connector = resolveConnectorForTool(name);
+      const targetName = connector ? `${connector}/${name}` : name;
+      return (
+        name !== failedTool &&
+        (!workflowId || !isToolNegativelyCached(workflowId, targetName, inferMarketScope(params)))
+      );
+    })
     .map((name) => catalog.get(name))
     .filter(
       (entry): entry is NonNullable<typeof entry> =>

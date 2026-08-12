@@ -76,7 +76,7 @@ async function ensurePythonVenv(dataDir: string): Promise<{
       : join(venvDir, "bin", "python3");
 
   if (existsSync(venvPython)) {
-    process.env["QUBIT_PYTHON"] = venvPython;
+    process.env.QUBIT_PYTHON = venvPython;
     return { status: "existing" };
   }
 
@@ -84,7 +84,7 @@ async function ensurePythonVenv(dataDir: string): Promise<{
   // 内的损坏 Python，部分 macOS/Bun 组合下 spawnSync timeout 不生效，会永久卡住 HTTP。
   const python = resolvePythonBin(dataDir);
   if (python.includes("python-venv")) {
-    process.env["QUBIT_PYTHON"] = python;
+    process.env.QUBIT_PYTHON = python;
     return { status: "existing" };
   }
 
@@ -113,7 +113,7 @@ async function ensurePythonVenv(dataDir: string): Promise<{
       { cwd: getPythonConnectorsDir() }
     );
     if (offline.code === 0) {
-      process.env["QUBIT_PYTHON"] = venvPython;
+      process.env.QUBIT_PYTHON = venvPython;
       return { status: "created", message: "installed from offline wheels" };
     }
     pipMessage = `offline pip install failed (${offline.stderr.slice(0, 200)}), falling back to network`;
@@ -130,7 +130,7 @@ async function ensurePythonVenv(dataDir: string): Promise<{
     };
   }
 
-  process.env["QUBIT_PYTHON"] = venvPython;
+  process.env.QUBIT_PYTHON = venvPython;
   return { status: "created", ...(pipMessage ? { message: pipMessage } : {}) };
 }
 
@@ -210,6 +210,6 @@ export async function runPlatformBootstrap(options?: {
     pythonVenv,
     ...(pythonMessage !== undefined ? { pythonMessage } : {}),
     dataDir,
-    appRoot: process.env["QUBIT_APP_ROOT"]?.trim() || process.cwd(),
+    appRoot: process.env.QUBIT_APP_ROOT?.trim() || process.cwd(),
   };
 }

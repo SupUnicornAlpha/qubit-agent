@@ -1,12 +1,21 @@
 import { Hono } from "hono";
-import { componentChallengerService, resolveShadowVariant } from "../runtime/governance/component-challenger-service";
+import {
+  componentChallengerService,
+  resolveShadowVariant,
+} from "../runtime/governance/component-challenger-service";
 import { getStrategyConsistencyReport } from "../runtime/governance/strategy-consistency-service";
 
 export const governanceRouter = new Hono();
 
 governanceRouter.post("/component-evaluations", async (c) => {
   const body = await c.req.json<Parameters<typeof componentChallengerService.record>[0]>();
-  if (!body.projectId || !body.componentKind || !body.componentId || !body.versionId || !body.evalKind) {
+  if (
+    !body.projectId ||
+    !body.componentKind ||
+    !body.componentId ||
+    !body.versionId ||
+    !body.evalKind
+  ) {
     return c.json({ ok: false, error: "missing_required_fields" }, 400);
   }
   return c.json({ ok: true, data: await componentChallengerService.record(body) }, 201);

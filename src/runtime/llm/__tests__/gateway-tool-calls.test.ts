@@ -15,7 +15,7 @@
  * 单独抽测试会更直接，但目前未导出。Anthropic + Responses 已能覆盖 schema 翻译 + 解析两端。
  */
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { runLlmGateway, type LlmToolDefinition } from "../gateway";
+import { type LlmToolDefinition, runLlmGateway } from "../gateway";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -39,16 +39,16 @@ const SAMPLE_TOOL: LlmToolDefinition = {
 
 describe("Gateway P3-3 — tools opt-in（不传 tools 时零差）", () => {
   let fetchSpy: ReturnType<typeof spyOn>;
-  const origNonStream = process.env["QUBIT_LLM_ANTHROPIC_NON_STREAM"];
+  const origNonStream = process.env.QUBIT_LLM_ANTHROPIC_NON_STREAM;
   beforeEach(() => {
-    process.env["ANTHROPIC_API_KEY"] = "sk-test-anthropic";
-    process.env["QUBIT_LLM_ANTHROPIC_NON_STREAM"] = "1";
+    process.env.ANTHROPIC_API_KEY = "sk-test-anthropic";
+    process.env.QUBIT_LLM_ANTHROPIC_NON_STREAM = "1";
     fetchSpy = spyOn(globalThis, "fetch");
   });
   afterEach(() => {
     fetchSpy.mockRestore();
-    if (origNonStream === undefined) delete process.env["QUBIT_LLM_ANTHROPIC_NON_STREAM"];
-    else process.env["QUBIT_LLM_ANTHROPIC_NON_STREAM"] = origNonStream;
+    if (origNonStream === undefined) delete process.env.QUBIT_LLM_ANTHROPIC_NON_STREAM;
+    else process.env.QUBIT_LLM_ANTHROPIC_NON_STREAM = origNonStream;
   });
 
   test("Anthropic：不传 tools → 请求体不带 tools 字段，结果不带 toolCalls", async () => {
@@ -59,7 +59,7 @@ describe("Gateway P3-3 — tools opt-in（不传 tools 时零差）", () => {
         jsonResponse({
           content: [{ type: "text", text: "ok" }],
           usage: { input_tokens: 1, output_tokens: 1 },
-        }),
+        })
       );
     });
 
@@ -77,16 +77,16 @@ describe("Gateway P3-3 — tools opt-in（不传 tools 时零差）", () => {
 
 describe("Gateway P3-3 — Anthropic tools schema + tool_use 解析", () => {
   let fetchSpy: ReturnType<typeof spyOn>;
-  const origNonStream = process.env["QUBIT_LLM_ANTHROPIC_NON_STREAM"];
+  const origNonStream = process.env.QUBIT_LLM_ANTHROPIC_NON_STREAM;
   beforeEach(() => {
-    process.env["ANTHROPIC_API_KEY"] = "sk-test-anthropic";
-    process.env["QUBIT_LLM_ANTHROPIC_NON_STREAM"] = "1";
+    process.env.ANTHROPIC_API_KEY = "sk-test-anthropic";
+    process.env.QUBIT_LLM_ANTHROPIC_NON_STREAM = "1";
     fetchSpy = spyOn(globalThis, "fetch");
   });
   afterEach(() => {
     fetchSpy.mockRestore();
-    if (origNonStream === undefined) delete process.env["QUBIT_LLM_ANTHROPIC_NON_STREAM"];
-    else process.env["QUBIT_LLM_ANTHROPIC_NON_STREAM"] = origNonStream;
+    if (origNonStream === undefined) delete process.env.QUBIT_LLM_ANTHROPIC_NON_STREAM;
+    else process.env.QUBIT_LLM_ANTHROPIC_NON_STREAM = origNonStream;
   });
 
   test("传 tools → 请求体使用 input_schema；响应 tool_use 解析进 result.toolCalls", async () => {
@@ -107,7 +107,7 @@ describe("Gateway P3-3 — Anthropic tools schema + tool_use 解析", () => {
           ],
           stop_reason: "tool_use",
           usage: { input_tokens: 50, output_tokens: 30 },
-        }),
+        })
       );
     });
 
@@ -140,16 +140,16 @@ describe("Gateway P3-3 — Anthropic tools schema + tool_use 解析", () => {
 
 describe("Gateway P3-3 — Responses API tools schema + function_call 解析", () => {
   let fetchSpy: ReturnType<typeof spyOn>;
-  const origNonStream = process.env["QUBIT_LLM_RESPONSES_NON_STREAM"];
+  const origNonStream = process.env.QUBIT_LLM_RESPONSES_NON_STREAM;
   beforeEach(() => {
-    process.env["OPENAI_API_KEY"] = "sk-test-openai";
-    process.env["QUBIT_LLM_RESPONSES_NON_STREAM"] = "1";
+    process.env.OPENAI_API_KEY = "sk-test-openai";
+    process.env.QUBIT_LLM_RESPONSES_NON_STREAM = "1";
     fetchSpy = spyOn(globalThis, "fetch");
   });
   afterEach(() => {
     fetchSpy.mockRestore();
-    if (origNonStream === undefined) delete process.env["QUBIT_LLM_RESPONSES_NON_STREAM"];
-    else process.env["QUBIT_LLM_RESPONSES_NON_STREAM"] = origNonStream;
+    if (origNonStream === undefined) delete process.env.QUBIT_LLM_RESPONSES_NON_STREAM;
+    else process.env.QUBIT_LLM_RESPONSES_NON_STREAM = origNonStream;
   });
 
   test("传 tools → Responses 请求体 type='function' + 顶层 name；arguments 是 string 被 JSON.parse", async () => {
@@ -169,7 +169,7 @@ describe("Gateway P3-3 — Responses API tools schema + function_call 解析", (
             },
           ],
           usage: { input_tokens: 80, output_tokens: 20, total_tokens: 100 },
-        }),
+        })
       );
     });
 
@@ -205,12 +205,12 @@ describe("Gateway P3-3 — Responses API tools schema + function_call 解析", (
               type: "function_call",
               call_id: "call_bad",
               name: "fetch_klines",
-              arguments: '{ broken json',
+              arguments: "{ broken json",
             },
           ],
           usage: { input_tokens: 10, output_tokens: 5 },
-        }),
-      ),
+        })
+      )
     );
 
     const result = await runLlmGateway({

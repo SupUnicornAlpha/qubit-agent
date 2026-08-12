@@ -26,7 +26,7 @@ function values(key: string): Set<string> {
     (process.env[key] ?? "")
       .split(",")
       .map((value) => value.trim())
-      .filter(Boolean),
+      .filter(Boolean)
   );
 }
 

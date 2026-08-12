@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 /**
  * Health aggregator unit tests.
  *
@@ -5,7 +6,6 @@
  * （只建本聚合器读到的 5 列），避免拉真实 schema.ts 的 100+ 表。
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import { aggregateHealth, normalizeErrorMessage } from "../health-aggregator";
 
 let sqlite: Database;
@@ -61,17 +61,13 @@ beforeEach(() => {
   `);
 });
 
-function insertMcpServerConfig(name: string, opts: { enabled?: boolean; projectId?: string | null } = {}) {
+function insertMcpServerConfig(
+  name: string,
+  opts: { enabled?: boolean; projectId?: string | null } = {}
+) {
   sqlite
-    .prepare(
-      `INSERT INTO mcp_server_config (id, name, project_id, enabled) VALUES (?, ?, ?, ?)`
-    )
-    .run(
-      crypto.randomUUID(),
-      name,
-      opts.projectId ?? null,
-      opts.enabled === false ? 0 : 1
-    );
+    .prepare("INSERT INTO mcp_server_config (id, name, project_id, enabled) VALUES (?, ?, ?, ?)")
+    .run(crypto.randomUUID(), name, opts.projectId ?? null, opts.enabled === false ? 0 : 1);
 }
 
 afterEach(() => {
@@ -105,16 +101,18 @@ function insertTool(
     );
 }
 
-function insertMcp(row: Partial<{
-  id: string;
-  workflowRunId: string;
-  serverName: string;
-  status: string;
-  circuitState: string | null;
-  transport: string | null;
-  latencyMs: number;
-  errorCode: string | null;
-}> = {}) {
+function insertMcp(
+  row: Partial<{
+    id: string;
+    workflowRunId: string;
+    serverName: string;
+    status: string;
+    circuitState: string | null;
+    transport: string | null;
+    latencyMs: number;
+    errorCode: string | null;
+  }> = {}
+) {
   sqlite
     .prepare(
       `INSERT INTO mcp_call_log (id, workflow_run_id, server_name, status, circuit_state, transport, latency_ms, error_code)
@@ -132,19 +130,21 @@ function insertMcp(row: Partial<{
     );
 }
 
-function insertLlm(row: Partial<{
-  id: string;
-  workflowRunId: string;
-  provider: string;
-  model: string;
-  status: string;
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
-  finishReason: string | null;
-  costUsd: number;
-  errorMessage: string | null;
-}> = {}) {
+function insertLlm(
+  row: Partial<{
+    id: string;
+    workflowRunId: string;
+    provider: string;
+    model: string;
+    status: string;
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    finishReason: string | null;
+    costUsd: number;
+    errorMessage: string | null;
+  }> = {}
+) {
   sqlite
     .prepare(
       `INSERT INTO llm_call_log (id, workflow_run_id, provider, model, status, prompt_tokens, completion_tokens, total_tokens, finish_reason, cost_usd, error_message)
@@ -165,13 +165,15 @@ function insertLlm(row: Partial<{
     );
 }
 
-function insertSkill(row: Partial<{
-  id: string;
-  workflowRunId: string;
-  skillId: string;
-  score: number;
-  executed: number;
-}> = {}) {
+function insertSkill(
+  row: Partial<{
+    id: string;
+    workflowRunId: string;
+    skillId: string;
+    score: number;
+    executed: number;
+  }> = {}
+) {
   sqlite
     .prepare(
       `INSERT INTO skill_recall_log (id, workflow_run_id, skill_id, score, executed)
@@ -206,7 +208,11 @@ describe("aggregateHealth", () => {
 
   test("Tool: 成功率 < 90% 触发 red，错误聚合 top error 出现", () => {
     for (let i = 0; i < 8; i++) {
-      insertTool({ toolName: "fetch_news", status: "error", errorMessage: "rate limited (after 3 retries)" });
+      insertTool({
+        toolName: "fetch_news",
+        status: "error",
+        errorMessage: "rate limited (after 3 retries)",
+      });
     }
     for (let i = 0; i < 2; i++) insertTool({ toolName: "fetch_news" });
     const r = aggregateHealth(sqlite, ["wf-1"]);
@@ -219,7 +225,12 @@ describe("aggregateHealth", () => {
 
   test("MCP: circuit_state=open 出现 → red", () => {
     for (let i = 0; i < 10; i++) insertMcp({ serverName: "plugin-datadog" });
-    insertMcp({ serverName: "plugin-datadog", status: "failed", circuitState: "open", errorCode: "circuit_open" });
+    insertMcp({
+      serverName: "plugin-datadog",
+      status: "failed",
+      circuitState: "open",
+      errorCode: "circuit_open",
+    });
     const r = aggregateHealth(sqlite, ["wf-1"]);
     const m = r.mcp.find((x) => x.serverName === "plugin-datadog");
     expect(m?.circuitOpenCount).toBe(1);
@@ -237,9 +248,31 @@ describe("aggregateHealth", () => {
   });
 
   test("LLM: 多 provider/model 分组汇总 + 截断率 + cost", () => {
-    insertLlm({ provider: "openai", model: "gpt-4o", promptTokens: 1000, completionTokens: 500, totalTokens: 1500, costUsd: 0.02 });
-    insertLlm({ provider: "openai", model: "gpt-4o", promptTokens: 2000, completionTokens: 800, totalTokens: 2800, costUsd: 0.04, finishReason: "length" });
-    insertLlm({ provider: "anthropic", model: "claude-3-5-sonnet", promptTokens: 1500, completionTokens: 1000, totalTokens: 2500, costUsd: 0.03 });
+    insertLlm({
+      provider: "openai",
+      model: "gpt-4o",
+      promptTokens: 1000,
+      completionTokens: 500,
+      totalTokens: 1500,
+      costUsd: 0.02,
+    });
+    insertLlm({
+      provider: "openai",
+      model: "gpt-4o",
+      promptTokens: 2000,
+      completionTokens: 800,
+      totalTokens: 2800,
+      costUsd: 0.04,
+      finishReason: "length",
+    });
+    insertLlm({
+      provider: "anthropic",
+      model: "claude-3-5-sonnet",
+      promptTokens: 1500,
+      completionTokens: 1000,
+      totalTokens: 2500,
+      costUsd: 0.03,
+    });
     const r = aggregateHealth(sqlite, ["wf-1"]);
     const oa = r.llm.find((l) => l.provider === "openai");
     const an = r.llm.find((l) => l.provider === "anthropic");

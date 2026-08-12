@@ -72,9 +72,9 @@ describe("data gap taxonomy", () => {
   });
 
   test("investor-agent MCP tools count as get_quote capability", () => {
-    expect(
-      toolMatchesRequiredCapability("mcp:investor-agent:historical_prices", "get_quote")
-    ).toBe(true);
+    expect(toolMatchesRequiredCapability("mcp:investor-agent:historical_prices", "get_quote")).toBe(
+      true
+    );
     expect(
       toolMatchesRequiredCapability("mcp:investor-agent:technical_indicator", "get_quote")
     ).toBe(true);

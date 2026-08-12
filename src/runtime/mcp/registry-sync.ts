@@ -85,7 +85,7 @@ const MAX_REGISTRY_PAGES = 100;
 
 function isCatalogPayload(input: unknown): input is RegistryCatalogPayload {
   if (!input || typeof input !== "object") return false;
-  const items = (input as Record<string, unknown>)["items"];
+  const items = (input as Record<string, unknown>).items;
   return Array.isArray(items);
 }
 
@@ -96,7 +96,7 @@ interface OfficialServersPage {
 
 function isOfficialServersPayload(input: unknown): input is OfficialServersPage {
   if (!input || typeof input !== "object") return false;
-  const servers = (input as Record<string, unknown>)["servers"];
+  const servers = (input as Record<string, unknown>).servers;
   return Array.isArray(servers);
 }
 
@@ -126,13 +126,13 @@ function mapOfficialServerEntry(entry: unknown): RegistryCatalogPayload["items"]
   const description = typeof s.description === "string" ? s.description : "";
   const title = typeof s.title === "string" ? s.title : (name.split("/").pop() ?? name);
 
-  const metaBlock = wrap["_meta"];
+  const metaBlock = wrap._meta;
   if (metaBlock && typeof metaBlock === "object") {
     const official = (metaBlock as Record<string, unknown>)[
       "io.modelcontextprotocol.registry/official"
     ];
     if (official && typeof official === "object") {
-      const status = (official as Record<string, unknown>)["status"];
+      const status = (official as Record<string, unknown>).status;
       if (status === "deleted") return null;
     }
   }
@@ -144,7 +144,7 @@ function mapOfficialServerEntry(entry: unknown): RegistryCatalogPayload["items"]
     const transportWrap = p.transport;
     const transportType =
       transportWrap && typeof transportWrap === "object"
-        ? (transportWrap as Record<string, unknown>)["type"]
+        ? (transportWrap as Record<string, unknown>).type
         : undefined;
     if (transportType === "stdio") {
       const identifier = typeof p.identifier === "string" ? p.identifier : "";
@@ -224,7 +224,7 @@ async function fetchCatalogFromSource(
 ): Promise<RegistryCatalogPayload> {
   const headers: Record<string, string> = {};
   if (source.authType === "bearer" && source.authRef) {
-    headers["Authorization"] = `Bearer ${source.authRef}`;
+    headers.Authorization = `Bearer ${source.authRef}`;
   } else if (source.authType === "api_key" && source.authRef) {
     headers["x-api-key"] = source.authRef;
   }

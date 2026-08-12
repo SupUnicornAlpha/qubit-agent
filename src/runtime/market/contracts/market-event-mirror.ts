@@ -5,13 +5,13 @@
 
 import { resolveTickerMarket } from "../resolve-ticker-market";
 import {
+  MARKET_EVENT_SCHEMA_VERSION,
   type MarketAssetClass,
   type MarketEventKind,
+  MarketEventSchema,
   type MarketEventV2,
   type MarketFeedClass,
   type MarketLicenseUse,
-  MARKET_EVENT_SCHEMA_VERSION,
-  MarketEventSchema,
   hashPayload,
   newMarketEventId,
 } from "./market-event-v2";
@@ -56,7 +56,9 @@ export interface MarketEventMirrorJournal {
 
 const DEFAULT_CAPACITY = 4_096;
 
-export function createMarketEventMirrorJournal(capacity = DEFAULT_CAPACITY): MarketEventMirrorJournal {
+export function createMarketEventMirrorJournal(
+  capacity = DEFAULT_CAPACITY
+): MarketEventMirrorJournal {
   const buffer: MarketEventV2[] = [];
   const metrics: MarketEventMirrorMetrics = {
     mirrored: 0,
@@ -152,12 +154,7 @@ function inferFeedMeta(provider: string): {
       licenseUse: "observe_only",
     };
   }
-  if (
-    id.includes("futu") ||
-    id.includes("ib") ||
-    id.includes("supermind") ||
-    id.includes("ths")
-  ) {
+  if (id.includes("futu") || id.includes("ib") || id.includes("supermind") || id.includes("ths")) {
     const upstreamFamily = id.includes("futu")
       ? "futu"
       : id.includes("supermind") || id.includes("ths")

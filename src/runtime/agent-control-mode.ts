@@ -112,9 +112,7 @@ export function parseAgentPlanSnapshot(raw: unknown): AgentPlanSnapshot | null {
     : Array.isArray(goalRecord?.success_criteria)
       ? goalRecord.success_criteria
       : null;
-  const constraintsRaw = Array.isArray(goalRecord?.constraints)
-    ? goalRecord.constraints
-    : null;
+  const constraintsRaw = Array.isArray(goalRecord?.constraints) ? goalRecord.constraints : null;
   const updatedAt =
     typeof record.updatedAt === "string"
       ? record.updatedAt

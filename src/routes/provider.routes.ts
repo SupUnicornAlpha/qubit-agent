@@ -4,12 +4,10 @@
  * 详见 docs/FACTOR_RULE_STRATEGY_DESIGN.md §5.4 §7.7
  */
 
-import { Hono } from "hono";
 import { eq } from "drizzle-orm";
+import { Hono } from "hono";
 import { getDb } from "../db/sqlite/client";
-import {
-  providerRegistry as providerRegistryTable,
-} from "../db/sqlite/schema";
+import { providerRegistry as providerRegistryTable } from "../db/sqlite/schema";
 import { providerRegistry } from "../runtime/provider/registry";
 import { providerResolver } from "../runtime/provider/resolver";
 import type { ProviderKind } from "../runtime/provider/types";
@@ -24,10 +22,7 @@ providerRouter.get("/", async (c) => {
   const db = await getDb();
   const rows =
     kindQ && ALL_KINDS.includes(kindQ)
-      ? await db
-          .select()
-          .from(providerRegistryTable)
-          .where(eq(providerRegistryTable.kind, kindQ))
+      ? await db.select().from(providerRegistryTable).where(eq(providerRegistryTable.kind, kindQ))
       : await db.select().from(providerRegistryTable);
   return c.json({
     ok: true,
@@ -54,12 +49,13 @@ providerRouter.get("/resolve", async (c) => {
   if (!kind || !ALL_KINDS.includes(kind)) {
     return c.json({ ok: false, error: "invalid_kind" }, 400);
   }
+  const projectId = c.req.query("project_id");
+  const workflowRunId = c.req.query("workflow_id");
+  const strategyVersionId = c.req.query("strategy_version_id");
   const scope = {
-    ...(c.req.query("project_id") ? { projectId: c.req.query("project_id")! } : {}),
-    ...(c.req.query("workflow_id") ? { workflowRunId: c.req.query("workflow_id")! } : {}),
-    ...(c.req.query("strategy_version_id")
-      ? { strategyVersionId: c.req.query("strategy_version_id")! }
-      : {}),
+    ...(projectId ? { projectId } : {}),
+    ...(workflowRunId ? { workflowRunId } : {}),
+    ...(strategyVersionId ? { strategyVersionId } : {}),
   };
   try {
     const p = await providerResolver.resolve(kind, scope);
@@ -74,10 +70,7 @@ providerRouter.get("/resolve", async (c) => {
       },
     });
   } catch (e) {
-    return c.json(
-      { ok: false, error: (e as Error).message, code: "resolve_failed" },
-      404
-    );
+    return c.json({ ok: false, error: (e as Error).message, code: "resolve_failed" }, 404);
   }
 });
 

@@ -28,7 +28,9 @@ export async function loadDebateConfig(rootDir = process.cwd()): Promise<DebateR
     const raw = await readFile(path, "utf-8");
     const parsed = JSON.parse(raw) as Partial<DebateRuntimeConfig>;
     return {
-      confidenceThreshold: clamp01(Number(parsed.confidenceThreshold ?? DEFAULT_CONFIG.confidenceThreshold)),
+      confidenceThreshold: clamp01(
+        Number(parsed.confidenceThreshold ?? DEFAULT_CONFIG.confidenceThreshold)
+      ),
       maxRounds: Math.max(1, Math.min(5, Number(parsed.maxRounds ?? DEFAULT_CONFIG.maxRounds))),
     };
   } catch {

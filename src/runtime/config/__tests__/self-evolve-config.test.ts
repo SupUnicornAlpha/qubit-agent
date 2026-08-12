@@ -59,15 +59,15 @@ describe("默认值", () => {
   });
 
   test("SELF_EVOLVE_ENABLED=true → pnl-aware 默认随总闸开", () => {
-    process.env["SELF_EVOLVE_ENABLED"] = "true";
+    process.env.SELF_EVOLVE_ENABLED = "true";
     const c = getSelfEvolveConfig();
     expect(c.enabled).toBe(true);
     expect(c.pnlAwareReasonEnabled).toBe(true);
   });
 
   test("SELF_EVOLVE_ENABLED=true + PNL_AWARE_REASON_ENABLED=false → 可独立关掉", () => {
-    process.env["SELF_EVOLVE_ENABLED"] = "true";
-    process.env["PNL_AWARE_REASON_ENABLED"] = "false";
+    process.env.SELF_EVOLVE_ENABLED = "true";
+    process.env.PNL_AWARE_REASON_ENABLED = "false";
     const c = getSelfEvolveConfig();
     expect(c.enabled).toBe(true);
     expect(c.pnlAwareReasonEnabled).toBe(false);
@@ -76,31 +76,31 @@ describe("默认值", () => {
 
 describe("env 解析容错", () => {
   test("布尔接受多种格式：1 / on / yes", () => {
-    process.env["SELF_EVOLVE_ENABLED"] = "1";
+    process.env.SELF_EVOLVE_ENABLED = "1";
     expect(getSelfEvolveConfig().enabled).toBe(true);
     setSelfEvolveConfigForTest(null);
-    process.env["SELF_EVOLVE_ENABLED"] = "on";
+    process.env.SELF_EVOLVE_ENABLED = "on";
     expect(getSelfEvolveConfig().enabled).toBe(true);
     setSelfEvolveConfigForTest(null);
-    process.env["SELF_EVOLVE_ENABLED"] = "yes";
+    process.env.SELF_EVOLVE_ENABLED = "yes";
     expect(getSelfEvolveConfig().enabled).toBe(true);
   });
 
   test("AUTO_INSTALL_MODE 非法值 → 回 propose 默认", () => {
-    process.env["AUTO_INSTALL_MODE"] = "garbage";
+    process.env.AUTO_INSTALL_MODE = "garbage";
     expect(getSelfEvolveConfig().autoInstallMode).toBe("propose");
   });
 
   test("AUTO_INSTALL_MIN_SCORE 越界裁切到 [0,1]", () => {
-    process.env["AUTO_INSTALL_MIN_SCORE"] = "1.5";
+    process.env.AUTO_INSTALL_MIN_SCORE = "1.5";
     expect(getSelfEvolveConfig().minScoreForAuto).toBe(1);
     setSelfEvolveConfigForTest(null);
-    process.env["AUTO_INSTALL_MIN_SCORE"] = "-0.3";
+    process.env.AUTO_INSTALL_MIN_SCORE = "-0.3";
     expect(getSelfEvolveConfig().minScoreForAuto).toBe(0);
   });
 
   test("REASON_PNL_TOP_N 非数字回默认", () => {
-    process.env["REASON_PNL_TOP_N"] = "abc";
+    process.env.REASON_PNL_TOP_N = "abc";
     expect(getSelfEvolveConfig().reasonPnlTopN).toBe(3);
   });
 });

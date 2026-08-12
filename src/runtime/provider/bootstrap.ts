@@ -10,14 +10,14 @@
  * - 用户在配置中心改的 status/priority 不会被启动时覆盖。
  */
 
-import { providerRegistry } from "./registry";
+import { EventDrivenBacktestProvider } from "./impls/backtest/event-driven-backtest-provider";
+import { SmaLegacyBacktestProvider } from "./impls/backtest/sma-legacy-backtest-provider";
+import { BuiltinFactorEvalProvider } from "./impls/factor/builtin-factor-eval-provider";
 import { PythonInlineFactorProvider } from "./impls/factor/python-inline-factor-provider";
 import { QlibExprFactorProvider } from "./impls/factor/qlib-expr-factor-provider";
 import { QlibPythonFactorProvider } from "./impls/factor/qlib-python-factor-provider";
-import { BuiltinFactorEvalProvider } from "./impls/factor/builtin-factor-eval-provider";
 import { JsonLogicRuleProvider } from "./impls/rule/jsonlogic-rule-provider";
-import { SmaLegacyBacktestProvider } from "./impls/backtest/sma-legacy-backtest-provider";
-import { EventDrivenBacktestProvider } from "./impls/backtest/event-driven-backtest-provider";
+import { providerRegistry } from "./registry";
 
 let bootstrapPromise: Promise<void> | null = null;
 

@@ -8,11 +8,11 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { runMigrations } from "../../../db/sqlite/migrate";
 import { getDb } from "../../../db/sqlite/client";
+import { runMigrations } from "../../../db/sqlite/migrate";
 import * as schema from "../../../db/sqlite/schema";
-import { skillService } from "../skill-service";
 import { proposeSkillCandidate } from "../../memory/memory-consolidation";
+import { skillService } from "../skill-service";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 
@@ -69,19 +69,19 @@ describe("SkillService basic CRUD", () => {
     expect(before).not.toBeNull();
     // 不传 bumpVersion 时版本号保留
     const stay = await skillService.patch({
-      skillId: before!.id,
+      skillId: before?.id,
       description: "(stable) 同步描述",
     });
-    expect(stay.version).toBe(before!.version);
+    expect(stay.version).toBe(before?.version);
     // 显式 bumpVersion 时升级
     const patched = await skillService.patch({
-      skillId: before!.id,
+      skillId: before?.id,
       description: "更新的描述：在 universe≥30 的 CN-A 项目下使用",
       pinned: true,
       metadata: { tags: ["alpha101", "promote"] },
       bumpVersion: true,
     });
-    expect(patched.version).not.toBe(before!.version);
+    expect(patched.version).not.toBe(before?.version);
     expect(patched.pinned).toBe(true);
     expect((patched.metadataJson as { tags?: string[] }).tags).toEqual(["alpha101", "promote"]);
   });
@@ -90,14 +90,14 @@ describe("SkillService basic CRUD", () => {
     const skill = await skillService.findByName(projectId, "factor-discovery-loop");
     expect(skill).not.toBeNull();
     // 把它人工置为 stale
-    await skillService.patch({ skillId: skill!.id, state: "stale" });
+    await skillService.patch({ skillId: skill?.id, state: "stale" });
 
     await skillService.recordUsage({
-      skillId: skill!.id,
+      skillId: skill?.id,
       outcome: "success",
       notes: "test usage",
     });
-    const after = await skillService.findById(skill!.id);
+    const after = await skillService.findById(skill?.id);
     expect(after?.useCount).toBe(1);
     expect(after?.successCount).toBe(1);
     expect(after?.state).toBe("active"); // 自动复活
@@ -106,20 +106,20 @@ describe("SkillService basic CRUD", () => {
   test("benchmark usage keeps run telemetry without training lifetime counters", async () => {
     const skill = await skillService.findByName(projectId, "factor-discovery-loop");
     expect(skill).not.toBeNull();
-    const beforeUseCount = skill!.useCount;
+    const beforeUseCount = skill?.useCount;
     await skillService.recordUsage({
-      skillId: skill!.id,
+      skillId: skill?.id,
       outcome: "success",
       notes: "benchmark:context_injection",
       updateLifetimeCounters: false,
     });
-    const after = await skillService.findById(skill!.id);
+    const after = await skillService.findById(skill?.id);
     expect(after?.useCount).toBe(beforeUseCount);
     const db = await getDb();
     const runs = await db
       .select()
       .from(schema.agentSkillRun)
-      .where(eq(schema.agentSkillRun.skillId, skill!.id));
+      .where(eq(schema.agentSkillRun.skillId, skill?.id));
     expect(runs.some((run) => run.notes === "benchmark:context_injection")).toBe(true);
   });
 

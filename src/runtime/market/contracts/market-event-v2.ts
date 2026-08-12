@@ -114,11 +114,7 @@ export const DataQualityCompletenessSchema = z.enum([
   "gap_pending",
   "gap_unrecoverable",
 ]);
-export const DataQualityConsistencySchema = z.enum([
-  "verified",
-  "divergent",
-  "insufficient_peers",
-]);
+export const DataQualityConsistencySchema = z.enum(["verified", "divergent", "insufficient_peers"]);
 export const DataQualityStructureSchema = z.enum(["valid", "malformed", "market_closed"]);
 export const DataQualityPitSchema = z.enum(["point_in_time_valid", "invalid"]);
 
@@ -216,7 +212,8 @@ export function evaluateTradability(
   let useClass: DataQualityVerdict["useClass"] = "denied";
   if (allowed) useClass = "trading";
   else if (input.licenseUse === "denied") useClass = "denied";
-  else if (input.licenseUse === "observe_only" || input.freshness === "stale") useClass = "observe_only";
+  else if (input.licenseUse === "observe_only" || input.freshness === "stale")
+    useClass = "observe_only";
   else useClass = "research_only";
 
   return DataQualityVerdictSchema.parse({

@@ -26,10 +26,7 @@
 
 import { z } from "zod";
 import type { AgentRole } from "../../types/entities";
-import {
-  triggerAutonomousA2A,
-  type AutonomousTriggerResult,
-} from "./autonomous-trigger";
+import { type AutonomousTriggerResult, triggerAutonomousA2A } from "./autonomous-trigger";
 
 /**
  * 反思 scope。决定 LLM 看哪些 agent_step / outcome：
@@ -80,9 +77,7 @@ export type ReflectionRequest = z.infer<typeof ReflectionRequestSchema>;
  * 返回：autonomous trigger 的 dispatch 结果，调用方可以拿 workflowRunId
  * 去轮询 /analyst/job/:id 或 /workflows/:id/timeline 看反思过程。
  */
-export async function requestReflection(
-  raw: ReflectionRequest,
-): Promise<AutonomousTriggerResult> {
+export async function requestReflection(raw: ReflectionRequest): Promise<AutonomousTriggerResult> {
   const input = ReflectionRequestSchema.parse(raw);
 
   const message =
@@ -91,9 +86,7 @@ export async function requestReflection(
       : `Reflection (${input.scope}) on subject=${input.subjectId}`;
 
   const workflowRunId =
-    input.attachToSubject && input.scope.startsWith("workflow_")
-      ? input.subjectId
-      : undefined;
+    input.attachToSubject && input.scope.startsWith("workflow_") ? input.subjectId : undefined;
 
   return triggerAutonomousA2A({
     kind: "reflection_request",

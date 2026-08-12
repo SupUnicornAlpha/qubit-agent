@@ -2,7 +2,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { brokerAccount } from "../../db/sqlite/schema";
 import type { BrokerProvider, CcxtProviderConfig, FutuProviderConfig } from "../../types/broker";
-import { getTradingSession, type MarketCode, type TradingSessionConfig } from "./trading-calendar";
+import { type MarketCode, type TradingSessionConfig, getTradingSession } from "./trading-calendar";
 
 export interface ResolvedInstrument {
   market: MarketCode;

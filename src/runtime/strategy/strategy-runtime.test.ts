@@ -1,16 +1,16 @@
+import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Database } from "bun:sqlite";
-import { describe, expect, test } from "bun:test";
+import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
-import { eq } from "drizzle-orm";
 import * as schema from "../../db/sqlite/schema";
-import { createOrderIntentWithExecution } from "../execution/order-intent-service";
-import { processExecutionTasks } from "../execution/execution-worker";
 import { paperEvaluationService } from "../effect-validation/paper-evaluation-service";
 import { strategyPromotionService } from "../effect-validation/strategy-promotion-service";
+import { processExecutionTasks } from "../execution/execution-worker";
+import { createOrderIntentWithExecution } from "../execution/order-intent-service";
 import { evaluateSignalCode } from "./signal-evaluator";
 import {
   createStrategyRuntime,
@@ -143,7 +143,7 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
     const db = drizzle(sqlite, { schema });
     const migrationsFolder = join(
       dirname(fileURLToPath(import.meta.url)),
-      "../../db/sqlite/migrations",
+      "../../db/sqlite/migrations"
     );
     await migrate(db, { migrationsFolder });
 
@@ -159,7 +159,7 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
         autoStart: false,
         params: { orderQty: 5 },
       },
-      db,
+      db
     );
 
     expect(runtime.status).toBe("stopped");
@@ -188,7 +188,7 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
       .set({ executionMode: "live" })
       .where(eq(schema.strategyRuntime.id, runtime.id));
     await expect(startStrategyRuntime(runtime.id, db)).rejects.toThrow(
-      /live_promotion_gate_blocked/,
+      /live_promotion_gate_blocked/
     );
     for (const evalKind of ["backtest", "walk_forward"] as const) {
       await db.insert(schema.strategyEvalRun).values({
@@ -201,11 +201,7 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
         pass: true,
       });
     }
-    const approved = await strategyPromotionService.approveRuntime(
-      runtime.id,
-      "tester",
-      db,
-    );
+    const approved = await strategyPromotionService.approveRuntime(runtime.id, "tester", db);
     expect(approved.liveEligible).toBe(true);
     await startStrategyRuntime(runtime.id, db);
     const runningLive = await db
@@ -253,7 +249,7 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
     const db = drizzle(sqlite, { schema });
     const migrationsFolder = join(
       dirname(fileURLToPath(import.meta.url)),
-      "../../db/sqlite/migrations",
+      "../../db/sqlite/migrations"
     );
     await migrate(db, { migrationsFolder });
     const { scriptId } = await seedBase(db);
@@ -266,8 +262,8 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
           symbol: "TEST",
           executionMode: "sim",
         },
-        db,
-      ),
+        db
+      )
     ).rejects.toThrow(/sim_execution_requires_broker_account/);
 
     const brokerAccountId = randomUUID();
@@ -289,7 +285,7 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
         brokerAccountId,
         autoStart: false,
       },
-      db,
+      db
     );
     expect(runtime.executionMode).toBe("sim");
     expect(runtime.brokerAccountId).toBe(brokerAccountId);
@@ -306,7 +302,7 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
         executionMode: "sim",
         autoStart: false,
       },
-      db,
+      db
     );
     expect(autoResolved.brokerAccountId).toBe(brokerAccountId);
   });

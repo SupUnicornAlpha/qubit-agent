@@ -8,11 +8,7 @@
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
-import {
-  agentDefinition,
-  agentInstance,
-  agentStep,
-} from "../../db/sqlite/schema";
+import { agentDefinition, agentInstance, agentStep } from "../../db/sqlite/schema";
 import { writeLlmCallLog } from "../monitor/llm-call-logger";
 import {
   recordToolCallError,
@@ -40,10 +36,7 @@ function handleKey(workflowId: string, runId: string): string {
   return `${workflowId}::${runId}`;
 }
 
-export function getCoreMonitorHandle(
-  workflowId: string,
-  runId: string
-): CoreMonitorHandle | null {
+export function getCoreMonitorHandle(workflowId: string, runId: string): CoreMonitorHandle | null {
   return handles.get(handleKey(workflowId, runId)) ?? null;
 }
 
@@ -261,10 +254,7 @@ export async function recordCoreMonitorToolCall(input: {
     }
   }
 
-  const latencyMs = Math.max(
-    1,
-    input.latencyMs ?? Date.now() - started
-  );
+  const latencyMs = Math.max(1, input.latencyMs ?? Date.now() - started);
   handle.openTools.delete(input.toolCallId);
 
   try {
@@ -394,26 +384,18 @@ export async function finalizeCoreMonitorTurn(input: {
       workflowRunId: handle.workflowId,
       agentStepId: handle.reasonStepId,
       agentDefinitionId: handle.agentDefinitionId,
-      provider: stats?.provider?.trim()
-        ? stats.provider.trim()
-        : "prime_core",
+      provider: stats?.provider?.trim() ? stats.provider.trim() : "prime_core",
       model: stats?.model?.trim() || "unknown",
       usage: {
-        ...(typeof stats?.prompt_tokens === "number"
-          ? { promptTokens: stats.prompt_tokens }
-          : {}),
+        ...(typeof stats?.prompt_tokens === "number" ? { promptTokens: stats.prompt_tokens } : {}),
         ...(typeof stats?.completion_tokens === "number"
           ? { completionTokens: stats.completion_tokens }
           : {}),
-        ...(typeof stats?.total_tokens === "number"
-          ? { totalTokens: stats.total_tokens }
-          : {}),
+        ...(typeof stats?.total_tokens === "number" ? { totalTokens: stats.total_tokens } : {}),
       },
       latencyMs,
       status: input.ok ? "success" : "error",
-      ...(input.ok
-        ? {}
-        : { errorMessage: "prime_core_turn_failed" }),
+      ...(input.ok ? {} : { errorMessage: "prime_core_turn_failed" }),
       systemPromptLen: undefined,
       userPromptLen: undefined,
       extraMeta: {
@@ -435,8 +417,7 @@ export async function finalizeCoreMonitorTurn(input: {
     await db
       .update(agentStep)
       .set({
-        tokenCount:
-          typeof stats?.total_tokens === "number" ? stats.total_tokens : null,
+        tokenCount: typeof stats?.total_tokens === "number" ? stats.total_tokens : null,
         latencyMs,
         observationJson: {
           backend: "rust",

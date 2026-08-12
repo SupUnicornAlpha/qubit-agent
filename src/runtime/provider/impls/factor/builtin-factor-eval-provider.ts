@@ -9,12 +9,12 @@
  *   - turnover：相邻调仓日的 top-quintile 持仓重合度补集
  */
 
-import {
-  type FactorComputeRow,
-  type FactorEvalRequest,
-  type FactorEvalResult,
-  type FactorEvaluationProvider,
-  type ProviderMeta,
+import type {
+  FactorComputeRow,
+  FactorEvalRequest,
+  FactorEvalResult,
+  FactorEvaluationProvider,
+  ProviderMeta,
 } from "../../types";
 
 const META: ProviderMeta = {
@@ -72,9 +72,9 @@ function rank(values: number[]): number[] {
   let i = 0;
   while (i < indexed.length) {
     let j = i;
-    while (j + 1 < indexed.length && indexed[j + 1]!.v === indexed[i]!.v) j++;
+    while (j + 1 < indexed.length && indexed[j + 1]?.v === indexed[i]?.v) j++;
     const avg = (i + j) / 2 + 1;
-    for (let k = i; k <= j; k++) ranks[indexed[k]!.i] = avg;
+    for (let k = i; k <= j; k++) ranks[indexed[k]?.i] = avg;
     i = j + 1;
   }
   return ranks;
@@ -88,10 +88,7 @@ interface PairsByDate {
 }
 
 /** 按 date 把因子值与未来收益配对，得到每日横截面 */
-function joinByDate(
-  values: FactorComputeRow[],
-  futures: FactorComputeRow[]
-): PairsByDate[] {
+function joinByDate(values: FactorComputeRow[], futures: FactorComputeRow[]): PairsByDate[] {
   // {date → {sym → fut}}
   const futMap = new Map<string, Map<string, number>>();
   for (const r of futures) {
@@ -137,7 +134,11 @@ function std(arr: number[]): number {
 }
 
 /** 横截面 daily IC 时序：返回每日 (pearson, spearman) */
-function dailyIcSeries(pairs: PairsByDate[]): { dates: string[]; ics: number[]; rankIcs: number[] } {
+function dailyIcSeries(pairs: PairsByDate[]): {
+  dates: string[];
+  ics: number[];
+  rankIcs: number[];
+} {
   const dates: string[] = [];
   const ics: number[] = [];
   const rankIcs: number[] = [];
@@ -162,7 +163,7 @@ function groupReturns(pairs: PairsByDate[], groupCount: number): number[] {
     const size = p.xs.length / groupCount;
     for (let k = 0; k < idx.length; k++) {
       const g = Math.min(groupCount - 1, Math.floor(k / size));
-      buckets[g]!.push(p.ys[idx[k]!]!);
+      buckets[g]?.push(p.ys[idx[k]!]!);
     }
   }
   return buckets.map((b) => (b.length ? mean(b) : 0));
@@ -179,7 +180,7 @@ function topQuintileTurnover(pairs: PairsByDate[]): number {
     idx.sort((a, b) => p.xs[b]! - p.xs[a]!);
     const topNow = new Set(idx.slice(0, k).map((i) => p.symbols[i]!));
     if (prevTop) {
-      const inter = [...topNow].filter((s) => prevTop!.has(s)).length;
+      const inter = [...topNow].filter((s) => prevTop?.has(s)).length;
       const change = 1 - inter / topNow.size;
       acc += change;
       cnt += 1;

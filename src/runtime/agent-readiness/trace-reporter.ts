@@ -59,9 +59,7 @@ export async function renderTraceMarkdown(input: TraceInput): Promise<string> {
   const truncate = input.truncateAt ?? 400;
 
   const wf = sqlite
-    .prepare(
-      "SELECT id, status, goal, mode FROM workflow_run WHERE id = ?"
-    )
+    .prepare("SELECT id, status, goal, mode FROM workflow_run WHERE id = ?")
     .get(input.workflowRunId) as
     | { id: string; status: string; goal: string; mode: string }
     | undefined;
@@ -122,9 +120,7 @@ export async function renderTraceMarkdown(input: TraceInput): Promise<string> {
       lines.push("");
       for (const t of stepTools) {
         const errSuffix = t.errorMessage ? ` · err=${truncateText(t.errorMessage, 80)}` : "";
-        lines.push(
-          `- \`${t.toolName}\` · ${t.status} · ${t.latencyMs ?? "?"} ms${errSuffix}`
-        );
+        lines.push(`- \`${t.toolName}\` · ${t.status} · ${t.latencyMs ?? "?"} ms${errSuffix}`);
       }
     }
 

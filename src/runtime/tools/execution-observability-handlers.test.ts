@@ -16,18 +16,22 @@ describe("execution observability tool surface", () => {
     ]) {
       expect(isBuiltinTool(name)).toBe(true);
     }
-    expect(SEED_AGENT_DEFINITIONS.find((item) => item.id === "def-execution-monitor")?.tools).not.toContain(
-      "broker_submit_order"
-    );
+    expect(
+      SEED_AGENT_DEFINITIONS.find((item) => item.id === "def-execution-monitor")?.tools
+    ).not.toContain("broker_submit_order");
   });
 
   test("catalog search discovers tools but never grants authorization", async () => {
     const definition = SEED_AGENT_DEFINITIONS.find((item) => item.id === "def-execution-monitor")!;
-    const output = (await ORCHESTRATION_HANDLERS["tool.catalog.search"]!(
+    const output = (await ORCHESTRATION_HANDLERS["tool.catalog.search"]?.(
       { workflowId: "w", runId: "r", traceId: "t", agentInstanceId: "a", definition },
-      { query: "broker", limit: 3 },
+      { query: "broker", limit: 3 }
     )) as { tools: Array<{ name: string; configuredForThisAgent: boolean }> };
     expect(output.tools.length).toBeGreaterThan(0);
-    expect(output.tools.some((tool) => tool.name === "execution.order.get" && tool.configuredForThisAgent)).toBe(true);
+    expect(
+      output.tools.some(
+        (tool) => tool.name === "execution.order.get" && tool.configuredForThisAgent
+      )
+    ).toBe(true);
   });
 });

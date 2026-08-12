@@ -1,7 +1,7 @@
 import { join } from "node:path";
+import { config } from "../../config";
 import type { BarData, FetchBarsParams } from "../../connectors/data/data.connector";
 import { PythonConnectorBridgeImpl } from "../../connectors/python-bridge";
-import { config } from "../../config";
 import { getPythonConnectorsDir, resolvePythonBin } from "../app-paths";
 import {
   type BuiltinConnectorInitConfigs,
@@ -53,7 +53,8 @@ async function getYfinanceBridge(): Promise<PythonConnectorBridgeImpl> {
         capabilities: ["fetch_bars", "fetch_dividends", "fetch_earnings", "fetch_asset_info"],
         assetClasses: ["stock", "crypto"],
         latencyProfile: "batch",
-        description: "yfinance Python subprocess bridge for OHLCV / dividends / earnings / asset info",
+        description:
+          "yfinance Python subprocess bridge for OHLCV / dividends / earnings / asset info",
       },
     });
     await instance.init({});
@@ -83,7 +84,7 @@ export async function probeYfinanceAvailable(): Promise<boolean> {
 /** 通过 Python yfinance 拉取 OHLCV（免费、需 `pip install yfinance pandas`）。 */
 export async function fetchYfinanceBars(
   params: FetchBarsParams,
-  settings: BuiltinConnectorInitConfigs = {},
+  settings: BuiltinConnectorInitConfigs = {}
 ): Promise<BarData[]> {
   const client = await getYfinanceBridge();
   const bars = (await client.execute("fetch_bars", {

@@ -2,8 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, lt } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { executionConfirmTicket, intentOrder } from "../../db/sqlite/schema";
-import { loadRiskConfig } from "../config/risk-config";
 import { loadExecutionSafetyConfig } from "../config/execution-safety-config";
+import { loadRiskConfig } from "../config/risk-config";
 
 function computeFinalRiskScore(input: {
   expectedRisk?: number | null;
@@ -22,7 +22,11 @@ function hashToken(token: string): string {
 
 export async function requestExecutionConfirmation(intentOrderId: string) {
   const db = await getDb();
-  const rows = await db.select().from(intentOrder).where(eq(intentOrder.id, intentOrderId)).limit(1);
+  const rows = await db
+    .select()
+    .from(intentOrder)
+    .where(eq(intentOrder.id, intentOrderId))
+    .limit(1);
   const intent = rows[0];
   if (!intent) throw new Error("intent order not found");
 
@@ -136,7 +140,9 @@ export async function cleanupExpiredExecutionConfirmTickets() {
   const rows = await db
     .select({ id: executionConfirmTicket.id })
     .from(executionConfirmTicket)
-    .where(and(eq(executionConfirmTicket.status, "active"), lt(executionConfirmTicket.expiresAt, nowIso)));
+    .where(
+      and(eq(executionConfirmTicket.status, "active"), lt(executionConfirmTicket.expiresAt, nowIso))
+    );
   if (rows.length === 0) return { cleaned: 0 };
   for (const row of rows) {
     await db

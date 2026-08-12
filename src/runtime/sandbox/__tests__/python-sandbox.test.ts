@@ -7,8 +7,8 @@
  */
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import { runPythonSandbox } from "../python-sandbox";
 import { _resetPythonHealthCache, checkPythonHealth } from "../python-runtime";
+import { runPythonSandbox } from "../python-sandbox";
 
 let pythonHealthy = false;
 let skipReason = "";

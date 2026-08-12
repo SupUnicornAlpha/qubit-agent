@@ -130,8 +130,7 @@ export async function executeWithPolicy<T>(
         }
       }
       if (!failure.retryable || attempt >= policy.retry.maxAttempts) break;
-      const backoff =
-        policy.retry.backoffMs * Math.pow(policy.retry.backoffMultiplier, attempt - 1);
+      const backoff = policy.retry.backoffMs * policy.retry.backoffMultiplier ** (attempt - 1);
       await Bun.sleep(backoff);
     }
   }

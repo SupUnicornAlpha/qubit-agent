@@ -6,7 +6,7 @@
  * 就拿不到 inputKind/options，对话 HITL 还会退回 approve_only。
  */
 import { describe, expect, test } from "bun:test";
-import { extractHitlHintFromText, HITL_HINT_DELIMITER } from "../hitl-hint-parse";
+import { HITL_HINT_DELIMITER, extractHitlHintFromText } from "../hitl-hint-parse";
 
 const REASON_WITH_TOOL_CALL = (hintJson: string) =>
   [
@@ -63,9 +63,7 @@ describe("extractHitlHintFromText", () => {
   });
 
   test("hitlHint JSON 无效 → null（不污染主流程）", () => {
-    const hint = extractHitlHintFromText(
-      `推理\n${HITL_HINT_DELIMITER}\n{invalid json :)`
-    );
+    const hint = extractHitlHintFromText(`推理\n${HITL_HINT_DELIMITER}\n{invalid json :)`);
     expect(hint).toBeNull();
   });
 

@@ -1,53 +1,53 @@
+import type { ServerWebSocket } from "bun";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
-import type { ServerWebSocket } from "bun";
 import { config } from "./config";
-import { workspaceRouter } from "./routes/workspace.routes";
-import { fsWorkspaceRouter } from "./routes/fs-workspace.routes";
-import { workflowRouter } from "./routes/workflow.routes";
-import { agentRouter } from "./routes/agent.routes";
-import { chatRouter } from "./routes/chat.routes";
-import { monitorRouter } from "./routes/monitor.routes";
-import { integrationsRouter } from "./routes/integrations.routes";
-import { analystRouter } from "./routes/analyst.routes";
-import { debateRouter } from "./routes/debate.routes";
-import { riskRouter } from "./routes/risk.routes";
-import { screenerRouter } from "./routes/screener.routes";
-import { geneRouter } from "./routes/gene.routes";
-import { reiaRouter } from "./routes/reia.routes";
-import { executionRouter } from "./routes/execution.routes";
-import { marketRouter } from "./routes/market.routes";
-import { strategyRuntimeRouter } from "./routes/strategy-runtime.routes";
-import { tradingEventsRouter } from "./routes/trading-events.routes";
-import { traderRouter } from "./routes/trader.routes";
-import { fsiRouter } from "./routes/fsi.routes";
-import { systemRouter } from "./routes/system.routes";
-import { primeBridgeRouter } from "./routes/prime-bridge.routes";
-import { environmentRouter } from "./routes/environment.routes";
-import { providerRouter } from "./routes/provider.routes";
-import { researchScenarioRouter } from "./routes/research-scenario.routes";
-import { factorRouter } from "./routes/factor.routes";
-import { ruleRouter } from "./routes/rule.routes";
-import { backtestJobRouter } from "./routes/backtest-job.routes";
-import { discoveryRouter } from "./routes/discovery.routes";
-import { strategyRouter } from "./routes/strategy.routes";
-import { strategyCompositionRouter } from "./routes/strategy-composition.routes";
-import { quantRouter } from "./routes/quant.routes";
-import { llmProviderRouter } from "./routes/llm-provider.routes";
-import { metaRouter } from "./routes/meta.routes";
-import { recommendationRouter } from "./routes/recommendation.routes";
-import { governanceRouter } from "./routes/governance.routes";
-import { a2aRouter } from "./routes/a2a.routes";
-import { pluginsOauthRouter } from "./routes/plugins-oauth.routes";
 import { registerBuiltinConnectors } from "./connectors/bootstrap";
-import { stepStreamBus } from "./runtime/react/event-stream";
+import { a2aRouter } from "./routes/a2a.routes";
+import { agentRouter } from "./routes/agent.routes";
+import { analystRouter } from "./routes/analyst.routes";
+import { backtestJobRouter } from "./routes/backtest-job.routes";
+import { chatRouter } from "./routes/chat.routes";
+import { debateRouter } from "./routes/debate.routes";
+import { discoveryRouter } from "./routes/discovery.routes";
+import { environmentRouter } from "./routes/environment.routes";
+import { executionRouter } from "./routes/execution.routes";
+import { factorRouter } from "./routes/factor.routes";
+import { fsWorkspaceRouter } from "./routes/fs-workspace.routes";
+import { fsiRouter } from "./routes/fsi.routes";
+import { geneRouter } from "./routes/gene.routes";
+import { governanceRouter } from "./routes/governance.routes";
+import { integrationsRouter } from "./routes/integrations.routes";
+import { llmProviderRouter } from "./routes/llm-provider.routes";
+import { marketRouter } from "./routes/market.routes";
+import { metaRouter } from "./routes/meta.routes";
+import { monitorRouter } from "./routes/monitor.routes";
+import { pluginsOauthRouter } from "./routes/plugins-oauth.routes";
+import { primeBridgeRouter } from "./routes/prime-bridge.routes";
+import { providerRouter } from "./routes/provider.routes";
+import { quantRouter } from "./routes/quant.routes";
+import { recommendationRouter } from "./routes/recommendation.routes";
+import { reiaRouter } from "./routes/reia.routes";
+import { researchScenarioRouter } from "./routes/research-scenario.routes";
+import { riskRouter } from "./routes/risk.routes";
+import { ruleRouter } from "./routes/rule.routes";
+import { screenerRouter } from "./routes/screener.routes";
+import { strategyCompositionRouter } from "./routes/strategy-composition.routes";
+import { strategyRuntimeRouter } from "./routes/strategy-runtime.routes";
+import { strategyRouter } from "./routes/strategy.routes";
+import { systemRouter } from "./routes/system.routes";
+import { traderRouter } from "./routes/trader.routes";
+import { tradingEventsRouter } from "./routes/trading-events.routes";
+import { workflowRouter } from "./routes/workflow.routes";
+import { workspaceRouter } from "./routes/workspace.routes";
 import { getMarketDataReadiness } from "./runtime/market/market-data-health";
-import { getPrimeAttachStatus } from "./runtime/prime/attach";
 import {
-  marketStreamGateway,
   type MarketStreamSubscription,
+  marketStreamGateway,
 } from "./runtime/market/market-stream-gateway";
+import { getPrimeAttachStatus } from "./runtime/prime/attach";
+import { stepStreamBus } from "./runtime/react/event-stream";
 
 void registerBuiltinConnectors();
 
@@ -228,17 +228,14 @@ export function createServer() {
           if (msg.action === "subscribe_market" && msg.subscription) {
             ws.data.marketUnsubscribe?.();
             ws.data.topic = "market";
-            ws.data.marketUnsubscribe = marketStreamGateway.subscribe(
-              msg.subscription,
-              (event) => {
-                try {
-                  ws.send(JSON.stringify({ topic: "market", payload: event }));
-                } catch {
-                  ws.data.marketUnsubscribe?.();
-                  delete ws.data.marketUnsubscribe;
-                }
+            ws.data.marketUnsubscribe = marketStreamGateway.subscribe(msg.subscription, (event) => {
+              try {
+                ws.send(JSON.stringify({ topic: "market", payload: event }));
+              } catch {
+                ws.data.marketUnsubscribe?.();
+                delete ws.data.marketUnsubscribe;
               }
-            );
+            });
             ws.send(
               JSON.stringify({
                 topic: "market",

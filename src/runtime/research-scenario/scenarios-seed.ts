@@ -154,8 +154,7 @@ export const STRATEGY_AUTHORING_SCENARIO: ResearchScenarioSpec = {
 export const FACTOR_RESEARCH_SCENARIO: ResearchScenarioSpec = {
   key: "factor_research",
   displayName: "因子研究",
-  description:
-    "围绕目标因子类别生成候选因子、计算因子值、评估 IC/IR、入库为可复用因子。",
+  description: "围绕目标因子类别生成候选因子、计算因子值、评估 IC/IR、入库为可复用因子。",
   inputSchema: {
     universe: {
       type: "enum",
@@ -496,11 +495,7 @@ export const DISCOVERY_SCENARIO: ResearchScenarioSpec = {
   },
   outputContract: {
     primary: "discovery_job_summary",
-    secondary: [
-      "factor_definition_batch",
-      "rule_definition_batch",
-      "strategy_composition_batch",
-    ],
+    secondary: ["factor_definition_batch", "rule_definition_batch", "strategy_composition_batch"],
   },
   requiredCapabilities: [
     { kind: "factor_compute", level: "required" },
