@@ -3,6 +3,13 @@
  * DOM：`html[data-qb-theme]` + `html[data-qb-style]`
  */
 
+import {
+  BUILTIN_STYLE_IDS,
+  isKnownThemeStyle,
+  loadInstalledThemeStyles,
+  type BuiltinStyleId,
+} from "./theme-registry";
+
 /** 默认风格配色：仅黑紫（浅色需求由「简洁」风格承载） */
 export const DEFAULT_PALETTE_IDS = ["dark-purple"] as const;
 export type DefaultPaletteId = (typeof DEFAULT_PALETTE_IDS)[number];
@@ -10,15 +17,9 @@ export type DefaultPaletteId = (typeof DEFAULT_PALETTE_IDS)[number];
 export const UI_PALETTE_IDS = [...DEFAULT_PALETTE_IDS] as const;
 export type UiPaletteId = (typeof UI_PALETTE_IDS)[number];
 
-export const UI_STYLE_IDS = [
-  "default",
-  "feishu-clean",
-  "industrial",
-  "bauhaus",
-  "sci-fi-hud",
-  "comic-book",
-] as const;
-export type UiStyleId = (typeof UI_STYLE_IDS)[number];
+export const UI_STYLE_IDS = BUILTIN_STYLE_IDS;
+/** 内置主题 + 已安装主题包的 id。 */
+export type UiStyleId = BuiltinStyleId | string;
 
 /** @deprecated 使用 UiPaletteId；保留别名供旧代码引用 */
 export type UiThemeId = UiPaletteId;
@@ -39,7 +40,7 @@ export function coercePaletteForStyle(_style: UiStyleId, palette: UiPaletteId): 
   return "dark-purple";
 }
 
-export const STYLE_LABELS: Record<UiStyleId, string> = {
+export const STYLE_LABELS: Record<BuiltinStyleId, string> = {
   default: "默认",
   "feishu-clean": "简洁",
   industrial: "工业设计",
@@ -73,6 +74,7 @@ export function isLightPalette(palette: UiPaletteId): boolean {
 
 export function applyUiAppearance(appearance: UiAppearance): void {
   if (typeof document === "undefined") return;
+  loadInstalledThemeStyles();
   const style = normalizeStyle(appearance.style) ?? "default";
   const palette = coercePaletteForStyle(style, appearance.palette);
   const root = document.documentElement;
@@ -132,7 +134,7 @@ function normalizePalette(v: unknown): UiPaletteId | null {
 
 function normalizeStyle(v: unknown): UiStyleId | null {
   if (typeof v !== "string") return null;
-  if (UI_STYLE_IDS.includes(v as UiStyleId)) return v as UiStyleId;
+  if (isKnownThemeStyle(v)) return v;
   return LEGACY_STYLE_MAP[v] ?? null;
 }
 
@@ -155,7 +157,11 @@ export function appearanceBootScript(): string {
   }
   function normStyle(v) {
     if (LEGACY_STYLE[v]) return LEGACY_STYLE[v];
-    return STYLES.indexOf(v) >= 0 ? v : "default";
+    if (STYLES.indexOf(v) >= 0) return v;
+    try {
+      var packs = JSON.parse(localStorage.getItem("qubit-ui-theme-packs-v1") || "[]");
+      return Array.isArray(packs) && packs.some(function (pack) { return pack && pack.id === v; }) ? v : "default";
+    } catch { return "default"; }
   }
   function normPaletteForStyle(style, v) {
     return normPalette(v);

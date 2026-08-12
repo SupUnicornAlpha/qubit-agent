@@ -6,6 +6,7 @@ import "./ide-theme.css";
 import "./theme/tokyo-night-editor.css";
 import "./qb-themes.css";
 import "./theme/quant-studio.css";
+import "./theme/quant-light.css";
 import "./theme/transitions.css";
 import "./theme/styles/feishu-clean.css";
 import "./theme/styles/industrial.css";

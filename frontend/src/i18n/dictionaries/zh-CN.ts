@@ -45,6 +45,11 @@ const pack: LocalePack = {
       mode: { simple: "简洁对话" },
       navAriaLabel: "主导航",
       style: { label: "界面风格" },
+      themePack: {
+        install: "导入主题",
+        installTitle: "导入 qubit-ui-theme JSON 主题包",
+        installFailed: "主题导入失败",
+      },
       language: { label: "界面语言", title: "界面语言" },
       restart: {
         button: "重启后端",

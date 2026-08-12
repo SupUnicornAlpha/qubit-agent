@@ -45,6 +45,11 @@ const pack: LocalePack = {
       mode: { simple: "Simple chat" },
       navAriaLabel: "Primary navigation",
       style: { label: "UI style" },
+      themePack: {
+        install: "Import theme",
+        installTitle: "Import a qubit-ui-theme JSON pack",
+        installFailed: "Theme import failed",
+      },
       language: { label: "Language", title: "Interface language" },
       restart: {
         button: "Restart backend",

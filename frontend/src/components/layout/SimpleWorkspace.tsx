@@ -2,7 +2,8 @@ import { Bell, Brain, CheckSquare2, Files, SlidersHorizontal } from "lucide-reac
 import { type FC, useEffect, useState } from "react";
 import { getOrCreateDefaultProject } from "../../api/backend";
 import { useTranslation } from "../../i18n";
-import { UI_STYLE_IDS, type UiStyleId, useAppStore } from "../../store";
+import { type UiStyleId, useAppStore } from "../../store";
+import { listThemeStyles, subscribeThemeStyles, type ThemeStyleDefinition } from "../../theme/theme-registry";
 import { ChatPanel } from "./MainContent";
 import {
   SimpleAlertsPage,
@@ -34,6 +35,7 @@ export const SimpleWorkspace: FC = () => {
   const setSelectedSessionId = useAppStore((state) => state.setSelectedSessionId);
   const { t } = useTranslation();
   const [page, setPage] = useState<SimplePage>("chat");
+  const [themeStyles, setThemeStyles] = useState<ThemeStyleDefinition[]>(() => listThemeStyles());
   const [projectId, setProjectId] = useState("");
   const [focusedWorkflowRunId, setFocusedWorkflowRunId] = useState<string | null>(null);
 
@@ -52,6 +54,8 @@ export const SimpleWorkspace: FC = () => {
       disposed = true;
     };
   }, []);
+
+  useEffect(() => subscribeThemeStyles(() => setThemeStyles(listThemeStyles())), []);
 
   const openTaskConversation = (sessionId: string, workflowRunId: string) => {
     setSelectedSessionId(sessionId);
@@ -105,9 +109,9 @@ export const SimpleWorkspace: FC = () => {
             aria-label={t("topbar.style.label")}
             onChange={(event) => setUiStyle(event.target.value as UiStyleId)}
           >
-            {UI_STYLE_IDS.map((styleId) => (
-              <option key={styleId} value={styleId}>
-                {t(`theme.styles.${styleId}`)}
+            {themeStyles.map((style) => (
+              <option key={style.id} value={style.id}>
+                {style.builtin ? t(`theme.styles.${style.id}`) : style.name}
               </option>
             ))}
           </select>
