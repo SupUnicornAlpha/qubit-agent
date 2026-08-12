@@ -349,6 +349,18 @@ fn update_menu_bar_summary(
     }
 }
 
+/**
+ * 菜单栏快速对话是一个无边框浮窗：关闭时隐藏而非销毁，避免 WebView close 在
+ * macOS 菜单栏场景下被系统吞掉，也便于下次菜单点击直接复用同一窗口。
+ */
+#[tauri::command]
+fn hide_menu_bar_quick_chat(handle: tauri::AppHandle) -> Result<(), String> {
+    let Some(window) = handle.get_webview_window("menu-bar-quick-chat") else {
+        return Ok(());
+    };
+    window.hide().map_err(|e| e.to_string())
+}
+
 fn backend_url() -> String {
     format!("http://127.0.0.1:{BACKEND_PORT}")
 }
@@ -759,7 +771,8 @@ pub fn run() {
             stop_backend,
             restart_backend,
             backend_status,
-            update_menu_bar_summary
+            update_menu_bar_summary,
+            hide_menu_bar_quick_chat
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

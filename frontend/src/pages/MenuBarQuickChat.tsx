@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FC, type FormEvent } from "react";
 import { ArrowUp, X } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import {
   createChatSession,
   createConversationTurn,
@@ -10,8 +11,13 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 
 type LatestSession = { id: string; title: string | null };
 
-function closeQuickChat() {
-  void getCurrentWindow().close().catch(() => window.close());
+async function closeQuickChat() {
+  try {
+    await invoke("hide_menu_bar_quick_chat");
+  } catch {
+    // 浏览器预览 / 老版本桌面端继续保留前端窗口 API 兜底。
+    await getCurrentWindow().hide().catch(() => window.close());
+  }
 }
 
 /** macOS 菜单栏唤起的轻量输入窗：只投递到默认项目的最新会话。 */
@@ -27,6 +33,14 @@ export const MenuBarQuickChat: FC = () => {
     document.body.classList.add("qb-menu-bar-quick-chat-body");
     inputRef.current?.focus();
     return () => document.body.classList.remove("qb-menu-bar-quick-chat-body");
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") void closeQuickChat();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
   useEffect(() => {
@@ -80,7 +94,7 @@ export const MenuBarQuickChat: FC = () => {
       });
       setInput("");
       setStatus("已发送到最近会话");
-      window.setTimeout(closeQuickChat, 500);
+      window.setTimeout(() => void closeQuickChat(), 500);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "发送失败");
     } finally {
@@ -93,7 +107,12 @@ export const MenuBarQuickChat: FC = () => {
       <form onSubmit={onSubmit}>
         <div className="qb-menu-bar-quick-chat__meta">
           <span>发送到最近会话{session?.title ? ` · ${session.title}` : ""}</span>
-          <button type="button" onClick={closeQuickChat} aria-label="关闭快速对话" title="关闭">
+          <button
+            type="button"
+            onClick={() => void closeQuickChat()}
+            aria-label="关闭快速对话"
+            title="关闭（Esc）"
+          >
             <X size={15} aria-hidden />
           </button>
         </div>

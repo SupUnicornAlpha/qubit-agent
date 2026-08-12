@@ -1,4 +1,4 @@
 [[permission]]
 identifier = "allow-backend-commands"
 description = "Allow QUBIT desktop app to control its backend sidecar and update the macOS menu bar."
-commands.allow = ["start_backend", "stop_backend", "restart_backend", "backend_status", "update_menu_bar_summary"]
+commands.allow = ["start_backend", "stop_backend", "restart_backend", "backend_status", "update_menu_bar_summary", "hide_menu_bar_quick_chat"]
