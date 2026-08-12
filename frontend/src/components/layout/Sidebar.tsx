@@ -30,6 +30,7 @@ const CONFIG_CENTER_SUB: readonly { id: ConfigSubPage; i18nKey: string }[] = [
   { id: "integration", i18nKey: "sidebar.config.integration" },
   { id: "schedule", i18nKey: "sidebar.config.schedule" },
   { id: "env", i18nKey: "sidebar.config.env" },
+  { id: "theme", i18nKey: "sidebar.config.theme" },
 ];
 
 /** 专业壳页面入口：与 registry 同源，永不露出独立对话页。 */

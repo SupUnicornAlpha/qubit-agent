@@ -866,7 +866,7 @@ const BacktestResultView: FC<{
       ) : null}
       {job.evaluation ? (
         <div
-          className="qb-quant-hero-card"
+          className="qb-quant-hero-card qb-quant-expandable-panel qb-quant-gate-panel"
           style={{ display: "flex", flexDirection: "column", gap: 10 }}
         >
           <div

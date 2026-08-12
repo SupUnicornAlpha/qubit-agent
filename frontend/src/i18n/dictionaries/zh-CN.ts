@@ -191,6 +191,7 @@ const pack: LocalePack = {
         integration: "集成 / IM",
         schedule: "定时任务",
         env: "环境管理",
+        theme: "主题管理",
       },
     },
     theme: {

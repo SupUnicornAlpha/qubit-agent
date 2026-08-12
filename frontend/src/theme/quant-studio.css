@@ -220,14 +220,13 @@ html[data-qb-theme="dark-purple"] {
 /* 绩效画像与基因池是可变长度的数据面板。不能继承紧凑 hero 卡片的裁剪，
  * 否则在较矮的工作台窗口里会只显示标题而把指标行截掉。 */
 .qb-quant-performance-diagnostics,
-.qb-quant-evolution-panel {
+.qb-quant-expandable-panel {
+  flex: 0 0 auto;
   height: auto;
   min-height: max-content;
   max-height: none;
-}
-
-.qb-quant-performance-diagnostics {
   overflow: visible;
+  contain: none;
 }
 
 .qb-quant-performance-grid {

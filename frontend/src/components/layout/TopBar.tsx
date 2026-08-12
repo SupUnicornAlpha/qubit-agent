@@ -1,15 +1,10 @@
-import type { ChangeEvent, CSSProperties, FC } from "react";
+import type { CSSProperties, FC } from "react";
 import { useEffect, useState } from "react";
 import { PACKAGED_BACKEND_URL } from "../../api/packaged-backend";
 import { isTauriEnv, tauriRestartBackend, waitForTauriBackendHealth } from "../../api/tauri";
 import { LanguageSwitcher, useTranslation } from "../../i18n";
 import { type UiStyleId, useAppStore } from "../../store";
-import {
-  installThemePack,
-  listThemeStyles,
-  subscribeThemeStyles,
-  type ThemeStyleDefinition,
-} from "../../theme/theme-registry";
+import { listThemeStyles, subscribeThemeStyles, type ThemeStyleDefinition } from "../../theme/theme-registry";
 
 export const TopBar: FC = () => {
   const connected = useAppStore((s) => s.backendConnected);
@@ -23,23 +18,9 @@ export const TopBar: FC = () => {
   const [restarting, setRestarting] = useState(false);
   const [brandImageFailed, setBrandImageFailed] = useState(false);
   const [themeStyles, setThemeStyles] = useState<ThemeStyleDefinition[]>(() => listThemeStyles());
-  const [themeImportError, setThemeImportError] = useState<string | null>(null);
   const inTauri = isTauriEnv();
 
   useEffect(() => subscribeThemeStyles(() => setThemeStyles(listThemeStyles())), []);
-
-  const onThemePackSelected = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    try {
-      const manifest = installThemePack(JSON.parse(await file.text()));
-      setThemeImportError(null);
-      setUiStyle(manifest.id);
-    } catch (error) {
-      setThemeImportError(error instanceof Error ? error.message : t("topbar.themePack.installFailed"));
-    }
-  };
 
   const onRestartBackend = async () => {
     if (!inTauri || restarting) return;
@@ -118,11 +99,6 @@ export const TopBar: FC = () => {
             </option>
           ))}
         </select>
-        <label className="qb-theme-install-btn" style={styles.themeInstall} title={t("topbar.themePack.installTitle")}>
-          {t("topbar.themePack.install")}
-          <input type="file" accept="application/json,.json" onChange={(event) => void onThemePackSelected(event)} hidden />
-        </label>
-        {themeImportError ? <span style={styles.themeError} title={themeImportError}>{t("topbar.themePack.installFailed")}</span> : null}
         <LanguageSwitcher />
       </div>
       <span className="qb-topbar__divider" aria-hidden />
@@ -245,14 +221,4 @@ const styles: Record<string, CSSProperties> = {
     color: "#d4d4d8",
     cursor: "pointer",
   },
-  themeInstall: {
-    cursor: "pointer",
-    fontSize: 11,
-    padding: "4px 8px",
-    borderRadius: 6,
-    border: "1px solid var(--qb-main-input-border, rgba(255,255,255,0.12))",
-    color: "var(--qb-body-fg, #d4d4d8)",
-    whiteSpace: "nowrap",
-  },
-  themeError: { color: "var(--qb-error, #dc5d62)", fontSize: 10, whiteSpace: "nowrap" },
 };

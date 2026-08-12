@@ -224,7 +224,8 @@ export type ConfigSubPage =
   | "schedule"
   | "providers"
   | "runtime"
-  | "env";
+  | "env"
+  | "theme";
 
 export interface AppState {
   backendConnected: boolean;

@@ -16,6 +16,7 @@ import { LlmProvidersList } from "../components/config/LlmProvidersList";
 import { OriginBadge } from "../components/common/OriginBadge";
 import { PythonRuntimeCard } from "../components/common/PythonRuntimeCard";
 import { EnvironmentPanel } from "../components/environment/EnvironmentPanel";
+import { ThemeManagementPanel } from "../components/config/ThemeManagementPanel";
 
 import { styles } from "./_shared/legacyMainStyles";
 
@@ -1025,6 +1026,7 @@ export const ConfigPanel: FC = () => {
             ["schedule", "定时任务"],
             ["runtime", "运行时"],
             ["env", "环境管理"],
+            ["theme", "主题管理"],
           ] as const
         ).map(([id, label]) => (
           <button
@@ -2509,6 +2511,7 @@ export const ConfigPanel: FC = () => {
         ) : null}
         {activeConfigSubPage === "providers" ? <ProvidersPanel /> : null}
         {activeConfigSubPage === "env" ? <EnvironmentPanel /> : null}
+        {activeConfigSubPage === "theme" ? <ThemeManagementPanel /> : null}
         {activeConfigSubPage === "integration" ? (
           <IntegrationCenterPanel
             workspaceId={currentWorkspaceId || undefined}
@@ -2588,4 +2591,3 @@ export const ConfigPanel: FC = () => {
     </div>
   );
 };
-

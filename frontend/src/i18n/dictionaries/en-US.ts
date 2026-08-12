@@ -191,6 +191,7 @@ const pack: LocalePack = {
         integration: "Integrations / IM",
         schedule: "Scheduled jobs",
         env: "Environment",
+        theme: "Theme management",
       },
     },
     theme: {

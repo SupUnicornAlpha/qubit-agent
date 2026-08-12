@@ -1,6 +1,6 @@
 # 可安装主题包
 
-QUBIT 的主题包是一个不执行 JavaScript 的 JSON 文件。主题作者提供全局视觉 token、量化工坊 token 和可选的作用域 CSS；用户在顶部栏点击“导入主题”后立即安装并切换。安装内容保存在本机浏览器/桌面应用的 localStorage，不会上传到后端。
+QUBIT 的主题包是一个不执行 JavaScript 的 JSON 文件。主题作者提供全局视觉 token、量化工坊 token 和可选的作用域 CSS；用户在 IDE 的「配置中心 → 主题管理」导入、切换、更新或卸载主题。安装内容保存在本机浏览器/桌面应用的 localStorage，不会上传到后端。
 
 可复制 [示例主题包](../examples/qubit-theme-pack.example.json) 作为起点。
 

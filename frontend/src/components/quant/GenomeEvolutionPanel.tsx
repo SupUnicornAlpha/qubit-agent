@@ -107,7 +107,7 @@ export const GenomeEvolutionPanel: FC<{ projectId: string }> = ({ projectId }) =
 
   if (generations.length === 0) {
     return (
-      <section className="qb-quant-hero-card qb-quant-evolution-panel" style={styles.panel}>
+      <section className="qb-quant-hero-card qb-quant-expandable-panel qb-quant-evolution-panel" style={styles.panel}>
         <div style={styles.header}>
           <div>
             <strong>自进化 / 基因池</strong>
@@ -124,13 +124,17 @@ export const GenomeEvolutionPanel: FC<{ projectId: string }> = ({ projectId }) =
             {busy === "init" ? "初始化中…" : "初始化 8 个体"}
           </button>
         </div>
+        <div style={styles.emptyState}>
+          <strong>尚未初始化基因池</strong>
+          <span>初始化后会生成 8 个候选个体；每个个体都必须完成回测，并通过收益、尾部风险、稳定性与基准相对表现的多维准入。</span>
+        </div>
         {error ? <div style={styles.error}>{error}</div> : null}
       </section>
     );
   }
 
   return (
-    <section className="qb-quant-hero-card qb-quant-evolution-panel" style={styles.panel}>
+    <section className="qb-quant-hero-card qb-quant-expandable-panel qb-quant-evolution-panel" style={styles.panel}>
       <div style={styles.header}>
         <div>
           <strong>自进化 / 基因池</strong>
@@ -319,4 +323,14 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 10,
   },
   error: { color: "var(--qb-danger, #dc5d62)", fontSize: 11, padding: "6px 0" },
+  emptyState: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 5,
+    padding: "10px 12px",
+    border: "1px dashed var(--qb-border-subtle)",
+    color: "var(--qb-text-muted)",
+    fontSize: 11,
+    lineHeight: 1.55,
+  },
 };
