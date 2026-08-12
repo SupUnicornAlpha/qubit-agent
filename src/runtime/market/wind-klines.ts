@@ -43,7 +43,7 @@ export function windConfigFromSettings(settings: BuiltinConnectorInitConfigs): W
     typeof data.windPassword === "string" && data.windPassword.trim()
       ? data.windPassword.trim()
       : undefined;
-  const autoLogin = data.windAutoLogin === false ? false : true;
+  const autoLogin = data.windAutoLogin !== false;
   const startWaitSec =
     typeof data.windStartWaitSec === "number" && Number.isFinite(data.windStartWaitSec)
       ? Math.max(10, Math.min(300, Math.floor(data.windStartWaitSec)))

@@ -117,9 +117,7 @@ export async function rejectSkillPromotion(
       visibility: "project_shared",
       contentJson: {
         summary: `驳回 promoted skill "${row.name}"`,
-        body:
-          (opts.reason && opts.reason.trim().length > 0 ? opts.reason.trim() : "（无理由说明）") +
-          `\n\nsignature: ${signature}\nskillId: ${skillId}`,
+        body: `${opts.reason && opts.reason.trim().length > 0 ? opts.reason.trim() : "（无理由说明）"}\n\nsignature: ${signature}\nskillId: ${skillId}`,
       },
       tagsJson: ["promoter", "reject", `actor:${opts.actor ?? "user"}`],
       metadataJson: { signature, rejectedSkillId: skillId, actor: opts.actor ?? "user" },

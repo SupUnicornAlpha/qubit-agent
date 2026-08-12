@@ -153,7 +153,7 @@ async function seedReflective(body: string): Promise<void> {
 describe("ToolGapWatcher.runOnce", () => {
   test("1) 3 路 detector 都命中 → 各自折叠后 INSERT 不同 signature", async () => {
     await seedToolCall("get_weather", "unknown tool: get_weather");
-    for (let i = 0; i < 3; i++) await seedToolCall("flaky", "boom " + i);
+    for (let i = 0; i < 3; i++) await seedToolCall("flaky", `boom ${i}`);
     await seedReflective("反思：需要一个实时期权链工具，否则无法做对冲。");
 
     const watcher = new ToolGapWatcher();
@@ -218,7 +218,7 @@ describe("ToolGapWatcher.runOnce", () => {
   test("4) 同 signature 多 signal → 用优先级最高 detection_kind 作代表", async () => {
     // signature='tool:flaky' 被 unknown_tool（高） + repeated_fail（低）同时命中
     for (let i = 0; i < 3; i++) {
-      await seedToolCall("flaky", "unknown tool: flaky " + i);
+      await seedToolCall("flaky", `unknown tool: flaky ${i}`);
     }
     const watcher = new ToolGapWatcher();
     await watcher.runOnce({ projectId: fx.projectId, emitMetrics: false });

@@ -244,7 +244,7 @@ describe("detectRepeatedFail", () => {
 
   test("3 次 error → 一条 repeated_fail signal", async () => {
     for (let i = 0; i < 3; i++) {
-      await seedToolCall("flaky", "builtin", "error", "boom " + i);
+      await seedToolCall("flaky", "builtin", "error", `boom ${i}`);
     }
     const r = await detectRepeatedFail({ projectId: fx.projectId, ...window });
     expect(r.signals.length).toBe(1);

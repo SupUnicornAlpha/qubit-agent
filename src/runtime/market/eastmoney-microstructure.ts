@@ -157,22 +157,32 @@ export async function fetchEastMoneyQuote(
   const data = await fetchQuotePayload(params.symbol, params.exchange ?? "", settings);
   const timestamp = responseTimestamp(data.f86);
   const lastPrice = scaledPrice(data.f43);
+  const open = scaledPrice(data.f46);
+  const high = scaledPrice(data.f44);
+  const low = scaledPrice(data.f45);
+  const previousClose = scaledPrice(data.f60);
+  const volume = finite(data.f47);
+  const turnover = finite(data.f48);
+  const bidPrice = scaledPrice(data.f19);
+  const bidVolume = finite(data.f20);
+  const askPrice = scaledPrice(data.f39);
+  const askVolume = finite(data.f40);
   if (lastPrice === undefined) throw new Error("eastmoney quote unavailable: missing last price");
   return {
     symbol: params.symbol,
     exchange: params.exchange || "UNKNOWN",
     source: "eastmoney",
     lastPrice,
-    ...(scaledPrice(data.f46) !== undefined ? { open: scaledPrice(data.f46)! } : {}),
-    ...(scaledPrice(data.f44) !== undefined ? { high: scaledPrice(data.f44)! } : {}),
-    ...(scaledPrice(data.f45) !== undefined ? { low: scaledPrice(data.f45)! } : {}),
-    ...(scaledPrice(data.f60) !== undefined ? { previousClose: scaledPrice(data.f60)! } : {}),
-    ...(finite(data.f47) !== undefined ? { volume: finite(data.f47)! } : {}),
-    ...(finite(data.f48) !== undefined ? { turnover: finite(data.f48)! } : {}),
-    ...(scaledPrice(data.f19) !== undefined ? { bidPrice: scaledPrice(data.f19)! } : {}),
-    ...(finite(data.f20) !== undefined ? { bidVolume: finite(data.f20)! } : {}),
-    ...(scaledPrice(data.f39) !== undefined ? { askPrice: scaledPrice(data.f39)! } : {}),
-    ...(finite(data.f40) !== undefined ? { askVolume: finite(data.f40)! } : {}),
+    ...(open !== undefined ? { open } : {}),
+    ...(high !== undefined ? { high } : {}),
+    ...(low !== undefined ? { low } : {}),
+    ...(previousClose !== undefined ? { previousClose } : {}),
+    ...(volume !== undefined ? { volume } : {}),
+    ...(turnover !== undefined ? { turnover } : {}),
+    ...(bidPrice !== undefined ? { bidPrice } : {}),
+    ...(bidVolume !== undefined ? { bidVolume } : {}),
+    ...(askPrice !== undefined ? { askPrice } : {}),
+    ...(askVolume !== undefined ? { askVolume } : {}),
     timestamp,
     freshnessMs: Math.max(0, Date.now() - Date.parse(timestamp)),
   };

@@ -1,3 +1,4 @@
+import type { Stats } from "node:fs";
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { WorkspacePathError, joinRoot, resolveInsideRoot } from "./path-safety";
@@ -247,7 +248,7 @@ async function walkDir(
     if (name === ".DS_Store") continue;
     const childRel = relPosix ? `${relPosix}/${name}` : name;
     const abs = join(absDir, name);
-    let st;
+    let st: Stats;
     try {
       st = await stat(abs);
     } catch {

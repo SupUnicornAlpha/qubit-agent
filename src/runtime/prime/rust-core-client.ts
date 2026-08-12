@@ -268,9 +268,7 @@ export class RustCoreClient implements CoreRuntime {
         streak += 1;
         if (streak >= streakNeed) {
           console.warn(
-            `[prime-core] orphan turn ${turnId}: active_turns=0` +
-              (registered === null ? "" : ` registered_turns=${registered}`) +
-              ` for ${streak}s — failTurn`
+            `[prime-core] orphan turn ${turnId}: active_turns=0${registered === null ? "" : ` registered_turns=${registered}`} for ${streak}s — failTurn`
           );
           try {
             await this.failTurn({ session_id: sessionId, turn_id: turnId });

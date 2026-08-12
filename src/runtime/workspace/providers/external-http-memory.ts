@@ -32,9 +32,7 @@ function requireConfig(ref: ProviderRef): HttpProviderConfig {
   const cfg = readHttpProviderConfig(ref);
   if (!cfg) {
     throw new Error(
-      `${EXTERNAL_HTTP_MEMORY_KIND} requires providers.memory.config.baseUrl ` +
-        "(or set in .qubit/providers/memory.json). Example: " +
-        `{ "kind": "external.http_memory", "config": { "baseUrl": "http://127.0.0.1:8099" } }`
+      `${EXTERNAL_HTTP_MEMORY_KIND} requires providers.memory.config.baseUrl (or set in .qubit/providers/memory.json). Example: { "kind": "external.http_memory", "config": { "baseUrl": "http://127.0.0.1:8099" } }`
     );
   }
   return cfg;

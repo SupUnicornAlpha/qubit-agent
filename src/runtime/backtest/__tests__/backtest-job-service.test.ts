@@ -115,8 +115,9 @@ describe("BacktestJobService", () => {
     expect(ran.providerId).toBe("stub_bt");
     expect(ran.endedAt).not.toBeNull();
     expect(ran.evaluation).not.toBeNull();
-    expect(ran.evaluation?.checks).toHaveLength(5);
+    expect(ran.evaluation?.checks).toHaveLength(9);
     expect(ran.evaluation?.checks.find((check) => check.key === "net_sharpe")?.pass).toBe(true);
+    expect(ran.evaluation?.checks.find((check) => check.key === "cvar95")?.pass).toBe(false);
     expect(ran.evaluation?.pass).toBe(false);
 
     const db = await getDb();

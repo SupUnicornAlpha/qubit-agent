@@ -111,15 +111,14 @@ export const SKELETON_DIRS = [
   "runs",
 ] as const;
 
-export const GITIGNORE_TEMPLATE =
-  [
-    "*.local.md",
-    "*.local.json",
-    ".qubit/settings.local.json",
-    ".qubit/locks/",
-    "memory/index/",
-    ".DS_Store",
-  ].join("\n") + "\n";
+export const GITIGNORE_TEMPLATE = `${[
+  "*.local.md",
+  "*.local.json",
+  ".qubit/settings.local.json",
+  ".qubit/locks/",
+  "memory/index/",
+  ".DS_Store",
+].join("\n")}\n`;
 
 export const QUBIT_MD_TEMPLATE = (name: string) => `# ${name}
 

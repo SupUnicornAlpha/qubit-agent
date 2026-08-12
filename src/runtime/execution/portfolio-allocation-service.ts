@@ -161,7 +161,7 @@ export function allocatePortfolio(
   });
   const convictionTotal = convictions.reduce((sum, value) => sum + value, 0);
   const weights = candidates.map((candidate, index) => {
-    const unconstrained = resolved.grossLimit * (convictions[index]! / convictionTotal);
+    const unconstrained = resolved.grossLimit * ((convictions[index] ?? 0) / convictionTotal);
     const candidateCap =
       candidate.proposedWeight == null || !Number.isFinite(candidate.proposedWeight)
         ? resolved.perPositionMax
@@ -177,12 +177,12 @@ export function allocatePortfolio(
     sectorIndexes.set(sector, indexes);
   });
   for (const [sector, indexes] of sectorIndexes) {
-    const gross = indexes.reduce((sum, index) => sum + weights[index]!, 0);
+    const gross = indexes.reduce((sum, index) => sum + (weights[index] ?? 0), 0);
     if (gross <= resolved.maxSectorGross) continue;
     const scale = resolved.maxSectorGross / gross;
-    indexes.forEach((index) => {
-      weights[index] = weights[index]! * scale;
-    });
+    for (const index of indexes) {
+      weights[index] = (weights[index] ?? 0) * scale;
+    }
     warnings.push(`sector cap applied: ${sector}`);
   }
 
@@ -190,7 +190,7 @@ export function allocatePortfolio(
     stopDistancePct(candidate, resolved.defaultStopDistancePct)
   );
   const estimatedRisk = weights.reduce(
-    (sum, weight, index) => sum + weight * riskDistances[index]!,
+    (sum, weight, index) => sum + weight * (riskDistances[index] ?? 0),
     0
   );
   if (estimatedRisk > resolved.totalRiskBudget) {
@@ -207,7 +207,10 @@ export function allocatePortfolio(
   );
 
   const rows = candidates.map((candidate, index): PortfolioAllocationRow => {
-    const signedWeight = weights[index]! * (candidate.side === "short" ? -1 : 1);
+    const weight = weights[index] ?? 0;
+    const riskDistance = riskDistances[index] ?? 0;
+    const sector = sectors[index] ?? "UNKNOWN";
+    const signedWeight = weight * (candidate.side === "short" ? -1 : 1);
     const targetNotional = signedWeight * resolved.capital;
     const targetQty = targetNotional / candidate.price;
     const currentQty = Number.isFinite(candidate.currentQty) ? Number(candidate.currentQty) : 0;
@@ -220,14 +223,14 @@ export function allocatePortfolio(
       targetQty: round(targetQty),
       currentQty: round(currentQty),
       rebalanceQty: round(targetQty - currentQty),
-      riskContributionPct: round(weights[index]! * riskDistances[index]!),
-      sector: sectors[index]!,
+      riskContributionPct: round(weight * riskDistance),
+      sector,
       beta: Number.isFinite(candidate.beta) ? Number(candidate.beta) : 1,
     };
   });
   const exposures = buildExposureReport(rows, candidates, config.correlationMatrix);
   exposures.estimatedLossAtStopsPct = round(
-    weights.reduce((sum, weight, index) => sum + weight * riskDistances[index]!, 0)
+    weights.reduce((sum, weight, index) => sum + weight * (riskDistances[index] ?? 0), 0)
   );
   return { asof: new Date().toISOString(), config: resolved, rows, exposures, warnings };
 }
@@ -292,9 +295,10 @@ function buildExposureReport(
     exposure.style,
     exposure.factor,
   ]) {
-    Object.keys(record).forEach((key) => {
-      record[key] = round(record[key]!);
-    });
+    for (const key of Object.keys(record)) {
+      const value = record[key];
+      if (value !== undefined) record[key] = round(value);
+    }
   }
   exposure.longGross = round(exposure.longGross);
   exposure.shortGross = round(exposure.shortGross);

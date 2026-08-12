@@ -132,8 +132,7 @@ export async function setWorkflowState(
   const transitionAllowed = previous == null || isAllowedTransition(previous, toStatus);
   if (!transitionAllowed) {
     console.warn(
-      `[workflow-state] illegal transition: ${previous} → ${toStatus} (workflowId=${workflowId})` +
-        (options.reason ? ` reason=${options.reason}` : "")
+      `[workflow-state] illegal transition: ${previous} → ${toStatus} (workflowId=${workflowId})${options.reason ? ` reason=${options.reason}` : ""}`
     );
   }
 

@@ -799,10 +799,7 @@ export async function runReactLoop(params: RunReactLoopParams): Promise<RunReact
           recoveryCount,
           suggestedTool: recovery.nextTool,
           draftParams: recovery.draftParams ?? {},
-          message:
-            "连续回合没有新的成功工具证据，但场景研究地板仍未满足。" +
-            "请立刻调用下一跳写工具，不要继续口述计划。\n" +
-            recovery.hint,
+          message: `连续回合没有新的成功工具证据，但场景研究地板仍未满足。请立刻调用下一跳写工具，不要继续口述计划。\n${recovery.hint}`,
         };
         effectiveParams.emit({
           runId: effectiveParams.runId,

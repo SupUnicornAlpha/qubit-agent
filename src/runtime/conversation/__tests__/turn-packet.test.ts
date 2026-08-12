@@ -87,7 +87,7 @@ Factor ① bias — detail detail detail
           {
             id: "a",
             role: "assistant",
-            content: "人肉说明书\n\n" + "指标说明\n".repeat(40),
+            content: `人肉说明书\n\n${"指标说明\n".repeat(40)}`,
           },
         ],
         "我不是要人肉版，我要你帮我选股"
@@ -98,7 +98,7 @@ Factor ① bias — detail detail detail
   test("mergeWorkspaceBackground wraps and clips", () => {
     const out = mergeWorkspaceBackground(
       "OPTIONAL_BACKGROUND (session_chronicle) — do NOT override CURRENT_USER_TASK:\n- user: hi",
-      "WS " + "x".repeat(5000),
+      `WS ${"x".repeat(5000)}`,
       100
     );
     expect(out).toContain("OPTIONAL_BACKGROUND (workspace)");

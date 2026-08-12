@@ -29,6 +29,10 @@ const DEFAULT_STALL_TOOLS = [
   "mcp:investor-agent:get_stock_info",
 ] as const;
 
+function baseToolName(toolName: string): string {
+  return toolName.split("/").at(-1) ?? toolName;
+}
+
 export function applyToolSurface(input: {
   tools: readonly string[];
   snapshot: ScenarioRuntimeSnapshot;
@@ -42,7 +46,7 @@ export function applyToolSurface(input: {
   if (role === "orchestrator" && snapshot.recipe?.roleToolAllowlist?.orchestrator) {
     const allow = new Set(snapshot.recipe.roleToolAllowlist.orchestrator);
     next = next.filter((toolName) => {
-      const base = toolName.includes("/") ? toolName.split("/").pop()! : toolName;
+      const base = baseToolName(toolName);
       if (allow.has(toolName) || allow.has(base)) return true;
       if (base.startsWith("topology.") || base === "update_plan") return true;
       if (
@@ -67,7 +71,7 @@ export function applyToolSurface(input: {
       snapshot.factorDefinitionCount === 0
     ) {
       next = next.filter((toolName) => {
-        const base = toolName.includes("/") ? toolName.split("/").pop()! : toolName;
+        const base = baseToolName(toolName);
         return base === "factor.register" || toolName === "factor.register";
       });
     }
@@ -105,14 +109,14 @@ export function applyToolSurface(input: {
       snapshot.scenarioKey === "research_theme" ||
       snapshot.recipe?.key === "research") &&
     snapshot.attemptedTools.some((t) => {
-      const base = t.includes("/") ? t.split("/").pop()! : t;
+      const base = baseToolName(t);
       return base === "fetch_klines" || base === "fetch_quote" || base === "fetch_bars";
     }) &&
     snapshot.notAttemptedCapabilities.includes("news")
   ) {
     const prefer = new Set(["fetch_news", "fetch_news_sentiment"]);
     const narrowed = next.filter((toolName) => {
-      const base = toolName.includes("/") ? toolName.split("/").pop()! : toolName;
+      const base = baseToolName(toolName);
       return prefer.has(base) || prefer.has(toolName);
     });
     if (narrowed.length > 0) {
@@ -122,7 +126,7 @@ export function applyToolSurface(input: {
       // Strip quote churn from the authorized input surface instead.
       const source = next.length > 0 ? next : [...tools];
       next = source.filter((toolName) => {
-        const base = toolName.includes("/") ? toolName.split("/").pop()! : toolName;
+        const base = baseToolName(toolName);
         return (
           base !== "fetch_klines" &&
           base !== "fetch_quote" &&
@@ -149,7 +153,7 @@ export function applyToolSurface(input: {
   ) {
     const prefer = new Set(["recommendation.record", "fetch_klines", "fetch_bars", "get_quote"]);
     const narrowed = next.filter((toolName) => {
-      const base = toolName.includes("/") ? toolName.split("/").pop()! : toolName;
+      const base = baseToolName(toolName);
       return prefer.has(base) || prefer.has(toolName);
     });
     if (narrowed.length > 0) next = narrowed;
@@ -162,7 +166,7 @@ export function applyToolSurface(input: {
   // rule.evaluate looks like "risk" for B-1 aliases but does not write risk_decision for an intent.
   if (isLive && snapshot.missingArtifactTables.includes("order_intent")) {
     next = next.filter((toolName) => {
-      const base = toolName.includes("/") ? toolName.split("/").pop()! : toolName;
+      const base = baseToolName(toolName);
       return (
         base !== "submit_order" &&
         !toolName.endsWith("/submit_order") &&
@@ -177,7 +181,7 @@ export function applyToolSurface(input: {
   // Live trading: never advertise order before a strategy version exists.
   if (isLive && !snapshot.strategyVersionId) {
     next = next.filter((toolName) => {
-      const base = toolName.includes("/") ? toolName.split("/").pop()! : toolName;
+      const base = baseToolName(toolName);
       return base !== "order.create_intent" && toolName !== "order.create_intent";
     });
   }
@@ -195,14 +199,14 @@ export function applyToolSurface(input: {
     if (openOrder) {
       const prefer = new Set(["order.create_intent"]);
       const narrowed = next.filter((toolName) => {
-        const base = toolName.includes("/") ? toolName.split("/").pop()! : toolName;
+        const base = baseToolName(toolName);
         return prefer.has(base) || prefer.has(toolName);
       });
       if (narrowed.length > 0) next = narrowed;
     } else if (openStrategyCompose) {
       const prefer = new Set(["strategy.compose", "backtest.run"]);
       const narrowed = next.filter((toolName) => {
-        const base = toolName.includes("/") ? toolName.split("/").pop()! : toolName;
+        const base = baseToolName(toolName);
         return prefer.has(base) || prefer.has(toolName);
       });
       if (narrowed.length > 0) next = narrowed;
@@ -220,7 +224,7 @@ export function applyToolSurface(input: {
   // stall tools that just exhausted their budget.
   if (next.length > 0) return next;
   const strippedStall = tools.filter((toolName) => {
-    const base = toolName.includes("/") ? toolName.split("/").pop()! : toolName;
+    const base = baseToolName(toolName);
     const budgetTools = new Set(snapshot.recipe?.stallBudget.tools ?? DEFAULT_STALL_TOOLS);
     return !budgetTools.has(base) && !budgetTools.has(toolName);
   });
@@ -236,7 +240,7 @@ function applyStallBudgetStrip(input: {
   const maxSuccess = input.recipe?.stallBudget.maxSuccess ?? 1;
   const successCounts = countToolSuccesses(input.snapshot.successfulTools);
   return input.tools.filter((toolName) => {
-    const base = toolName.includes("/") ? toolName.split("/").pop()! : toolName;
+    const base = baseToolName(toolName);
     if (!budgetTools.has(base) && !budgetTools.has(toolName)) return true;
     const stillNeeded = input.snapshot.notAttemptedCapabilities.some((capability) =>
       toolMatchesRequiredCapability(toolName, capability)
@@ -257,7 +261,7 @@ function applyStallBudgetStrip(input: {
 function countToolSuccesses(successfulTools: readonly string[]): Map<string, number> {
   const map = new Map<string, number>();
   for (const tool of successfulTools) {
-    const base = tool.includes("/") ? tool.split("/").pop()! : tool;
+    const base = baseToolName(tool);
     map.set(tool, (map.get(tool) ?? 0) + 1);
     map.set(base, (map.get(base) ?? 0) + 1);
   }

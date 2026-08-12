@@ -98,19 +98,27 @@ function getIntArg(arg: Series | number, name: string): number {
   throw new ExprEvalError("invalid_window", `${name} window must be a numeric literal`);
 }
 
+function requireArg(args: Array<Series | number>, index: number, name: string): Series | number {
+  const arg = args[index];
+  if (arg === undefined) {
+    throw new ExprEvalError("invalid_arguments", `${name} is missing argument ${index + 1}`);
+  }
+  return arg;
+}
+
 // ─── 算子实现 ───────────────────────────────────────────────────────────────
 
 const OPS: Record<string, (args: Array<Series | number>, n: number) => Series | number> = {
   Ref(args, n) {
     const x = args[0] as Series;
-    const k = getIntArg(args[1]!, "Ref");
+    const k = getIntArg(requireArg(args, 1, "Ref"), "Ref");
     const out: Series = new Array(n);
-    for (let i = 0; i < n; i++) out[i] = i - k >= 0 ? x[i - k]! : null;
+    for (let i = 0; i < n; i++) out[i] = i - k >= 0 ? (x[i - k] ?? null) : null;
     return out;
   },
   Mean(args, _n) {
     const x = args[0] as Series;
-    const w = getIntArg(args[1]!, "Mean");
+    const w = getIntArg(requireArg(args, 1, "Mean"), "Mean");
     return rollingWindow(x, w, (vs) => {
       let s = 0;
       for (const v of vs) s += v;
@@ -119,7 +127,7 @@ const OPS: Record<string, (args: Array<Series | number>, n: number) => Series | 
   },
   Sum(args, _n) {
     const x = args[0] as Series;
-    const w = getIntArg(args[1]!, "Sum");
+    const w = getIntArg(requireArg(args, 1, "Sum"), "Sum");
     return rollingWindow(x, w, (vs) => {
       let s = 0;
       for (const v of vs) s += v;
@@ -128,7 +136,7 @@ const OPS: Record<string, (args: Array<Series | number>, n: number) => Series | 
   },
   Std(args, _n) {
     const x = args[0] as Series;
-    const w = getIntArg(args[1]!, "Std");
+    const w = getIntArg(requireArg(args, 1, "Std"), "Std");
     return rollingWindow(x, w, (vs) => {
       const n = vs.length;
       let m = 0;
@@ -141,19 +149,20 @@ const OPS: Record<string, (args: Array<Series | number>, n: number) => Series | 
   },
   Min(args, _n) {
     const x = args[0] as Series;
-    const w = getIntArg(args[1]!, "Min");
+    const w = getIntArg(requireArg(args, 1, "Min"), "Min");
     return rollingWindow(x, w, (vs) => Math.min(...vs));
   },
   Max(args, _n) {
     const x = args[0] as Series;
-    const w = getIntArg(args[1]!, "Max");
+    const w = getIntArg(requireArg(args, 1, "Max"), "Max");
     return rollingWindow(x, w, (vs) => Math.max(...vs));
   },
   Rank(args, _n) {
     const x = args[0] as Series;
-    const w = getIntArg(args[1]!, "Rank");
+    const w = getIntArg(requireArg(args, 1, "Rank"), "Rank");
     return rollingWindow(x, w, (vs) => {
-      const last = vs[vs.length - 1]!;
+      const last = vs.at(-1);
+      if (!isNum(last)) return null;
       let lower = 0;
       let equal = 0;
       for (const v of vs) {
@@ -166,7 +175,7 @@ const OPS: Record<string, (args: Array<Series | number>, n: number) => Series | 
   },
   Delta(args, n) {
     const x = args[0] as Series;
-    const k = getIntArg(args[1]!, "Delta");
+    const k = getIntArg(requireArg(args, 1, "Delta"), "Delta");
     const out: Series = new Array(n);
     for (let i = 0; i < n; i++) {
       const a = x[i];
@@ -204,7 +213,7 @@ const OPS: Record<string, (args: Array<Series | number>, n: number) => Series | 
   },
   EMA(args, n) {
     const x = args[0] as Series;
-    const w = getIntArg(args[1]!, "EMA");
+    const w = getIntArg(requireArg(args, 1, "EMA"), "EMA");
     const alpha = 2 / (w + 1);
     const out: Series = new Array(n);
     let prev: number | null = null;
@@ -222,7 +231,7 @@ const OPS: Record<string, (args: Array<Series | number>, n: number) => Series | 
   Corr(args, _n) {
     const x = args[0] as Series;
     const y = args[1] as Series;
-    const w = getIntArg(args[2]!, "Corr");
+    const w = getIntArg(requireArg(args, 2, "Corr"), "Corr");
     const len = Math.min(x.length, y.length);
     const out: Series = new Array(len);
     for (let i = 0; i < len; i++) {
@@ -263,7 +272,7 @@ const OPS: Record<string, (args: Array<Series | number>, n: number) => Series | 
   },
   Slope(args, _n) {
     const x = args[0] as Series;
-    const w = getIntArg(args[1]!, "Slope");
+    const w = getIntArg(requireArg(args, 1, "Slope"), "Slope");
     const sumX = ((w - 1) * w) / 2;
     const sumX2 = ((w - 1) * w * (2 * w - 1)) / 6;
     const meanX = sumX / w;
@@ -271,7 +280,8 @@ const OPS: Record<string, (args: Array<Series | number>, n: number) => Series | 
       let sumY = 0;
       let sumXY = 0;
       for (let i = 0; i < w; i++) {
-        const v = vs[i]!;
+        const v = vs[i];
+        if (v === undefined) return null;
         sumY += v;
         sumXY += i * v;
       }
@@ -283,8 +293,8 @@ const OPS: Record<string, (args: Array<Series | number>, n: number) => Series | 
   },
   IfPos(args, n) {
     const cond = args[0] as Series;
-    const thenE = args[1]!;
-    const elseE = args[2]!;
+    const thenE = requireArg(args, 1, "IfPos");
+    const elseE = requireArg(args, 2, "IfPos");
     const out: Series = new Array(n);
     for (let i = 0; i < n; i++) {
       const c = cond[i];

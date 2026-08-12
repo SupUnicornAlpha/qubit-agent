@@ -86,9 +86,7 @@ async function main() {
       bridgeUrl: process.env.QUBIT_LEGACY_BRIDGE_URL,
     });
     console.log(
-      `[QUBIT] Rust Core: spawned=${core.spawned} url=${core.url}` +
-        (core.pid ? ` pid=${core.pid}` : "") +
-        ` (${core.reason})`
+      `[QUBIT] Rust Core: spawned=${core.spawned} url=${core.url}${core.pid ? ` pid=${core.pid}` : ""} (${core.reason})`
     );
   }
 
@@ -101,18 +99,13 @@ async function main() {
       `healthy=${attach.healthy} synced=${attach.syncedSpecs ?? "-"} (${attach.reason})`
   );
   console.log(
-    `[QUBIT] Core backend=${attach.activeBackend}` +
-      (attach.activeBackend === "rust" ? ` url=${attach.rustCoreUrl}` : "") +
-      ` bridge=${process.env.QUBIT_LEGACY_BRIDGE_URL}`
+    `[QUBIT] Core backend=${attach.activeBackend}${attach.activeBackend === "rust" ? ` url=${attach.rustCoreUrl}` : ""} bridge=${process.env.QUBIT_LEGACY_BRIDGE_URL}`
   );
 
   // Block silent TS ReAct fallback when debugging / defaulting to Rust Core.
   if (attachMode === "rust" && (!attach.healthy || attach.activeBackend !== "rust")) {
     console.error(
-      "[QUBIT] FATAL: QUBIT_CORE_BACKEND=rust but Core is not healthy " +
-        `(active=${attach.activeBackend}, reason=${attach.reason}). ` +
-        "Refusing to fall back to TS. Build/start qubit-app-server or set " +
-        "QUBIT_CORE_BACKEND=ts / QUBIT_CORE_STRICT=0 explicitly."
+      `[QUBIT] FATAL: QUBIT_CORE_BACKEND=rust but Core is not healthy (active=${attach.activeBackend}, reason=${attach.reason}). Refusing to fall back to TS. Build/start qubit-app-server or set QUBIT_CORE_BACKEND=ts / QUBIT_CORE_STRICT=0 explicitly.`
     );
     process.exit(1);
   }

@@ -204,7 +204,7 @@ executionRouter.post("/reconciliation/positions/remediate", async (c) => {
       .from(instrument)
       .where(inArray(instrument.symbol, symbolCandidates))
       .limit(1);
-    if (!rows[0]) return c.json({ ok: false, error: "instrument_not_found:" + action.symbol }, 409);
+    if (!rows[0]) return c.json({ ok: false, error: `instrument_not_found:${action.symbol}` }, 409);
     resolved.push({ action, instrumentId: rows[0].id });
   }
   const orders = [];
@@ -213,7 +213,7 @@ executionRouter.post("/reconciliation/positions/remediate", async (c) => {
       item.action.quantity > 0 ? item.action.estimatedNotional / item.action.quantity : null;
     if (!referencePrice || !Number.isFinite(referencePrice) || referencePrice <= 0) {
       return c.json(
-        { ok: false, error: "invalid_reconciliation_reference_price:" + item.action.symbol },
+        { ok: false, error: `invalid_reconciliation_reference_price:${item.action.symbol}` },
         409
       );
     }
@@ -230,8 +230,8 @@ executionRouter.post("/reconciliation/positions/remediate", async (c) => {
         dispatchMode: "live",
         brokerAccountId,
         symbol: item.action.symbol,
-        clientOrderId: "reconcile:" + current.remediation.planHash + ":" + item.action.symbol,
-        traceId: "reconcile:" + current.remediation.planHash,
+        clientOrderId: `reconcile:${current.remediation.planHash}:${item.action.symbol}`,
+        traceId: `reconcile:${current.remediation.planHash}`,
       })
     );
   }

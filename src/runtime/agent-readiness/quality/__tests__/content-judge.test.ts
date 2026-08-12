@@ -76,20 +76,17 @@ describe("A-3 LLM-as-Judge", () => {
   });
 
   test("parseJudgeResponse 容忍 ```json fence", () => {
-    const raw =
-      "```json\n" +
-      JSON.stringify({
-        scores: {
-          data_grounding: 4,
-          quantification: 3,
-          reasoning_chain: 4,
-          citations: 2,
-          risk_awareness: 3,
-        },
-        issues: ["missing risk"],
-        overall: 3.2,
-      }) +
-      "\n```";
+    const raw = `\`\`\`json\n${JSON.stringify({
+      scores: {
+        data_grounding: 4,
+        quantification: 3,
+        reasoning_chain: 4,
+        citations: 2,
+        risk_awareness: 3,
+      },
+      issues: ["missing risk"],
+      overall: 3.2,
+    })}\n\`\`\``;
     const r = parseJudgeResponse(raw);
     expect(r).not.toBeNull();
     expect(r?.scores.data_grounding).toBe(4);

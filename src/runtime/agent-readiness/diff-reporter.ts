@@ -116,7 +116,7 @@ export function renderDiffMarkdown(pair: DiffSnapshotPair): string {
 function formatValue(value: number | null): string {
   if (value === null || value === undefined) return "n/a";
   if (Number.isInteger(value)) return String(value);
-  if (value > -1.0001 && value < 1.0001) return (value * 100).toFixed(1) + "%";
+  if (value > -1.0001 && value < 1.0001) return `${(value * 100).toFixed(1)}%`;
   return value.toFixed(2);
 }
 

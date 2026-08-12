@@ -106,7 +106,7 @@ export function buildJudgeUserPrompt(
   }
   // 简单截断：4 KB ≈ 1K token
   if (serialized.length > 4096) {
-    serialized = serialized.slice(0, 4000) + "\n... (truncated)";
+    serialized = `${serialized.slice(0, 4000)}\n... (truncated)`;
   }
   return [
     `场景：${scenario}`,

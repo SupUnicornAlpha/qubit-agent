@@ -46,8 +46,11 @@ function pearson(xs: number[], ys: number[]): number {
   let sx = 0;
   let sy = 0;
   for (let i = 0; i < n; i++) {
-    sx += xs[i]!;
-    sy += ys[i]!;
+    const x = xs[i];
+    const y = ys[i];
+    if (x === undefined || y === undefined) return 0;
+    sx += x;
+    sy += y;
   }
   const mx = sx / n;
   const my = sy / n;
@@ -55,8 +58,11 @@ function pearson(xs: number[], ys: number[]): number {
   let dx = 0;
   let dy = 0;
   for (let i = 0; i < n; i++) {
-    const a = xs[i]! - mx;
-    const b = ys[i]! - my;
+    const x = xs[i];
+    const y = ys[i];
+    if (x === undefined || y === undefined) return 0;
+    const a = x - mx;
+    const b = y - my;
     num += a * b;
     dx += a * a;
     dy += b * b;
@@ -159,11 +165,14 @@ function groupReturns(pairs: PairsByDate[], groupCount: number): number[] {
     if (p.xs.length < groupCount) continue;
     // 按 xs 排序得到 group index
     const idx = p.xs.map((_, i) => i);
-    idx.sort((a, b) => p.xs[a]! - p.xs[b]!);
+    idx.sort((a, b) => (p.xs[a] ?? 0) - (p.xs[b] ?? 0));
     const size = p.xs.length / groupCount;
     for (let k = 0; k < idx.length; k++) {
       const g = Math.min(groupCount - 1, Math.floor(k / size));
-      buckets[g]?.push(p.ys[idx[k]!]!);
+      const index = idx[k];
+      const value = index === undefined ? undefined : p.ys[index];
+      const bucket = buckets[g];
+      if (bucket && value !== undefined) bucket.push(value);
     }
   }
   return buckets.map((b) => (b.length ? mean(b) : 0));
@@ -177,8 +186,13 @@ function topQuintileTurnover(pairs: PairsByDate[]): number {
   for (const p of pairs) {
     const k = Math.max(1, Math.floor(p.symbols.length * 0.2));
     const idx = p.symbols.map((_, i) => i);
-    idx.sort((a, b) => p.xs[b]! - p.xs[a]!);
-    const topNow = new Set(idx.slice(0, k).map((i) => p.symbols[i]!));
+    idx.sort((a, b) => (p.xs[b] ?? 0) - (p.xs[a] ?? 0));
+    const topNow = new Set(
+      idx
+        .slice(0, k)
+        .map((i) => p.symbols[i])
+        .filter((symbol): symbol is string => symbol !== undefined)
+    );
     if (prevTop) {
       const inter = [...topNow].filter((s) => prevTop?.has(s)).length;
       const change = 1 - inter / topNow.size;

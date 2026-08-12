@@ -323,9 +323,9 @@ function pickConceptKeyword(excerpt: string): string | null {
     .match(/[a-z][a-z0-9_-]{2,}/g)
     ?.filter((w) => !STOP_KEYWORDS.has(w))
     .sort((a, b) => b.length - a.length);
-  if (ascii && ascii[0]) return ascii[0];
+  if (ascii?.[0]) return ascii[0];
   const cn = excerpt.match(/[\u4e00-\u9fff]{2,6}/g)?.filter((w) => !STOP_KEYWORDS.has(w));
-  if (cn && cn[0]) return cn[0];
+  if (cn?.[0]) return cn[0];
   return null;
 }
 

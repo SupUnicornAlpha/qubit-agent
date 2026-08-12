@@ -453,8 +453,7 @@ export async function executeDebateSafely(input: {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(
-      `[analyst-team] debate session failed for ${input.ticker} (workflow=${input.workflowRunId}): ${msg}; ` +
-        "continuing without consensus (risk evaluation will fall back to confidence-only)."
+      `[analyst-team] debate session failed for ${input.ticker} (workflow=${input.workflowRunId}): ${msg}; continuing without consensus (risk evaluation will fall back to confidence-only).`
     );
     await input.logFailure({
       workflowRunId: input.workflowRunId,

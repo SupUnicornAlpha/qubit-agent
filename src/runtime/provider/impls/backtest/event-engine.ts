@@ -63,8 +63,8 @@ function isRebalanceDay(
 ): boolean {
   if (freq === "daily") return true;
   if (!prevDate) return true;
-  const cur = new Date(date + "T00:00:00Z");
-  const prev = new Date(prevDate + "T00:00:00Z");
+  const cur = new Date(`${date}T00:00:00Z`);
+  const prev = new Date(`${prevDate}T00:00:00Z`);
   if (freq === "weekly") {
     // ISO 周不同 → 再平衡
     const cw = isoWeek(cur);

@@ -145,14 +145,14 @@ function formatValue(id: string, value: number | null): string {
   // D-2 是 0-1 比例
   if (Number.isInteger(value)) return String(value);
   if (value > -1.0001 && value < 1.0001) {
-    return (value * 100).toFixed(1) + "%";
+    return `${(value * 100).toFixed(1)}%`;
   }
   return value.toFixed(2);
 }
 
 function formatScore(s: number | null): string {
   if (s === null || s === undefined) return "n/a";
-  return (s * 100).toFixed(1) + "%";
+  return `${(s * 100).toFixed(1)}%`;
 }
 
 function suggestForRed(id: string): string {

@@ -166,9 +166,7 @@ export async function autoMarkRecalledSkillsAsExecuted(
           // A tool response cannot prove the whole skill was followed.  Keep
           // this fixed even if an old caller still passes outcome="success".
           outcome: "unknown",
-          notes:
-            `auto-hook[recommended]: tool=${input.toolName}` +
-            (input.mcpServerName ? ` server=${input.mcpServerName}` : ""),
+          notes: `auto-hook[recommended]: tool=${input.toolName}${input.mcpServerName ? ` server=${input.mcpServerName}` : ""}`,
         });
         result.recorded += 1;
       } catch (err) {

@@ -106,18 +106,7 @@ async function runProbe(bin: string): Promise<{
    * 这样一次 spawn 就拿到全部信息，避免多次启动 python 解释器的开销。
    */
   const reqJson = JSON.stringify([...REQUIRED_DEPS, ...OPTIONAL_DEPS]);
-  const code =
-    "import json,sys\n" +
-    `mods=${reqJson}\n` +
-    `out={"version":sys.version.split()[0],"deps":{}}\n` +
-    "for m in mods:\n" +
-    "  try:\n" +
-    "    mod=__import__(m)\n" +
-    `    v=getattr(mod,'__version__',None)\n` +
-    `    out["deps"][m]={"ok":True,"version":v}\n` +
-    "  except Exception as e:\n" +
-    `    out["deps"][m]={"ok":False,"error":str(e)[:200]}\n` +
-    "print(json.dumps(out))";
+  const code = `import json,sys\nmods=${reqJson}\nout={"version":sys.version.split()[0],"deps":{}}\nfor m in mods:\n  try:\n    mod=__import__(m)\n    v=getattr(mod,'__version__',None)\n    out["deps"][m]={"ok":True,"version":v}\n  except Exception as e:\n    out["deps"][m]={"ok":False,"error":str(e)[:200]}\nprint(json.dumps(out))`;
 
   let proc: ReturnType<typeof Bun.spawn>;
   try {

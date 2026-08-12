@@ -1116,7 +1116,7 @@ async function runOpenAICompatibleNonStream(
 function shouldEnableAnthropicPromptCache(systemPrompt: string): boolean {
   if (process.env.QUBIT_LLM_ANTHROPIC_PROMPT_CACHE === "1") return true;
   const raw = process.env.QUBIT_LLM_ANTHROPIC_PROMPT_CACHE_MIN_CHARS;
-  if (raw && raw.trim()) {
+  if (raw?.trim()) {
     const n = Number(raw);
     if (Number.isFinite(n) && n >= 0 && systemPrompt.length >= n) return true;
   }

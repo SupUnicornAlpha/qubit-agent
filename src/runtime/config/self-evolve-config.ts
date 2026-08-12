@@ -77,7 +77,7 @@ function loadFromEnv(): SelfEvolveConfig {
     enabled,
     autoInstallMode: parseMode(process.env.AUTO_INSTALL_MODE, DEFAULT_CONFIG.autoInstallMode),
     // pnl-aware reason 默认随总闸（避免单独配置；想关给个 false 的 PNL_AWARE_REASON_ENABLED 即可）
-    pnlAwareReasonEnabled: parseBool(process.env.PNL_AWARE_REASON_ENABLED, enabled ? true : false),
+    pnlAwareReasonEnabled: parseBool(process.env.PNL_AWARE_REASON_ENABLED, !!enabled),
     minScoreForAuto: parseNumber(
       process.env.AUTO_INSTALL_MIN_SCORE,
       DEFAULT_CONFIG.minScoreForAuto,

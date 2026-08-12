@@ -603,9 +603,7 @@ export async function actNode(
       priorToolCalls: state.toolCalls,
     })
   ) {
-    const message =
-      `本轮已成功调用 ${targetName}，禁止重复健康探测。` +
-      "若核心业务数据已取得，请立即用 tool=none 汇总；否则直接调用尚未执行的业务工具。";
+    const message = `本轮已成功调用 ${targetName}，禁止重复健康探测。若核心业务数据已取得，请立即用 tool=none 汇总；否则直接调用尚未执行的业务工具。`;
     const observation = {
       level: "warn",
       toolGovernance: true,
@@ -897,7 +895,7 @@ export async function actNode(
     const dataGap = classifyDataGap({
       toolName: targetName,
       params:
-        mcp && mcp.arguments && typeof mcp.arguments === "object" && !Array.isArray(mcp.arguments)
+        mcp?.arguments && typeof mcp.arguments === "object" && !Array.isArray(mcp.arguments)
           ? (mcp.arguments as Record<string, unknown>)
           : enrichedToolParams,
       message: errMsg,

@@ -110,7 +110,7 @@ export function floorToBucket(date: Date, interval: TimeseriesInterval): string 
   const sec = INTERVAL_SECONDS[interval];
   const epoch = Math.floor(date.getTime() / 1000);
   const aligned = Math.floor(epoch / sec) * sec;
-  return new Date(aligned * 1000).toISOString().slice(0, 19) + "Z";
+  return `${new Date(aligned * 1000).toISOString().slice(0, 19)}Z`;
 }
 
 /**
@@ -125,7 +125,7 @@ export function buildBucketStarts(from: Date, to: Date, interval: TimeseriesInte
   const lastAlignedExclusive = Math.floor((to.getTime() - 1) / 1000 / sec) * sec;
   const out: string[] = [];
   for (let t = firstAligned; t <= lastAlignedExclusive; t += sec) {
-    out.push(new Date(t * 1000).toISOString().slice(0, 19) + "Z");
+    out.push(`${new Date(t * 1000).toISOString().slice(0, 19)}Z`);
   }
   return out;
 }

@@ -150,9 +150,7 @@ export async function runFsiSeedIntegration(definitions: RuntimeAgentDefinition[
     );
   } else {
     console.log(
-      "[Seed][FSI] Disabled (edit content-packs/anthropic-fsi/settings.json or set QUBIT_FSI_DISABLED=true). " +
-        `Registered ${presets} sandbox preset(s), ${mcps} MCP catalog row(s); ` +
-        `agent_skill mirrored: ${mirrored}.`
+      `[Seed][FSI] Disabled (edit content-packs/anthropic-fsi/settings.json or set QUBIT_FSI_DISABLED=true). Registered ${presets} sandbox preset(s), ${mcps} MCP catalog row(s); agent_skill mirrored: ${mirrored}.`
     );
   }
 }

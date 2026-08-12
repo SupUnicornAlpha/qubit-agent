@@ -379,7 +379,7 @@ export function deriveTitle(summary: string | undefined, signature: string): str
   if (base.length > 0) {
     const cleaned = base
       .split("\n")[0]
-      ?.replace(/[\u200B-\u200D\uFEFF]/g, "")
+      ?.replace(/(?:\u200B|\u200C|\u200D|\uFEFF)/g, "")
       .trim();
     return cleaned.slice(0, 80);
   }

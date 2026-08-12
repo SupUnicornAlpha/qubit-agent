@@ -222,16 +222,11 @@ export async function dispatchMcpToolCall(input: McpDispatchInput): Promise<McpD
   if (connectorAlias) {
     if (connectorAlias === "qubit-news") {
       throw new Error(
-        `call_mcp: "${input.serverName}" 是内置新闻 connector，不是 MCP server。` +
-          "请派 call_team_news_event / agent.invoke(callee_spec_id=def-news-event)，由新闻 Agent 调 fetch_news*；" +
-          "Orchestrator 不要直接 call_mcp(qubit-news)。"
+        `call_mcp: "${input.serverName}" 是内置新闻 connector，不是 MCP server。请派 call_team_news_event / agent.invoke(callee_spec_id=def-news-event)，由新闻 Agent 调 fetch_news*；Orchestrator 不要直接 call_mcp(qubit-news)。`
       );
     }
     throw new Error(
-      `call_mcp: "${input.serverName}" 是内置 connector，不是 MCP server。` +
-        "行情请用 market.snapshot.get / market.resolve_symbol，或已启用的 mcp:investor-agent:*；" +
-        "不要把 qubit-data / qubit-backtest 等 connector 名当作 serverName。" +
-        (input.toolName ? `（你想调的是 ${input.toolName}）` : "")
+      `call_mcp: "${input.serverName}" 是内置 connector，不是 MCP server。行情请用 market.snapshot.get / market.resolve_symbol，或已启用的 mcp:investor-agent:*；不要把 qubit-data / qubit-backtest 等 connector 名当作 serverName。${input.toolName ? `（你想调的是 ${input.toolName}）` : ""}`
     );
   }
   /**

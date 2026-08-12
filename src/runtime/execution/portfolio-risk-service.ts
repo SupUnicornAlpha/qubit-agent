@@ -50,8 +50,11 @@ function quantile(sorted: number[], probability: number): number {
   const index = (sorted.length - 1) * probability;
   const lower = Math.floor(index);
   const upper = Math.ceil(index);
-  if (lower === upper) return sorted[lower]!;
-  return sorted[lower]! + (sorted[upper]! - sorted[lower]!) * (index - lower);
+  const lowerValue = sorted[lower];
+  const upperValue = sorted[upper];
+  if (lowerValue === undefined || upperValue === undefined) return 0;
+  if (lower === upper) return lowerValue;
+  return lowerValue + (upperValue - lowerValue) * (index - lower);
 }
 
 function standardDeviation(values: number[]): number {
@@ -67,7 +70,10 @@ function covariance(left: number[], right: number[]): number {
   const leftMean = left.reduce((sum, value) => sum + value, 0) / left.length;
   const rightMean = right.reduce((sum, value) => sum + value, 0) / right.length;
   return (
-    left.reduce((sum, value, index) => sum + (value - leftMean) * (right[index]! - rightMean), 0) /
+    left.reduce(
+      (sum, value, index) => sum + (value - leftMean) * ((right[index] ?? rightMean) - rightMean),
+      0
+    ) /
     (left.length - 1)
   );
 }
@@ -215,8 +221,10 @@ export async function buildHistoricalPortfolioRisk(input: {
     const values = returnsBySymbol.get(row.symbol);
     return values && values.size >= (input.minimumObservations ?? 30);
   });
-  const commonDates = usableRows.length
-    ? [...returnsBySymbol.get(usableRows[0]?.symbol)?.keys()].filter((date) =>
+  const firstUsableRow = usableRows[0];
+  const baseReturns = firstUsableRow ? returnsBySymbol.get(firstUsableRow.symbol) : undefined;
+  const commonDates = baseReturns
+    ? [...baseReturns.keys()].filter((date) =>
         usableRows.every((row) => returnsBySymbol.get(row.symbol)?.has(date))
       )
     : [];
@@ -224,7 +232,7 @@ export async function buildHistoricalPortfolioRisk(input: {
     .sort()
     .map((date) =>
       usableRows.reduce(
-        (sum, row) => sum + row.targetWeight * returnsBySymbol.get(row.symbol)?.get(date)!,
+        (sum, row) => sum + row.targetWeight * (returnsBySymbol.get(row.symbol)?.get(date) ?? 0),
         0
       )
     );
@@ -232,20 +240,22 @@ export async function buildHistoricalPortfolioRisk(input: {
   const covarianceMatrix: Record<string, Record<string, number>> = {};
   let weightedCorrelationSum = 0;
   let weightedCorrelationWeight = 0;
-  for (let leftIndex = 0; leftIndex < usableRows.length; leftIndex += 1) {
-    const left = usableRows[leftIndex]!;
-    correlationMatrix[left.symbol] = {};
-    covarianceMatrix[left.symbol] = {};
-    const leftReturns = commonDates.map((date) => returnsBySymbol.get(left.symbol)?.get(date)!);
-    for (let rightIndex = 0; rightIndex < usableRows.length; rightIndex += 1) {
-      const right = usableRows[rightIndex]!;
-      const rightReturns = commonDates.map((date) => returnsBySymbol.get(right.symbol)?.get(date)!);
+  for (const [leftIndex, left] of usableRows.entries()) {
+    const correlationRow: Record<string, number> = {};
+    const covarianceRow: Record<string, number> = {};
+    correlationMatrix[left.symbol] = correlationRow;
+    covarianceMatrix[left.symbol] = covarianceRow;
+    const leftReturns = commonDates.map((date) => returnsBySymbol.get(left.symbol)?.get(date) ?? 0);
+    for (const [rightIndex, right] of usableRows.entries()) {
+      const rightReturns = commonDates.map(
+        (date) => returnsBySymbol.get(right.symbol)?.get(date) ?? 0
+      );
       const pairCovariance = covariance(leftReturns, rightReturns);
       const denominator = standardDeviation(leftReturns) * standardDeviation(rightReturns);
       const pairCorrelation =
         denominator > 0 ? pairCovariance / denominator : leftIndex === rightIndex ? 1 : 0;
-      covarianceMatrix[left.symbol]![right.symbol] = round(pairCovariance, 10);
-      correlationMatrix[left.symbol]![right.symbol] = round(pairCorrelation);
+      covarianceRow[right.symbol] = round(pairCovariance, 10);
+      correlationRow[right.symbol] = round(pairCorrelation);
       if (rightIndex > leftIndex) {
         const pairWeight = Math.abs(left.targetWeight * right.targetWeight);
         weightedCorrelationSum += pairCorrelation * pairWeight;

@@ -164,7 +164,7 @@ export async function fuseSignals(params: {
        * 之前用 0.25 会污染下游 risk 规则；现在跳过占位时给中性值。
        */
       fusedConfidence: params.skipPlaceholderForNoSignals ? 0.55 : 0.25,
-      debateTriggered: params.skipPlaceholderForNoSignals ? false : true,
+      debateTriggered: !params.skipPlaceholderForNoSignals,
       weights: {},
       signalBreakdown: [],
       ...(params.skipPlaceholderForNoSignals ? { noAnalystSignals: true } : {}),

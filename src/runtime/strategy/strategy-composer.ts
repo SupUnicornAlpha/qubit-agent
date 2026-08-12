@@ -555,8 +555,7 @@ export class StrategyComposer {
     if (latestRaw.size === 0) {
       throw new StrategyComposerError(
         "validation_failed",
-        `${method}_no_factor_evaluation: 所有因子都没有 factor_evaluation 留痕，无法用 IC 权重；` +
-          "请先调 factor.evaluate / factor.autoEvaluate，或切回 weight_method=equal"
+        `${method}_no_factor_evaluation: 所有因子都没有 factor_evaluation 留痕，无法用 IC 权重；请先调 factor.evaluate / factor.autoEvaluate，或切回 weight_method=equal`
       );
     }
 

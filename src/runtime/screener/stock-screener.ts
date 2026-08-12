@@ -173,11 +173,7 @@ export async function runStockScreener(input: ScreenerInput): Promise<ScreenerRu
 
   let hint: string | undefined;
   if (scored.length === 0) {
-    hint =
-      `0 个候选命中（universe=${universe} 池中 ${STOCK_UNIVERSE.length} 只；filter 后 ${filtered.length} 只）。` +
-      "建议放宽 criteria（移除 sector/industry 或调低 minMarketCapBillion / minMomentum30d / minQuality）" +
-      `；或试 universe="ALL" / 切换 country 维度。可参考的 sector 取值：Tech, Financials, Healthcare, Consumer, Energy, ` +
-      "Industrials, Materials, REIT, Utilities, Telecom, Crypto。";
+    hint = `0 个候选命中（universe=${universe} 池中 ${STOCK_UNIVERSE.length} 只；filter 后 ${filtered.length} 只）。建议放宽 criteria（移除 sector/industry 或调低 minMarketCapBillion / minMomentum30d / minQuality）；或试 universe="ALL" / 切换 country 维度。可参考的 sector 取值：Tech, Financials, Healthcare, Consumer, Energy, Industrials, Materials, REIT, Utilities, Telecom, Crypto。`;
   }
 
   return {

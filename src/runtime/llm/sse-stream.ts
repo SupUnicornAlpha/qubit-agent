@@ -38,8 +38,9 @@ export async function* readSseEvents(
        * 先把 \r\n 规范成 \n 再切，避免漏切。
        */
       buf = buf.replace(/\r\n/g, "\n");
-      let idx: number;
-      while ((idx = buf.indexOf("\n\n")) !== -1) {
+      while (true) {
+        const idx = buf.indexOf("\n\n");
+        if (idx === -1) break;
         const block = buf.slice(0, idx);
         buf = buf.slice(idx + 2);
         const ev = parseSseBlock(block);

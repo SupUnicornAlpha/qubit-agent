@@ -340,8 +340,7 @@ export function compactObservations<T>(
     })();
     if (json.length > maxCharsPerObs) {
       truncatedPerItem += 1;
-      const truncatedJson =
-        json.slice(0, maxCharsPerObs) + `…[truncated ${json.length - maxCharsPerObs} chars]`;
+      const truncatedJson = `${json.slice(0, maxCharsPerObs)}…[truncated ${json.length - maxCharsPerObs} chars]`;
       /**
        * 我们不真正修改 T 的内部结构（避免破坏 caller 期望的字段），而是替换成"已压缩" stub。
        * caller 想要更精细的 per-field 截断，应该在自己的 observation builder 里做。

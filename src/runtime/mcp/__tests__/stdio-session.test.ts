@@ -42,8 +42,8 @@ describe("_formatStdioExitErrorMessage (F-P0-07)", () => {
   });
 
   test("单行超长被截断到 240 字符 + 省略号（避免单条 JSON dump 把 errMsg 撑爆 stack）", () => {
-    const longLine = "X".repeat(1000) + "tail-marker";
-    const msg = _formatStdioExitErrorMessage([longLine + "\n"], 1, "tools/call");
+    const longLine = `${"X".repeat(1000)}tail-marker`;
+    const msg = _formatStdioExitErrorMessage([`${longLine}\n`], 1, "tools/call");
     // 截断标记
     expect(msg).toContain("…");
     // 整行 X 的总长度不会超过 240+省略号

@@ -141,7 +141,7 @@ async function tickOneRuntime(
   const barLimit = Math.max(20, Math.min(params.barLimit ?? 120, 500));
   const { startDate, endDate, period } = computeDateRangeForLimit(runtime.timeframe, barLimit);
 
-  let bars;
+  let bars: Awaited<ReturnType<typeof queryBarsRange>>;
   try {
     bars = await queryBarsRange({
       symbol: runtime.symbol,
@@ -167,7 +167,8 @@ async function tickOneRuntime(
 
   if (!bars.length) return;
 
-  const lastBar = bars[bars.length - 1]!;
+  const lastBar = bars.at(-1);
+  if (!lastBar) return;
   // A worker tick may run every few seconds while the newest closed bar remains
   // unchanged.  Evaluate each bar once; otherwise an invalid expression floods
   // the trace and a healthy strategy wastes cycles re-evaluating the same input.

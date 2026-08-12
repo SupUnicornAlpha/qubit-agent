@@ -102,11 +102,7 @@ async function buildSingleSymbolSnapshot(symbol: string, exchange?: string): Pro
     const newsItems = [...brief.symbolNews, ...brief.sectorNews];
     if (newsItems.length === 0) {
       blocks.push(
-        `[资讯] 当前证据不可用（窗口=${brief.evidence.maxAgeDays}天；` +
-          `拒绝 synthetic=${brief.evidence.rejected.synthetic}、` +
-          `stale=${brief.evidence.rejected.stale}、` +
-          `irrelevant=${brief.evidence.rejected.irrelevant}）。` +
-          "禁止用历史新闻冒充近期催化；如任务明确是历史验证，才可切换 historical_validation 模式。"
+        `[资讯] 当前证据不可用（窗口=${brief.evidence.maxAgeDays}天；拒绝 synthetic=${brief.evidence.rejected.synthetic}、stale=${brief.evidence.rejected.stale}、irrelevant=${brief.evidence.rejected.irrelevant}）。禁止用历史新闻冒充近期催化；如任务明确是历史验证，才可切换 historical_validation 模式。`
       );
     } else {
       const sectorHint = brief.sectorLabel != null ? `，板块 ${brief.sectorLabel}` : "";

@@ -203,7 +203,7 @@ function extractContent(contentJson: unknown): string {
 
 function truncate(s: string, max: number): string {
   if (s.length <= max) return s;
-  return s.slice(0, max) + " ...(truncated)";
+  return `${s.slice(0, max)} ...(truncated)`;
 }
 
 /** 把一个 workflow 涉及的所有 agent 都同步一次 memory.md */

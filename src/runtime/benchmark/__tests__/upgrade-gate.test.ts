@@ -5,7 +5,10 @@ import { QUBIT_BENCH_CASES } from "../qubit-bench-cases";
 import { scoreRunEnvelope } from "../scorecard";
 import { evaluateUpgradeGate } from "../upgrade-gate";
 
-const benchmarkCase = QUBIT_BENCH_CASES[0]!;
+const benchmarkCase = QUBIT_BENCH_CASES[0];
+if (!benchmarkCase) throw new Error("expected at least one benchmark case");
+const l0Envelope = L0_CASES[0]?.envelope;
+if (!l0Envelope) throw new Error("expected at least one L0 benchmark case");
 
 function snapshot(overrides: Partial<Record<string, number | null>> = {}): ReadinessSnapshot {
   return {
@@ -33,7 +36,7 @@ const grade = { weightedScore: 1 } as SnapshotGrade;
 
 function completeScorecard() {
   return scoreRunEnvelope({
-    ...L0_CASES[0]?.envelope,
+    ...l0Envelope,
     suite: "L1",
     workflowRunId: "benchmark-run",
     scenarioKey: benchmarkCase.scenarioKey,
@@ -101,11 +104,13 @@ describe("benchmark upgrade gate", () => {
   });
 
   test("telemetry gaps are soft on observability but still block promotion", () => {
+    const firstCase = L0_CASES[0];
+    if (!firstCase) throw new Error("expected at least one L0 benchmark case");
     const {
       contract: _contract,
       capability: _capability,
       ...withoutTelemetry
-    } = L0_CASES[0]?.envelope;
+    } = firstCase.envelope;
     const result = evaluateUpgradeGate({
       benchmarkCase,
       snapshot: snapshot(),
@@ -129,7 +134,8 @@ describe("benchmark upgrade gate", () => {
   });
 
   test("memory dimension fails when recall is required but never attempted", () => {
-    const memCase = QUBIT_BENCH_CASES.find((c) => c.id === "QB-MEM-01")!;
+    const memCase = QUBIT_BENCH_CASES.find((c) => c.id === "QB-MEM-01");
+    if (!memCase) throw new Error("expected QB-MEM-01 benchmark case");
     const result = evaluateUpgradeGate({
       benchmarkCase: memCase,
       snapshot: snapshot(),

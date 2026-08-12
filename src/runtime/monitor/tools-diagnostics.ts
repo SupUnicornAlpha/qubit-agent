@@ -285,7 +285,7 @@ function percentile(sorted: number[], p: number): number {
 export function normalizeErrorMessage(raw: string | null): string {
   if (!raw) return "(empty)";
   let s = raw.trim();
-  if (s.length > 240) s = s.slice(0, 240) + "…";
+  if (s.length > 240) s = `${s.slice(0, 240)}…`;
   // UUID
   s = s.replace(
     /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/g,

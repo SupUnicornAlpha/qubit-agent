@@ -194,7 +194,7 @@ describe("assembleContextEnvelope", () => {
       role: "analyst",
       slots: {
         goal: "GOAL_TEXT",
-        recall_finance: "FINANCE_" + "x".repeat(10_000),
+        recall_finance: `FINANCE_${"x".repeat(10_000)}`,
         recall_general: "GENERAL",
         session: "SESSION",
       },

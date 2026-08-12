@@ -631,7 +631,7 @@ export function renderSkillsBlockForPrompt(skills: AgentSkill[]): string {
     // body 截断到 1.2KB 防 prompt 爆炸
     const body =
       s.bodyMd.length > 1200
-        ? s.bodyMd.slice(0, 1200) + "\n…(截断，调 skill.view 看全文)"
+        ? `${s.bodyMd.slice(0, 1200)}\n…(截断，调 skill.view 看全文)`
         : s.bodyMd;
     lines.push(body.trim());
     lines.push("");

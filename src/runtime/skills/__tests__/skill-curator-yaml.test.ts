@@ -75,7 +75,7 @@ describe("buildCuratorReviewPrompt — handles edge cases", () => {
 
 function mkSkill(overrides: Partial<AgentSkill>): AgentSkill {
   return {
-    id: "sk_" + Math.random().toString(36).slice(2, 8),
+    id: `sk_${Math.random().toString(36).slice(2, 8)}`,
     projectId: "p1",
     definitionId: null,
     name: "test-skill",

@@ -135,8 +135,9 @@ export function parseDuckDuckGoHtml(html: string, count: number): WebSearchResul
   // Classic result block: <a class="result__a" href="...">title</a> ... result__snippet
   const blockRe =
     /<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?(?:class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/(?:a|td|div)>)?/gi;
-  let m: RegExpExecArray | null;
-  while ((m = blockRe.exec(html)) !== null && results.length < count) {
+  while (results.length < count) {
+    const m = blockRe.exec(html);
+    if (!m) break;
     const href = String(m[1] ?? "").trim();
     const title = stripHtmlToText(m[2] ?? "").slice(0, 300);
     const snippet = stripHtmlToText(m[3] ?? "").slice(0, 500);
@@ -151,7 +152,9 @@ export function parseDuckDuckGoHtml(html: string, count: number): WebSearchResul
   // a DuckDuckGo markup rollout does not take web.search down entirely.
   const liteRe =
     /<a[^>]*class=["'][^"']*result-link[^"']*["'][^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>(?:[\s\S]*?<td[^>]*class=["'][^"']*result-snippet[^"']*["'][^>]*>([\s\S]*?)<\/td>)?/gi;
-  while ((m = liteRe.exec(html)) !== null && results.length < count) {
+  while (results.length < count) {
+    const m = liteRe.exec(html);
+    if (!m) break;
     const url = unwrapDuckDuckGoRedirect(String(m[1] ?? "").trim());
     const title = stripHtmlToText(m[2] ?? "").slice(0, 300);
     const snippet = stripHtmlToText(m[3] ?? "").slice(0, 500);

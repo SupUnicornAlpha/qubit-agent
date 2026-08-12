@@ -111,9 +111,7 @@ export function buildNativeQubitToolDefinition(tools: string[]): LlmToolDefiniti
     .join("\n");
   return {
     name: "qubit_action",
-    description:
-      "选择并调用一个 QUBIT 已授权工具。一次只调用一个；若无需工具，直接返回文字，不要调用本函数。\n" +
-      descriptions,
+    description: `选择并调用一个 QUBIT 已授权工具。一次只调用一个；若无需工具，直接返回文字，不要调用本函数。\n${descriptions}`,
     parameters: {
       type: "object",
       properties: {
@@ -299,14 +297,14 @@ function extractJsonToolBlock(text: string): string | null {
   const sentinels = [...text.matchAll(/<TOOL_CALL>\s*([\s\S]*?)\s*<\/TOOL_CALL>/gi)];
   if (sentinels.length > 0) {
     const inner = sentinels[sentinels.length - 1]?.[1]?.trim();
-    if (inner && inner.startsWith("{")) return inner;
+    if (inner?.startsWith("{")) return inner;
   }
 
   // 2. fenced —— 取最后一个含 "tool" 的
   const fences = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)];
   for (let i = fences.length - 1; i >= 0; i--) {
     const inner = fences[i]?.[1]?.trim();
-    if (inner && inner.startsWith("{") && inner.includes('"tool"')) return inner;
+    if (inner?.startsWith("{") && inner.includes('"tool"')) return inner;
   }
 
   // 3. 启发式

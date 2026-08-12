@@ -201,8 +201,7 @@ export async function syncBuiltinQuantSkillsForProject(projectId: string): Promi
   const root = getQuantSkillsRoot();
   if (!existsSync(root)) {
     console.warn(
-      `[Seed:quant-skills] root not found: ${root} ` +
-        "(检查 QUBIT_APP_ROOT 或仓库 content-packs/quant-skills 是否存在)"
+      `[Seed:quant-skills] root not found: ${root} (检查 QUBIT_APP_ROOT 或仓库 content-packs/quant-skills 是否存在)`
     );
     return 0;
   }

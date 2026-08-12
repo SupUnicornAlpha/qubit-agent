@@ -119,7 +119,7 @@ function parseEastMoneyKlineRow(row: string, params: FetchBarsParams): BarData |
   if (![open, close, high, low].every(Number.isFinite)) return null;
 
   const ts = dateRaw.includes(" ")
-    ? new Date(dateRaw.replace(" ", "T") + ":00+08:00").toISOString()
+    ? new Date(`${dateRaw.replace(" ", "T")}:00+08:00`).toISOString()
     : new Date(`${dateRaw.slice(0, 10)}T00:00:00+08:00`).toISOString();
 
   return {

@@ -477,7 +477,7 @@ export function parseCuratorYaml(rawYaml: string): CuratorActionItem[] {
   let current: Partial<CuratorActionItem> | null = null;
 
   const flush = () => {
-    if (current && current.kind) {
+    if (current?.kind) {
       const item: CuratorActionItem = {
         kind: current.kind,
         reason: current.reason ?? "",

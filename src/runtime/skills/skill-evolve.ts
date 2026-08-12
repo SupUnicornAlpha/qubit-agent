@@ -174,7 +174,7 @@ export class SkillEvolver {
           if (!candidateBody) continue;
           // 限长
           if (Buffer.byteLength(candidateBody, "utf-8") > MAX_BODY_BYTES) {
-            candidateBody = candidateBody.slice(0, MAX_BODY_BYTES - 64) + "\n...(truncated)";
+            candidateBody = `${candidateBody.slice(0, MAX_BODY_BYTES - 64)}\n...(truncated)`;
           }
           const { score, breakdown } = scoreSkillBodyDetailed({
             description: bestDesc,
@@ -409,10 +409,7 @@ function offlineMutate(body: string, strategyKey: string): string {
         .trim();
     case "add_failure_modes":
       if (/常见失败|common pitfalls/i.test(body)) return body;
-      return (
-        body.trim() +
-        '\n\n## 常见失败模式与回退\n- 当某步连续 ≥ 2 次失败 → 调 skill.patch 添加该失败模式与回退\n- 若工具返回空 → 跳到下一个候选信号源\n- 若 LLM 解析 JSON 失败 → 把 system_prompt 中 "必须输出 JSON" 这条加粗\n'
-      );
+      return `${body.trim()}\n\n## 常见失败模式与回退\n- 当某步连续 ≥ 2 次失败 → 调 skill.patch 添加该失败模式与回退\n- 若工具返回空 → 跳到下一个候选信号源\n- 若 LLM 解析 JSON 失败 → 把 system_prompt 中 "必须输出 JSON" 这条加粗\n`;
     case "sharpen_when_to_use":
       if (/## 适用场景/i.test(body)) return body;
       return `## 适用场景\n- **该用**：当 goal 涉及 5+ 步工具链 / 跨 agent 协作 / 包含上游有不确定输入\n- **别用**：goal 是单一查询 / 一次性数据拉取 / 用户已显式指定流程\n\n${body.trim()}`;
@@ -420,7 +417,7 @@ function offlineMutate(body: string, strategyKey: string): string {
       if (/^(\s*[\d]+[\.)] )/m.test(body)) return body;
       return body.replace(/^(\s*[-*]\s+)/gm, (m) => {
         // 把无序列表强制改成 1./2./3.（最多 9 个）
-        return m.replace(/[-*]/, String(Math.floor(Math.random() * 9) + 1) + ".");
+        return m.replace(/[-*]/, `${String(Math.floor(Math.random() * 9) + 1)}.`);
       });
     default:
       return body;

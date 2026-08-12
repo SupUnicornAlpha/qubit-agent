@@ -163,12 +163,12 @@ export function extractSignalJsonFromText(text: string): Record<string, unknown>
     let depth = 0;
     let start = -1;
     let inString = false;
-    let escape = false;
+    let isEscaped = false;
     for (let i = 0; i < src.length; i += 1) {
       const ch = src[i];
       if (inString) {
-        if (escape) escape = false;
-        else if (ch === "\\") escape = true;
+        if (isEscaped) isEscaped = false;
+        else if (ch === "\\") isEscaped = true;
         else if (ch === '"') inString = false;
         continue;
       }

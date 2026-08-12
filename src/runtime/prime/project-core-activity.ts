@@ -300,8 +300,7 @@ export async function projectCoreBridgeToolCall(input: {
     kind: "tool_call",
     toolKind: input.mcp ? "mcp" : "prime_bridge",
     toolName: input.toolName,
-    contentText:
-      `${input.ok ? "✓" : "✗"} ${input.toolName}` + (summary ? `\n${summary.slice(0, 1500)}` : ""),
+    contentText: `${input.ok ? "✓" : "✗"} ${input.toolName}${summary ? `\n${summary.slice(0, 1500)}` : ""}`,
     payloadJson: {
       backend: "rust",
       toolCallId: input.toolCallId,

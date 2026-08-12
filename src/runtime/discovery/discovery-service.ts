@@ -521,8 +521,8 @@ export class DiscoveryService {
 // ─── 合成数据（GBM） ─────────────────────────────────────────────────────────
 
 function synthesizeBars(symbol: string, startDate: string, endDate: string): BarData[] {
-  const d0 = new Date(startDate + "T00:00:00Z").getTime();
-  const d1 = new Date(endDate + "T00:00:00Z").getTime();
+  const d0 = new Date(`${startDate}T00:00:00Z`).getTime();
+  const d1 = new Date(`${endDate}T00:00:00Z`).getTime();
   const dayMs = 86_400_000;
   const n = Math.max(40, Math.floor((d1 - d0) / dayMs) + 1);
   const ticks = generateGbmTicks(symbol, n);

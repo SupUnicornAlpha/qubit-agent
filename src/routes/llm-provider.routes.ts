@@ -74,11 +74,11 @@ function normalizeApiKey(input: {
   modelName?: string;
 }): { apiKeyRef: string | null; apiKeySecret: string | null } {
   // case 1: user 显式 env-ref
-  if (input.apiKeyRef && input.apiKeyRef.trim()) {
+  if (input.apiKeyRef?.trim()) {
     return { apiKeyRef: input.apiKeyRef.trim(), apiKeySecret: null };
   }
   // case 2: 明文 apiKey
-  if (input.apiKey && input.apiKey.trim()) {
+  if (input.apiKey?.trim()) {
     const secret = input.apiKey.trim();
     const provider =
       input.providerType === "custom" && input.modelName

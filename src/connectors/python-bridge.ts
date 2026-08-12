@@ -117,7 +117,7 @@ export class PythonConnectorBridgeImpl extends BaseConnector {
       });
 
       const request: JsonRpcRequest = { id, method, params };
-      const line = JSON.stringify(request) + "\n";
+      const line = `${JSON.stringify(request)}\n`;
       try {
         const stdin = this.process?.stdin;
         if (!stdin || typeof stdin === "number") {

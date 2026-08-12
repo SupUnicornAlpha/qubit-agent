@@ -33,8 +33,7 @@ function requireConfig(ref: ProviderRef): HttpProviderConfig {
   const cfg = readHttpProviderConfig(ref);
   if (!cfg) {
     throw new Error(
-      `${EXTERNAL_HTTP_DECISION_KIND} requires providers.decision.config.baseUrl. ` +
-        `Example: { "kind": "external.http_decision", "config": { "baseUrl": "http://127.0.0.1:8098" } }`
+      `${EXTERNAL_HTTP_DECISION_KIND} requires providers.decision.config.baseUrl. Example: { "kind": "external.http_decision", "config": { "baseUrl": "http://127.0.0.1:8098" } }`
     );
   }
   return cfg;

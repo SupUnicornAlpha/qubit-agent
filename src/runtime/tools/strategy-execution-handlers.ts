@@ -652,9 +652,7 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
         : { persistReason: persist.reason }),
       message: persist.persisted
         ? "编译成功并已落库。下一步 strategy.contract_backtest；Team 中栏「策略契约」可编辑同码。"
-        : "编译成功（未落库：" +
-          ("reason" in persist ? persist.reason : "unknown") +
-          "）。下一步 strategy.contract_backtest。",
+        : `编译成功（未落库：${"reason" in persist ? persist.reason : "unknown"}）。下一步 strategy.contract_backtest。`,
     };
   },
 

@@ -27,5 +27,5 @@ export function checkGoldenMarketDataReadiness() {
 export function assertGoldenMarketDataReadiness(): void {
   const result = checkGoldenMarketDataReadiness();
   if (!result.ok)
-    throw new Error("golden_market_data_readiness_failed:" + JSON.stringify(result.cases));
+    throw new Error(`golden_market_data_readiness_failed:${JSON.stringify(result.cases)}`);
 }

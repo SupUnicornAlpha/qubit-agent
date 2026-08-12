@@ -737,11 +737,11 @@ export class FactorService {
     if (result.error) {
       throw new FactorServiceError(
         "validation_failed",
-        `factor_evaluation_invalid: ${result.error}; sample_size=${result.sampleSize}; horizon=${horizon}; ` +
-          `symbols=${symbols.length} (${symbols.slice(0, 5).join(",")}); ` +
-          (result.error === "sample_size_too_small"
+        `factor_evaluation_invalid: ${result.error}; sample_size=${result.sampleSize}; horizon=${horizon}; symbols=${symbols.length} (${symbols.slice(0, 5).join(",")}); ${
+          result.error === "sample_size_too_small"
             ? "IC/RankIC 是横截面指标，至少需要 3 只 symbols 才能计算（推荐 ≥ 10）。请改用更宽的 universe 重跑 factor.compute + factor.autoEvaluate。"
-            : "请检查数据完整性、horizon 选择是否合理、symbols 数量是否足够。"),
+            : "请检查数据完整性、horizon 选择是否合理、symbols 数量是否足够。"
+        }`,
         { factorId: f.id, evaluationId: result.evaluationId }
       );
     }
@@ -846,7 +846,7 @@ export class FactorService {
 
   /** YYYY-MM-DD + days */
   private shiftDate(dateStr: string, days: number): string {
-    const d = new Date(dateStr.slice(0, 10) + "T00:00:00Z");
+    const d = new Date(`${dateStr.slice(0, 10)}T00:00:00Z`);
     d.setUTCDate(d.getUTCDate() + days);
     return d.toISOString().slice(0, 10);
   }

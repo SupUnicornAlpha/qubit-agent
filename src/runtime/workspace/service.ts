@@ -1,3 +1,4 @@
+import type { Stats } from "node:fs";
 import { mkdir, readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { defaultDataDir } from "../app-paths";
@@ -36,7 +37,7 @@ export async function discoverWorkspaces(dataDir?: string): Promise<DiscoverHit[
   const hits: DiscoverHit[] = [];
   for (const name of names) {
     const rootPath = join(root, name);
-    let st;
+    let st: Stats;
     try {
       st = await stat(rootPath);
     } catch {

@@ -69,7 +69,8 @@ function evalNode(node: Json, ctx: EvalCtx): unknown {
     for (const k of keys) out[k] = evalNode(obj[k], ctx);
     return out;
   }
-  const op = keys[0]!;
+  const op = keys[0];
+  if (op === undefined) return null;
   const args = obj[op];
 
   switch (op) {
@@ -97,9 +98,13 @@ function evalNode(node: Json, ctx: EvalCtx): unknown {
       // [cond, then, else, cond, then, ...] 模式
       const a = args as Json[];
       for (let i = 0; i + 1 < a.length; i += 2) {
-        if (Boolean(evalNode(a[i]!, ctx))) return evalNode(a[i + 1]!, ctx);
+        const condition = a[i];
+        const result = a[i + 1];
+        if (condition === undefined || result === undefined) break;
+        if (evalNode(condition, ctx)) return evalNode(result, ctx);
       }
-      if (a.length % 2 === 1) return evalNode(a[a.length - 1]!, ctx);
+      const fallback = a.length % 2 === 1 ? a.at(-1) : undefined;
+      if (fallback !== undefined) return evalNode(fallback, ctx);
       return null;
     }
     case "==":
@@ -130,6 +135,7 @@ function evalNode(node: Json, ctx: EvalCtx): unknown {
         case ">=":
           return ln >= rn;
       }
+      return null;
     }
     case "+":
     case "-":
@@ -139,7 +145,8 @@ function evalNode(node: Json, ctx: EvalCtx): unknown {
         .map((n) => asNumber(evalNode(n, ctx)))
         .filter((v): v is number => v !== null);
       if (nums.length === 0) return null;
-      const first = nums[0]!;
+      const first = nums[0];
+      if (first === undefined) return null;
       switch (op) {
         case "+":
           return nums.reduce((a, b) => a + b, 0);
@@ -150,6 +157,7 @@ function evalNode(node: Json, ctx: EvalCtx): unknown {
         case "/":
           return nums.slice(1).reduce((a, b) => (b === 0 ? Number.NaN : a / b), first);
       }
+      return null;
     }
     case "abs": {
       const n = asNumber(evalNode(Array.isArray(args) ? args[0] : args, ctx));

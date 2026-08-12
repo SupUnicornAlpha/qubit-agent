@@ -133,9 +133,7 @@ export const RESEARCH_THESIS_HANDLERS: Record<string, BuiltinToolHandler> = {
         const msg = err instanceof Error ? err.message : String(err);
         snapshotId = unboundSnapshotId(symbols, direction);
         snapshotBinding = "unbound";
-        snapshotWarning =
-          `snapshot 自动拉取失败（${msg}）；已用 unbound snapshotId=${snapshotId} 落库 thesis。` +
-          "后续请补 market.snapshot.get 并在 evidence 中引用真实 mkt_snapshot_*。";
+        snapshotWarning = `snapshot 自动拉取失败（${msg}）；已用 unbound snapshotId=${snapshotId} 落库 thesis。后续请补 market.snapshot.get 并在 evidence 中引用真实 mkt_snapshot_*。`;
       }
     }
 
