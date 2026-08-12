@@ -5,7 +5,16 @@ import { strategy, strategyEvalRun, strategyVersion } from "../../db/sqlite/sche
 import type { BacktestJobRecord } from "../backtest/backtest-job-service";
 
 export interface StrategyGateCheck {
-  key: "sample_size" | "net_sharpe" | "max_drawdown" | "turnover" | "annual_return";
+  key:
+    | "sample_size"
+    | "net_sharpe"
+    | "sortino"
+    | "calmar"
+    | "max_drawdown"
+    | "cvar95"
+    | "positive_period_rate"
+    | "turnover"
+    | "annual_return";
   label: string;
   value: number;
   threshold: number;
@@ -28,7 +37,11 @@ export interface StrategyEvaluationRecord {
 const DEFAULT_THRESHOLDS = {
   minSampleSize: 30,
   minSharpe: 0.5,
+  minSortino: 0.5,
+  minCalmar: 0.35,
   maxDrawdown: 0.25,
+  maxCvar95: 0.08,
+  minPositivePeriodRate: 0.45,
   maxTurnover: 12,
   minAnnualReturn: 0,
 };
@@ -53,7 +66,17 @@ export class StrategyEvaluationService {
     const checks: StrategyGateCheck[] = [
       check("sample_size", "样本量", job.result.meta.sampleSize, thresholds.minSampleSize, ">="),
       check("net_sharpe", "成本后 Sharpe", metrics.sharpe, thresholds.minSharpe, ">="),
+      check("sortino", "成本后 Sortino", metrics.sortino ?? 0, thresholds.minSortino, ">="),
+      check("calmar", "Calmar", metrics.calmar ?? 0, thresholds.minCalmar, ">="),
       check("max_drawdown", "最大回撤", metrics.maxDrawdown, thresholds.maxDrawdown, "<="),
+      check("cvar95", "CVaR 95%", metrics.conditionalValueAtRisk95 ?? 1, thresholds.maxCvar95, "<="),
+      check(
+        "positive_period_rate",
+        "正收益期占比",
+        metrics.positivePeriodRate ?? 0,
+        thresholds.minPositivePeriodRate,
+        ">="
+      ),
       check("turnover", "换手率", metrics.turnover, thresholds.maxTurnover, "<="),
       check("annual_return", "年化收益", metrics.annualReturn, thresholds.minAnnualReturn, ">"),
     ];
@@ -66,7 +89,7 @@ export class StrategyEvaluationService {
       skippedDays: job.result.meta.skippedDays,
       costs: job.config.costs,
       checks,
-      gateVersion: "strategy-gate-v1",
+      gateVersion: "strategy-gate-v2",
     };
     const existing = await db
       .select({ id: strategyEvalRun.id })

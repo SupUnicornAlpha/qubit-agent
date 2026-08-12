@@ -1287,6 +1287,7 @@ export interface GeneGenerationRecord {
   populationSize: number;
   mutationRate: number;
   bestSharpe: number | null;
+  bestFitness: number | null;
   createdAt: string;
 }
 
@@ -1299,6 +1300,8 @@ export interface StrategyGenomeRecord {
   sharpeRatio: number | null;
   maxDrawdown: number | null;
   totalReturn: number | null;
+  fitnessScore: number | null;
+  evaluationJson: Record<string, unknown> | null;
   mutationLog: string | null;
   isActive: boolean;
   createdAt: string;
@@ -1308,8 +1311,10 @@ export interface GeneTrendPoint {
   generationId: string;
   generationNumber: number;
   bestSharpe: number | null;
+  bestFitness: number | null;
   avgSharpe: number | null;
   avgDrawdown: number | null;
+  avgFitness: number | null;
   populationSize: number;
   createdAt: string;
 }

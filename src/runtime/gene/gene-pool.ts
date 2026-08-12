@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { geneGeneration, strategyGenome } from "../../db/sqlite/schema";
+import type { BacktestMetrics } from "../provider/types";
+import { scoreGenomeFitness } from "./gene-fitness";
 
 export interface InitGenePoolInput {
   projectId: string;
@@ -47,17 +49,47 @@ export async function initGenePool(input: InitGenePoolInput) {
 export async function applyBacktestResult(input: {
   genomeId: string;
   backtestRunId?: string;
+  /** 兼容旧调用；新调用必须同时传 metrics + sampleSize 才能参加进化。 */
   sharpeRatio: number;
   maxDrawdown: number;
   totalReturn: number;
+  metrics?: Partial<BacktestMetrics>;
+  sampleSize?: number;
 }) {
   const db = await getDb();
+  const metrics = input.metrics ?? {};
+  const evaluation = scoreGenomeFitness({
+    metrics: {
+      annualReturn: metrics.annualReturn,
+      sharpe: metrics.sharpe ?? input.sharpeRatio,
+      sortino: metrics.sortino,
+      calmar: metrics.calmar,
+      maxDrawdown: metrics.maxDrawdown ?? input.maxDrawdown,
+      conditionalValueAtRisk95: metrics.conditionalValueAtRisk95,
+      turnover: metrics.turnover,
+      positivePeriodRate: metrics.positivePeriodRate,
+      maxConsecutiveLosses: metrics.maxConsecutiveLosses,
+      tradeCount: metrics.tradeCount,
+      benchmark: metrics.benchmark,
+    } as Parameters<typeof scoreGenomeFitness>[0]["metrics"],
+    sampleSize: input.sampleSize ?? 0,
+  });
+  const sharpeRatio = metrics.sharpe ?? input.sharpeRatio;
+  const maxDrawdown = metrics.maxDrawdown ?? input.maxDrawdown;
+  const totalReturn = metrics.totalReturn ?? input.totalReturn;
   await db
     .update(strategyGenome)
     .set({
-      sharpeRatio: input.sharpeRatio,
-      maxDrawdown: input.maxDrawdown,
-      totalReturn: input.totalReturn,
+      sharpeRatio,
+      maxDrawdown,
+      totalReturn,
+      fitnessScore: evaluation.eligible ? evaluation.score : null,
+      evaluationJson: {
+        ...evaluation,
+        sampleSize: input.sampleSize ?? null,
+        metrics,
+        evaluatedAt: new Date().toISOString(),
+      } as never,
       backtestRunId: input.backtestRunId ?? null,
     })
     .where(eq(strategyGenome.id, input.genomeId));
@@ -74,16 +106,22 @@ export async function applyBacktestResult(input: {
   if (!generationId) return { ok: true };
 
   const best = await db
-    .select({ bestSharpe: sql<number>`MAX(${strategyGenome.sharpeRatio})` })
+    .select({
+      bestSharpe: sql<number>`MAX(${strategyGenome.sharpeRatio})`,
+      bestFitness: sql<number>`MAX(${strategyGenome.fitnessScore})`,
+    })
     .from(strategyGenome)
     .where(eq(strategyGenome.generationId, generationId));
 
   await db
     .update(geneGeneration)
-    .set({ bestSharpe: best[0]?.bestSharpe ?? null })
+    .set({
+      bestSharpe: best[0]?.bestSharpe ?? null,
+      bestFitness: best[0]?.bestFitness ?? null,
+    })
     .where(eq(geneGeneration.id, generationId));
 
-  // 自动周期演化：当本代已完成回测数量 >= populationSize 时，自动触发下一代
+  // 自动周期演化：全体都要完成评估；父本则只从通过多维准入的个体中选择。
   const generationRow = await db
     .select()
     .from(geneGeneration)
@@ -95,8 +133,13 @@ export async function applyBacktestResult(input: {
   const evaluated = await db
     .select({ cnt: sql<number>`COUNT(*)` })
     .from(strategyGenome)
-    .where(eq(strategyGenome.generationId, generationId));
+    .where(and(eq(strategyGenome.generationId, generationId), isNotNull(strategyGenome.evaluationJson)));
   const evaluatedCnt = Number(evaluated[0]?.cnt ?? 0);
+  const eligible = await db
+    .select({ cnt: sql<number>`COUNT(*)` })
+    .from(strategyGenome)
+    .where(and(eq(strategyGenome.generationId, generationId), isNotNull(strategyGenome.fitnessScore)));
+  const eligibleCnt = Number(eligible[0]?.cnt ?? 0);
   const nextExist = await db
     .select({ id: geneGeneration.id })
     .from(geneGeneration)
@@ -107,13 +150,21 @@ export async function applyBacktestResult(input: {
 
   let autoEvolved = false;
   let autoNextGenerationNumber: number | null = null;
-  if (evaluatedCnt >= cur.populationSize && !nextExist[0]) {
+  if (evaluatedCnt >= cur.populationSize && eligibleCnt >= 2 && !nextExist[0]) {
     const evolved = await evolveFromGeneration(cur.id);
     autoEvolved = true;
     autoNextGenerationNumber = evolved.generationNumber;
   }
 
-  return { ok: true, autoEvolved, autoNextGenerationNumber };
+  return {
+    ok: true,
+    evaluation,
+    eligibleForEvolution: evaluation.eligible,
+    evaluatedCount: evaluatedCnt,
+    eligibleCount: eligibleCnt,
+    autoEvolved,
+    autoNextGenerationNumber,
+  };
 }
 
 export async function evolveNextGeneration(input: { projectId: string }) {
@@ -142,9 +193,11 @@ async function evolveFromGeneration(generationId: string) {
   const genomes = await db
     .select()
     .from(strategyGenome)
-    .where(eq(strategyGenome.generationId, cur.id))
-    .orderBy(desc(strategyGenome.sharpeRatio));
-  if (genomes.length < 2) throw new Error("Need at least 2 genomes to evolve.");
+    .where(and(eq(strategyGenome.generationId, cur.id), isNotNull(strategyGenome.fitnessScore)))
+    .orderBy(desc(strategyGenome.fitnessScore));
+  if (genomes.length < 2) {
+    throw new Error("Need at least 2 genomes that passed multidimensional evaluation to evolve.");
+  }
 
   const top = genomes.slice(0, Math.max(2, Math.floor(genomes.length / 2)));
   const nextGenerationId = randomUUID();
@@ -212,7 +265,7 @@ export async function listGenomesByGeneration(generationId: string) {
     .select()
     .from(strategyGenome)
     .where(eq(strategyGenome.generationId, generationId))
-    .orderBy(desc(strategyGenome.sharpeRatio));
+    .orderBy(desc(strategyGenome.fitnessScore), desc(strategyGenome.sharpeRatio));
 }
 
 export async function listGenerationTrends(projectId: string) {
@@ -229,6 +282,7 @@ export async function listGenerationTrends(projectId: string) {
       .select({
         avgDrawdown: sql<number>`AVG(${strategyGenome.maxDrawdown})`,
         avgSharpe: sql<number>`AVG(${strategyGenome.sharpeRatio})`,
+        avgFitness: sql<number>`AVG(${strategyGenome.fitnessScore})`,
       })
       .from(strategyGenome)
       .where(eq(strategyGenome.generationId, g.id));
@@ -236,8 +290,10 @@ export async function listGenerationTrends(projectId: string) {
       generationId: g.id,
       generationNumber: g.generationNumber,
       bestSharpe: g.bestSharpe ?? null,
+      bestFitness: g.bestFitness ?? null,
       avgSharpe: agg[0]?.avgSharpe ?? null,
       avgDrawdown: agg[0]?.avgDrawdown ?? null,
+      avgFitness: agg[0]?.avgFitness ?? null,
       populationSize: g.populationSize,
       createdAt: g.createdAt,
     });

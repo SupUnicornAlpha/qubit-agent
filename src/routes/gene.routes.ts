@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { BacktestMetrics } from "../runtime/provider/types";
 import {
   applyBacktestResult,
   evolveNextGeneration,
@@ -28,6 +29,8 @@ geneRouter.post("/backtest-result", async (c) => {
     sharpeRatio: number;
     maxDrawdown: number;
     totalReturn: number;
+    metrics?: Partial<BacktestMetrics>;
+    sampleSize?: number;
   }>();
   if (!body.genomeId) return c.json({ error: "genomeId is required" }, 400);
   const data = await applyBacktestResult(body);

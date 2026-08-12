@@ -235,25 +235,25 @@ export interface BacktestMetrics {
   annualReturn: number;
   annualVol: number;
   sharpe: number;
-  sortino: number;
-  downsideDeviation: number;
+  sortino?: number;
+  downsideDeviation?: number;
   maxDrawdown: number;
-  maxDrawdownDuration: number;
-  calmar: number;
-  ulcerIndex: number;
+  maxDrawdownDuration?: number;
+  calmar?: number;
+  ulcerIndex?: number;
   /** 单期历史 VaR / CVaR（95%，均为正的潜在损失比例）。 */
-  valueAtRisk95: number;
-  conditionalValueAtRisk95: number;
-  positivePeriodRate: number;
-  maxConsecutiveLosses: number;
-  returnSkewness: number;
-  excessKurtosis: number;
+  valueAtRisk95?: number;
+  conditionalValueAtRisk95?: number;
+  positivePeriodRate?: number;
+  maxConsecutiveLosses?: number;
+  returnSkewness?: number;
+  excessKurtosis?: number;
   winRate: number;
   tradeCount: number;
   turnover: number;
-  totalCommission: number;
+  totalCommission?: number;
   /** 基准存在时给出 Alpha/Beta、信息比率和捕获率。 */
-  benchmark: {
+  benchmark?: {
     totalReturn: number;
     annualReturn: number;
     beta: number;

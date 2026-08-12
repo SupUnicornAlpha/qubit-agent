@@ -111,28 +111,12 @@ function moments(returns: number[]): { skewness: number; excessKurtosis: number 
   const average = mean(returns);
   const std = sampleStd(returns, average);
   if (std <= EPSILON) return { skewness: 0, excessKurtosis: 0 };
-  const n = returns.length;
   const third = mean(returns.map((value) => ((value - average) / std) ** 3));
   const fourth = mean(returns.map((value) => ((value - average) / std) ** 4));
   // 小样本时不试图做无偏校正；此处用于比较策略的尾部形态而非统计推断。
   return {
     skewness: finite(third),
     excessKurtosis: finite(fourth - 3),
-  };
-}
-
-function emptyBenchmark(): BenchmarkPerformanceMetrics {
-  return {
-    totalReturn: 0,
-    annualReturn: 0,
-    beta: 0,
-    alpha: 0,
-    correlation: 0,
-    informationRatio: 0,
-    trackingError: 0,
-    upCapture: null,
-    downCapture: null,
-    observations: 0,
   };
 }
 
@@ -236,16 +220,18 @@ export function computePerformanceMetrics(
     const benchmarkTotalReturn = benchmarkStart > 0 ? benchmarkEnd / benchmarkStart - 1 : 0;
     const benchmarkAnnualReturn = finite(Math.pow(1 + benchmarkTotalReturn, 1 / years) - 1);
     const benchmarkMean = mean(benchmarkReturns);
+    const strategyMean = mean(pairedStrategyReturns);
     const benchmarkVariance = sampleStd(benchmarkReturns, benchmarkMean) ** 2;
-    const covariance = mean(
-      pairedStrategyReturns.map(
-        (value, index) =>
-          (value - mean(pairedStrategyReturns)) * (benchmarkReturns[index]! - benchmarkMean)
-      )
-    );
+    // 与 sampleStd 的 n - 1 分母保持一致，避免 Beta 出现系统性向下偏差。
+    const covariance =
+      pairedStrategyReturns.reduce(
+        (sum, value, index) =>
+          sum + (value - strategyMean) * (benchmarkReturns[index]! - benchmarkMean),
+        0
+      ) / (pairedStrategyReturns.length - 1);
     const beta = benchmarkVariance > EPSILON ? covariance / benchmarkVariance : 0;
     const alphaPeriod =
-      mean(pairedStrategyReturns) - riskFreePeriod - beta * (benchmarkMean - riskFreePeriod);
+      strategyMean - riskFreePeriod - beta * (benchmarkMean - riskFreePeriod);
     const activeReturns = pairedStrategyReturns.map(
       (value, index) => value - benchmarkReturns[index]!
     );
@@ -303,5 +289,3 @@ export function computePerformanceMetrics(
     benchmark,
   };
 }
-
-export const EMPTY_BENCHMARK_PERFORMANCE = emptyBenchmark;

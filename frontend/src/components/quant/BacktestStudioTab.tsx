@@ -9,7 +9,7 @@
  * 与后端 /api/v1/backtest-jobs 对接。strategy_version 由 /api/v1/strategies/versions 提供。
  */
 
-import type { CSSProperties, FC } from "react";
+import type { CSSProperties, FC, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   getBacktestJob,
@@ -19,6 +19,7 @@ import {
   runBacktestJobNow,
   runWalkForwardEvaluation,
   type BacktestJobRecord,
+  type BacktestMetricsDto,
   type BacktestSignalSpec,
   type StrategyCompositionRecord,
   type StrategyVersionFlatRecord,
@@ -26,6 +27,7 @@ import {
 import { useDefaultProject } from "./useDefaultProject";
 import { pickColor, SvgLineChart, type ChartSeries } from "./charts/SvgLineChart";
 import { LineageBadge, LineageTrail } from "./LineageBadge";
+import { GenomeEvolutionPanel } from "./GenomeEvolutionPanel";
 import { useAppStore } from "../../store";
 
 type Source = "composition" | "raw";
@@ -639,7 +641,7 @@ export const BacktestStudioTab: FC = () => {
         {compareMode && compareFullJobs.length >= 2 ? (
           <CompareView jobs={compareFullJobs} equitySeries={compareEquitySeries} />
         ) : selected ? (
-          <BacktestResultView job={selected} onRefresh={reloadSelected} />
+          <BacktestResultView job={selected} projectId={projectId} onRefresh={reloadSelected} />
         ) : (
           <div className="qb-quant-empty" style={styles.empty}>
             左侧选择历史任务或新建回测。
@@ -708,10 +710,11 @@ export const BacktestStudioTab: FC = () => {
   );
 };
 
-const BacktestResultView: FC<{ job: BacktestJobRecord; onRefresh: () => Promise<void> }> = ({
-  job,
-  onRefresh,
-}) => {
+const BacktestResultView: FC<{
+  job: BacktestJobRecord;
+  projectId: string;
+  onRefresh: () => Promise<void>;
+}> = ({ job, projectId, onRefresh }) => {
   const m = job.result?.metrics;
   const equityRaw = job.result?.equityCurve;
   const equity = Array.isArray(equityRaw) ? equityRaw : [];
@@ -1012,12 +1015,15 @@ const BacktestResultView: FC<{ job: BacktestJobRecord; onRefresh: () => Promise<
           <Metric label="年化收益" value={m.annualReturn} pct tone="emerald" signed />
           <Metric label="年化波动" value={m.annualVol} pct tone="cyan" />
           <Metric label="Sharpe" value={m.sharpe} tone="indigo" signed />
+          <Metric label="Sortino" value={m.sortino ?? Number.NaN} tone="indigo" signed />
+          <Metric label="Calmar" value={m.calmar ?? Number.NaN} tone="indigo" signed />
           <Metric label="最大回撤" value={m.maxDrawdown} pct tone="amber" />
           <Metric label="胜率" value={m.winRate} pct tone="pink" />
           <Metric label="交易笔数" value={m.tradeCount} digits={0} tone="cyan" />
           <Metric label="换手率" value={m.turnover} tone="indigo" />
         </div>
       ) : null}
+      {m ? <PerformanceDiagnostics metrics={m} /> : null}
       {equitySeries.length > 0 ? (
         <SvgLineChart
           title="Equity Curve"
@@ -1026,7 +1032,96 @@ const BacktestResultView: FC<{ job: BacktestJobRecord; onRefresh: () => Promise<
           yFormatter={(v) => v.toFixed(0)}
         />
       ) : null}
+      <GenomeEvolutionPanel projectId={projectId} />
     </>
+  );
+};
+
+const PerformanceDiagnostics: FC<{ metrics: BacktestMetricsDto }> = ({ metrics }) => {
+  const benchmark = metrics.benchmark;
+  return (
+    <section className="qb-quant-hero-card" style={styles.diagnostics}>
+      <div style={styles.diagnosticsHeader}>
+        <div>
+          <strong>全维绩效画像</strong>
+          <div className="qb-quant-detail-meta" style={styles.detailMeta}>
+            以成本后净值为准；用于判断回测是否具备继续验证和进入自进化的条件。
+          </div>
+        </div>
+        <span className="qb-quant-detail-meta" style={styles.detailMeta}>
+          {benchmark ? `基准观测 ${benchmark.observations} 期` : "未配置基准：相对收益指标暂不可用"}
+        </span>
+      </div>
+      <div style={styles.diagnosticColumns}>
+        <DiagnosticGroup title="下行与尾部" description="比波动率更关注亏损形态">
+          <DiagnosticValue label="下行波动" value={metrics.downsideDeviation} pct />
+          <DiagnosticValue label="VaR 95%" value={metrics.valueAtRisk95} pct risk />
+          <DiagnosticValue label="CVaR 95%" value={metrics.conditionalValueAtRisk95} pct risk />
+          <DiagnosticValue label="Ulcer 指数" value={metrics.ulcerIndex} pct risk />
+          <DiagnosticValue label="最长回撤期" value={metrics.maxDrawdownDuration} suffix=" 期" />
+        </DiagnosticGroup>
+        <DiagnosticGroup title="稳定性与执行" description="避免偶然收益和高成本策略">
+          <DiagnosticValue label="正收益期占比" value={metrics.positivePeriodRate} pct />
+          <DiagnosticValue label="最大连亏期" value={metrics.maxConsecutiveLosses} suffix=" 期" risk />
+          <DiagnosticValue label="累计佣金" value={metrics.totalCommission} prefix="$" digits={2} />
+          <DiagnosticValue label="收益偏度" value={metrics.returnSkewness} signed />
+          <DiagnosticValue label="超额峰度" value={metrics.excessKurtosis} signed />
+        </DiagnosticGroup>
+        <DiagnosticGroup title="相对基准" description="区分市场 Beta 与真正的 Alpha">
+          <DiagnosticValue label="年化 Alpha" value={benchmark?.alpha} pct signed />
+          <DiagnosticValue label="Beta" value={benchmark?.beta} digits={2} />
+          <DiagnosticValue label="信息比率" value={benchmark?.informationRatio} signed />
+          <DiagnosticValue label="跟踪误差" value={benchmark?.trackingError} pct />
+          <DiagnosticValue label="相关性" value={benchmark?.correlation} digits={2} />
+          <DiagnosticValue label="上 / 下行捕获" composite={[benchmark?.upCapture, benchmark?.downCapture]} />
+        </DiagnosticGroup>
+      </div>
+    </section>
+  );
+};
+
+const DiagnosticGroup: FC<{ title: string; description: string; children: ReactNode }> = ({
+  title,
+  description,
+  children,
+}) => (
+  <div style={styles.diagnosticGroup}>
+    <div style={styles.diagnosticGroupTitle}>{title}</div>
+    <div style={styles.diagnosticGroupDescription}>{description}</div>
+    <div style={styles.diagnosticList}>{children}</div>
+  </div>
+);
+
+const DiagnosticValue: FC<{
+  label: string;
+  value?: number | null;
+  composite?: [number | null | undefined, number | null | undefined];
+  pct?: boolean;
+  digits?: number;
+  prefix?: string;
+  suffix?: string;
+  signed?: boolean;
+  risk?: boolean;
+}> = ({ label, value, composite, pct = false, digits = 3, prefix = "", suffix = "", signed = false, risk = false }) => {
+  const text = composite
+    ? composite.every((entry) => typeof entry === "number" && Number.isFinite(entry))
+      ? `${composite[0]?.toFixed(2) ?? "—"} / ${composite[1]?.toFixed(2) ?? "—"}`
+      : "—"
+    : typeof value === "number" && Number.isFinite(value)
+      ? `${prefix}${pct ? `${(value * 100).toFixed(2)}%` : value.toFixed(digits)}${suffix}`
+      : "—";
+  const tone = signed && typeof value === "number" && value !== 0
+    ? value > 0
+      ? "var(--qb-success, #36ad6a)"
+      : "var(--qb-danger, #dc5d62)"
+    : risk
+      ? "var(--qb-warning, #d99a32)"
+      : "var(--qb-text-strong)";
+  return (
+    <div style={styles.diagnosticValue}>
+      <span>{label}</span>
+      <strong style={{ color: tone }}>{text}</strong>
+    </div>
   );
 };
 
@@ -1342,6 +1437,33 @@ const styles: Record<string, CSSProperties> = {
   },
   metricLabel: { fontSize: 10, color: "var(--qb-text-muted)" },
   metricValue: { fontSize: 13, fontWeight: 600, marginTop: 2 },
+  diagnostics: { display: "flex", flexDirection: "column", gap: 10 },
+  diagnosticsHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  diagnosticColumns: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(185px, 1fr))",
+    gap: 14,
+  },
+  diagnosticGroup: {
+    borderLeft: "2px solid var(--qb-border-subtle)",
+    paddingLeft: 10,
+    minWidth: 0,
+  },
+  diagnosticGroupTitle: { fontSize: 11, fontWeight: 650 },
+  diagnosticGroupDescription: { color: "var(--qb-text-muted)", fontSize: 10, marginTop: 2 },
+  diagnosticList: { display: "flex", flexDirection: "column", marginTop: 7, gap: 4 },
+  diagnosticValue: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: 8,
+    fontSize: 11,
+    color: "var(--qb-text-muted)",
+  },
   compTable: { width: "100%", borderCollapse: "collapse", fontSize: 11 },
   tableWrap: {
     border: "1px solid var(--qb-border-subtle)",

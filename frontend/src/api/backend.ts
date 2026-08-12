@@ -5442,10 +5442,34 @@ export interface BacktestMetricsDto {
   annualReturn: number;
   annualVol: number;
   sharpe: number;
+  sortino?: number;
+  downsideDeviation?: number;
   maxDrawdown: number;
+  maxDrawdownDuration?: number;
+  calmar?: number;
+  ulcerIndex?: number;
+  valueAtRisk95?: number;
+  conditionalValueAtRisk95?: number;
+  positivePeriodRate?: number;
+  maxConsecutiveLosses?: number;
+  returnSkewness?: number;
+  excessKurtosis?: number;
   winRate: number;
   tradeCount: number;
   turnover: number;
+  totalCommission?: number;
+  benchmark?: {
+    totalReturn: number;
+    annualReturn: number;
+    beta: number;
+    alpha: number;
+    correlation: number;
+    informationRatio: number;
+    trackingError: number;
+    upCapture: number | null;
+    downCapture: number | null;
+    observations: number;
+  } | null;
 }
 
 export interface BacktestEquityPoint {
@@ -5472,7 +5496,16 @@ export interface BacktestResultDto {
 }
 
 export interface StrategyGateCheckDto {
-  key: "sample_size" | "net_sharpe" | "max_drawdown" | "turnover" | "annual_return";
+  key:
+    | "sample_size"
+    | "net_sharpe"
+    | "sortino"
+    | "calmar"
+    | "max_drawdown"
+    | "cvar95"
+    | "positive_period_rate"
+    | "turnover"
+    | "annual_return";
   label: string;
   value: number;
   threshold: number;

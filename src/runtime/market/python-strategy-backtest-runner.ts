@@ -130,7 +130,7 @@ async function runWithBinary(
       ...parsed.metrics,
       ...performanceMetrics,
     },
-    stderrText: parsed.stderrText,
+    ...(parsed.stderrText !== undefined ? { stderrText: parsed.stderrText } : {}),
   };
 }
 
