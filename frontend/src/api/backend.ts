@@ -4358,6 +4358,183 @@ export async function importPluginPackage(input: {
   return res.data;
 }
 
+/** Harness 声明式能力包：服务端只接受已签名的 JSON Manifest/Profile。 */
+export interface HarnessPackageLockRecordDto {
+  packageId: string;
+  version: string;
+  digest: string;
+  keyId: string;
+  installedAt: string;
+}
+
+export interface HarnessPackageVersionDto {
+  packageId: string;
+  version: string;
+  digest: string;
+  keyId: string;
+  current: boolean;
+}
+
+export interface HarnessPackageProfileDto {
+  id: string;
+  title: string;
+  packageId: string;
+  packageVersion: string;
+  resolverAllowlisted: boolean;
+}
+
+export interface HarnessProfileActivationDto {
+  schemaVersion: 1;
+  profileIds: string[];
+  parameterOverrides: Record<string, Record<string, string | number | boolean>>;
+  revision: number;
+  updatedAt: string | null;
+}
+
+export interface HarnessProfileHealthDto {
+  profileId: string;
+  state: "closed" | "open";
+  failuresInWindow: number;
+  openedAt: string | null;
+  retryAt: string | null;
+  lastError: string | null;
+}
+
+export interface HarnessHealthDto {
+  profiles: HarnessProfileHealthDto[];
+  recentDegradations: number;
+  fallbackPolicy: string;
+}
+
+export interface HarnessPackageProfilesDto {
+  activeProfileIds: string[];
+  activation: HarnessProfileActivationDto;
+  available: HarnessPackageProfileDto[];
+  rejected: Array<{ packageId: string; reason: string }>;
+}
+
+export interface HarnessRecentEventDto {
+  id: string;
+  eventType: string;
+  workflowRunId: string;
+  profileId: string | null;
+  capabilityId: string | null;
+  toolCallId: string | null;
+  status: string | null;
+  createdAt: string;
+}
+
+export interface HarnessRecentEventsDto {
+  summary: {
+    composed: number;
+    degraded: number;
+    admitted: number;
+    rejected: number;
+    started: number;
+    completed: number;
+    artifacts: number;
+    completedByStatus: Record<string, number>;
+  };
+  events: HarnessRecentEventDto[];
+}
+
+export async function listHarnessPackages(): Promise<HarnessPackageLockRecordDto[]> {
+  const res = await httpGet<{ data: HarnessPackageLockRecordDto[] }>("/api/v1/harness/packages");
+  return res.data;
+}
+
+export async function listHarnessPackageVersions(
+  packageId: string
+): Promise<HarnessPackageVersionDto[]> {
+  const res = await httpGet<{ data: HarnessPackageVersionDto[] }>(
+    `/api/v1/harness/packages/${encodeURIComponent(packageId)}/versions`
+  );
+  return res.data;
+}
+
+export async function rollbackHarnessPackage(
+  packageId: string,
+  version: string
+): Promise<HarnessPackageLockRecordDto> {
+  const res = await httpPost<{ data: HarnessPackageLockRecordDto }>(
+    `/api/v1/harness/packages/${encodeURIComponent(packageId)}/rollback`,
+    { version }
+  );
+  return res.data;
+}
+
+export async function uninstallHarnessPackage(
+  packageId: string
+): Promise<HarnessPackageLockRecordDto> {
+  const res = await httpDelete<{ data: HarnessPackageLockRecordDto }>(
+    `/api/v1/harness/packages/${encodeURIComponent(packageId)}`
+  );
+  return res.data;
+}
+
+export async function getHarnessPackageProfiles(): Promise<HarnessPackageProfilesDto> {
+  const res = await httpGet<{ data: HarnessPackageProfilesDto }>("/api/v1/harness/profiles");
+  return res.data;
+}
+
+export async function setActiveHarnessPackageProfiles(profileIds: string[]): Promise<string[]> {
+  const res = await httpPut<{ data: { activeProfileIds: string[] } }>("/api/v1/harness/profiles", { profileIds });
+  return res.data.activeProfileIds;
+}
+
+export async function getHarnessHealth(): Promise<HarnessHealthDto> {
+  const res = await httpGet<{ data: HarnessHealthDto }>("/api/v1/harness/health");
+  return res.data;
+}
+
+export async function exportHarnessPackageProfiles(): Promise<
+  HarnessProfileActivationDto & { exportedAt: string }
+> {
+  const res = await httpGet<{ data: HarnessProfileActivationDto & { exportedAt: string } }>(
+    "/api/v1/harness/profiles/export"
+  );
+  return res.data;
+}
+
+export async function importHarnessPackageProfiles(
+  activation: Record<string, unknown>
+): Promise<HarnessProfileActivationDto> {
+  const res = await httpPost<{
+    data: { activeProfileIds: string[]; activation: HarnessProfileActivationDto };
+  }>("/api/v1/harness/profiles/import", { activation });
+  return res.data.activation;
+}
+
+export async function getRecentHarnessEvents(limit = 12): Promise<HarnessRecentEventsDto> {
+  const res = await httpGet<{ data: HarnessRecentEventsDto }>(
+    `/api/v1/harness/events/recent?limit=${encodeURIComponent(String(limit))}`
+  );
+  return res.data;
+}
+
+export async function verifyHarnessPackageManifest(packageData: Record<string, unknown>): Promise<{
+  ok: boolean;
+  digest?: string;
+  keyId?: string;
+  code?: string;
+  message?: string;
+}> {
+  const res = await httpPost<{
+    data: { ok: boolean; digest?: string; keyId?: string; code?: string; message?: string };
+  }>("/api/v1/harness/packages/verify", { package: packageData });
+  return res.data;
+}
+
+export async function installHarnessPackageManifest(
+  packageData: Record<string, unknown>
+): Promise<HarnessPackageLockRecordDto> {
+  const res = await httpPost<{ data: HarnessPackageLockRecordDto }>(
+    "/api/v1/harness/packages/install",
+    { package: packageData }
+  );
+  return res.data;
+}
+
 /** P2 OAuth connectors */
 export interface ConnectorAuthPublicDto {
   id: string;

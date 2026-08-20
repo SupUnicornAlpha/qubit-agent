@@ -18,6 +18,7 @@ import { fsWorkspaceRouter } from "./routes/fs-workspace.routes";
 import { fsiRouter } from "./routes/fsi.routes";
 import { geneRouter } from "./routes/gene.routes";
 import { governanceRouter } from "./routes/governance.routes";
+import { harnessRouter } from "./routes/harness.routes";
 import { integrationsRouter } from "./routes/integrations.routes";
 import { llmProviderRouter } from "./routes/llm-provider.routes";
 import { marketRouter } from "./routes/market.routes";
@@ -42,6 +43,7 @@ import { tradingEventsRouter } from "./routes/trading-events.routes";
 import { workflowRouter } from "./routes/workflow.routes";
 import { workspaceRouter } from "./routes/workspace.routes";
 import { getMarketDataReadiness } from "./runtime/market/market-data-health";
+import { refreshHarnessPackageRuntime } from "./runtime/harness/package-manager";
 import {
   type MarketStreamSubscription,
   marketStreamGateway,
@@ -50,6 +52,7 @@ import { getPrimeAttachStatus } from "./runtime/prime/attach";
 import { stepStreamBus } from "./runtime/react/event-stream";
 
 void registerBuiltinConnectors();
+void refreshHarnessPackageRuntime();
 
 // ─── HTTP API (Hono) ─────────────────────────────────────────────────────────
 
@@ -85,6 +88,7 @@ app.route("/api/v1/workspaces", workspaceRouter);
 app.route("/api/v1/fs-workspaces", fsWorkspaceRouter);
 app.route("/api/v1/workflows", workflowRouter);
 app.route("/api/v1/agents", agentRouter);
+app.route("/api/v1/harness", harnessRouter);
 app.route("/api/v1/plugins/oauth", pluginsOauthRouter);
 app.route("/api/v1/chat", chatRouter);
 app.route("/api/v1/monitor", monitorRouter);

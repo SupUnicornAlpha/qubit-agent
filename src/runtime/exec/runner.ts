@@ -15,6 +15,10 @@
 import { isAbsolute, normalize, resolve, sep } from "node:path";
 import type { Subprocess } from "bun";
 import { getDataDir } from "../agent/agent-pack-service";
+import {
+  type HarnessContainerExecution,
+  runHarnessContainerExec,
+} from "../harness/container-exec-adapter";
 import type { ExecProvider, ExecResult } from "./types";
 
 /**
@@ -150,6 +154,11 @@ export interface RunExecInput {
   cwd: string;
   stdinText?: string;
   timeoutMs?: number;
+  /**
+   * Explicit Harness execution boundary. When present it forces the Docker
+   * adapter; a failed container admission never falls back to host execution.
+   */
+  harnessContainer?: HarnessContainerExecution;
   /** 由 builtin handler 注入：用于错误日志归因，不参与执行 */
   toolCallContext?: {
     workflowId?: string;
@@ -164,6 +173,16 @@ export interface RunExecInput {
  * 不在这里做注册表查找——那是 builtin handler 的职责，让 runner 保持纯执行语义、好测试。
  */
 export async function runExec(input: RunExecInput): Promise<ExecResult> {
+  if (input.harnessContainer) {
+    return runHarnessContainerExec({
+      execution: input.harnessContainer,
+      provider: input.provider,
+      args: input.args,
+      cwd: input.cwd,
+      ...(input.stdinText !== undefined ? { stdinText: input.stdinText } : {}),
+      ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
+    });
+  }
   const { provider, args, cwd, stdinText } = input;
   const startedAt = Date.now();
   const timeoutMs = Math.min(
@@ -267,6 +286,6 @@ function truncateUtf8(s: string, maxBytes: number): string {
   if (buf.length <= maxBytes) return s;
   // 退一位避免砍断 utf-8 多字节序列
   let end = maxBytes;
-  while (end > 0 && (buf[end] & 0xc0) === 0x80) end -= 1;
+  while (end > 0 && ((buf[end] ?? 0) & 0xc0) === 0x80) end -= 1;
   return `${buf.subarray(0, end).toString("utf-8")}\n…[truncated]`;
 }

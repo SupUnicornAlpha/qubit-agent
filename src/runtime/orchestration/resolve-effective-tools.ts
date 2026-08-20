@@ -1,6 +1,15 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { workflowRun } from "../../db/sqlite/schema";
+import { appendHarnessCompositionSafe, appendHarnessEventSafe } from "../harness/event-ledger";
+import {
+  type HarnessResolverRollout,
+  resolveHarnessResolverRolloutFromEnv,
+} from "../harness/rollout";
+import {
+  type HarnessToolSurfaceShadow,
+  buildHarnessToolSurfaceShadow,
+} from "../harness/shadow-tool-surface";
 import { stripOrchestratorTeamCompatTools } from "../market/contracts/prime-tool-host-surface";
 import {
   applyMissingArtifactToolFilter,
@@ -22,6 +31,13 @@ import {
 
 export type EffectiveToolsResult = {
   tools: string[];
+  /**
+   * Phase 2 shadow-only Harness surface. It is deliberately observational:
+   * prompt and execution continue to use `tools` until an explicit rollout.
+   */
+  harnessShadow: HarnessToolSurfaceShadow;
+  /** Shadow by default; becomes active only for an explicit profile allowlist. */
+  harnessRollout: HarnessResolverRollout;
   topologyContext: OrchestratorTopologyContext | null;
   topologyPromptBlock: string;
   collaborationHint: string;
@@ -29,13 +45,64 @@ export type EffectiveToolsResult = {
   scenarioKey: string | null;
 };
 
+async function withHarnessShadow(
+  definition: RuntimeAgentDefinition,
+  workflowId: string,
+  result: Omit<EffectiveToolsResult, "harnessShadow" | "harnessRollout">
+): Promise<EffectiveToolsResult> {
+  const harnessShadow = buildHarnessToolSurfaceShadow({
+    role: definition.role,
+    legacyTools: result.tools,
+  });
+  const harnessRollout = resolveHarnessResolverRolloutFromEnv(harnessShadow);
+  await appendHarnessCompositionSafe({
+    workflowRunId: workflowId,
+    mode: harnessRollout.mode,
+    profileIds: harnessShadow.profileIds,
+    capabilityIds: harnessShadow.capabilityIds,
+    sharedTools: harnessShadow.sharedTools,
+    legacyOnlyTools: harnessShadow.legacyOnlyTools,
+    harnessOnlyTools: harnessShadow.harnessOnlyTools,
+  });
+  if (harnessShadow.unavailableProfileIds.length > 0) {
+    await appendHarnessEventSafe({
+      workflowRunId: workflowId,
+      eventType: "capability.degraded",
+      profileId: harnessShadow.unavailableProfileIds.join("+"),
+      payload: {
+        reason: harnessShadow.availabilityWarning,
+        unavailableProfileIds: harnessShadow.unavailableProfileIds,
+        fallbackProfileIds: harnessShadow.profileIds,
+        // The old tool surface remains the availability fallback.
+        legacyToolCount: harnessShadow.legacyTools.length,
+      },
+    });
+  }
+  return {
+    ...result,
+    tools: harnessRollout.effectiveTools,
+    harnessShadow,
+    harnessRollout,
+  };
+}
+
 const SCENARIO_SUPPORT_TOOLS = new Set(["update_plan"]);
 
 /** Research-default internet builtins; always attached outside strict orchestrator scenario presets. */
 const INTERNET_SUPPORT_TOOLS = ["web.fetch", "web.search"] as const;
-/** Orchestrator only needs symbol resolve + immutable snapshot (Prime D6). */
-const ORCHESTRATOR_PRIME_MARKET_TOOLS = ["market.resolve_symbol", "market.snapshot.get"] as const;
+/**
+ * Orchestrator may inspect the user's IDE subscription and make an explicit
+ * broker read; it must not infer either from conversational memory.
+ */
+const ORCHESTRATOR_PRIME_MARKET_TOOLS = [
+  "market.ide_subscription.get",
+  "market.broker_quote.get",
+  "market.resolve_symbol",
+  "market.snapshot.get",
+] as const;
 const MARKET_GOVERNANCE_TOOLS = [
+  "market.ide_subscription.get",
+  "market.broker_quote.get",
   "market.resolve_symbol",
   "market.data_sources",
   "market.readiness",
@@ -177,35 +244,40 @@ export async function resolveEffectiveAgentTools(
         : normalizeToolNames([...(def.tools ?? []), ...scenarioTools, ...INTERNET_SUPPORT_TOOLS]);
 
   const base = scenarioScopedTools.length
-    ? filterScenarioToolsForContractProgress({
-        tools: baseRaw,
-        scenarioKey,
-        workflowId,
-        role: def.role,
-      })
+    ? normalizeToolNames([
+        ...filterScenarioToolsForContractProgress({
+          tools: baseRaw,
+          scenarioKey,
+          workflowId,
+          role: def.role,
+        }),
+        // User-level “my watchlist” remains callable under every scenario;
+        // otherwise a scenario preset can make the Agent fall back to memory.
+        ...(def.role === "orchestrator" ? ORCHESTRATOR_PRIME_MARKET_TOOLS : []),
+      ])
     : attachMarketGovernanceTools(def.role, baseRaw);
 
   if (def.role !== "orchestrator") {
-    return {
+    return withHarnessShadow(def, workflowId, {
       tools: base,
       topologyContext: null,
       topologyPromptBlock: "",
       collaborationHint: buildAgentCollaborationHint(def.role),
       scenarioTools,
       scenarioKey,
-    };
+    });
   }
 
   // Prime D6: strip team-compat bulk tools on every orchestrator path (incl. scenario).
   if (scenarioScopedTools.length > 0) {
-    return {
+    return withHarnessShadow(def, workflowId, {
       tools: stripOrchestratorTeamCompatTools(base),
       topologyContext: null,
       topologyPromptBlock: "",
       collaborationHint: "",
       scenarioTools,
       scenarioKey,
-    };
+    });
   }
 
   const topologyContext = await loadOrchestratorTopologyForWorkflow();
@@ -215,12 +287,12 @@ export async function resolveEffectiveAgentTools(
   );
   const topologyPromptBlock = buildTopologyToolsPromptBlock(topologyContext);
 
-  return {
+  return withHarnessShadow(def, workflowId, {
     tools,
     topologyContext,
     topologyPromptBlock,
     collaborationHint: "",
     scenarioTools,
     scenarioKey,
-  };
+  });
 }

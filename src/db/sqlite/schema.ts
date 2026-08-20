@@ -1000,6 +1000,59 @@ export const workflowArtifactLedger = sqliteTable(
   })
 );
 
+/**
+ * Harness 事件账本（migration 0110）。
+ *
+ * 与 tool_call_log 的关系：后者是已有执行日志，保留其所有兼容查询；本表只追加
+ * Profile / Capability / Tool Pipeline 的统一语义事件，用于回放、Trace 与 UI 投影。
+ */
+export const harnessEventLedger = sqliteTable(
+  "harness_event_ledger",
+  {
+    id: id(),
+    workflowRunId: text("workflow_run_id")
+      .notNull()
+      .references(() => workflowRun.id),
+    traceId: text("trace_id"),
+    turnId: text("turn_id"),
+    stepId: text("step_id"),
+    toolCallId: text("tool_call_id"),
+    capabilityId: text("capability_id"),
+    profileId: text("profile_id"),
+    /** Stable key for idempotent observations such as capability composition. */
+    dedupeKey: text("dedupe_key"),
+    schemaVersion: integer("schema_version").notNull().default(1),
+    eventType: text("event_type", {
+      enum: [
+        "capability.composed",
+        "capability.degraded",
+        "tool.admitted",
+        "tool.rejected",
+        "tool.started",
+        "tool.completed",
+        "artifact.created",
+      ],
+    }).notNull(),
+    /** Secret-redacted and size-bounded event projection; large data stays in Artifact Ledger. */
+    payloadJson: text("payload_json", { mode: "json" }).notNull().default({}),
+    createdAt: createdAt(),
+  },
+  (table) => ({
+    workflowCreated: index("idx_harness_event_ledger_workflow_created").on(
+      table.workflowRunId,
+      table.createdAt
+    ),
+    traceCreated: index("idx_harness_event_ledger_trace_created").on(
+      table.traceId,
+      table.createdAt
+    ),
+    workflowDedupe: uniqueIndex("uq_harness_event_ledger_workflow_dedupe").on(
+      table.workflowRunId,
+      table.dedupeKey
+    ),
+  })
+);
+
 // Schema 收敛 C5-1（migration 0070）：`acp_call` 已删除。
 // 4 个终态 helper 之外只有 minimum-acceptance 脚本读 1 处行数断言，0 个
 // monitor 服务 / 0 个前端组件消费；同样字段已落在 tool_call_log + mcp_call_log。

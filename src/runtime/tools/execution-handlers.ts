@@ -1,8 +1,22 @@
 import { writeExecCallLog } from "../exec/exec-call-log";
 import { getExecProvider } from "../exec/registry";
 import { checkArgs, checkCwdScope, renderArgTemplate, runExec } from "../exec/runner";
-import type { ExecResult } from "../exec/types";
+import type { ExecProvider, ExecResult } from "../exec/types";
+import { resolveHarnessContainerExecutionFromEnv } from "../harness/container-exec-adapter";
+import type { HarnessContainerExecution } from "../harness/container-exec-adapter";
+import { resolveReviewedHarnessRunner } from "../harness/reviewed-runner";
 import type { BuiltinToolHandler } from "./types";
+
+function resolveExecutionBoundary(
+  provider: ExecProvider
+):
+  | { configured: false }
+  | { configured: true; execution: HarnessContainerExecution }
+  | { configured: true; error: string; errorDetail: string } {
+  const reviewed = resolveReviewedHarnessRunner(provider);
+  if (reviewed.configured) return reviewed;
+  return resolveHarnessContainerExecutionFromEnv();
+}
 
 /** Sandboxed local-command and external CLI-agent handlers. */
 export const EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
@@ -116,6 +130,19 @@ export const EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
 
     const timeoutMs =
       typeof params.timeoutMs === "number" && params.timeoutMs > 0 ? params.timeoutMs : undefined;
+    const harnessContainer = resolveExecutionBoundary(provider);
+    if ("error" in harnessContainer) {
+      return earlyResult({
+        ok: false,
+        exitCode: null,
+        stdout: "",
+        stderr: "",
+        truncated: false,
+        elapsedMs: 0,
+        error: harnessContainer.error,
+        errorDetail: harnessContainer.errorDetail,
+      });
+    }
 
     const result = await runExec({
       provider,
@@ -123,6 +150,7 @@ export const EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
       cwd,
       ...(stdinText !== undefined ? { stdinText } : {}),
       ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      ...(harnessContainer.configured ? { harnessContainer: harnessContainer.execution } : {}),
       toolCallContext: {
         ...(ctx.workflowId ? { workflowId: ctx.workflowId } : {}),
         ...(ctx.projectId ? { projectId: ctx.projectId } : {}),
@@ -272,6 +300,22 @@ export const EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
     const stdinBytes = stdinText ? Buffer.byteLength(stdinText, "utf-8") : 0;
     const timeoutMs =
       typeof params.timeoutMs === "number" && params.timeoutMs > 0 ? params.timeoutMs : undefined;
+    const harnessContainer = resolveExecutionBoundary(provider);
+    if ("error" in harnessContainer) {
+      return earlyResult(
+        {
+          ok: false,
+          exitCode: null,
+          stdout: "",
+          stderr: "",
+          truncated: false,
+          elapsedMs: 0,
+          error: harnessContainer.error,
+          errorDetail: harnessContainer.errorDetail,
+        },
+        args
+      );
+    }
 
     const result = await runExec({
       provider,
@@ -279,6 +323,7 @@ export const EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
       cwd,
       ...(stdinText !== undefined ? { stdinText } : {}),
       ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      ...(harnessContainer.configured ? { harnessContainer: harnessContainer.execution } : {}),
       toolCallContext: {
         ...(ctx.workflowId ? { workflowId: ctx.workflowId } : {}),
         ...(ctx.projectId ? { projectId: ctx.projectId } : {}),
