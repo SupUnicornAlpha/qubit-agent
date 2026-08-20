@@ -40,6 +40,8 @@ export type MarketDataUpstreamFamily =
   | "yahoo"
   | "futu"
   | "ib"
+  | "alpaca"
+  | "qmt"
   | "supermind";
 
 export interface MarketDataSourceDefinition {
@@ -227,6 +229,34 @@ export const MARKET_DATA_SOURCE_DEFINITIONS: MarketDataSourceDefinition[] = [
     feedClass: "L2_realtime_observe",
     licenseUse: "observe_only",
     // Historical via ib_insync reqHistoricalData + realtime WS when configured.
+  },
+  {
+    id: "alpaca_bridge",
+    name: "Alpaca Market Data Bridge",
+    vendor: "Alpaca",
+    markets: ["US", "OPTION"],
+    timeframes: ["quote"],
+    credentialMode: "account",
+    priority: 86,
+    isFallback: false,
+    upstreamFamily: "alpaca",
+    feedClass: "L2_realtime_observe",
+    licenseUse: "observe_only",
+    streamOnly: true,
+  },
+  {
+    id: "qmt_bridge",
+    name: "QMT / xtquant Market Bridge",
+    vendor: "迅投 QMT（由券商开通）",
+    markets: ["CN"],
+    timeframes: ["quote"],
+    credentialMode: "terminal",
+    priority: 89,
+    isFallback: false,
+    upstreamFamily: "qmt",
+    feedClass: "L2_realtime_observe",
+    licenseUse: "observe_only",
+    streamOnly: true,
   },
   {
     id: "supermind_bridge",

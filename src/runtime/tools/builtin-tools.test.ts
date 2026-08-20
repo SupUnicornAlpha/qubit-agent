@@ -345,6 +345,26 @@ describe("market.snapshot.get builtin", () => {
   });
 });
 
+describe("IDE subscription and broker quote tools", () => {
+  test("are separately registered and catalogued", () => {
+    expect(isBuiltinTool("market.ide_subscription.get")).toBe(true);
+    expect(isBuiltinTool("market.broker_quote.get")).toBe(true);
+    const catalog = buildToolCatalog();
+    expect(catalog.find((row) => row.name === "market.ide_subscription.get")?.description).toContain(
+      "不访问 Agent 记忆"
+    );
+    expect(catalog.find((row) => row.name === "market.broker_quote.get")?.description).toContain(
+      "券商行情桥"
+    );
+  });
+
+  test("broker quote rejects an ambiguous empty request before touching a bridge", async () => {
+    await expect(dispatchBuiltinTool("market.broker_quote.get", ctx, {})).rejects.toThrow(
+      /missing_symbol/
+    );
+  });
+});
+
 describe("market.resolve_symbol ToolContract", () => {
   test("batch symbols returns {results,count}", async () => {
     const out = (await dispatchBuiltinTool("market.resolve_symbol", ctx, {

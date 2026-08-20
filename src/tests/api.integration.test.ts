@@ -742,7 +742,7 @@ describe("api minimal integration", () => {
     const health = healthJson.data as Record<string, unknown>;
     expect(health.status).toBe("healthy");
 
-    for (const provider of ["supermind", "eastmoney_emt"] as const) {
+    for (const provider of ["supermind", "eastmoney_emt", "qmt"] as const) {
       const cnUpsertRes = await app.request(
         new Request("http://test/api/v1/reia/broker/accounts/upsert", {
           method: "POST",
@@ -754,7 +754,9 @@ describe("api minimal integration", () => {
             providerConfig:
               provider === "supermind"
                 ? { accountId: "mock-account", market: "CN" }
-                : { connectionSettingEnv: "QUBIT_EMT_CONNECTION_JSON", market: "CN" },
+                : provider === "qmt"
+                  ? { accountId: "mock-account", qmtPath: "D:\\qmt\\userdata_mini", market: "CN" }
+                  : { connectionSettingEnv: "QUBIT_EMT_CONNECTION_JSON", market: "CN" },
           }),
         })
       );

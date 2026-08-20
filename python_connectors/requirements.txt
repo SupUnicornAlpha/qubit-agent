@@ -31,6 +31,10 @@ futu-api>=9.0.0
 
 # Market-data WS bridge (optional — python -m market_bridge.server)
 websockets>=12.0
+# IB market bridge only (TWS / IB Gateway must be running locally):
+# ib-insync>=0.9.86
+# QMT market bridge only (Windows + broker-provided miniQMT/xtquant runtime):
+# xtquant
 
 # Dev / test
 pytest>=8.0.0

@@ -53,6 +53,8 @@ export const ORCHESTRATOR_PRIME_REQUIRED_TOOLS = [
   ...PRIME_HOST_EVIDENCE_TOOLS,
   "update_plan",
   "agent.invoke",
+  "market.ide_subscription.get",
+  "market.broker_quote.get",
   "market.resolve_symbol",
   "web.search",
   "web.fetch",
@@ -65,6 +67,8 @@ export const ORCHESTRATOR_PRIME_REQUIRED_TOOLS = [
 export const ORCHESTRATOR_PRIME_BASE_TOOLS = [
   "update_plan",
   "agent.invoke",
+  "market.ide_subscription.get",
+  "market.broker_quote.get",
   "market.resolve_symbol",
   ...PRIME_HOST_EVIDENCE_TOOLS,
   ...PRIME_HOST_CONTRACT_TOOLS,

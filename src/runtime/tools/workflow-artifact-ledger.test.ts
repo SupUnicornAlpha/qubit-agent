@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { getDb } from "../../db/sqlite/client";
 import { runMigrations } from "../../db/sqlite/migrate";
 import { project, workflowRun, workspace } from "../../db/sqlite/schema";
+import { listHarnessTraceProjection } from "../harness/event-ledger";
 import {
   classifyWorkflowArtifactKind,
   findWorkflowArtifactByFingerprint,
@@ -73,6 +74,22 @@ describe("workflow artifact ledger", () => {
       producerTaskId: "first-execution",
       payload: result,
       freshnessMs: 500,
+    });
+  });
+
+  test("mirrors a durable artifact into the append-only Harness ledger", async () => {
+    await recordWorkflowToolArtifact({
+      workflowRunId: workflowId,
+      fingerprint: "ledger-mirror-quote",
+      toolName: "qubit-data/fetch_quote",
+      result: { connectorResult: { symbol: "AAPL", lastPrice: 200 } },
+    });
+
+    const projection = await listHarnessTraceProjection(workflowId);
+    expect(projection.summary.artifacts).toBe(1);
+    expect(projection.events[0]).toMatchObject({
+      eventType: "artifact.created",
+      payload: { artifactKind: "MarketSnapshot", action: "upserted" },
     });
   });
 

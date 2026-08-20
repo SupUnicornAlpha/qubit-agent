@@ -11,6 +11,7 @@ Bun runtime 通过 `qubit-broker` connector → `executeIntentLive` → 这个 H
 | `ib` | 全资产含期权 | IB Paper Trading | `ib.py` | ✅ 需装 TWS/IB Gateway + IB 账号 |
 | `ccxt` | 加密 | Exchange testnet | `ccxt_adapter.py` | ✅ 注册即用 |
 | `supermind` | A 股 | 取决于同花顺账户权限 | `supermind.py` | ✅ 需 SuperMind 客户端与交易权限 |
+| `qmt` | A 股 / 两融 / 期货（券商开通范围内） | 由 QMT 账户决定 | `qmt.py` | ✅ Windows + miniQMT + xtquant |
 | `eastmoney_emt` | A 股 | 取决于 EMT 柜台权限 | `eastmoney_emt.py` | ✅ Windows + VeighNa EMT |
 
 ---
@@ -195,7 +196,31 @@ python broker_http_server.py
 限价单必须提供 `limitPrice`。市价委托默认调用 SuperMind 的最新价下单；如需智能委托，
 可配置官方 `pricetype`（例如 `3` 为最新价、`17` 为市价）。
 
-## 5. 东方财富 EMT
+## 5. QMT / xtquant
+
+QMT 是由接入券商提供的本地量化交易终端。QUBIT 只连接已登录的 miniQMT，支持资产、持仓、
+当日委托/成交、下单与撤单；交易密码和柜台认证信息始终留在 Windows Sidecar。
+
+```json
+{
+  "provider": "qmt",
+  "accountRef": "qmt-live",
+  "mode": "live",
+  "baseUrl": "http://windows-sidecar:18765",
+  "providerConfig": {
+    "accountId": "你的资金账户",
+    "qmtPath": "D:\\qmt\\userdata_mini",
+    "accountType": "STOCK",
+    "strategyName": "qubit",
+    "market": "CN"
+  }
+}
+```
+
+在对应的 Windows QMT Python 环境启动 `python broker_http_server.py`。不同券商对普通证券、
+两融、期货和模拟账户的开通范围不同；必须先在券商侧取得程序化交易权限。
+
+## 6. 东方财富 EMT
 
 东方财富接入基于 VeighNa `vnpy_emt.EmtGateway`。该网关依赖东方财富 EMT 柜台授权和
 Windows 原生交易 SDK，因此建议在 Windows 主机单独运行 Sidecar，QUBIT 主进程仍可运行在
@@ -231,7 +256,7 @@ SQLite；管理界面仍支持直接填写 JSON，便于本地联调。跨主机
 Windows Sidecar 同时配置相同的 `QUBIT_BROKER_AUTH_TOKEN`，只开放可信内网，并通过主机
 防火墙限制 QUBIT 服务端 IP；默认仍只监听 `127.0.0.1`。
 
-## 6. 切换 / 同时跑多 provider
+## 7. 切换 / 同时跑多 provider
 
 `broker_account` 是按 provider 唯一 default 的，可以同时配多个：
 
@@ -254,7 +279,7 @@ await qubitBroker.submitOrder(intent, {
 
 ---
 
-## 7. 调试 / 常见问题
+## 8. 调试 / 常见问题
 
 | 现象 | 排查 |
 |---|---|

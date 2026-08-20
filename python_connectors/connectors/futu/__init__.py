@@ -2,6 +2,10 @@
 Futu OpenQuote DataConnector — historical OHLCV via OpenD.
 
 Uses `OpenQuoteContext.request_history_kline` (does not require the quote WS bridge).
+For listed options it combines `get_option_chain` (contract metadata) with
+`get_market_snapshot` (current quote / IV / OI / Greeks).  The OpenD API returns
+the former as static data only, so treating `get_option_chain` by itself as a
+live option chain would be incorrect.
 Install: pip install futu-api
 Requires a running OpenD with quote entitlement for the requested market.
 """
@@ -164,6 +168,8 @@ class FutuQuoteConnector(BaseConnector):
     def execute(self, operation: str, payload: dict[str, Any]) -> Any:
         if operation == "fetch_bars":
             return self._fetch_bars(payload or {})
+        if operation == "fetch_option_chain":
+            return self._fetch_option_chain(payload or {})
         raise ValueError(f"unsupported operation: {operation}")
 
     def _fetch_bars(self, params: dict[str, Any]) -> list[dict[str, Any]]:
@@ -230,6 +236,156 @@ class FutuQuoteConnector(BaseConnector):
 
         rows.sort(key=lambda b: b["timestamp"])
         return rows
+
+    def _fetch_option_chain(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Return one expiry of a Futu/OpenD option chain with current snapshots.
+
+        Futu's option-chain API supplies contract metadata only.  Snapshot data
+        is requested in batches afterwards, which is the source of price, bid /
+        ask, volume, open interest, IV and available Greeks.  This stays a
+        read-only market-data operation; no trading API is opened.
+        """
+        from futu import OpenQuoteContext, RET_OK  # type: ignore
+
+        symbol = str(params.get("symbol") or "").strip()
+        exchange = str(params.get("exchange") or "US").strip()
+        if not symbol:
+            raise ValueError("fetch_option_chain: symbol is required")
+        code = _to_futu_code(symbol, exchange)
+        requested_expiry = _ymd(str(params.get("expiry") or "")) if params.get("expiry") else ""
+        host = str(params.get("opendHost") or self._host)
+        port = int(params.get("opendPort") or self._port)
+
+        ctx = OpenQuoteContext(host=host, port=port)
+        try:
+            ret, expiry_data = ctx.get_option_expiration_date(code)
+            if ret != RET_OK:
+                raise RuntimeError(f"futu get_option_expiration_date failed: {expiry_data}")
+            expirations = sorted(
+                {
+                    str(row.get("strike_time") or "").strip()
+                    for _, row in expiry_data.iterrows()
+                    if str(row.get("strike_time") or "").strip()
+                }
+            )
+            if not expirations:
+                raise RuntimeError(f"futu get_option_expiration_date returned no listed options for {code}")
+            expiry = requested_expiry if requested_expiry in expirations else expirations[0]
+
+            ret, chain_data = ctx.get_option_chain(code, start=expiry, end=expiry)
+            if ret != RET_OK:
+                raise RuntimeError(f"futu get_option_chain failed: {chain_data}")
+            if chain_data is None or getattr(chain_data, "empty", True):
+                raise RuntimeError(f"futu get_option_chain returned no contracts for {code} @ {expiry}")
+
+            contract_rows: list[dict[str, Any]] = []
+            codes: list[str] = []
+            for _, row in chain_data.iterrows():
+                option_code = str(row.get("code") or "").strip().upper()
+                strike = _finite_or_none(row.get("strike_price"))
+                right = _option_right(row.get("option_type"))
+                if not option_code or strike is None or right is None:
+                    continue
+                contract_rows.append(
+                    {
+                        "code": option_code,
+                        "right": right,
+                        "strike": strike,
+                        "expiration": str(row.get("strike_time") or expiry).strip() or expiry,
+                    }
+                )
+                codes.append(option_code)
+            if not contract_rows:
+                raise RuntimeError(f"futu get_option_chain returned no usable call/put contracts for {code}")
+
+            snapshots: dict[str, Any] = {}
+            # Futu documents a maximum of 400 snapshot codes per request.
+            for offset in range(0, len(codes), 400):
+                ret, snapshot_data = ctx.get_market_snapshot(codes[offset : offset + 400])
+                if ret != RET_OK:
+                    raise RuntimeError(f"futu get_market_snapshot failed: {snapshot_data}")
+                if snapshot_data is None or getattr(snapshot_data, "empty", True):
+                    continue
+                for _, row in snapshot_data.iterrows():
+                    snapshot_code = str(row.get("code") or "").strip().upper()
+                    if snapshot_code:
+                        snapshots[snapshot_code] = row
+
+            ret, underlying_snapshot = ctx.get_market_snapshot([code])
+            if ret != RET_OK:
+                raise RuntimeError(f"futu underlying snapshot failed: {underlying_snapshot}")
+            spot = None
+            if underlying_snapshot is not None and not getattr(underlying_snapshot, "empty", True):
+                spot = _finite_or_none(underlying_snapshot.iloc[0].get("last_price"))
+
+            calls: list[dict[str, Any]] = []
+            puts: list[dict[str, Any]] = []
+            for item in contract_rows:
+                snapshot = snapshots.get(item["code"])
+                previous = _finite_or_none(snapshot.get("prev_close_price")) if snapshot is not None else None
+                last = _finite_or_none(snapshot.get("last_price")) if snapshot is not None else None
+                change = last - previous if last is not None and previous is not None else None
+                percent_change = (change / previous * 100) if change is not None and previous not in (None, 0) else None
+                normalized = {
+                    "contractSymbol": item["code"],
+                    "right": item["right"],
+                    "strike": item["strike"],
+                    "lastPrice": last,
+                    "bid": _finite_or_none(snapshot.get("bid_price")) if snapshot is not None else None,
+                    "ask": _finite_or_none(snapshot.get("ask_price")) if snapshot is not None else None,
+                    "change": change,
+                    "percentChange": percent_change,
+                    "volume": _finite_or_none(snapshot.get("volume")) if snapshot is not None else None,
+                    "openInterest": _finite_or_none(snapshot.get("option_open_interest")) if snapshot is not None else None,
+                    "impliedVolatility": _finite_or_none(snapshot.get("option_implied_volatility")) if snapshot is not None else None,
+                    "inTheMoney": _is_in_the_money(item["right"], item["strike"], spot),
+                    "expiration": f"{item['expiration'][:10]}T00:00:00Z",
+                    "greeks": {
+                        "delta": _finite_or_none(snapshot.get("option_delta")) if snapshot is not None else None,
+                        "gamma": _finite_or_none(snapshot.get("option_gamma")) if snapshot is not None else None,
+                        "vega": _finite_or_none(snapshot.get("option_vega")) if snapshot is not None else None,
+                        "theta": _finite_or_none(snapshot.get("option_theta")) if snapshot is not None else None,
+                        "rho": _finite_or_none(snapshot.get("option_rho")) if snapshot is not None else None,
+                    },
+                }
+                (calls if item["right"] == "call" else puts).append(normalized)
+
+            return {
+                "underlying": symbol.upper(),
+                "source": "futu_opend",
+                "feedClass": "L2_realtime_observe",
+                "licenseUse": "observe_only",
+                "fallbackUsed": False,
+                "fetchedAt": datetime.now(_UTC).isoformat().replace("+00:00", "Z"),
+                "expirations": [f"{date[:10]}T00:00:00Z" for date in expirations],
+                "calls": calls,
+                "puts": puts,
+            }
+        finally:
+            ctx.close()
+
+
+def _finite_or_none(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+        return parsed if parsed == parsed and parsed not in (float("inf"), float("-inf")) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _option_right(value: Any) -> str | None:
+    raw = str(value or "").upper()
+    if "CALL" in raw:
+        return "call"
+    if "PUT" in raw:
+        return "put"
+    return None
+
+
+def _is_in_the_money(right: str, strike: float, spot: float | None) -> bool:
+    if spot is None:
+        return False
+    return spot >= strike if right == "call" else spot <= strike
 
 
 def get_connector() -> FutuQuoteConnector:

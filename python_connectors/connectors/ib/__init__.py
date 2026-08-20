@@ -1,7 +1,7 @@
 """
 Interactive Brokers historical OHLCV via ib_insync / TWS Gateway.
 
-Uses `IB.reqHistoricalData` (does not require the quote WS bridge stub).
+Uses `IB.reqHistoricalData` (independent from the quote WS bridge).
 Install: pip install ib_insync
 Requires TWS or IB Gateway with API enabled.
 """

@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from connectors.broker_gateway import eastmoney_emt, supermind
+from connectors.broker_gateway import eastmoney_emt, qmt, supermind
 
 
 class SuperMindHelpersTest(unittest.TestCase):
@@ -66,6 +66,25 @@ class EastmoneyHelpersTest(unittest.TestCase):
             {"账号": "", "密码": ""},
         )
         self.assertEqual(resolved, {"账号": "10001", "密码": ""})
+
+
+class QmtHelpersTest(unittest.TestCase):
+    def test_a_share_symbol_normalization(self) -> None:
+        self.assertEqual(qmt._symbol("600519"), "600519.SH")
+        self.assertEqual(qmt._symbol("000001"), "000001.SZ")
+        self.assertEqual(qmt._symbol("600519.sh"), "600519.SH")
+
+    def test_connection_requires_local_account_and_path(self) -> None:
+        with self.assertRaises(ValueError):
+            qmt._account_config({})
+        with self.assertRaises(ValueError):
+            qmt._account_config({"accountId": "10001"})
+
+    def test_connection_config_has_stable_generated_session(self) -> None:
+        first = qmt._account_config({"accountId": "10001", "qmtPath": r"D:\\qmt\\userdata_mini"})
+        second = qmt._account_config({"accountId": "10001", "qmtPath": r"D:\\qmt\\userdata_mini"})
+        self.assertEqual(first[2], second[2])
+        self.assertEqual(first[3], "STOCK")
 
     def test_connection_setting_is_required(self) -> None:
         with self.assertRaises(ValueError):

@@ -166,7 +166,7 @@ const pack: LocalePack = {
         team: "研究",
         trader: "交易",
         quant: "量化工作台",
-        chart: "资讯",
+        chart: "行情",
         chat: "对话",
         monitor: "运行监控",
         broker: "券商账户配置",
@@ -215,6 +215,7 @@ const pack: LocalePack = {
       leftColumn: {
         ariaLabel: "左侧工作台工具",
         editor: "代码编辑",
+        watchlist: "自选 / 持仓",
         editorEmptyTitle: "Workspace 文件编辑",
         editorEmptyBody:
           "对话在右侧 Agent。此处用 Monaco 编辑课题文件；从 Explorer 打开 .md / .py / .ts 等。",
@@ -245,8 +246,10 @@ const pack: LocalePack = {
         overlays: {
           sma20: "SMA20 主图均线",
           ema20: "EMA20 主图均线",
+          vwap: "VWAP 主图锚线",
           rsi14: "RSI14 副图",
-          macd: "MACD 副图（与 RSI 二选一）",
+          macd: "MACD 副图",
+          kdj: "KDJ 副图",
           bb20: "布林带（20, 2）主图叠加",
         },
         panelToggles: {
@@ -265,7 +268,7 @@ const pack: LocalePack = {
       },
       backtest: {
         dockAriaLabel: "回测与调参",
-        tabs: { backtest: "回测参数", tune: "智能调参" },
+        tabs: { backtest: "回测参数", tune: "智能调参", options: "期权链" },
         kind: {
           label: "策略来源",
           python: "左侧 Python 脚本（on_init/on_bar）",

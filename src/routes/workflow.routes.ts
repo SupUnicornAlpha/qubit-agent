@@ -582,13 +582,45 @@ workflowRouter.get("/:id/inject-message/pending", async (c) => {
 });
 
 /**
- * 停止 / 协作式中断：
- * 1) 标记 Bun 侧 interrupt（团队 wave 边界停到 HITL）
- * 2) 若有 Prime Core 在飞 turn，立刻 cancelTurn（Cursor 式 Stop）
- * 立即返回；UI 应乐观切到空闲。
+ * 停止当前运行：
+ * 1) 先持久化 `workflow_run.status=cancelled`，这是客户端重连 / 热更新后的权威事实；
+ * 2) 再标记 Bun 侧 interrupt，并 Abort 原生 ReAct 请求；
+ * 3) 若有 Prime Core 在飞 turn，立刻 cancelTurn。
+ *
+ * 过去这里只放进程内 interrupt 标记，Core 重启或前端热更新后会丢失，列表里的旧
+ * `running` 行就可能把 UI 错误地“复活”。现在 HTTP 200 代表停止状态已落库，而不只是
+ * “取消请求已经发出”。
  */
 workflowRouter.post("/:id/interrupt", async (c) => {
   const workflowRunId = c.req.param("id");
+  const db = await getDb();
+  const rows = await db
+    .select({ status: workflowRun.status })
+    .from(workflowRun)
+    .where(eq(workflowRun.id, workflowRunId))
+    .limit(1);
+  const current = rows[0];
+  if (!current) return c.json({ error: "workflow_not_found" }, 404);
+
+  const alreadyTerminal = ["completed", "partial", "failed", "cancelled"].includes(
+    String(current.status)
+  );
+  if (alreadyTerminal) {
+    return c.json({
+      ok: true,
+      data: {
+        workflowRunId,
+        requested: false,
+        status: current.status,
+        acknowledgedAt: new Date().toISOString(),
+      },
+    });
+  }
+
+  // 先持久化终态，再做 best-effort 的进程内中断。这样即使运行时正好重启，
+  // 重新订阅 heartbeat 的客户端也会立即读到 cancelled，而不是旧的 running。
+  await setWorkflowState(workflowRunId, "cancelled", { reason: "workflow.interrupt:user_stop" });
+  requestWorkflowCancellation(workflowRunId);
   requestInterrupt(workflowRunId);
   const core = await cancelActiveCoreTurnForWorkflow(workflowRunId);
   return c.json({
@@ -596,6 +628,8 @@ workflowRouter.post("/:id/interrupt", async (c) => {
     data: {
       workflowRunId,
       requested: true,
+      status: "cancelled",
+      acknowledgedAt: new Date().toISOString(),
       coreCancelled: core.cancelled,
       ...(core.turnId ? { turnId: core.turnId } : {}),
       ...(core.reason ? { coreReason: core.reason } : {}),

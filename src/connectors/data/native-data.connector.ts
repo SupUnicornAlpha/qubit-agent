@@ -44,7 +44,10 @@ import {
   normalizeKlinesToolRequest,
 } from "../../runtime/market/normalize-klines-request";
 import { extractSymbolArgs, receivedParamKeys } from "../../runtime/market/normalize-symbol-args";
-import { fetchYahooOptionChain } from "../../runtime/market/options-chain";
+import {
+  fetchOptionChain,
+  type OptionChainRequestSource,
+} from "../../runtime/market/options-chain";
 import { resolveTickerMarket } from "../../runtime/market/resolve-ticker-market";
 import { snapshotIndicators } from "../../runtime/market/technical-indicators";
 import { fetchWindBars, windConfigFromSettings } from "../../runtime/market/wind-klines";
@@ -420,9 +423,17 @@ export class QubitNativeDataConnector extends DataConnector {
       if (!symbol)
         throw new Error("missing_symbol: fetch_option_chain: symbol or underlying is required");
       const liveSettings = await loadBuiltinConnectorSettings();
-      return (await fetchYahooOptionChain({
+      const requestedSource =
+        typeof p.source === "string" && ["auto", "futu", "research"].includes(p.source)
+          ? (p.source as OptionChainRequestSource)
+          : undefined;
+      return (await fetchOptionChain({
         symbol,
+        ...(typeof p.exchange === "string" && p.exchange.trim()
+          ? { exchange: p.exchange.trim() }
+          : {}),
         ...(typeof p.expiry === "string" && p.expiry.trim() ? { expiry: p.expiry } : {}),
+        ...(requestedSource ? { source: requestedSource } : {}),
         settings: liveSettings,
       })) as TOutput;
     }

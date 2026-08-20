@@ -24,6 +24,32 @@ export interface MarketQuote {
   freshnessMs: number;
 }
 
+/** 用户级行情工作台：本机自选与关联券商的只读持仓合并后的条目。 */
+export interface MarketWatchlistEntry {
+  symbol: string;
+  exchange: string;
+  label: string | null;
+  sources: Array<"manual" | "broker_position">;
+  position: {
+    quantity: number;
+    averagePrice: number;
+    provider: string;
+    accountRef: string;
+  } | null;
+}
+
+export interface MarketWatchlistSnapshot {
+  /** @deprecated 使用 watchlistEntries 和 positionEntries 分别展示。 */
+  entries: MarketWatchlistEntry[];
+  /** 用户手动维护的自选，删除只会影响这一组。 */
+  watchlistEntries: MarketWatchlistEntry[];
+  /** 从已配置券商账户实时读取的只读持仓。 */
+  positionEntries: MarketWatchlistEntry[];
+  connectedAccounts: number;
+  brokerErrors: string[];
+  brokerWatchlistSupported: false;
+}
+
 export interface MarketOrderBookLevel {
   price: number;
   volume: number;
@@ -100,7 +126,7 @@ export interface KlinesResponseMeta {
   returned: number;
 }
 
-/** 研究级美股期权链；来自 `/market/options/chain`，不可用作实盘报价。 */
+/** 期权链可来自券商 OpenD 实时快照或明确标识的研究级公开降级源。 */
 export interface OptionContract {
   contractSymbol: string;
   right: "call" | "put";
@@ -115,15 +141,56 @@ export interface OptionContract {
   impliedVolatility: number | null;
   inTheMoney: boolean;
   expiration: string | null;
+  greeks?: {
+    delta: number | null;
+    gamma: number | null;
+    vega: number | null;
+    theta: number | null;
+    rho: number | null;
+  };
 }
 
 export interface OptionChain {
   underlying: string;
-  source: "yahoo_chart";
+  source: "futu_opend" | "alpaca" | "yahoo_chart" | "yfinance";
+  feedClass: "L0_research_fallback" | "L2_realtime_observe";
+  licenseUse: "research_only" | "observe_only";
+  fallbackUsed: boolean;
+  fallbackReason?: string;
   fetchedAt: string;
   expirations: string[];
   calls: OptionContract[];
   puts: OptionContract[];
+}
+
+/** 运行时期权策略模块返回的只读分析结果；不等同于订单或持仓。 */
+export interface OptionStrategyAnalysis {
+  strategy: string;
+  underlying: string;
+  spot: number | null;
+  source: OptionChain["source"];
+  feedClass: OptionChain["feedClass"];
+  licenseUse: OptionChain["licenseUse"];
+  fetchedAt: string;
+  contractMultiplier: number;
+  netPremium: number | null;
+  markToMarketPnl: number | null;
+  expiryBreakEvens: number[];
+  expiryScenarios: Array<{ label: string; underlyingPrice: number; pnl: number | null }>;
+  greeks: { delta: number; gamma: number; theta: number; vega: number };
+  risk: { maxProfit: number | null; maxLoss: number | null; profitProbability: null };
+  warnings: string[];
+  legs: Array<{
+    kind: "option" | "underlying";
+    action: "buy" | "sell";
+    quantity: number;
+    contractSymbol?: string;
+    right?: "call" | "put";
+    strike?: number;
+    expiration?: string | null;
+    entryPrice: number | null;
+    markPrice: number | null;
+  }>;
 }
 
 export interface MarketDataReadiness {
@@ -167,7 +234,7 @@ export interface MarketDataSourceRecord {
   circuitOpenedAt: string | null;
   priority: number;
   isFallback: boolean;
-  upstreamFamily: "wind" | "tushare" | "binance" | "eastmoney" | "tencent" | "yahoo" | "yfinance";
+  upstreamFamily: "wind" | "tushare" | "binance" | "eastmoney" | "tencent" | "yahoo" | "yfinance" | "futu" | "ib" | "alpaca" | "qmt" | "supermind";
   /** Prime D1 */
   feedClass?: MarketFeedClass;
   /** Prime D1 */
@@ -1532,13 +1599,26 @@ export interface EastmoneyEmtProviderConfig {
   market?: "CN";
 }
 
+export interface QmtProviderConfig {
+  accountId?: string;
+  qmtPath?: string;
+  accountType?: "STOCK" | "CREDIT" | "FUTURE";
+  sessionId?: number;
+  strategyName?: string;
+  marketPriceType?: number;
+  limitPriceType?: number;
+  marketProtectionPrice?: number;
+  market?: "CN";
+}
+
 export type BrokerProvider =
   | "futu"
   | "ib"
   | "ccxt"
   | "alpaca"
   | "supermind"
-  | "eastmoney_emt";
+  | "eastmoney_emt"
+  | "qmt";
 
 export type BrokerProviderConfig =
   | FutuProviderConfig
@@ -1546,7 +1626,8 @@ export type BrokerProviderConfig =
   | CcxtProviderConfig
   | AlpacaProviderConfig
   | SuperMindProviderConfig
-  | EastmoneyEmtProviderConfig;
+  | EastmoneyEmtProviderConfig
+  | QmtProviderConfig;
 
 export interface BrokerAccountRecord {
   id: string;

@@ -33,6 +33,7 @@ const { config } = await import("../../../config");
 const { checkArgs, checkCwdScope, filterEnv, renderArgTemplate, runExec } = await import(
   "../runner"
 );
+const { getBuiltinHarnessSandboxProfile } = await import("../../harness/sandbox-profile");
 const { getExecProvider, listExecProviders, loadExecProviders, resetExecProviderRegistry } =
   await import("../registry");
 type ExecProviderT = import("../types").ExecProvider;
@@ -148,6 +149,25 @@ describe("exec/runner — runExec", () => {
     expect(result.error).toBe("output_truncated");
     expect(result.ok).toBe(false);
     expect(result.stdout.length).toBeLessThan(big.length);
+  });
+
+  test("explicit Harness container mode never falls back to the host process", async () => {
+    const profile = getBuiltinHarnessSandboxProfile("guarded-container");
+    if (!profile) throw new Error("missing guarded-container profile");
+    const result = await runExec({
+      provider: fakeProvider(),
+      args: ["must-not-run-on-host"],
+      cwd: workflowDir,
+      harnessContainer: {
+        image: "qubit-harness:stable",
+        profile: { ...profile, allowedCommands: [] },
+      },
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: "command_not_allowlisted",
+      stdout: "",
+    });
   });
 });
 

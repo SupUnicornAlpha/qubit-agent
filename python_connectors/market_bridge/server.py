@@ -43,10 +43,18 @@ def _build_provider(provider: str, emit):
 
         return SupermindQuoteProvider(emit)
     if name == "ib":
-        from market_bridge.providers.ib_stub import IbQuoteProvider
+        from market_bridge.providers.ib_quote import IbQuoteProvider
 
         return IbQuoteProvider(emit)
-    raise SystemExit(f"unknown provider: {provider} (futu|supermind|ib)")
+    if name == "alpaca":
+        from market_bridge.providers.alpaca_quote import AlpacaQuoteProvider
+
+        return AlpacaQuoteProvider(emit)
+    if name in ("qmt", "xtquant", "miniqmt"):
+        from market_bridge.providers.qmt_quote import QmtQuoteProvider
+
+        return QmtQuoteProvider(emit)
+    raise SystemExit(f"unknown provider: {provider} (futu|ib|alpaca|qmt|supermind)")
 
 
 async def _run(host: str, port: int, provider_name: str) -> None:

@@ -145,6 +145,12 @@ export const PROMPT_ORCHESTRATOR = `你是 QUBIT 多 Agent 体系的 **Orchestra
 
 ## 能力归属（硬约束）
 
+### 用户自选与券商行情（硬约束）
+
+- 用户说“我的自选 / 我订阅的标的 / 看下自选”时，第一步必须调用 \`market.ide_subscription.get\`。它只读 IDE 本机订阅和已到达的订阅缓存；**不得**把 \`memory.recall\`、对话历史或旧 \`market.snapshot.get\` 当作自选事实。
+- 需要对自选标的取券商实时行情时，先从上一步的 entries 选择 symbol，再调用 \`market.broker_quote.get\`；它只走已配置的券商桥，失败必须明确说明“券商行情不可用”，不可伪装成公共数据。
+- \`market.snapshot.get\` 仍用于研究/回测的不可变证据快照；它不是自选清单工具。不要在用户仅要求“看我的自选”时直接调用它。
+
 | 缺口 | 谁做 | 你怎么做 |
 |------|------|----------|
 | 行情 / K 线 / 现价 | \`market_data\` | **优先** \`call_team_market_data\`；收口用 \`market.snapshot.get\` 钉 snapshotId |
@@ -254,7 +260,9 @@ export const PROMPT_MARKET_DATA = `你是 **Market Data（行情与数据工程�
 
 1. 按任务拉取 K 线或现价：明确标的、交易所、周期、起止时间、复权口径（缺省须声明假设）。
 2. 标注数据缺口、停牌、限频；禁止编造行情。
-3. 工具面包含治理三件套 + \`fetch_klines\` + \`fetch_quote\` + \`fetch_option_chain\`；取数成功即交付结果，由 Orchestrator 继续派单或写合同。
+3. 工具面包含治理三件套 + \`fetch_klines\` + \`fetch_quote\` + \`fetch_option_chain\` + \`market.options.strategy_analyze\`；后者只做多腿期权的报价、Greeks 与盈亏情景计算，不创建订单。取数成功即交付结果，由 Orchestrator 继续派单或写合同。
+
+当任务来自“我的自选”时：先用 \`market.ide_subscription.get\` 确认 IDE 本机订阅清单；如需券商实时行情，使用 \`market.broker_quote.get\`。前者不联网，后者仅走券商桥且不降级到公共源；不要把记忆、旧 snapshot 或公开 K 线冒充自选/券商行情。
 
 ## 实时与历史路由（硬约束）
 

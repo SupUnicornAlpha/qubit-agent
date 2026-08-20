@@ -5,13 +5,13 @@
 import type { ComponentType } from "react";
 import type { ActiveView, InterfaceMode } from "../store";
 import { BrokerAccountsPanel } from "../components/broker/BrokerAccountsPanel";
-import { KlinePanel } from "../components/chart/KlinePanel";
 import { IdeResearchWorkbench } from "../components/ide/IdeResearchWorkbench";
 import { MonitorDashboard } from "../components/monitor/MonitorDashboard";
 import { QuantStudioPanel } from "../components/quant/QuantStudioPanel";
 import { TraderLivePanel } from "../components/trader/TraderLivePanel";
 import { ChatPanel } from "./ChatPage";
 import { ConfigPanel } from "./ConfigPage";
+import { MarketWorkspacePage } from "./MarketWorkspacePage";
 import { TeamDashboardPanel } from "./TeamPage";
 
 export type PageShell = "simple" | "pro";
@@ -85,7 +85,7 @@ export const PAGE_REGISTRY: readonly PageDescriptor[] = [
     shells: ["pro"],
     order: 50,
     layout: "ide",
-    component: KlinePanel,
+    component: MarketWorkspacePage,
   },
   {
     id: "monitor",

@@ -221,6 +221,35 @@ describe("declarative Harness package manager", () => {
     }
   });
 
+  test("persists a selected built-in financial Profile without requiring a package", async () => {
+    const packageDataDir = await mkdtemp(join(tmpdir(), "qubit-harness-system-profile-"));
+    try {
+      const state = await setActiveHarnessPackageProfiles({
+        profileIds: ["us-options-research"],
+        trustedKeys: { "test-root": publicKey },
+        dataDir: packageDataDir,
+      });
+      expect(state.activation).toMatchObject({
+        profileIds: ["us-options-research"],
+        revision: 1,
+      });
+      expect(
+        (
+          await refreshHarnessPackageRuntime({
+            trustedKeys: { "test-root": publicKey },
+            dataDir: packageDataDir,
+          })
+        ).activeProfileIds
+      ).toEqual(["us-options-research"]);
+    } finally {
+      await rm(packageDataDir, { recursive: true, force: true });
+      await refreshHarnessPackageRuntime({
+        trustedKeys: { "test-root": publicKey },
+        dataDir: packageDataDir,
+      });
+    }
+  });
+
   test("validates Profile parameters and keeps an activation audit trail", async () => {
     const pack = signedPackage("1.3.0");
     first(pack.profiles).parameters = {

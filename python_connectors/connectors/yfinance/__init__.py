@@ -13,6 +13,7 @@ Operations:
   fetch_earnings     → [{ period, eps?, revenue?, source }]   (income statement rows + earnings dates)
   fetch_asset_info   → { shortName, sector, industry, marketCap, ... }
                        PII fields (address/email/phone) are stripped at this layer.
+  fetch_option_chain → { expirations, calls, puts } (research-grade listed options)
 
 Install: pip install yfinance pandas
 """
@@ -21,6 +22,7 @@ from __future__ import annotations
 
 import re
 import os
+import math
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -148,6 +150,8 @@ class YFinanceConnector(BaseConnector):
             return self._fetch_earnings(payload)
         if operation == "fetch_asset_info":
             return self._fetch_asset_info(payload)
+        if operation == "fetch_option_chain":
+            return self._fetch_option_chain(payload)
         raise ValueError(f"Unknown operation: {operation}")
 
     # ─── operations ──────────────────────────────────────────────────────────
@@ -282,6 +286,70 @@ class YFinanceConnector(BaseConnector):
         info["symbol"] = symbol
         info["yahooSymbol"] = _to_yahoo_symbol(symbol, exchange)
         return info
+
+    def _fetch_option_chain(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Return only Yahoo's quoted option fields; do not derive Greeks.
+
+        yfinance owns Yahoo's cookie/crumb negotiation and retries internally.
+        Keeping that state inside its persistent Python connector avoids the
+        fragile one-request TS fallback that can return ``Invalid Crumb``.
+        """
+        symbol = str(params.get("symbol", "")).strip()
+        exchange = str(params.get("exchange", "")).strip()
+        if not symbol:
+            raise ValueError("fetch_option_chain: symbol is required")
+        ticker = self._yf.Ticker(_to_yahoo_symbol(symbol, exchange))
+        expirations = [str(item) for item in (ticker.options or []) if str(item).strip()]
+        if not expirations:
+            raise RuntimeError(f"fetch_option_chain: no listed options for {symbol}")
+        requested = str(params.get("expiry", "")).strip()[:10]
+        expiry = requested if requested in expirations else expirations[0]
+        chain = ticker.option_chain(expiry)
+        expiration_iso = f"{expiry}T00:00:00Z"
+
+        def number_or_none(value: Any) -> float | None:
+            try:
+                result = float(value)
+                return result if math.isfinite(result) else None
+            except (TypeError, ValueError):
+                return None
+
+        def contracts(frame: Any, right: str) -> list[dict[str, Any]]:
+            rows: list[dict[str, Any]] = []
+            if frame is None or getattr(frame, "empty", True):
+                return rows
+            for _, raw in frame.iterrows():
+                contract_symbol = str(raw.get("contractSymbol") or "").strip().upper()
+                strike = number_or_none(raw.get("strike"))
+                if not contract_symbol or strike is None:
+                    continue
+                rows.append(
+                    {
+                        "contractSymbol": contract_symbol,
+                        "right": right,
+                        "strike": strike,
+                        "lastPrice": number_or_none(raw.get("lastPrice")),
+                        "bid": number_or_none(raw.get("bid")),
+                        "ask": number_or_none(raw.get("ask")),
+                        "change": number_or_none(raw.get("change")),
+                        "percentChange": number_or_none(raw.get("percentChange")),
+                        "volume": number_or_none(raw.get("volume")),
+                        "openInterest": number_or_none(raw.get("openInterest")),
+                        "impliedVolatility": number_or_none(raw.get("impliedVolatility")),
+                        "inTheMoney": bool(raw.get("inTheMoney")),
+                        "expiration": expiration_iso,
+                    }
+                )
+            return rows
+
+        return {
+            "underlying": symbol.upper(),
+            "source": "yfinance",
+            "fetchedAt": datetime.now(_UTC).isoformat().replace("+00:00", "Z"),
+            "expirations": [f"{date}T00:00:00Z" for date in expirations],
+            "calls": contracts(chain.calls, "call"),
+            "puts": contracts(chain.puts, "put"),
+        }
 
     # ─── helpers ─────────────────────────────────────────────────────────────
 

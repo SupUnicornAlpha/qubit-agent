@@ -229,6 +229,14 @@ html[data-qb-theme="dark-purple"] {
   contain: none;
 }
 
+/* 回测结果位于固定高度的纵向 flex 滚动列。默认的 flex-shrink 会在内容较多时
+ * 压扁最上方的策略摘要卡，而卡片自身的 overflow:hidden 又会把摘要裁掉。
+ * 所有结果块保持其固有高度，让列本身负责滚动。 */
+.qb-quant-col--mid > * {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
 .qb-quant-performance-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 205px), 1fr));

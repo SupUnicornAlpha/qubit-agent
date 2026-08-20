@@ -15,8 +15,10 @@ describe("attachMarketGovernanceTools", () => {
     expect(tools).toContain("market.snapshot.get");
   });
 
-  test("orchestrator only gets Prime market tools (resolve + snapshot)", () => {
+  test("orchestrator gets explicit IDE and broker quote market tools", () => {
     const tools = attachMarketGovernanceTools("orchestrator", ["assign_task", "evaluate_risk"]);
+    expect(tools).toContain("market.ide_subscription.get");
+    expect(tools).toContain("market.broker_quote.get");
     expect(tools).toContain("market.resolve_symbol");
     expect(tools).toContain("market.snapshot.get");
     expect(tools).not.toContain("market.data_sources");

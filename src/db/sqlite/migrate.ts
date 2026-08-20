@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { config } from "../../config";
 import { getBundledMigrationsDir } from "../../runtime/app-paths";
-import { getDb } from "./client";
+import { getDb, getSqliteForTesting } from "./client";
 
 /**
  * 选择 migrations 目录。两个候选：
@@ -78,7 +78,31 @@ export class MigrationDriftError extends Error {
 export async function runMigrations(): Promise<void> {
   const db = await getDb();
   const dir = migrationsDir();
-  await migrate(db, { migrationsFolder: dir });
+  const sqlite = getSqliteForTesting();
+
+  // SQLite does not allow PRAGMA foreign_keys to change inside a transaction.
+  // Drizzle wraps each migration file in one, so the PRAGMA statements embedded
+  // in historical table-rebuild migrations are ineffective when a later table
+  // references the table being rebuilt. Disable checks on this connection before
+  // Drizzle starts its transaction, then verify the resulting schema afterwards.
+  sqlite.exec("PRAGMA foreign_keys=OFF;");
+  try {
+    await migrate(db, { migrationsFolder: dir });
+  } finally {
+    sqlite.exec("PRAGMA foreign_keys=ON;");
+  }
+
+  const foreignKeyViolations = sqlite
+    .query<{ table: string; rowid: number; parent: string; fkid: number }, []>(
+      "PRAGMA foreign_key_check"
+    )
+    .all();
+  if (foreignKeyViolations.length > 0) {
+    const first = foreignKeyViolations[0];
+    throw new Error(
+      `[DB] foreign_key_check failed after migrations: ${first.table} row=${first.rowid} references ${first.parent} (constraint ${first.fkid})`
+    );
+  }
 
   const expected = readJournalEntryCount(dir);
   const actual = readAppliedMigrationCount();

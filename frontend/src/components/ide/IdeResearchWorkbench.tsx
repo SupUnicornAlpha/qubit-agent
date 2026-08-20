@@ -73,7 +73,7 @@ export const IdeResearchWorkbench: FC = () => {
               <>
                 {idePanels.chart ? (
                   <div style={styles.chartArea}>
-                    <KlinePanel embedded />
+                    <KlinePanel embedded linkTraderMarkers />
                   </div>
                 ) : null}
                 {idePanels.backtest ? <IdeBacktestDock /> : null}

@@ -87,6 +87,11 @@ function isAllowedTransition(from: WorkflowStatus, to: WorkflowStatus): boolean 
   return allowedFrom.has("*") || allowedFrom.has(from);
 }
 
+/** 用户 Stop 后，只有显式的新一轮 pending 可以解除 cancelled 闩锁。 */
+function shouldKeepCancelled(previous: WorkflowStatus | null, toStatus: WorkflowStatus): boolean {
+  return previous === "cancelled" && toStatus !== "cancelled" && toStatus !== "pending";
+}
+
 export type SetWorkflowStateResult = {
   previous: WorkflowStatus | null;
   current: WorkflowStatus;
@@ -128,6 +133,21 @@ export async function setWorkflowState(
     .where(eq(workflowRun.id, workflowId))
     .limit(1);
   const previous = (prevRows[0]?.status ?? null) as WorkflowStatus | null;
+
+  /**
+   * `cancelled` 是用户明确停止后的持久化闩锁。异步 worker / Core turn 可能在停止
+   * 请求之后才收口；它们绝不能把该工作流重新写成 running、failed 或
+   * awaiting_approval。只有一次明确的新发起会先把 cancelled 转回 pending。
+   *
+   * 这道服务端闩锁比前端布尔值更重要：它能跨页面热更新、客户端重连和 Core 重启。
+   */
+  if (shouldKeepCancelled(previous, toStatus)) {
+    console.warn(
+      `[workflow-state] ignored stale transition after user stop: cancelled → ${toStatus} ` +
+        `(workflowId=${workflowId})${options.reason ? ` reason=${options.reason}` : ""}`
+    );
+    return { previous, current: "cancelled", transitionAllowed: false };
+  }
 
   const transitionAllowed = previous == null || isAllowedTransition(previous, toStatus);
   if (!transitionAllowed) {
@@ -202,4 +222,12 @@ export async function setWorkflowState(
 /** 测试用：暴露合法迁移检查，避免直接 export 内部常量。 */
 export function _isAllowedTransitionForTest(from: WorkflowStatus, to: WorkflowStatus): boolean {
   return isAllowedTransition(from, to);
+}
+
+/** 测试用：验证用户 Stop 后不会被迟到的 worker 状态覆盖。 */
+export function _shouldKeepCancelledForTest(
+  previous: WorkflowStatus | null,
+  toStatus: WorkflowStatus
+): boolean {
+  return shouldKeepCancelled(previous, toStatus);
 }

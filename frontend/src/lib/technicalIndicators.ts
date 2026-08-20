@@ -109,3 +109,45 @@ export function bollinger(
   }
   return { middle, upper, lower };
 }
+
+/** 区间 VWAP。日内数据由上一个可见 bar 起累计，适合作为研究视图的价格锚点。 */
+export function vwap(
+  bars: Array<{ high: number; low: number; close: number; volume: number }>,
+): Array<number | null> {
+  let cumulativeVolume = 0;
+  let cumulativeValue = 0;
+  return bars.map((bar) => {
+    const volume = Number.isFinite(bar.volume) && bar.volume > 0 ? bar.volume : 0;
+    const typicalPrice = (bar.high + bar.low + bar.close) / 3;
+    cumulativeVolume += volume;
+    cumulativeValue += typicalPrice * volume;
+    return cumulativeVolume > 0 ? cumulativeValue / cumulativeVolume : null;
+  });
+}
+
+export function kdj(
+  bars: Array<{ high: number; low: number; close: number }>,
+  period = 9,
+): { k: Array<number | null>; d: Array<number | null>; j: Array<number | null> } {
+  const window = Math.max(2, Math.floor(period));
+  const k: Array<number | null> = new Array(bars.length).fill(null);
+  const d: Array<number | null> = new Array(bars.length).fill(null);
+  const j: Array<number | null> = new Array(bars.length).fill(null);
+  let previousK = 50;
+  let previousD = 50;
+
+  for (let index = window - 1; index < bars.length; index += 1) {
+    const sample = bars.slice(index - window + 1, index + 1);
+    const highest = Math.max(...sample.map((bar) => bar.high));
+    const lowest = Math.min(...sample.map((bar) => bar.low));
+    const rsv = highest === lowest ? 50 : ((bars[index]!.close - lowest) / (highest - lowest)) * 100;
+    const nextK = (2 * previousK + rsv) / 3;
+    const nextD = (2 * previousD + nextK) / 3;
+    k[index] = nextK;
+    d[index] = nextD;
+    j[index] = 3 * nextK - 2 * nextD;
+    previousK = nextK;
+    previousD = nextD;
+  }
+  return { k, d, j };
+}

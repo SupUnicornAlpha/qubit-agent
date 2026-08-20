@@ -18,6 +18,7 @@ from connectors.broker_gateway import ccxt_adapter
 from connectors.broker_gateway import eastmoney_emt as eastmoney_emt_adapter
 from connectors.broker_gateway import futu as futu_adapter
 from connectors.broker_gateway import ib as ib_adapter
+from connectors.broker_gateway import qmt as qmt_adapter
 from connectors.broker_gateway import supermind as supermind_adapter
 
 logger = logging.getLogger("broker_gateway")
@@ -72,6 +73,8 @@ class BrokerGatewayConnector(BaseConnector):
             return supermind_adapter.healthcheck(cfg)
         if self._provider == "eastmoney_emt":
             return eastmoney_emt_adapter.healthcheck(cfg)
+        if self._provider == "qmt":
+            return qmt_adapter.healthcheck(cfg)
         return {"healthy": False, "message": f"unknown provider {self._provider}"}
 
     def _healthcheck_cfg(self) -> dict[str, Any]:
@@ -136,6 +139,8 @@ class BrokerGatewayConnector(BaseConnector):
             return supermind_adapter.submit_order(ticker, side, qty, limit_price, order_type, paper, cfg)
         if self._provider == "eastmoney_emt":
             return eastmoney_emt_adapter.submit_order(ticker, side, qty, limit_price, order_type, paper, cfg)
+        if self._provider == "qmt":
+            return qmt_adapter.submit_order(ticker, side, qty, limit_price, order_type, paper, cfg)
         raise ValueError(f"unsupported provider {self._provider}")
 
     def _cancel_order(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -154,6 +159,8 @@ class BrokerGatewayConnector(BaseConnector):
             return supermind_adapter.cancel_order(broker_order_id, paper, cfg)
         if self._provider == "eastmoney_emt":
             return eastmoney_emt_adapter.cancel_order(broker_order_id, paper, cfg)
+        if self._provider == "qmt":
+            return qmt_adapter.cancel_order(broker_order_id, paper, cfg)
         raise ValueError(f"unsupported provider {self._provider}")
 
     def _get_order(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -172,6 +179,8 @@ class BrokerGatewayConnector(BaseConnector):
             return supermind_adapter.get_order(broker_order_id, paper, cfg)
         if self._provider == "eastmoney_emt":
             return eastmoney_emt_adapter.get_order(broker_order_id, paper, cfg)
+        if self._provider == "qmt":
+            return qmt_adapter.get_order(broker_order_id, paper, cfg)
         raise ValueError(f"unsupported provider {self._provider}")
 
     def _get_fills(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -190,6 +199,8 @@ class BrokerGatewayConnector(BaseConnector):
             return supermind_adapter.get_fills(broker_order_id, paper, cfg)
         if self._provider == "eastmoney_emt":
             return eastmoney_emt_adapter.get_fills(broker_order_id, paper, cfg)
+        if self._provider == "qmt":
+            return qmt_adapter.get_fills(broker_order_id, paper, cfg)
         raise ValueError(f"unsupported provider {self._provider}")
 
     def _get_open_orders(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -213,6 +224,8 @@ class BrokerGatewayConnector(BaseConnector):
             return supermind_adapter.get_positions(paper, cfg)
         if self._provider == "eastmoney_emt":
             return eastmoney_emt_adapter.get_positions(paper, cfg)
+        if self._provider == "qmt":
+            return qmt_adapter.get_positions(paper, cfg)
         raise ValueError(f"unsupported provider {self._provider}")
 
     def _modify_order(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -245,6 +258,7 @@ class BrokerGatewayConnector(BaseConnector):
             "alpaca": alpaca_adapter,
             "supermind": supermind_adapter,
             "eastmoney_emt": eastmoney_emt_adapter,
+            "qmt": qmt_adapter,
         }.get(self._provider)
 
     def _capabilities(self) -> dict[str, Any]:

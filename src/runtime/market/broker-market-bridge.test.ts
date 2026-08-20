@@ -13,6 +13,8 @@ import {
 const ENV_KEYS = [
   "QUBIT_FUTU_MARKET_WS_URL",
   "QUBIT_IB_MARKET_WS_URL",
+  "QUBIT_ALPACA_MARKET_WS_URL",
+  "QUBIT_QMT_MARKET_WS_URL",
   "QUBIT_SUPERMIND_MARKET_WS_URL",
   "QUBIT_THS_MARKET_WS_URL",
   "QUBIT_MARKET_STREAM_PROVIDER",
@@ -42,12 +44,13 @@ afterEach(() => {
 });
 
 describe("broker-market-bridge", () => {
-  test("lists builtin futu / ib / supermind bridges", () => {
+  test("lists builtin Futu / IBKR / Alpaca / QMT / SuperMind bridges", () => {
     const ids = listBrokerMarketBridges()
       .map((d) => d.id)
       .sort();
-    expect(ids).toEqual(["futu", "ib", "supermind"]);
+    expect(ids).toEqual(["alpaca", "futu", "ib", "qmt", "supermind"]);
     expect(isBrokerMarketBridgeSourceId("futu_bridge")).toBe(true);
+    expect(isBrokerMarketBridgeSourceId("qmt_bridge")).toBe(true);
     expect(isBrokerMarketBridgeSourceId("eastmoney")).toBe(false);
   });
 
@@ -86,6 +89,14 @@ describe("broker-market-bridge", () => {
     process.env.QUBIT_IB_MARKET_WS_URL = "ws://ib";
     expect(selectBrokerMarketBridge({ market: "FUTURES" })?.id).toBe("ib");
     expect(selectBrokerMarketBridge({ market: "OPTION" })?.id).toBe("ib");
+  });
+
+  test("routes configured Alpaca to US and QMT to A shares", () => {
+    clearBridgeEnv();
+    process.env.QUBIT_ALPACA_MARKET_WS_URL = "ws://alpaca";
+    process.env.QUBIT_QMT_MARKET_WS_URL = "ws://qmt";
+    expect(selectBrokerMarketBridge({ market: "US" })?.id).toBe("alpaca");
+    expect(selectBrokerMarketBridge({ market: "CN" })?.id).toBe("qmt");
   });
 
   test("auto prefers healthy broker over configured-but-down peer", () => {

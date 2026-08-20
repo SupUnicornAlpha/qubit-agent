@@ -2,10 +2,13 @@ import type { CSSProperties, FC } from "react";
 import { useCallback, useEffect, useState } from "react";
 import {
   type HarnessHealthDto,
+  type HarnessMarketplaceItemDto,
   type HarnessPackageLockRecordDto,
   type HarnessPackageProfilesDto,
   type HarnessPackageVersionDto,
+  type HarnessProfileActivationHistoryDto,
   type HarnessRecentEventsDto,
+  type HarnessTrustDto,
   type PluginListItemDto,
   type PluginListTab,
   beginOauthAuthorize,
@@ -13,12 +16,15 @@ import {
   exportHarnessPackageProfiles,
   getHarnessHealth,
   getHarnessPackageProfiles,
+  getHarnessProfileActivationHistory,
+  getHarnessTrust,
   getOauthPreset,
   getRecentHarnessEvents,
   importHarnessPackageProfiles,
   importPluginPackage,
   installHarnessPackageManifest,
   installPlugin,
+  listHarnessMarketplace,
   listHarnessPackageVersions,
   listHarnessPackages,
   listPlugins,
@@ -32,6 +38,8 @@ import {
 
 type Props = {
   projectId: string;
+  /** 插件目录与 Harness 运行能力分开呈现，避免把运行时配置伪装成普通插件。 */
+  view?: "plugins" | "harness";
   onOpenMcp?: () => void;
   onOpenSkills?: () => void;
 };
@@ -89,7 +97,14 @@ const styles: Record<string, CSSProperties> = {
   label: { fontSize: 12, color: "var(--qb-main-meta)", marginBottom: 4 },
 };
 
-export const PluginsPanel: FC<Props> = ({ projectId, onOpenMcp, onOpenSkills }) => {
+export const PluginsPanel: FC<Props> = ({
+  projectId,
+  view = "plugins",
+  onOpenMcp,
+  onOpenSkills,
+}) => {
+  const showPlugins = view === "plugins";
+  const showHarness = view === "harness";
   const [tab, setTab] = useState<PluginListTab>("featured");
   const [q, setQ] = useState("");
   const [items, setItems] = useState<PluginListItemDto[]>([]);
@@ -120,6 +135,12 @@ export const PluginsPanel: FC<Props> = ({ projectId, onOpenMcp, onOpenSkills }) 
   });
   const [harnessEvents, setHarnessEvents] = useState<HarnessRecentEventsDto | null>(null);
   const [harnessHealth, setHarnessHealth] = useState<HarnessHealthDto | null>(null);
+  const [harnessHistory, setHarnessHistory] = useState<HarnessProfileActivationHistoryDto[]>([]);
+  const [harnessTrust, setHarnessTrust] = useState<HarnessTrustDto | null>(null);
+  const [harnessMarketplace, setHarnessMarketplace] = useState<HarnessMarketplaceItemDto[]>([]);
+  const [harnessParameterDrafts, setHarnessParameterDrafts] = useState<
+    Record<string, Record<string, string | number | boolean>>
+  >({});
   const [oauthPluginId, setOauthPluginId] = useState<string | null>(null);
   const [oauthForm, setOauthForm] = useState({
     clientId: "",
@@ -131,6 +152,10 @@ export const PluginsPanel: FC<Props> = ({ projectId, onOpenMcp, onOpenSkills }) 
   });
 
   const reload = useCallback(async () => {
+    if (!showPlugins) {
+      setItems([]);
+      return;
+    }
     if (!projectId && tab === "installed") {
       setItems([]);
       return;
@@ -150,32 +175,41 @@ export const PluginsPanel: FC<Props> = ({ projectId, onOpenMcp, onOpenSkills }) 
     } finally {
       setLoading(false);
     }
-  }, [projectId, tab, q]);
+  }, [projectId, q, showPlugins, tab]);
 
   useEffect(() => {
+    if (!showPlugins) return;
     void reload();
-  }, [reload]);
+  }, [reload, showPlugins]);
 
   const reloadHarnessPackages = useCallback(async () => {
     try {
-      const [packages, profiles, events, health] = await Promise.all([
+      const [packages, profiles, events, health, history, trust, marketplace] = await Promise.all([
         listHarnessPackages(),
         getHarnessPackageProfiles(),
         getRecentHarnessEvents(),
         getHarnessHealth(),
+        getHarnessProfileActivationHistory(),
+        getHarnessTrust(),
+        listHarnessMarketplace(),
       ]);
       setHarnessPackages(packages);
       setHarnessProfiles(profiles);
       setHarnessEvents(events);
       setHarnessHealth(health);
+      setHarnessHistory(history);
+      setHarnessTrust(trust);
+      setHarnessMarketplace(marketplace);
+      setHarnessParameterDrafts(profiles.activation.parameterOverrides);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
   }, []);
 
   useEffect(() => {
+    if (!showHarness) return;
     void reloadHarnessPackages();
-  }, [reloadHarnessPackages]);
+  }, [reloadHarnessPackages, showHarness]);
 
   useEffect(() => {
     const onMsg = (ev: MessageEvent) => {
@@ -389,18 +423,64 @@ export const PluginsPanel: FC<Props> = ({ projectId, onOpenMcp, onOpenSkills }) 
     }
   };
 
+  const onApplyHarnessProfiles = async (profileIds: string[]) => {
+    const parameterOverrides = Object.fromEntries(
+      Object.entries(harnessParameterDrafts).filter(([id]) => profileIds.includes(id))
+    );
+    setError(null);
+    try {
+      const activation = await setActiveHarnessPackageProfiles({
+        profileIds,
+        parameterOverrides,
+      });
+      setHarnessProfiles((current) => ({
+        ...current,
+        activeProfileIds: activation.profileIds,
+        activation,
+      }));
+      setHarnessParameterDrafts(activation.parameterOverrides);
+      setMessage(`Harness 已更新：${activation.profileIds.length} 项能力启用`);
+      await reloadHarnessPackages();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const onToggleHarnessProfile = async (profileId: string) => {
     const next = harnessProfiles.activeProfileIds.includes(profileId)
       ? harnessProfiles.activeProfileIds.filter((id) => id !== profileId)
       : [...harnessProfiles.activeProfileIds, profileId];
+    await onApplyHarnessProfiles(next);
+  };
+
+  const onSaveHarnessProfileParameters = async () => {
+    const parameterOverrides = Object.fromEntries(
+      Object.entries(harnessParameterDrafts).filter(([profileId]) =>
+        harnessProfiles.activeProfileIds.includes(profileId)
+      )
+    );
     setError(null);
     try {
-      const activeProfileIds = await setActiveHarnessPackageProfiles(next);
-      setHarnessProfiles((current) => ({ ...current, activeProfileIds }));
-      setMessage(`Harness Profile 已更新：${activeProfileIds.length} 个启用`);
+      const activation = await setActiveHarnessPackageProfiles({
+        profileIds: harnessProfiles.activeProfileIds,
+        parameterOverrides,
+      });
+      setHarnessProfiles((current) => ({ ...current, activation }));
+      setHarnessParameterDrafts(activation.parameterOverrides);
+      setMessage(`已保存 Profile 参数（修订 ${activation.revision}）`);
+      await reloadHarnessPackages();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
+  };
+
+  const onResetHarnessProfileParameters = (profileId: string) => {
+    setHarnessParameterDrafts((current) => {
+      const next = { ...current };
+      delete next[profileId];
+      return next;
+    });
+    setMessage("已恢复包内默认参数；点击“保存参数修订”后生效");
   };
 
   const onExportHarnessProfiles = async () => {
@@ -486,275 +566,591 @@ export const PluginsPanel: FC<Props> = ({ projectId, onOpenMcp, onOpenSkills }) 
 
   return (
     <div>
-      <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>插件</h3>
-      <p style={styles.hint}>
-        自建插件管理（轨 A）：官方包、OAuth 连接器、MCP 目录投影、本机导入。Skill / MCP
-        仍可在各自页面直装（轨 B）。
-      </p>
-      <div style={styles.row}>
-        {(
-          [
-            ["featured", "精选"],
-            ["installed", "已安装"],
-            ["catalog", "MCP 目录"],
-            ["all", "全部"],
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            style={tab === id ? styles.tabActive : styles.tab}
-            onClick={() => setTab(id)}
-          >
-            {label}
-          </button>
-        ))}
-        <input
-          style={styles.input}
-          placeholder="搜索插件…"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-        />
-        <button type="button" style={styles.btn} onClick={() => void reload()}>
-          刷新
-        </button>
-        {onOpenMcp ? (
-          <button type="button" style={styles.btn} onClick={onOpenMcp}>
-            MCP 直装 →
-          </button>
-        ) : null}
-        {onOpenSkills ? (
-          <button type="button" style={styles.btn} onClick={onOpenSkills}>
-            Skills 直装 →
-          </button>
-        ) : null}
-      </div>
-
-      <div style={{ ...styles.card, marginBottom: 16 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>从本机导入插件包</div>
-        <div style={styles.row}>
-          <select
-            style={{ ...styles.input, flex: "0 0 180px" }}
-            value={importFormat}
-            onChange={(e) =>
-              setImportFormat(e.target.value as "codex_plugin" | "claude_plugin" | "agent_skills")
-            }
-          >
-            <option value="codex_plugin">Codex 插件目录</option>
-            <option value="claude_plugin">Claude 插件目录</option>
-            <option value="agent_skills">Agent Skill（SKILL.md）</option>
-          </select>
-          <input
-            style={styles.input}
-            placeholder="绝对路径，如 /path/to/plugin 或 …/SKILL.md"
-            value={importPath}
-            onChange={(e) => setImportPath(e.target.value)}
-          />
-          <button type="button" style={styles.btn} onClick={() => void onImport()}>
-            导入
-          </button>
-        </div>
-      </div>
-
-      <div style={{ ...styles.card, marginBottom: 16 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
-          Harness 能力包（签名 JSON）
-        </div>
-        <div style={styles.meta}>
-          仅导入已由服务端信任根签名的声明式 Capability/Profile；包不会直接执行本机代码。
-        </div>
-        <textarea
-          style={{
-            ...styles.input,
-            width: "100%",
-            minHeight: 110,
-            marginTop: 8,
-            resize: "vertical",
-          }}
-          placeholder='粘贴 Harness package JSON，例如 { "schemaVersion": 1, ... }'
-          value={harnessPackageSource}
-          onChange={(event) => setHarnessPackageSource(event.target.value)}
-        />
-        <div style={{ ...styles.row, marginTop: 8, marginBottom: 0 }}>
-          <button type="button" style={styles.btn} onClick={() => void onVerifyHarnessPackage()}>
-            验证签名
-          </button>
-          <button type="button" style={styles.btn} onClick={() => void onInstallHarnessPackage()}>
-            安装能力包
-          </button>
-          <button type="button" style={styles.btn} onClick={() => void reloadHarnessPackages()}>
-            刷新已安装
-          </button>
-        </div>
-        {harnessPackages.length > 0 ? (
-          <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
-            {harnessPackages.map((item) => {
-              const versions = harnessVersions[item.packageId];
-              return (
-                <div
-                  key={item.packageId}
-                  style={{ border: "1px solid var(--qb-border)", borderRadius: 6, padding: 8 }}
-                >
-                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                    <strong style={{ fontSize: 13 }}>{item.packageId}</strong>
-                    <span style={styles.meta}>当前 {item.version}</span>
-                    <span style={styles.meta}>签名 {item.keyId}</span>
-                    <button
-                      type="button"
-                      style={styles.btn}
-                      onClick={() => void onToggleHarnessVersions(item.packageId)}
-                    >
-                      {versions ? "收起版本" : "历史版本"}
-                    </button>
-                    <button
-                      type="button"
-                      style={styles.btn}
-                      onClick={() => void onUninstallHarnessPackage(item.packageId)}
-                    >
-                      卸载
-                    </button>
-                  </div>
-                  {versions ? (
-                    <div style={{ ...styles.row, margin: "8px 0 0" }}>
-                      {versions.map((version) => (
-                        <span
-                          key={version.version}
-                          style={{
-                            ...styles.meta,
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 6,
-                          }}
-                        >
-                          {version.current ? "● 当前" : "○"} {version.version}
-                          {!version.current ? (
-                            <button
-                              type="button"
-                              style={styles.btn}
-                              onClick={() =>
-                                void onRollbackHarnessPackage(item.packageId, version.version)
-                              }
-                            >
-                              回退到此版
-                            </button>
-                          ) : null}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
+      {showPlugins ? (
+        <>
+          <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>插件</h3>
+          <p style={styles.hint}>
+            自建插件管理（轨 A）：官方包、OAuth 连接器、MCP 目录投影、本机导入。Skill / MCP
+            仍可在各自页面直装（轨 B）。
+          </p>
+          <div style={styles.row}>
+            {(
+              [
+                ["featured", "精选"],
+                ["installed", "已安装"],
+                ["catalog", "MCP 目录"],
+                ["all", "全部"],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                style={tab === id ? styles.tabActive : styles.tab}
+                onClick={() => setTab(id)}
+              >
+                {label}
+              </button>
+            ))}
+            <input
+              style={styles.input}
+              placeholder="搜索插件…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
+            <button type="button" style={styles.btn} onClick={() => void reload()}>
+              刷新
+            </button>
+            {onOpenMcp ? (
+              <button type="button" style={styles.btn} onClick={onOpenMcp}>
+                MCP 直装 →
+              </button>
+            ) : null}
+            {onOpenSkills ? (
+              <button type="button" style={styles.btn} onClick={onOpenSkills}>
+                Skills 直装 →
+              </button>
+            ) : null}
           </div>
-        ) : (
-          <div style={{ ...styles.meta, marginTop: 8 }}>暂无已安装 Harness 能力包</div>
-        )}
-        {harnessProfiles.available.length > 0 ? (
-          <div style={{ marginTop: 12 }}>
-            <div style={styles.label}>Profile 组合（启用后仍需经灰度白名单进入实际工具面）</div>
-            <div style={{ ...styles.row, marginTop: 6, marginBottom: 0 }}>
-              {harnessProfiles.available.map((profile) => {
-                const active = harnessProfiles.activeProfileIds.includes(profile.id);
+
+          <div style={{ ...styles.card, marginBottom: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>从本机导入插件包</div>
+            <div style={styles.row}>
+              <select
+                style={{ ...styles.input, flex: "0 0 180px" }}
+                value={importFormat}
+                onChange={(e) =>
+                  setImportFormat(
+                    e.target.value as "codex_plugin" | "claude_plugin" | "agent_skills"
+                  )
+                }
+              >
+                <option value="codex_plugin">Codex 插件目录</option>
+                <option value="claude_plugin">Claude 插件目录</option>
+                <option value="agent_skills">Agent Skill（SKILL.md）</option>
+              </select>
+              <input
+                style={styles.input}
+                placeholder="绝对路径，如 /path/to/plugin 或 …/SKILL.md"
+                value={importPath}
+                onChange={(e) => setImportPath(e.target.value)}
+              />
+              <button type="button" style={styles.btn} onClick={() => void onImport()}>
+                导入
+              </button>
+            </div>
+          </div>
+        </>
+      ) : null}
+
+      {showHarness ? (
+        <>
+          <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>Harness</h3>
+          {error ? <div style={styles.err}>{error}</div> : null}
+          {message ? <div style={{ ...styles.meta, marginBottom: 8 }}>{message}</div> : null}
+          <div style={{ ...styles.card, marginBottom: 12 }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "baseline",
+                justifyContent: "space-between",
+                gap: 12,
+                flexWrap: "wrap",
+                marginBottom: 10,
+              }}
+            >
+              <div style={{ fontSize: 14, fontWeight: 650 }}>工作模式</div>
+              <div style={styles.meta}>
+                当前 {harnessProfiles.activeProfileIds.length} 项能力
+                {harnessProfiles.activation.updatedAt
+                  ? ` · ${new Date(harnessProfiles.activation.updatedAt).toLocaleString()}`
+                  : ""}
+              </div>
+            </div>
+            <div style={{ ...styles.row, marginBottom: 10 }}>
+              {[
+                { title: "金融研究", ids: ["financial-research"] },
+                { title: "券商行情", ids: ["broker-connected-research"] },
+                { title: "期权研究", ids: ["us-options-research"] },
+                { title: "模拟交易", ids: ["paper-trading"] },
+                { title: "研究交付", ids: ["document-production"] },
+              ].map((preset) => {
+                const active =
+                  preset.ids.length === harnessProfiles.activeProfileIds.length &&
+                  preset.ids.every((id) => harnessProfiles.activeProfileIds.includes(id));
                 return (
                   <button
-                    key={profile.id}
+                    key={preset.title}
                     type="button"
                     style={active ? styles.tabActive : styles.tab}
-                    onClick={() => void onToggleHarnessProfile(profile.id)}
-                    title={`${profile.packageId}@${profile.packageVersion}`}
+                    onClick={() => void onApplyHarnessProfiles(preset.ids)}
                   >
-                    {active ? "● " : "○ "}
-                    {profile.title}
-                    {active ? (profile.resolverAllowlisted ? " · 已列入灰度" : " · 影子") : ""}
+                    {preset.title}
                   </button>
                 );
               })}
+              <button
+                type="button"
+                style={styles.btn}
+                onClick={() => void onApplyHarnessProfiles([])}
+              >
+                清空
+              </button>
             </div>
-          </div>
-        ) : null}
-        <div style={{ marginTop: 12 }}>
-          <div style={styles.label}>
-            Profile 配置导入/导出 · 当前修订 {harnessProfiles.activation.revision}
-            {harnessProfiles.activation.updatedAt
-              ? ` · 更新于 ${new Date(harnessProfiles.activation.updatedAt).toLocaleString()}`
-              : ""}
-          </div>
-          <textarea
-            style={{ ...styles.input, width: "100%", minHeight: 74, resize: "vertical" }}
-            placeholder='导出的 Profile JSON，例如 { "schemaVersion": 1, "profileIds": [...] }'
-            value={harnessProfileSource}
-            onChange={(event) => setHarnessProfileSource(event.target.value)}
-          />
-          <div style={{ ...styles.row, marginTop: 7, marginBottom: 0 }}>
-            <button type="button" style={styles.btn} onClick={() => void onExportHarnessProfiles()}>
-              导出当前配置
-            </button>
-            <button type="button" style={styles.btn} onClick={() => void onImportHarnessProfiles()}>
-              导入并校验
-            </button>
-          </div>
-        </div>
-        {harnessProfiles.rejected.length > 0 ? (
-          <div style={styles.warn}>
-            忽略未通过校验的包：
-            {harnessProfiles.rejected
-              .map((item) => `${item.packageId}（${item.reason}）`)
-              .join("；")}
-          </div>
-        ) : null}
-        {harnessEvents ? (
-          <div style={{ marginTop: 14, borderTop: "1px solid var(--qb-border)", paddingTop: 10 }}>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>近期 Harness 运行摘要</div>
-            <div style={{ ...styles.meta, marginTop: 4 }}>
-              组合 {harnessEvents.summary.composed} · 降级 {harnessEvents.summary.degraded} · 准入{" "}
-              {harnessEvents.summary.admitted} · 拒绝 {harnessEvents.summary.rejected} · 完成{" "}
-              {harnessEvents.summary.completed} · Artifact {harnessEvents.summary.artifacts}
+            <div style={{ display: "grid", gap: 6 }}>
+              {harnessProfiles.available
+                .filter((profile) => profile.source === "system")
+                .map((profile) => {
+                  const active = harnessProfiles.activeProfileIds.includes(profile.id);
+                  return (
+                    <div
+                      key={profile.id}
+                      style={{
+                        display: "flex",
+                        gap: 12,
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        borderTop: "1px solid var(--qb-border)",
+                        paddingTop: 7,
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 600 }}>{profile.title}</div>
+                        <div style={styles.meta}>{profile.description}</div>
+                      </div>
+                      <button
+                        type="button"
+                        style={active ? styles.tabActive : styles.btn}
+                        onClick={() => void onToggleHarnessProfile(profile.id)}
+                      >
+                        {active ? "已启用" : "启用"}
+                      </button>
+                    </div>
+                  );
+                })}
             </div>
-            {harnessEvents.events.length > 0 ? (
-              <div style={{ display: "grid", gap: 3, marginTop: 7 }}>
-                {harnessEvents.events.slice(0, 8).map((event) => (
-                  <div key={event.id} style={styles.meta}>
-                    {event.eventType}
-                    {event.profileId ? ` · ${event.profileId}` : ""}
-                    {event.status ? ` · ${event.status}` : ""}
-                    {` · ${new Date(event.createdAt).toLocaleString()}`}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div style={{ ...styles.meta, marginTop: 6 }}>暂无 Harness 调用记录</div>
-            )}
+            {harnessProfiles.available.length === 0 ? (
+              <div style={styles.meta}>正在读取可用工作模式…</div>
+            ) : null}
           </div>
-        ) : null}
-        {harnessHealth ? (
-          <div style={{ marginTop: 14, borderTop: "1px solid var(--qb-border)", paddingTop: 10 }}>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>Harness 健康与自动降级</div>
-            <div style={{ ...styles.meta, marginTop: 4 }}>
-              回退策略：旧工具面持续可用 · 最近降级 {harnessHealth.recentDegradations}
-            </div>
-            {harnessHealth.profiles.length ? (
-              <div style={{ display: "grid", gap: 3, marginTop: 7 }}>
-                {harnessHealth.profiles.map((profile) => (
-                  <div
-                    key={profile.profileId}
-                    style={profile.state === "open" ? styles.warn : styles.meta}
-                  >
-                    {profile.state === "open" ? "熔断中" : "正常"} · {profile.profileId} · 近 5
-                    分钟失败 {profile.failuresInWindow}
-                    {profile.retryAt
-                      ? ` · ${new Date(profile.retryAt).toLocaleString()} 后自动重试`
-                      : ""}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div style={{ ...styles.meta, marginTop: 6 }}>暂无受控 Profile 失败记录</div>
-            )}
-          </div>
-        ) : null}
-      </div>
 
-      {oauthPluginId ? (
+          <details style={{ marginBottom: 16 }}>
+            <summary
+              style={{
+                ...styles.meta,
+                cursor: "pointer",
+                userSelect: "none",
+                padding: "4px 0",
+              }}
+            >
+              高级：导入能力包、参数、迁移与运行审计
+            </summary>
+            <div style={{ ...styles.card, marginTop: 8, marginBottom: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>导入签名能力包</div>
+              <textarea
+                style={{
+                  ...styles.input,
+                  width: "100%",
+                  minHeight: 110,
+                  marginTop: 8,
+                  resize: "vertical",
+                }}
+                placeholder='粘贴 Harness package JSON，例如 { "schemaVersion": 1, ... }'
+                value={harnessPackageSource}
+                onChange={(event) => setHarnessPackageSource(event.target.value)}
+              />
+              <div style={{ ...styles.row, marginTop: 8, marginBottom: 0 }}>
+                <button
+                  type="button"
+                  style={styles.btn}
+                  onClick={() => void onVerifyHarnessPackage()}
+                >
+                  验证签名
+                </button>
+                <button
+                  type="button"
+                  style={styles.btn}
+                  onClick={() => void onInstallHarnessPackage()}
+                >
+                  安装能力包
+                </button>
+                <button
+                  type="button"
+                  style={styles.btn}
+                  onClick={() => void reloadHarnessPackages()}
+                >
+                  刷新已安装
+                </button>
+              </div>
+              {harnessPackages.length > 0 ? (
+                <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+                  {harnessPackages.map((item) => {
+                    const versions = harnessVersions[item.packageId];
+                    return (
+                      <div
+                        key={item.packageId}
+                        style={{
+                          border: "1px solid var(--qb-border)",
+                          borderRadius: 6,
+                          padding: 8,
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: 8,
+                            alignItems: "center",
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          <strong style={{ fontSize: 13 }}>{item.packageId}</strong>
+                          <span style={styles.meta}>当前 {item.version}</span>
+                          <span style={styles.meta}>签名 {item.keyId}</span>
+                          <button
+                            type="button"
+                            style={styles.btn}
+                            onClick={() => void onToggleHarnessVersions(item.packageId)}
+                          >
+                            {versions ? "收起版本" : "历史版本"}
+                          </button>
+                          <button
+                            type="button"
+                            style={styles.btn}
+                            onClick={() => void onUninstallHarnessPackage(item.packageId)}
+                          >
+                            卸载
+                          </button>
+                        </div>
+                        {versions ? (
+                          <div style={{ ...styles.row, margin: "8px 0 0" }}>
+                            {versions.map((version) => (
+                              <span
+                                key={version.version}
+                                style={{
+                                  ...styles.meta,
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 6,
+                                }}
+                              >
+                                {version.current ? "● 当前" : "○"} {version.version}
+                                {!version.current ? (
+                                  <button
+                                    type="button"
+                                    style={styles.btn}
+                                    onClick={() =>
+                                      void onRollbackHarnessPackage(item.packageId, version.version)
+                                    }
+                                  >
+                                    回退到此版
+                                  </button>
+                                ) : null}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div style={{ ...styles.meta, marginTop: 8 }}>暂无已安装 Harness 能力包</div>
+              )}
+              {harnessProfiles.available.length > 0 ? (
+                <div style={{ marginTop: 12 }}>
+                  <div style={styles.label}>
+                    Profile 组合（启用后仍需经灰度白名单进入实际工具面）
+                  </div>
+                  <div style={{ ...styles.row, marginTop: 6, marginBottom: 0 }}>
+                    {harnessProfiles.available.map((profile) => {
+                      const active = harnessProfiles.activeProfileIds.includes(profile.id);
+                      return (
+                        <button
+                          key={profile.id}
+                          type="button"
+                          style={active ? styles.tabActive : styles.tab}
+                          onClick={() => void onToggleHarnessProfile(profile.id)}
+                          title={`${profile.packageId}@${profile.packageVersion}`}
+                        >
+                          {active ? "● " : "○ "}
+                          {profile.title}
+                          {active
+                            ? profile.resolverAllowlisted
+                              ? " · 已列入灰度"
+                              : " · 影子"
+                            : ""}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+              {harnessProfiles.available.some(
+                (profile) =>
+                  harnessProfiles.activeProfileIds.includes(profile.id) &&
+                  profile.parameters.length > 0
+              ) ? (
+                <div
+                  style={{ marginTop: 12, borderTop: "1px solid var(--qb-border)", paddingTop: 10 }}
+                >
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>已启用 Profile 的参数</div>
+                  <div style={{ ...styles.meta, marginTop: 4 }}>
+                    参数来自签名能力包的
+                    schema，仅支持非密钥的字符串、数字、开关和枚举值；保存会生成可回溯修订。
+                  </div>
+                  <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+                    {harnessProfiles.available
+                      .filter(
+                        (profile) =>
+                          harnessProfiles.activeProfileIds.includes(profile.id) &&
+                          profile.parameters.length > 0
+                      )
+                      .map((profile) => (
+                        <div
+                          key={profile.id}
+                          style={{
+                            border: "1px solid var(--qb-border)",
+                            borderRadius: 6,
+                            padding: 10,
+                          }}
+                        >
+                          <div style={{ fontSize: 13, fontWeight: 600 }}>{profile.title}</div>
+                          <div style={styles.meta}>
+                            {profile.id} · {profile.resolverAllowlisted ? "灰度准入" : "影子模式"}
+                          </div>
+                          {profile.description ? (
+                            <div style={styles.meta}>{profile.description}</div>
+                          ) : null}
+                          <div style={{ display: "grid", gap: 8, marginTop: 9 }}>
+                            {profile.parameters.map((parameter) => {
+                              const value =
+                                harnessParameterDrafts[profile.id]?.[parameter.id] ??
+                                parameter.default ??
+                                "";
+                              const setValue = (next: string | number | boolean) =>
+                                setHarnessParameterDrafts((current) => ({
+                                  ...current,
+                                  [profile.id]: { ...current[profile.id], [parameter.id]: next },
+                                }));
+                              return (
+                                <div key={parameter.id} style={{ display: "grid", gap: 4 }}>
+                                  <span style={styles.label}>
+                                    {parameter.title} · {parameter.type}
+                                    {parameter.description ? ` · ${parameter.description}` : ""}
+                                  </span>
+                                  {parameter.type === "boolean" ? (
+                                    <input
+                                      type="checkbox"
+                                      checked={Boolean(value)}
+                                      onChange={(event) => setValue(event.target.checked)}
+                                    />
+                                  ) : parameter.type === "enum" ? (
+                                    <select
+                                      style={styles.input}
+                                      value={String(value)}
+                                      onChange={(event) => setValue(event.target.value)}
+                                    >
+                                      {(parameter.values ?? []).map((item) => (
+                                        <option key={item} value={item}>
+                                          {item}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  ) : (
+                                    <input
+                                      type={parameter.type === "number" ? "number" : "text"}
+                                      style={styles.input}
+                                      value={String(value)}
+                                      onChange={(event) => {
+                                        if (parameter.type === "number") {
+                                          const next = Number(event.target.value);
+                                          if (Number.isFinite(next)) setValue(next);
+                                          return;
+                                        }
+                                        setValue(event.target.value);
+                                      }}
+                                    />
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                          <div style={{ ...styles.row, marginTop: 8, marginBottom: 0 }}>
+                            <button
+                              type="button"
+                              style={styles.btn}
+                              onClick={() => onResetHarnessProfileParameters(profile.id)}
+                            >
+                              恢复包内默认值
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                  <div style={{ ...styles.row, marginTop: 8, marginBottom: 0 }}>
+                    <button
+                      type="button"
+                      style={styles.btn}
+                      onClick={() => void onSaveHarnessProfileParameters()}
+                    >
+                      保存参数修订
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              <div style={{ marginTop: 12 }}>
+                <div style={styles.label}>
+                  Profile 配置导入/导出 · 当前修订 {harnessProfiles.activation.revision}
+                  {harnessProfiles.activation.updatedAt
+                    ? ` · 更新于 ${new Date(harnessProfiles.activation.updatedAt).toLocaleString()}`
+                    : ""}
+                </div>
+                <textarea
+                  style={{ ...styles.input, width: "100%", minHeight: 74, resize: "vertical" }}
+                  placeholder='导出的 Profile JSON，例如 { "schemaVersion": 1, "profileIds": [...] }'
+                  value={harnessProfileSource}
+                  onChange={(event) => setHarnessProfileSource(event.target.value)}
+                />
+                <div style={{ ...styles.row, marginTop: 7, marginBottom: 0 }}>
+                  <button
+                    type="button"
+                    style={styles.btn}
+                    onClick={() => void onExportHarnessProfiles()}
+                  >
+                    导出当前配置
+                  </button>
+                  <button
+                    type="button"
+                    style={styles.btn}
+                    onClick={() => void onImportHarnessProfiles()}
+                  >
+                    导入并校验
+                  </button>
+                </div>
+              </div>
+              {harnessMarketplace.length > 0 ? (
+                <div
+                  style={{ marginTop: 14, borderTop: "1px solid var(--qb-border)", paddingTop: 10 }}
+                >
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>Harness 能力市场目录</div>
+                  <div style={{ ...styles.meta, marginTop: 4 }}>
+                    目录由部署方同步，展示前会再次校验签名；从目录安装仍需导入完整签名
+                    JSON，避免页面成为可执行代码入口。
+                  </div>
+                  <div style={{ display: "grid", gap: 5, marginTop: 8 }}>
+                    {harnessMarketplace.map((item) => (
+                      <div key={`${item.id}@${item.version}`} style={styles.meta}>
+                        {item.verification.ok ? "●" : "○"} {item.title} · {item.id}@{item.version}
+                        {item.verification.ok
+                          ? ` · 签名 ${item.verification.keyId ?? "已验证"}`
+                          : ` · 不可安装：${item.verification.message ?? item.verification.code ?? "签名无效"}`}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              {harnessTrust ? (
+                <div
+                  style={{ marginTop: 14, borderTop: "1px solid var(--qb-border)", paddingTop: 10 }}
+                >
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>信任与部署边界</div>
+                  <div style={{ ...styles.meta, marginTop: 4 }}>
+                    信任根、撤销密钥、灰度白名单、容器镜像与出网代理由部署管理员配置，普通插件页只显示状态，不能降低执行边界。
+                  </div>
+                  <div style={{ ...styles.meta, marginTop: 6 }}>
+                    信任签名：{harnessTrust.trustedKeyIds.join("、") || "未配置"} · 已撤销：
+                    {harnessTrust.revokedKeyIds.join("、") || "无"} · 支持密钥轮换：
+                    {harnessTrust.keyRotationSupported ? "是" : "否"}
+                  </div>
+                </div>
+              ) : null}
+              {harnessHistory.length > 0 ? (
+                <div
+                  style={{ marginTop: 14, borderTop: "1px solid var(--qb-border)", paddingTop: 10 }}
+                >
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>Profile 配置历史</div>
+                  <div style={{ display: "grid", gap: 3, marginTop: 6 }}>
+                    {harnessHistory.slice(0, 6).map((entry) => (
+                      <div key={`${entry.revision}-${entry.changedAt}`} style={styles.meta}>
+                        r{entry.revision} · {new Date(entry.changedAt).toLocaleString()} ·{" "}
+                        {entry.source} · 启用：
+                        {entry.profileIds.join("、") || "无"}
+                        {entry.changedParameterProfiles.length
+                          ? ` · 参数：${entry.changedParameterProfiles.join("、")}`
+                          : ""}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              {harnessProfiles.rejected.length > 0 ? (
+                <div style={styles.warn}>
+                  忽略未通过校验的包：
+                  {harnessProfiles.rejected
+                    .map((item) => `${item.packageId}（${item.reason}）`)
+                    .join("；")}
+                </div>
+              ) : null}
+              {harnessEvents ? (
+                <div
+                  style={{ marginTop: 14, borderTop: "1px solid var(--qb-border)", paddingTop: 10 }}
+                >
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>近期 Harness 运行摘要</div>
+                  <div style={{ ...styles.meta, marginTop: 4 }}>
+                    组合 {harnessEvents.summary.composed} · 降级 {harnessEvents.summary.degraded} ·
+                    准入 {harnessEvents.summary.admitted} · 拒绝 {harnessEvents.summary.rejected} ·
+                    完成 {harnessEvents.summary.completed} · Artifact{" "}
+                    {harnessEvents.summary.artifacts}
+                  </div>
+                  {harnessEvents.events.length > 0 ? (
+                    <div style={{ display: "grid", gap: 3, marginTop: 7 }}>
+                      {harnessEvents.events.slice(0, 8).map((event) => (
+                        <div key={event.id} style={styles.meta}>
+                          {event.eventType}
+                          {event.profileId ? ` · ${event.profileId}` : ""}
+                          {event.status ? ` · ${event.status}` : ""}
+                          {` · ${new Date(event.createdAt).toLocaleString()}`}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ ...styles.meta, marginTop: 6 }}>暂无 Harness 调用记录</div>
+                  )}
+                </div>
+              ) : null}
+              {harnessHealth ? (
+                <div
+                  style={{ marginTop: 14, borderTop: "1px solid var(--qb-border)", paddingTop: 10 }}
+                >
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>Harness 健康与自动降级</div>
+                  <div style={{ ...styles.meta, marginTop: 4 }}>
+                    回退策略：旧工具面持续可用 · 最近降级 {harnessHealth.recentDegradations}
+                  </div>
+                  {harnessHealth.profiles.length ? (
+                    <div style={{ display: "grid", gap: 3, marginTop: 7 }}>
+                      {harnessHealth.profiles.map((profile) => (
+                        <div
+                          key={profile.profileId}
+                          style={profile.state === "open" ? styles.warn : styles.meta}
+                        >
+                          {profile.state === "open" ? "熔断中" : "正常"} · {profile.profileId} · 近
+                          5 分钟失败 {profile.failuresInWindow}
+                          {profile.retryAt
+                            ? ` · ${new Date(profile.retryAt).toLocaleString()} 后自动重试`
+                            : ""}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ ...styles.meta, marginTop: 6 }}>暂无受控 Profile 失败记录</div>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          </details>
+        </>
+      ) : null}
+
+      {showPlugins && oauthPluginId ? (
         <div style={{ ...styles.card, marginBottom: 16 }}>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
             配置 OAuth：{oauthPluginId}
@@ -813,80 +1209,87 @@ export const PluginsPanel: FC<Props> = ({ projectId, onOpenMcp, onOpenSkills }) 
         </div>
       ) : null}
 
-      {error ? <div style={styles.err}>{error}</div> : null}
-      {message ? <div style={{ ...styles.meta, marginBottom: 8 }}>{message}</div> : null}
-      {loading ? <div style={styles.meta}>加载中…</div> : null}
+      {showPlugins && error ? <div style={styles.err}>{error}</div> : null}
+      {showPlugins && message ? (
+        <div style={{ ...styles.meta, marginBottom: 8 }}>{message}</div>
+      ) : null}
+      {showPlugins && loading ? <div style={styles.meta}>加载中…</div> : null}
 
-      {!loading && items.length === 0 ? (
+      {showPlugins && !loading && items.length === 0 ? (
         <div style={{ ...styles.card, color: "var(--qb-main-meta)", fontSize: 13 }}>
           暂无插件条目
         </div>
       ) : null}
 
-      {items.map((item) => (
-        <div key={item.id} style={styles.card}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontWeight: 600, fontSize: 14 }}>
-                {item.name}{" "}
-                <span style={styles.meta}>
-                  · {item.kind}
-                  {item.version ? ` · v${item.version}` : ""}
-                  {item.installed ? " · 已安装" : ""}
-                  {item.oauthConnected ? " · OAuth 已连接" : ""}
-                  {item.oauthStatus && !item.oauthConnected ? ` · oauth=${item.oauthStatus}` : ""}
-                </span>
+      {showPlugins &&
+        items.map((item) => (
+          <div key={item.id} style={styles.card}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>
+                  {item.name}{" "}
+                  <span style={styles.meta}>
+                    · {item.kind}
+                    {item.version ? ` · v${item.version}` : ""}
+                    {item.installed ? " · 已安装" : ""}
+                    {item.oauthConnected ? " · OAuth 已连接" : ""}
+                    {item.oauthStatus && !item.oauthConnected ? ` · oauth=${item.oauthStatus}` : ""}
+                  </span>
+                </div>
+                <div style={{ fontSize: 13, marginTop: 4 }}>{item.description || "（无描述）"}</div>
+                <div style={styles.meta}>
+                  {item.category} · safety={item.safetyLevel}
+                  {item.auth?.type ? ` · auth=${item.auth.type}` : ""}
+                  {item.oauthMcpServerName ? ` · mcp=${item.oauthMcpServerName}` : ""}
+                </div>
+                {item.oauthError ? <div style={styles.warn}>{item.oauthError}</div> : null}
               </div>
-              <div style={{ fontSize: 13, marginTop: 4 }}>{item.description || "（无描述）"}</div>
-              <div style={styles.meta}>
-                {item.category} · safety={item.safetyLevel}
-                {item.auth?.type ? ` · auth=${item.auth.type}` : ""}
-                {item.oauthMcpServerName ? ` · mcp=${item.oauthMcpServerName}` : ""}
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {item.id === "connector:futu" ? (
+                  <button type="button" style={styles.btn} onClick={() => void onInstall(item)}>
+                    打通行情+交易
+                  </button>
+                ) : item.kind === "connector" || item.auth?.type === "oauth2" ? (
+                  item.oauthConnected ? (
+                    <button
+                      type="button"
+                      style={styles.btn}
+                      onClick={() => void onDisconnectOauth(item)}
+                    >
+                      断开
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      style={styles.btn}
+                      onClick={() => void openOauthForm(item)}
+                    >
+                      连接
+                    </button>
+                  )
+                ) : null}
+                {!item.installed && item.kind === "mcp" ? (
+                  <button type="button" style={styles.btn} onClick={() => void onInstall(item)}>
+                    安装
+                  </button>
+                ) : null}
+                {item.kind === "builtin_pack" ? (
+                  <button type="button" style={styles.btn} onClick={() => void onInstall(item)}>
+                    内置
+                  </button>
+                ) : null}
+                {item.installed &&
+                item.installKey &&
+                !item.installKey.startsWith("builtin:") &&
+                item.id !== "connector:futu" ? (
+                  <button type="button" style={styles.btn} onClick={() => void onUninstall(item)}>
+                    卸载
+                  </button>
+                ) : null}
               </div>
-              {item.oauthError ? <div style={styles.warn}>{item.oauthError}</div> : null}
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {item.id === "connector:futu" ? (
-                <button type="button" style={styles.btn} onClick={() => void onInstall(item)}>
-                  打通行情+交易
-                </button>
-              ) : item.kind === "connector" || item.auth?.type === "oauth2" ? (
-                item.oauthConnected ? (
-                  <button
-                    type="button"
-                    style={styles.btn}
-                    onClick={() => void onDisconnectOauth(item)}
-                  >
-                    断开
-                  </button>
-                ) : (
-                  <button type="button" style={styles.btn} onClick={() => void openOauthForm(item)}>
-                    连接
-                  </button>
-                )
-              ) : null}
-              {!item.installed && item.kind === "mcp" ? (
-                <button type="button" style={styles.btn} onClick={() => void onInstall(item)}>
-                  安装
-                </button>
-              ) : null}
-              {item.kind === "builtin_pack" ? (
-                <button type="button" style={styles.btn} onClick={() => void onInstall(item)}>
-                  内置
-                </button>
-              ) : null}
-              {item.installed &&
-              item.installKey &&
-              !item.installKey.startsWith("builtin:") &&
-              item.id !== "connector:futu" ? (
-                <button type="button" style={styles.btn} onClick={() => void onUninstall(item)}>
-                  卸载
-                </button>
-              ) : null}
             </div>
           </div>
-        </div>
-      ))}
+        ))}
     </div>
   );
 };

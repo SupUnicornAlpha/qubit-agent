@@ -36,8 +36,21 @@ import {
   queryMarketTrades,
 } from "../runtime/market/microstructure-query";
 import { queryMarketNewsBrief } from "../runtime/market/news-brief-query";
-import { fetchYahooOptionChain } from "../runtime/market/options-chain";
+import {
+  fetchOptionChain,
+  type OptionChainRequestSource,
+} from "../runtime/market/options-chain";
+import {
+  analyzeOptionStrategy,
+  isOptionStrategyName,
+  type OptionStrategyInput,
+} from "../runtime/market/options-strategy";
 import { detectRegimeFromBars } from "../runtime/market/regime";
+import {
+  addMarketWatchlistItem,
+  getMarketWatchlist,
+  removeMarketWatchlistItem,
+} from "../runtime/market/watchlist-service";
 import { runStructuredTune } from "../runtime/market/structured-tune";
 import {
   getWindSessionStatus,
@@ -74,6 +87,31 @@ marketRouter.get("/stream/metrics", (c) =>
   c.json({ ok: true, data: marketStreamGateway.snapshot() })
 );
 
+/** 本机用户自选 + 已关联券商持仓；只读聚合，永不写券商侧。 */
+marketRouter.get("/watchlist", async (c) => c.json({ ok: true, data: await getMarketWatchlist() }));
+
+marketRouter.post("/watchlist", async (c) => {
+  const body = await c.req.json<{ symbol?: string; exchange?: string; label?: string }>();
+  try {
+    const data = await addMarketWatchlistItem({
+      symbol: body.symbol ?? "",
+      ...(body.exchange !== undefined ? { exchange: body.exchange } : {}),
+      ...(body.label !== undefined ? { label: body.label } : {}),
+    });
+    return c.json({ ok: true, data });
+  } catch (error) {
+    return c.json({ ok: false, error: error instanceof Error ? error.message : "watchlist_add_failed" }, 400);
+  }
+});
+
+marketRouter.delete("/watchlist/:symbol", async (c) => {
+  const data = await removeMarketWatchlistItem({
+    symbol: c.req.param("symbol"),
+    ...(c.req.query("exchange") !== undefined ? { exchange: c.req.query("exchange") } : {}),
+  });
+  return c.json({ ok: true, data });
+});
+
 /** Pluggable broker market-data bridges (Futu / IB / SuperMind / …). */
 marketRouter.get("/stream/bridges", async (c) =>
   c.json({
@@ -106,16 +144,26 @@ marketRouter.get("/quote", async (c) => {
   }
 });
 
-/** 研究级期权链（Yahoo 公开 fallback；不用于实盘交易或 Greeks 推导）。 */
+/**
+ * 期权链：默认券商优先（富途 OpenD），公开 Yahoo 仅作带来源标识的研究级降级。
+ * `source=futu` 禁止降级，便于策略 / Agent 显式要求券商行情。
+ */
 marketRouter.get("/options/chain", async (c) => {
   try {
     const symbol = c.req.query("symbol")?.trim() ?? c.req.query("underlying")?.trim() ?? "";
     const expiry = c.req.query("expiry");
+    const exchange = c.req.query("exchange")?.trim();
+    const requestedSource = c.req.query("source")?.trim().toLowerCase();
     if (!symbol) return c.json({ ok: false, error: "symbol is required" }, 400);
+    if (requestedSource && !["auto", "futu", "alpaca", "research"].includes(requestedSource)) {
+      return c.json({ ok: false, error: "source must be auto, futu, alpaca, or research" }, 400);
+    }
     const settings = await loadBuiltinConnectorSettings();
-    const data = await fetchYahooOptionChain({
+    const data = await fetchOptionChain({
       symbol,
+      ...(exchange ? { exchange } : {}),
       ...(expiry ? { expiry } : {}),
+      ...(requestedSource ? { source: requestedSource as OptionChainRequestSource } : {}),
       settings,
     });
     return c.json({ ok: true, data });
@@ -124,6 +172,66 @@ marketRouter.get("/options/chain", async (c) => {
       { ok: false, error: error instanceof Error ? error.message : String(error) },
       503
     );
+  }
+});
+
+/**
+ * Deterministic, read-only multi-leg strategy analysis. The result is a quote
+ * snapshot, never an order preview: callers must not treat it as an execution
+ * authorization even if its source is a broker observe feed.
+ */
+marketRouter.get("/options/strategy-analyze", async (c) => {
+  try {
+    const symbol = c.req.query("symbol")?.trim() ?? c.req.query("underlying")?.trim() ?? "";
+    const strategyRaw = c.req.query("strategy")?.trim().toLowerCase() ?? "single";
+    const sourceRaw = c.req.query("source")?.trim().toLowerCase() ?? "auto";
+    if (!symbol) return c.json({ ok: false, error: "symbol is required" }, 400);
+    if (!isOptionStrategyName(strategyRaw)) return c.json({ ok: false, error: "invalid option strategy" }, 400);
+    if (!["auto", "futu", "alpaca", "research"].includes(sourceRaw)) {
+      return c.json({ ok: false, error: "source must be auto, futu, alpaca, or research" }, 400);
+    }
+    const exchange = c.req.query("exchange")?.trim();
+    const expiry = c.req.query("expiry")?.trim();
+    const farExpiry = c.req.query("farExpiry")?.trim() ?? c.req.query("far_expiry")?.trim();
+    const numeric = (key: string) => {
+      const value = Number(c.req.query(key));
+      return Number.isFinite(value) ? value : undefined;
+    };
+    const settings = await loadBuiltinConnectorSettings();
+    const source = sourceRaw as OptionChainRequestSource;
+    const chain = await fetchOptionChain({ symbol, ...(exchange ? { exchange } : {}), ...(expiry ? { expiry } : {}), source, settings });
+    const needsFarExpiry = strategyRaw === "calendar" || strategyRaw === "diagonal";
+    const inferredFarExpiry = chain.expirations.find((date) => !expiry || !date.startsWith(expiry));
+    const resolvedFarExpiry = farExpiry || inferredFarExpiry;
+    const farChain = needsFarExpiry && resolvedFarExpiry
+      ? await fetchOptionChain({ symbol, ...(exchange ? { exchange } : {}), expiry: resolvedFarExpiry, source, settings })
+      : null;
+    const quote = await queryMarketQuote({ symbol, ...(exchange ? { exchange } : {}) }).catch(() => null);
+    const input: OptionStrategyInput = {
+      strategy: strategyRaw,
+      ...(numeric("centerStrike") !== undefined ? { centerStrike: numeric("centerStrike") } : {}),
+      ...(numeric("widthSteps") !== undefined ? { widthSteps: numeric("widthSteps") } : {}),
+      ...(numeric("quantity") !== undefined ? { quantity: numeric("quantity") } : {}),
+      ...(c.req.query("singleRight") === "call" || c.req.query("singleRight") === "put" ? { singleRight: c.req.query("singleRight") as "call" | "put" } : {}),
+      ...(c.req.query("singleSide") === "buy" || c.req.query("singleSide") === "sell" ? { singleSide: c.req.query("singleSide") as "buy" | "sell" } : {}),
+      ...(c.req.query("direction") === "bullish" || c.req.query("direction") === "bearish" ? { direction: c.req.query("direction") as "bullish" | "bearish" } : {}),
+    };
+    const analysis = analyzeOptionStrategy(input, farChain ? [chain, farChain] : [chain], quote?.lastPrice ?? null);
+    return c.json({
+      ok: true,
+      data: {
+        ...analysis,
+        underlying: chain.underlying,
+        spot: quote?.lastPrice ?? null,
+        source: chain.source,
+        feedClass: chain.feedClass,
+        licenseUse: chain.licenseUse,
+        fetchedAt: chain.fetchedAt,
+        ...(needsFarExpiry && !farChain ? { warning: "calendar_or_diagonal_requires_a_second_expiry" } : {}),
+      },
+    });
+  } catch (error) {
+    return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 503);
   }
 });
 

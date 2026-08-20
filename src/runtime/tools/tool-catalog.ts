@@ -169,6 +169,34 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   },
 
   // 行情
+  "market.ide_subscription.get": {
+    description:
+      "读取 IDE 本机自选订阅及已抵达 IDE 的行情缓存；不访问 Agent 记忆、不触发网络、不读取券商。" +
+      "用于用户问“我的自选/订阅了什么”。返回每个标的的市场、缓存状态、来源和新鲜度；需要券商实时报价再显式调用 market.broker_quote.get。",
+    category: "market",
+  },
+  "market.broker_quote.get": {
+    description:
+      "从已配置的券商行情桥（Futu / IB / SuperMind）一次性读取指定 symbols 的实时行情。" +
+      "params: symbol|symbols, exchange?, provider?/bridge?, timeoutMs?。只接受券商推流，桥不可用/超时会明确失败，绝不降级到公共行情源。",
+    category: "market",
+  },
+  "market.options.strategy_analyze": {
+    description:
+      "本机只读期权策略分析模块。支持 single、vertical、covered_call、collar、straddle、strangle、calendar、diagonal、butterfly、condor、iron_butterfly、iron_condor 与 custom 多腿。" +
+      "params: symbol/underlying, strategy, exchange?, expiry?, farExpiry?（calendar/diagonal）, centerStrike?, widthSteps?, quantity?, singleRight?, singleSide?, direction?, legs?。" +
+      "返回策略腿、净权利金、盯市损益、到期盈亏平衡、情景盈亏、Greeks 与风险边界；只读，不创建订单或持仓。L0 研究级期权链不可用于交易决策或订单准入。",
+    category: "market",
+  },
+  "market.watchlist.get": {
+    description:
+      "[兼容] 聚合本机自选与券商持仓。新代码应拆开：market.ide_subscription.get 读取 IDE 自选；market.broker_quote.get 读取券商行情。",
+    category: "market",
+    lifecycle: "deprecated",
+    replacedBy: "market.ide_subscription.get",
+    deprecationReason: "混合了 IDE 自选和券商持仓，数据边界不清晰",
+    resolveAlias: false,
+  },
   "market.resolve_symbol": {
     description:
       "调用行情工具前统一识别 symbol 所属市场和 exchange，返回 CN/HK/US/CRYPTO 等市场、置信度和判断原因。" +
@@ -286,8 +314,8 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   },
   fetch_option_chain: {
     description:
-      "查询美股上市期权链（Call/Put、行权价、到期、Bid/Ask、成交量、未平仓、隐含波动率）。" +
-      "params: symbol 或 underlying，expiry?；数据源为 Yahoo 研究级公开 fallback，只能研究，不能作为实盘报价或 Greeks 的推导依据。",
+      "查询港美上市期权链（Call/Put、行权价、到期、Bid/Ask、成交量、未平仓、隐含波动率）。" +
+      "params: symbol 或 underlying，exchange?，expiry?，source? (auto|futu|alpaca|research)。auto 先尝试富途 OpenD、再 Alpaca 券商快照，失败时才返回明确标记的 Yahoo/yfinance 研究级降级；source=futu/alpaca 禁止降级。",
     category: "market",
   },
   fetch_order_book: {

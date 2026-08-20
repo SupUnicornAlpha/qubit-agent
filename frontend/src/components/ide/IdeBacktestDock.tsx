@@ -1,374 +1,180 @@
 import type { CSSProperties, FC } from "react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { BadgeCheck, ChartCandlestick, CircleAlert, Play, RefreshCw } from "lucide-react";
 import {
-  postMarketBacktest,
-  postMarketRegimeDetect,
-  postMarketStructuredTune,
+  backtestStrategyContractApi,
+  compileStrategyContract,
+  getProjectStrategyScript,
+  type StrategyManifestV2,
 } from "../../api/backend";
+import type { QuantStrategyScriptDetail } from "../../api/backend";
+import { assessStrategyChartCompatibility } from "../../lib/strategyChartCompatibility";
+import { isStrategyApiV2Code, preferStrategyApiCode } from "../../lib/strategyApiCode";
 import { useAppStore } from "../../store";
-import { useTranslation } from "../../i18n";
+import { MarketTerminalDock } from "../market/MarketTerminalDock";
 
-type DockTab = "backtest" | "tune";
-type BacktestKind = "python_strategy" | "sma_crossover";
+type DockTab = "options" | "backtest";
 
-function parseNumList(raw: string, fallback: number[]): number[] {
-  const xs = raw
-    .split(/[\s,;]+/)
-    .map((x) => Number(x.trim()))
-    .filter((x) => Number.isFinite(x) && x > 0);
-  return xs.length ? xs : fallback;
+function chartMarket(exchange: string): string {
+  const market = exchange.trim().toUpperCase();
+  if (["NASDAQ", "NYSE", "AMEX", "ARCA", "OPRA", "OCC"].includes(market)) return "US";
+  if (market === "HKEX") return "HK";
+  if (["SH", "SZ", "SSE", "SZSE", "XSHG", "XSHE"].includes(market)) return "CN";
+  return market || "UNKNOWN";
 }
 
+const metric = (value: number | undefined) =>
+  typeof value === "number" && Number.isFinite(value) ? value.toFixed(2) : "—";
+
+/** K 线底部坞：期权链优先；回测只由 Strategy API Manifest 驱动。 */
 export const IdeBacktestDock: FC = () => {
   const chartSpec = useAppStore((s) => s.chartSpec);
   const ideStrategySource = useAppStore((s) => s.ideStrategySource);
-  const { t } = useTranslation();
-  const [tab, setTab] = useState<DockTab>("backtest");
-  const [kind, setKind] = useState<BacktestKind>("python_strategy");
-  const [fastPeriod, setFastPeriod] = useState(5);
-  const [slowPeriod, setSlowPeriod] = useState(20);
-  const [initialCapital, setInitialCapital] = useState(10_000);
-  const [commission, setCommission] = useState(0.001);
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
-  const [useCustomRange, setUseCustomRange] = useState(false);
-  const [btLoading, setBtLoading] = useState(false);
-  const [btError, setBtError] = useState<string | null>(null);
-  const [btSummary, setBtSummary] = useState<string | null>(null);
-  const [btStderr, setBtStderr] = useState<string | null>(null);
-  const [tuneFast, setTuneFast] = useState("3, 5, 8");
-  const [tuneSlow, setTuneSlow] = useState("15, 20, 30");
-  const [tuneLoading, setTuneLoading] = useState(false);
-  const [tuneOut, setTuneOut] = useState<string | null>(null);
-  const [regLoading, setRegLoading] = useState(false);
-  const [regOut, setRegOut] = useState<string | null>(null);
+  const activeStrategyScriptId = useAppStore((s) => s.ideActiveStrategyScriptId);
+  const pushTraderMarker = useAppStore((s) => s.pushTraderMarker);
+  const setActiveView = useAppStore((s) => s.setActiveView);
+  const setQuantTab = useAppStore((s) => s.setQuantTab);
+  const [tab, setTab] = useState<DockTab>("options");
+  const [linkedScript, setLinkedScript] = useState<QuantStrategyScriptDetail | null>(null);
+  const [strategyLoading, setStrategyLoading] = useState(false);
+  const [manifest, setManifest] = useState<StrategyManifestV2 | null>(null);
+  const [busy, setBusy] = useState<"validate" | "backtest" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [summary, setSummary] = useState<string | null>(null);
+
+  useEffect(() => {
+    setManifest(null);
+    setError(null);
+    setSummary(null);
+    if (!activeStrategyScriptId) {
+      setLinkedScript(null);
+      return;
+    }
+    let cancelled = false;
+    setStrategyLoading(true);
+    void getProjectStrategyScript(activeStrategyScriptId)
+      .then((next) => { if (!cancelled) setLinkedScript(next); })
+      .catch((cause: unknown) => {
+        if (!cancelled) {
+          setLinkedScript(null);
+          setError(`读取关联策略失败：${cause instanceof Error ? cause.message : String(cause)}`);
+        }
+      })
+      .finally(() => { if (!cancelled) setStrategyLoading(false); });
+    return () => { cancelled = true; };
+  }, [activeStrategyScriptId]);
+
+  const strategyCode = useMemo(
+    () => linkedScript ? preferStrategyApiCode(linkedScript) : ideStrategySource.trim(),
+    [ideStrategySource, linkedScript],
+  );
+  const strategyName = linkedScript?.name ?? "当前 IDE 草稿";
+  const compatibility = useMemo(
+    () => manifest ? assessStrategyChartCompatibility({ manifest, symbol: chartSpec.symbol, exchange: chartSpec.exchange, timeframe: chartSpec.timeframe }) : null,
+    [chartSpec.exchange, chartSpec.symbol, chartSpec.timeframe, manifest],
+  );
+
+  const validate = useCallback(async (): Promise<StrategyManifestV2 | null> => {
+    if (!strategyCode.trim()) {
+      setError("请先选择或编写策略。");
+      return null;
+    }
+    if (!isStrategyApiV2Code(strategyCode)) {
+      setError("当前是旧版策略脚本，无法判断 Universe 与 K 线周期。请使用包含 initialize()、set_universe() 和 handle_data() 的 Strategy API 策略。");
+      return null;
+    }
+    const compiled = await compileStrategyContract(strategyCode, { persist: false });
+    if (!compiled.ok) {
+      setError(`策略契约校验失败：${compiled.error}`);
+      return null;
+    }
+    setManifest(compiled.manifest);
+    return compiled.manifest;
+  }, [strategyCode]);
+
+  const validateAgainstChart = useCallback(async () => {
+    setBusy("validate");
+    setError(null);
+    setSummary(null);
+    try {
+      const nextManifest = await validate();
+      if (!nextManifest) return;
+      const result = assessStrategyChartCompatibility({ manifest: nextManifest, symbol: chartSpec.symbol, exchange: chartSpec.exchange, timeframe: chartSpec.timeframe });
+      setSummary(result.compatible ? "策略与当前 K 线匹配，可以回测。" : result.reason);
+    } finally {
+      setBusy(null);
+    }
+  }, [chartSpec.exchange, chartSpec.symbol, chartSpec.timeframe, validate]);
 
   const runBacktest = useCallback(async () => {
-    setBtLoading(true);
-    setBtError(null);
-    setBtSummary(null);
-    setBtStderr(null);
+    setBusy("backtest");
+    setError(null);
+    setSummary(null);
     try {
-      const baseBody = {
-        symbol: chartSpec.symbol.trim(),
-        exchange: chartSpec.exchange.trim() || undefined,
+      const nextManifest = await validate();
+      if (!nextManifest) return;
+      const match = assessStrategyChartCompatibility({ manifest: nextManifest, symbol: chartSpec.symbol, exchange: chartSpec.exchange, timeframe: chartSpec.timeframe });
+      if (!match.compatible) {
+        setSummary(match.reason);
+        return;
+      }
+      const result = await backtestStrategyContractApi({
+        code: strategyCode,
+        symbol: `${chartMarket(chartSpec.exchange)}:${chartSpec.symbol.trim().toUpperCase()}`,
         timeframe: chartSpec.timeframe,
         limit: chartSpec.limit,
-        initialCapital,
-        commission,
-        ...(useCustomRange && startDate && endDate ? { startDate, endDate } : {}),
-      };
-      const body =
-        kind === "python_strategy"
-          ? {
-              ...baseBody,
-              kind: "python_strategy" as const,
-              strategyCode: ideStrategySource,
-            }
-          : {
-              ...baseBody,
-              kind: "sma_crossover" as const,
-              fastPeriod,
-              slowPeriod,
-            };
-      const res = await postMarketBacktest(body);
-      if (!res.ok) {
-        setBtError(res.error ?? t("ide.backtest.run.failedDefault"));
-        return;
-      }
-      const r = res.data?.result as
-        | {
-            backtest?: {
-              metrics?: {
-                totalReturnPct?: number;
-                maxDrawdownPct?: number;
-                sharpeApprox?: number;
-                tradeCount?: number;
-                bars?: number;
-                lastPosition?: number;
-              };
-            };
-            stderrText?: string;
-          }
-        | undefined;
-      const m = r?.backtest?.metrics;
-      if (m) {
-        const posTail =
-          kind === "python_strategy" && typeof m.lastPosition === "number"
-            ? t("ide.backtest.run.posTail", { pos: m.lastPosition.toFixed(4) })
-            : "";
-        setBtSummary(
-          t("ide.backtest.run.summary", {
-            ret: (m.totalReturnPct ?? 0).toFixed(2),
-            dd: (m.maxDrawdownPct ?? 0).toFixed(2),
-            sharpe: (m.sharpeApprox ?? 0).toFixed(2),
-            trades: m.tradeCount ?? 0,
-            bars: m.bars ?? 0,
-            posTail,
-          }),
-        );
-      } else {
-        setBtSummary(JSON.stringify(res.data?.result ?? res.data, null, 2).slice(0, 800));
-      }
-      if (kind === "python_strategy" && r?.stderrText) {
-        setBtStderr(r.stderrText);
-      }
-    } catch (e) {
-      setBtError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBtLoading(false);
-    }
-  }, [
-    chartSpec.exchange,
-    chartSpec.limit,
-    chartSpec.symbol,
-    chartSpec.timeframe,
-    commission,
-    endDate,
-    fastPeriod,
-    ideStrategySource,
-    initialCapital,
-    kind,
-    slowPeriod,
-    startDate,
-    t,
-    useCustomRange,
-  ]);
-
-  const runTune = useCallback(async () => {
-    setTuneLoading(true);
-    setTuneOut(null);
-    try {
-      const res = await postMarketStructuredTune({
-        base: {
-          symbol: chartSpec.symbol.trim(),
-          exchange: chartSpec.exchange.trim() || undefined,
-          timeframe: chartSpec.timeframe,
-          limit: chartSpec.limit,
-          ...(useCustomRange && startDate && endDate ? { startDate, endDate } : {}),
-        },
-        fastPeriods: parseNumList(tuneFast, [3, 5, 8]),
-        slowPeriods: parseNumList(tuneSlow, [15, 20, 30]),
-        initialCapital,
-        commission,
+        initialCapital: 100_000,
       });
-      if (!res.ok) {
-        setTuneOut(t("ide.backtest.tune.errorPrefix", { err: res.error ?? "unknown" }));
+      if (!result.ok || !result.data) {
+        setError(`策略回测失败：${result.error ?? "unknown"}`);
         return;
       }
-      setTuneOut(JSON.stringify(res.data, null, 2).slice(0, 4000));
-    } catch (e) {
-      setTuneOut(e instanceof Error ? e.message : String(e));
-    } finally {
-      setTuneLoading(false);
-    }
-  }, [
-    chartSpec.exchange,
-    chartSpec.limit,
-    chartSpec.symbol,
-    chartSpec.timeframe,
-    commission,
-    endDate,
-    initialCapital,
-    startDate,
-    t,
-    tuneFast,
-    tuneSlow,
-    useCustomRange,
-  ]);
-
-  const runRegime = useCallback(async () => {
-    setRegLoading(true);
-    setRegOut(null);
-    try {
-      const res = await postMarketRegimeDetect({
-        symbol: chartSpec.symbol.trim(),
-        exchange: chartSpec.exchange.trim() || undefined,
-        timeframe: chartSpec.timeframe,
-        limit: chartSpec.limit,
-        ...(useCustomRange && startDate && endDate ? { startDate, endDate } : {}),
-      });
-      if (!res.ok) {
-        setRegOut(t("ide.backtest.tune.errorPrefix", { err: res.error ?? "unknown" }));
-        return;
+      setManifest(result.data.manifest);
+      for (const [index, trade] of (result.data.trades ?? []).entries()) {
+        const side = trade.side === "sell" ? "sell" : "buy";
+        pushTraderMarker({
+          id: `strategy-backtest:${result.data.manifest.codeHash}:${trade.time ?? index}`,
+          side,
+          source: "strategy",
+          barTime: trade.time,
+          text: `${side === "buy" ? "B" : "S"} 回测${trade.reason ? ` · ${trade.reason}` : ""}`,
+        });
       }
-      setRegOut(JSON.stringify(res.data, null, 2).slice(0, 2000));
-    } catch (e) {
-      setRegOut(e instanceof Error ? e.message : String(e));
+      const m = result.data.metrics;
+      setSummary(`已在当前 K 线上完成回测 · 收益 ${metric(m.totalReturnPct)}% · 最大回撤 ${metric(m.maxDrawdownPct)}% · Sharpe ${metric(m.sharpeApprox)} · ${m.tradeCount} 笔交易。买卖点已标记到图表。`);
     } finally {
-      setRegLoading(false);
+      setBusy(null);
     }
-  }, [
-    chartSpec.exchange,
-    chartSpec.limit,
-    chartSpec.symbol,
-    chartSpec.timeframe,
-    endDate,
-    startDate,
-    t,
-    useCustomRange,
-  ]);
+  }, [chartSpec.exchange, chartSpec.limit, chartSpec.symbol, chartSpec.timeframe, pushTraderMarker, strategyCode, validate]);
 
   return (
-    <aside style={styles.dock} aria-label={t("ide.backtest.dockAriaLabel")}>
-      <div className="qb-dock-tabstrip" role="tablist">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "backtest"}
-          className={`qb-dock-tab${tab === "backtest" ? " qb-dock-tab--active" : ""}`}
-          onClick={() => setTab("backtest")}
-        >
-          {t("ide.backtest.tabs.backtest")}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "tune"}
-          className={`qb-dock-tab${tab === "tune" ? " qb-dock-tab--active" : ""}`}
-          onClick={() => setTab("tune")}
-        >
-          {t("ide.backtest.tabs.tune")}
-        </button>
+    <aside style={styles.dock} aria-label="期权链与策略回测">
+      <div className="qb-dock-tabstrip" role="tablist" aria-label="行情工具">
+        <button type="button" role="tab" aria-selected={tab === "options"} className={`qb-dock-tab${tab === "options" ? " qb-dock-tab--active" : ""}`} onClick={() => setTab("options")}>期权链</button>
+        <button type="button" role="tab" aria-selected={tab === "backtest"} className={`qb-dock-tab${tab === "backtest" ? " qb-dock-tab--active" : ""}`} onClick={() => setTab("backtest")}>策略回测</button>
       </div>
-      {tab === "backtest" ? (
+      {tab === "options" ? <MarketTerminalDock optionsOnly /> : (
         <div style={styles.body}>
-          <div style={styles.kindRow}>
-            <span style={styles.kindLabel}>{t("ide.backtest.kind.label")}</span>
-            <label style={styles.kindOpt}>
-              <input
-                type="radio"
-                name="bt-kind"
-                checked={kind === "python_strategy"}
-                onChange={() => setKind("python_strategy")}
-              />
-              <span>{t("ide.backtest.kind.python")}</span>
-            </label>
-            <label style={styles.kindOpt}>
-              <input
-                type="radio"
-                name="bt-kind"
-                checked={kind === "sma_crossover"}
-                onChange={() => setKind("sma_crossover")}
-              />
-              <span>{t("ide.backtest.kind.sma")}</span>
-            </label>
-          </div>
-          <div style={styles.grid}>
-            {kind === "sma_crossover" ? (
-              <>
-                <label style={styles.field}>
-                  <span>{t("ide.backtest.fields.fastPeriod")}</span>
-                  <input
-                    type="number"
-                    style={styles.inp}
-                    min={1}
-                    value={fastPeriod}
-                    onChange={(e) => setFastPeriod(Number(e.target.value) || 5)}
-                  />
-                </label>
-                <label style={styles.field}>
-                  <span>{t("ide.backtest.fields.slowPeriod")}</span>
-                  <input
-                    type="number"
-                    style={styles.inp}
-                    min={2}
-                    value={slowPeriod}
-                    onChange={(e) => setSlowPeriod(Number(e.target.value) || 20)}
-                  />
-                </label>
-              </>
-            ) : null}
-            <label style={styles.field}>
-              <span>{t("ide.backtest.fields.initialCapital")}</span>
-              <input
-                type="number"
-                style={styles.inp}
-                min={100}
-                step={100}
-                value={initialCapital}
-                onChange={(e) => setInitialCapital(Number(e.target.value) || 10_000)}
-              />
-            </label>
-            <label style={styles.field}>
-              <span>{t("ide.backtest.fields.commission")}</span>
-              <input
-                type="number"
-                style={styles.inp}
-                min={0}
-                step={0.0001}
-                value={commission}
-                onChange={(e) => setCommission(Number(e.target.value) || 0)}
-              />
-            </label>
-          </div>
-          <label style={styles.check}>
-            <input
-              type="checkbox"
-              checked={useCustomRange}
-              onChange={(e) => setUseCustomRange(e.target.checked)}
-            />
-            {t("ide.backtest.fields.customRange")}
-          </label>
-          {useCustomRange ? (
-            <div style={styles.grid}>
-              <label style={styles.field}>
-                <span>{t("ide.backtest.fields.startDate")}</span>
-                <input style={styles.inp} value={startDate} onChange={(e) => setStartDate(e.target.value)} placeholder="YYYY-MM-DD" />
-              </label>
-              <label style={styles.field}>
-                <span>{t("ide.backtest.fields.endDate")}</span>
-                <input style={styles.inp} value={endDate} onChange={(e) => setEndDate(e.target.value)} placeholder="YYYY-MM-DD" />
-              </label>
+          <div style={styles.strategyCard}>
+            <div style={styles.cardHead}>
+              <div><span style={styles.eyebrow}>STRATEGY ↔ CHART</span><strong>{strategyName}</strong></div>
+              <span style={styles.status}>{strategyLoading ? "读取策略…" : linkedScript ? "已关联策略" : "未保存草稿"}</span>
             </div>
-          ) : null}
-          <div style={styles.row}>
-            <button type="button" className="qb-btn-primary" disabled={btLoading} onClick={() => void runBacktest()}>
-              {btLoading ? t("ide.backtest.run.running") : t("ide.backtest.run.button")}
-            </button>
-            <span style={styles.muted}>
-              {t("ide.backtest.run.symbolFromToolbar")} ·{" "}
-              {kind === "python_strategy"
-                ? t("ide.backtest.run.pythonPathHint")
-                : t("ide.backtest.run.smaPathHint")}
-              · POST /api/v1/market/backtests
-            </span>
+            <div style={styles.chartScope}><ChartCandlestick size={14} aria-hidden /> 当前 K 线：{chartSpec.symbol || "—"} · {chartSpec.exchange || "AUTO"} · {chartSpec.timeframe}</div>
+            {manifest ? <div style={{ ...styles.compatibility, ...(compatibility?.compatible ? styles.compatible : styles.incompatible) }}>
+              {compatibility?.compatible ? <BadgeCheck size={14} aria-hidden /> : <CircleAlert size={14} aria-hidden />}
+              <span>{compatibility?.reason}</span>
+              <small style={styles.scopeLine}>Universe：{compatibility?.universeLabel} · 主周期：{compatibility?.strategyTimeframe}</small>
+            </div> : <div style={styles.hint}>回测前先解析策略的 Universe、策略类型和主 K 线周期；不会再把任意图表直接套进策略。</div>}
           </div>
-          {btError ? <div style={styles.err}>{btError}</div> : null}
-          {btSummary ? <div style={styles.ok}>{btSummary}</div> : null}
-          {btStderr ? (
-            <details style={styles.stdoutBox}>
-              <summary style={styles.stdoutSum}>
-                {t("ide.backtest.run.stdoutSummary", { n: btStderr.length })}
-              </summary>
-              <pre style={styles.pre}>{btStderr}</pre>
-            </details>
-          ) : null}
-          <div style={styles.pillRow}>
-            <span style={styles.pillMuted}>{t("ide.backtest.run.runtimeHint")}</span>
+          <div style={styles.actions}>
+            <button type="button" className="qb-btn-ghost qb-btn--compact" onClick={() => { setQuantTab("script"); setActiveView("quant"); }}>从策略工坊关联</button>
+            <button type="button" className="qb-btn-secondary qb-btn--compact" disabled={busy !== null || strategyLoading} onClick={() => void validateAgainstChart()}><RefreshCw size={13} aria-hidden /> {busy === "validate" ? "校验中…" : "校验当前 K 线"}</button>
+            <button type="button" className="qb-btn-primary" disabled={busy !== null || strategyLoading} onClick={() => void runBacktest()}><Play size={13} aria-hidden /> {busy === "backtest" ? "回测中…" : "在当前 K 线上回测"}</button>
           </div>
-        </div>
-      ) : (
-        <div style={styles.body}>
-          <p style={styles.hint}>{t("ide.backtest.tune.intro")}</p>
-          <label style={styles.fieldFull}>
-            <span>{t("ide.backtest.tune.fastList")}</span>
-            <input style={styles.inp} value={tuneFast} onChange={(e) => setTuneFast(e.target.value)} />
-          </label>
-          <label style={styles.fieldFull}>
-            <span>{t("ide.backtest.tune.slowList")}</span>
-            <input style={styles.inp} value={tuneSlow} onChange={(e) => setTuneSlow(e.target.value)} />
-          </label>
-          <div style={styles.row}>
-            <button type="button" className="qb-btn-primary" disabled={tuneLoading} onClick={() => void runTune()}>
-              {tuneLoading ? t("ide.backtest.tune.running") : t("ide.backtest.tune.run")}
-            </button>
-            <button type="button" className="qb-btn-ghost" disabled={regLoading} onClick={() => void runRegime()}>
-              {regLoading ? t("ide.backtest.tune.regimeRunning") : t("ide.backtest.tune.regimeRun")}
-            </button>
-          </div>
-          {tuneOut ? <pre style={styles.pre}>{tuneOut}</pre> : null}
-          {regOut ? <pre style={styles.preSm}>{regOut}</pre> : null}
+          <div style={styles.assumption}>执行假设：Strategy API 默认参数 · 初始资金 100,000 · 手续费 0.10% · next-open 成交。策略参数由脚本 Manifest 声明，不再使用旧版 SMA 调参。</div>
+          {error ? <div role="alert" style={styles.error}>{error}</div> : null}
+          {summary ? <output style={styles.summary}>{summary}</output> : null}
         </div>
       )}
     </aside>
@@ -376,100 +182,20 @@ export const IdeBacktestDock: FC = () => {
 };
 
 const styles: Record<string, CSSProperties> = {
-  dock: {
-    flexShrink: 0,
-    minHeight: 260,
-    maxHeight: "min(44vh, 420px)",
-    display: "flex",
-    flexDirection: "column",
-    borderTop: "1px solid var(--qb-main-input-border, #27272a)",
-    background: "var(--qb-team-stage-bg, #0c0c0e)",
-    overflow: "hidden",
-  },
-  body: {
-    flex: 1,
-    padding: "10px 12px",
-    overflow: "auto",
-    display: "flex",
-    flexDirection: "column",
-    gap: 8,
-  },
-  grid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
-    gap: 8,
-  },
-  field: { display: "flex", flexDirection: "column", gap: 4, fontSize: 11, color: "var(--qb-main-meta, #71717a)" },
-  fieldFull: { display: "flex", flexDirection: "column", gap: 4, fontSize: 11, color: "var(--qb-main-meta, #71717a)" },
-  inp: {
-    padding: "6px 8px",
-    borderRadius: 6,
-    border: "1px solid var(--qb-main-input-border, #3f3f46)",
-    background: "var(--qb-main-input-bg, #18181b)",
-    color: "var(--qb-main-input-fg, #e4e4e7)",
-    fontSize: 12,
-  },
-  check: { display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--qb-main-meta, #a1a1aa)" },
-  row: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 },
-  muted: { fontSize: 11, color: "var(--qb-main-meta, #52525b)", flex: 1, minWidth: 120 },
-  hint: { margin: 0, fontSize: 12, color: "var(--qb-main-meta, #a1a1aa)", lineHeight: 1.45 },
-  err: { fontSize: 12, color: "#fca5a5" },
-  ok: { fontSize: 12, color: "#86efac", lineHeight: 1.4 },
-  pre: {
-    margin: 0,
-    padding: 8,
-    borderRadius: 6,
-    background: "var(--qb-stream-box-bg, #09090b)",
-    border: "1px solid var(--qb-main-input-border, #27272a)",
-    fontSize: 10,
-    color: "var(--qb-stream-box-fg, #a1a1aa)",
-    overflow: "auto",
-    maxHeight: 160,
-    whiteSpace: "pre-wrap",
-    wordBreak: "break-word",
-  },
-  preSm: {
-    margin: 0,
-    padding: 8,
-    borderRadius: 6,
-    background: "var(--qb-stream-box-bg, #09090b)",
-    border: "1px solid var(--qb-main-input-border, #27272a)",
-    fontSize: 10,
-    color: "var(--qb-blue, #93c5fd)",
-    overflow: "auto",
-    maxHeight: 100,
-    whiteSpace: "pre-wrap",
-  },
-  pillRow: { display: "flex", flexWrap: "wrap", gap: 6 },
-  pillMuted: { fontSize: 10, color: "var(--qb-main-input-border, #3f3f46)" },
-  kindRow: {
-    display: "flex",
-    flexWrap: "wrap",
-    alignItems: "center",
-    gap: 12,
-    padding: "6px 8px",
-    border: "1px dashed var(--qb-main-input-border, #27272a)",
-    borderRadius: 6,
-    background: "var(--qb-stream-box-bg, #09090b)",
-  },
-  kindLabel: { fontSize: 11, color: "var(--qb-main-meta, #71717a)", flexShrink: 0 },
-  kindOpt: {
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
-    fontSize: 12,
-    color: "var(--qb-main-fg, #e4e4e7)",
-    cursor: "pointer",
-  },
-  stdoutBox: {
-    border: "1px solid var(--qb-main-input-border, #27272a)",
-    borderRadius: 6,
-    background: "var(--qb-stream-box-bg, #09090b)",
-  },
-  stdoutSum: {
-    cursor: "pointer",
-    padding: "4px 8px",
-    fontSize: 11,
-    color: "var(--qb-main-meta, #a1a1aa)",
-  },
+  dock: { flexShrink: 0, minHeight: 260, maxHeight: "min(44vh, 420px)", display: "flex", flexDirection: "column", borderTop: "1px solid var(--qb-main-input-border, #27272a)", background: "var(--qb-team-stage-bg, #0c0c0e)", overflow: "hidden" },
+  body: { flex: 1, minHeight: 0, padding: "10px 12px", overflow: "auto", display: "flex", flexDirection: "column", gap: 9 },
+  strategyCard: { display: "grid", gap: 7, padding: 9, borderRadius: 7, border: "1px solid var(--qb-main-input-border, #3f3f46)", background: "var(--qb-stream-box-bg, #09090b)" },
+  cardHead: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 },
+  eyebrow: { display: "block", marginBottom: 3, color: "var(--qb-main-meta, #71717a)", fontSize: 9, letterSpacing: "0.12em", fontWeight: 700 },
+  status: { flexShrink: 0, color: "var(--qb-info, #60a5fa)", fontSize: 10 },
+  chartScope: { display: "flex", alignItems: "center", gap: 5, color: "var(--qb-main-meta, #a1a1aa)", fontSize: 11, fontFamily: "var(--qb-font-mono, ui-monospace, monospace)" },
+  compatibility: { display: "grid", gridTemplateColumns: "auto 1fr", gap: "3px 6px", padding: "6px 7px", borderRadius: 5, fontSize: 11, lineHeight: 1.4 },
+  scopeLine: { gridColumn: "1 / -1", opacity: 0.78 },
+  compatible: { color: "var(--qb-success, #34d399)", background: "color-mix(in srgb, var(--qb-success, #34d399) 10%, transparent)" },
+  incompatible: { color: "var(--qb-warn, #f59e0b)", background: "color-mix(in srgb, var(--qb-warn, #f59e0b) 10%, transparent)" },
+  hint: { color: "var(--qb-main-meta, #a1a1aa)", fontSize: 11, lineHeight: 1.45 },
+  actions: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 },
+  assumption: { color: "var(--qb-main-meta, #71717a)", fontSize: 10, lineHeight: 1.4 },
+  error: { padding: "6px 8px", color: "#fca5a5", background: "color-mix(in srgb, #ef4444 10%, transparent)", fontSize: 11, lineHeight: 1.45 },
+  summary: { display: "block", padding: "6px 8px", color: "#86efac", background: "color-mix(in srgb, #22c55e 10%, transparent)", fontSize: 11, lineHeight: 1.45 },
 };

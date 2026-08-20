@@ -11,7 +11,7 @@ import {
   Waves,
 } from "lucide-react";
 import { useAppStore } from "../../store";
-import { CHART_TIMEFRAMES, chartControlStyle } from "../../lib/chartSpec";
+import { CHART_TIMEFRAMES, chartControlStyle, guessChartExchangeFromSymbol } from "../../lib/chartSpec";
 import { ChartMarketSelect } from "../chart/ChartMarketSelect";
 import { IconToolbarButton } from "../ui/IconToolbarButton";
 import { useTranslation } from "../../i18n";
@@ -57,7 +57,10 @@ export const IdeWorkbenchToolbar: FC = () => {
           <input
             style={styles.fieldControl}
             value={chartSpec.symbol}
-            onChange={(e) => setChartSpec({ symbol: e.target.value })}
+            onChange={(e) => {
+              const symbol = e.target.value;
+              setChartSpec({ symbol, exchange: guessChartExchangeFromSymbol(symbol) });
+            }}
             placeholder={t("ide.toolbar.labels.symbol")}
             aria-label={t("ide.toolbar.labels.symbolAria")}
           />
@@ -138,6 +141,12 @@ export const IdeWorkbenchToolbar: FC = () => {
             onClick={() => toggleChartOverlay("ema20")}
           />
           <IconToolbarButton
+            Icon={ChartLine}
+            label={t("ide.toolbar.overlays.vwap")}
+            active={chartOverlays.vwap}
+            onClick={() => toggleChartOverlay("vwap")}
+          />
+          <IconToolbarButton
             Icon={Activity}
             label={t("ide.toolbar.overlays.rsi14")}
             active={chartOverlays.rsi14}
@@ -148,6 +157,12 @@ export const IdeWorkbenchToolbar: FC = () => {
             label={t("ide.toolbar.overlays.macd")}
             active={chartOverlays.macd}
             onClick={() => toggleChartOverlay("macd")}
+          />
+          <IconToolbarButton
+            Icon={Activity}
+            label={t("ide.toolbar.overlays.kdj")}
+            active={chartOverlays.kdj}
+            onClick={() => toggleChartOverlay("kdj")}
           />
           <IconToolbarButton
             Icon={CircleDashed}

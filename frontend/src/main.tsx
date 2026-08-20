@@ -28,6 +28,7 @@ import "./theme/quant-sci-fi-hud.css";
 import "./theme/simple-mode.css";
 import "./theme/prime-chrome.css";
 import "./theme/trading-console.css";
+import "./theme/market-workspace.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Root element not found");

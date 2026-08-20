@@ -30,6 +30,8 @@ export interface MarketStreamSubscription {
   exchange?: string;
   timeframe?: string;
   channels?: Array<"quote" | "order_book" | "trade" | "bar">;
+  /** Optional explicit broker bridge for broker-only one-shot reads. */
+  provider?: string;
 }
 
 export interface MarketStreamEvent {
@@ -60,6 +62,15 @@ export interface MarketStreamMetrics {
   mirrorErrors: number;
 }
 
+export interface MarketCachedQuote {
+  symbol: string;
+  exchange: string;
+  source: string;
+  emittedAt: string;
+  ageMs: number;
+  data: unknown;
+}
+
 type Listener = (event: MarketStreamEvent) => void;
 
 interface StreamSession {
@@ -80,21 +91,36 @@ interface SessionHooks {
 
 function normalized(input: MarketStreamSubscription): Required<MarketStreamSubscription> {
   const symbol = typeof input?.symbol === "string" ? input.symbol.trim().toUpperCase() : "";
+  const requestedExchange = input?.exchange?.trim().toUpperCase() ?? "";
+  const resolution = resolveTickerMarket(symbol, {
+    ...(["", "AUTO", "UNKNOWN", "UNSPECIFIED"].includes(requestedExchange)
+      ? {}
+      : { hintExchange: requestedExchange }),
+  });
   return {
-    symbol,
-    exchange: input?.exchange?.trim().toUpperCase() ?? "",
+    symbol: resolution.symbol || symbol,
+    exchange: resolution.exchange !== "UNKNOWN" ? resolution.exchange : requestedExchange,
     timeframe: input?.timeframe?.trim().toLowerCase() || "1m",
     channels:
       input?.channels && input.channels.length > 0
         ? [...new Set(input.channels)]
         : ["quote", "bar"],
+    provider: input?.provider?.trim().toLowerCase() || "",
   };
 }
 
 function subscriptionKey(input: Required<MarketStreamSubscription>): string {
-  return [input.symbol, input.exchange, input.timeframe, [...input.channels].sort().join(",")].join(
-    "|"
-  );
+  return [
+    input.symbol,
+    input.exchange,
+    input.timeframe,
+    [...input.channels].sort().join(","),
+    input.provider,
+  ].join("|");
+}
+
+function quoteCacheKey(input: Pick<Required<MarketStreamSubscription>, "symbol" | "exchange">): string {
+  return `${input.symbol}|${input.exchange}`;
 }
 
 function normalizedSymbol(value: unknown): string {
@@ -110,7 +136,7 @@ function normalizedSymbol(value: unknown): string {
  * the last candle into a misleading cross-symbol range.
  */
 export function bridgePayloadMatchesSubscription(
-  input: Required<MarketStreamSubscription>,
+  input: Pick<Required<MarketStreamSubscription>, "symbol" | "exchange">,
   payload: unknown
 ): boolean {
   if (!payload || typeof payload !== "object") return true;
@@ -120,6 +146,14 @@ export function bridgePayloadMatchesSubscription(
   const receivedExchange =
     typeof record.exchange === "string" ? record.exchange.trim().toUpperCase() : "";
   return !(receivedExchange && input.exchange && receivedExchange !== input.exchange);
+}
+
+function bridgeKindRequested(
+  kind: MarketStreamEventKind,
+  channels: Required<MarketStreamSubscription>["channels"],
+): boolean {
+  if (kind === "status" || kind === "heartbeat") return true;
+  return channels.includes(kind as "quote" | "order_book" | "trade" | "bar");
 }
 
 function socketText(data: unknown): string {
@@ -351,7 +385,9 @@ class PollingStreamSession extends BaseSession {
     try {
       if (this.input.channels.includes("quote") || this.input.channels.includes("bar")) {
         const quote = await queryMarketQuote(this.input);
-        this.emit("quote", quote.source, quote);
+        // Keep the upstream provider in the payload, while exposing that this
+        // stream itself is polling so UIs never present delayed data as a push feed.
+        this.emit("quote", quote.source, { ...quote, streamTransport: "polling" });
         if (this.input.channels.includes("bar")) {
           const aggregated = this.aggregator.update({
             price: quote.lastPrice,
@@ -491,8 +527,9 @@ class BridgeStreamSession extends BaseSession {
         this.lastProviderEventAt = providerEventAt;
         if (Number.isFinite(sequence)) this.lastProviderSequence = sequence;
         if (payload.kind) {
+          if (!bridgeKindRequested(payload.kind, this.input.channels)) return;
           if (
-            (payload.kind === "quote" || payload.kind === "trade" || payload.kind === "bar") &&
+            (payload.kind === "quote" || payload.kind === "order_book" || payload.kind === "trade" || payload.kind === "bar") &&
             !bridgePayloadMatchesSubscription(this.input, payload.data)
           ) {
             this.hooks.error(
@@ -588,6 +625,8 @@ class MarketStreamGateway {
   private readonly sessions = new Map<string, StreamSession>();
   private readonly sequences = new Map<string, number>();
   private readonly globalListeners = new Set<Listener>();
+  /** Last quote seen by the IDE stream; bounded and never a replacement for a broker query. */
+  private readonly latestQuotes = new Map<string, Omit<MarketCachedQuote, "ageMs">>();
   private readonly latencySamples: number[] = [];
   private readonly metrics: MarketStreamMetrics = {
     activeStreams: 0,
@@ -637,6 +676,20 @@ class MarketStreamGateway {
           };
           this.metrics.eventsPublished += 1;
           this.metrics.lastEventAt = event.emittedAt;
+          if (kind === "quote") {
+            this.latestQuotes.set(quoteCacheKey(input), {
+              symbol: input.symbol,
+              exchange: input.exchange,
+              source,
+              emittedAt: event.emittedAt,
+              data,
+            });
+            while (this.latestQuotes.size > 512) {
+              const oldest = this.latestQuotes.keys().next().value;
+              if (oldest === undefined) break;
+              this.latestQuotes.delete(oldest);
+            }
+          }
           this.observeFreshness(kind, data);
           // D1: side-path mirror — never blocks dispatch on failure.
           safeMirrorMarketStreamEvent(event);
@@ -692,10 +745,87 @@ class MarketStreamGateway {
     return { ...this.metrics };
   }
 
+  /**
+   * Read the last quote already delivered to an IDE subscription. This method
+   * does not open a network connection or silently fall back to another source.
+   */
+  getCachedQuote(inputRaw: Pick<MarketStreamSubscription, "symbol" | "exchange">):
+    | MarketCachedQuote
+    | null {
+    const input = normalized({ ...inputRaw, channels: ["quote"] });
+    const cached = this.latestQuotes.get(quoteCacheKey(input));
+    if (!cached) return null;
+    return {
+      ...cached,
+      ageMs: Math.max(0, Date.now() - Date.parse(cached.emittedAt)),
+    };
+  }
+
+  /**
+   * Explicit broker-bridge quote request. It never falls back to public HTTP
+   * polling: unavailable bridge / timeout remains visible to the caller.
+   */
+  async requestBrokerQuote(
+    inputRaw: MarketStreamSubscription,
+    timeoutMs = 5_000
+  ): Promise<MarketCachedQuote> {
+    const provisional = normalized({ ...inputRaw, channels: ["quote"] });
+    const resolution = resolveTickerMarket(provisional.symbol, {
+      hintExchange: provisional.exchange,
+    });
+    const bridge = selectBrokerMarketBridge({
+      market: resolution.market,
+      ...(provisional.provider ? { preferred: provisional.provider } : {}),
+    });
+    if (!bridge) {
+      throw new Error(
+        `broker_quote_unavailable: no configured broker market bridge for ${resolution.market}`
+      );
+    }
+    const input = { ...provisional, provider: bridge.id };
+    return new Promise<MarketCachedQuote>((resolve, reject) => {
+      let settled = false;
+      let unsubscribe: () => void = () => undefined;
+      const finish = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        unsubscribe();
+        fn();
+      };
+      const timer = setTimeout(() => {
+        finish(() =>
+          reject(
+            new Error(
+              `broker_quote_timeout: ${input.symbol}.${input.exchange} via ${bridge.id} after ${timeoutMs}ms`
+            )
+          )
+        );
+      }, timeoutMs);
+      unsubscribe = this.subscribe(input, (event) => {
+        if (event.kind !== "quote") return;
+        finish(() =>
+          resolve({
+            symbol: event.symbol,
+            exchange: event.exchange,
+            source: event.source,
+            emittedAt: event.emittedAt,
+            ageMs: 0,
+            data: event.data,
+          })
+        );
+      });
+      // Defend against a synchronous bridge implementation resolving while
+      // subscribe() is still returning its disposer.
+      if (settled) unsubscribe();
+    });
+  }
+
   closeAll(): void {
     for (const session of this.sessions.values()) session.close();
     this.sessions.clear();
     this.sequences.clear();
+    this.latestQuotes.clear();
     this.refreshCounts();
   }
 
@@ -712,7 +842,10 @@ class MarketStreamGateway {
     ) {
       void import("./futu-runtime").then((m) => m.ensureFutuRuntime()).catch(() => undefined);
     }
-    const bridge = selectBrokerMarketBridge({ market: resolution.market });
+    const bridge = selectBrokerMarketBridge({
+      market: resolution.market,
+      ...(input.provider ? { preferred: input.provider } : {}),
+    });
     if (bridge) {
       return new BridgeStreamSession(input, hooks, bridge.url, bridge.id);
     }

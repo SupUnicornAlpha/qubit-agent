@@ -11,6 +11,7 @@ import type { BarData, FetchBarsParams } from "../../connectors/data/data.connec
 import { PythonConnectorBridgeImpl } from "../../connectors/python-bridge";
 import { getPythonConnectorsDir, resolvePythonBin } from "../app-paths";
 import { resolveFutuOpenDConfig } from "./futu-runtime";
+import type { OptionChain } from "./options-chain";
 
 let bridge: PythonConnectorBridgeImpl | null = null;
 let bridgeInit: Promise<PythonConnectorBridgeImpl> | null = null;
@@ -50,10 +51,10 @@ async function getFutuBridge(): Promise<PythonConnectorBridgeImpl> {
         name: "futu-opend-quote",
         version: "1.0.0",
         connectorType: "data",
-        capabilities: ["fetch_bars"],
-        assetClasses: ["stock"],
+        capabilities: ["fetch_bars", "fetch_option_chain"],
+        assetClasses: ["stock", "option"],
         latencyProfile: "batch",
-        description: "Futu OpenQuote historical K-line via OpenD",
+        description: "Futu OpenQuote historical K-line and option snapshot chain via OpenD",
       },
     });
     await instance.init({
@@ -120,4 +121,34 @@ export async function fetchFutuBars(params: FetchBarsParams): Promise<BarData[]>
     sorted = sorted.filter((b) => b.timestamp >= startIso && b.timestamp <= endIso);
   }
   return sorted;
+}
+
+/**
+ * Broker-backed listed option chain through Futu OpenD.
+ *
+ * The Python connector first obtains the contract universe, then requests
+ * current snapshots for those contract codes.  This is intentionally separate
+ * from the WebSocket quote bridge: it can return a coherent chain snapshot and
+ * fails explicitly when OpenD / the relevant option entitlement is unavailable.
+ */
+export async function fetchFutuOptionChain(params: {
+  symbol: string;
+  exchange?: string;
+  expiry?: string;
+}): Promise<OptionChain> {
+  const openD = await resolveFutuOpenDConfig();
+  const envHost = process.env.QUBIT_FUTU_OPEND_HOST?.trim();
+  if (!openD && !envHost) {
+    throw new Error(
+      "futu_opend_unavailable: configure a Futu OpenD broker account or QUBIT_FUTU_OPEND_HOST before requesting a broker option chain"
+    );
+  }
+  markFutuAccountConfigured(Boolean(openD || envHost));
+  const client = await getFutuBridge();
+  return (await client.execute("fetch_option_chain", {
+    symbol: params.symbol,
+    exchange: params.exchange ?? "US",
+    ...(params.expiry?.trim() ? { expiry: params.expiry } : {}),
+    ...(openD ? { opendHost: openD.opendHost, opendPort: openD.opendPort } : {}),
+  })) as OptionChain;
 }

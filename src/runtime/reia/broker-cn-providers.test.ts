@@ -3,15 +3,17 @@ import { BROKER_PROVIDERS, isBrokerProvider } from "../../types/broker";
 import { createBrokerConnector, getBrokerConnector } from "./broker-connector";
 
 describe("China broker providers", () => {
-  test("provider registry includes SuperMind and Eastmoney EMT", () => {
+  test("provider registry includes the China broker adapters", () => {
     expect(BROKER_PROVIDERS).toContain("supermind");
     expect(BROKER_PROVIDERS).toContain("eastmoney_emt");
     expect(isBrokerProvider("supermind")).toBe(true);
     expect(isBrokerProvider("eastmoney_emt")).toBe(true);
+    expect(BROKER_PROVIDERS).toContain("qmt");
+    expect(isBrokerProvider("qmt")).toBe(true);
     expect(isBrokerProvider("eastmoney")).toBe(false);
   });
 
-  test.each(["supermind", "eastmoney_emt"] as const)(
+  test.each(["supermind", "eastmoney_emt", "qmt"] as const)(
     "%s mock connector satisfies contract",
     async (provider) => {
       const connector = createBrokerConnector({

@@ -7,7 +7,11 @@ import type {
   ChatSession,
   StepStreamEvent,
 } from "../api/types";
-import { coerceChartMarketExchange, persistChartSpec, readPersistedChartSpec } from "../lib/chartSpec";
+import {
+  coerceChartMarketExchange,
+  persistChartSpec,
+  readPersistedChartSpec,
+} from "../lib/chartSpec";
 import { DEFAULT_IDE_STRATEGY_SOURCE, DEFAULT_PYTHON_SIGNAL_STRATEGY } from "../lib/ideDefaults";
 
 export interface ChartContextPayload {
@@ -140,7 +144,7 @@ import {
 export { UI_PALETTE_IDS, UI_STYLE_IDS, type UiPaletteId, type UiStyleId, type UiThemeId };
 export const UI_THEME_IDS = UI_PALETTE_IDS;
 
-export type ChartOverlayKey = "sma20" | "ema20" | "rsi14" | "macd" | "bb20";
+export type ChartOverlayKey = "sma20" | "ema20" | "vwap" | "rsi14" | "macd" | "kdj" | "bb20";
 
 export interface ChartSpecState {
   symbol: string;
@@ -152,8 +156,10 @@ export interface ChartSpecState {
 export interface ChartOverlaysState {
   sma20: boolean;
   ema20: boolean;
+  vwap: boolean;
   rsi14: boolean;
   macd: boolean;
+  kdj: boolean;
   bb20: boolean;
 }
 
@@ -211,12 +217,12 @@ export interface IdePanelsState {
   backtest: boolean;
 }
 
-
 /** 配置中心左侧 / 顶部分类（与 ConfigPanel 条件渲染一致） */
 export type ConfigSubPage =
   | "llm"
   | "datasources"
   | "plugins"
+  | "harness"
   | "mcp"
   | "skills"
   | "agent"
@@ -334,9 +340,9 @@ export interface AppState {
   setIdeActiveStrategyScriptId: (v: string | null) => void;
   ideAiPrompt: string;
   setIdeAiPrompt: (v: string) => void;
-  /** IDE 左栏工具（v1 仅 editor；见 ideLeftTools） */
-  ideLeftTab: "editor";
-  setIdeLeftTab: (v: "editor") => void;
+  /** IDE 左栏工具（自选/持仓或代码编辑器；见 ideLeftTools） */
+  ideLeftTab: "editor" | "watchlist";
+  setIdeLeftTab: (v: "editor" | "watchlist") => void;
   chatDraftPrefill: string | null;
   setChatDraftPrefill: (v: string | null) => void;
   agents: AgentSummary[];
@@ -360,13 +366,19 @@ export interface AppState {
   clearTraderMarkers: () => void;
   /** 实时交易页：Agent 决策与信息流 */
   traderAgentLog: TraderAgentLogRecord[];
-  pushTraderAgentLog: (e: Omit<TraderAgentLogRecord, "id" | "ts"> & { id?: string; ts?: number }) => void;
+  pushTraderAgentLog: (
+    e: Omit<TraderAgentLogRecord, "id" | "ts"> & { id?: string; ts?: number }
+  ) => void;
   clearTraderAgentLog: () => void;
   traderDrivers: TraderDriverRecord[];
-  pushTraderDriver: (e: Omit<TraderDriverRecord, "id" | "ts"> & { id?: string; ts?: number }) => void;
+  pushTraderDriver: (
+    e: Omit<TraderDriverRecord, "id" | "ts"> & { id?: string; ts?: number }
+  ) => void;
   clearTraderDrivers: () => void;
   traderAgentMessages: TraderAgentMessageRecord[];
-  pushTraderAgentMessage: (e: Omit<TraderAgentMessageRecord, "id" | "ts"> & { id?: string; ts?: number }) => void;
+  pushTraderAgentMessage: (
+    e: Omit<TraderAgentMessageRecord, "id" | "ts"> & { id?: string; ts?: number }
+  ) => void;
   clearTraderAgentMessages: () => void;
   traderAgentConfig: TraderAgentConfigState;
   setTraderAgentConfig: (patch: Partial<TraderAgentConfigState>) => void;
@@ -376,8 +388,10 @@ export interface AppState {
 const defaultChartOverlays: ChartOverlaysState = {
   sma20: false,
   ema20: false,
+  vwap: false,
   rsi14: false,
   macd: false,
+  kdj: false,
   bb20: false,
 };
 
@@ -390,13 +404,7 @@ const AGENT_PANEL_OPEN_LS = "qubit:agentPanelOpen";
 const AGENT_PANEL_WIDTH_LS = "qubit:agentPanelWidthPx";
 const CHROME_DENSITY_LS = "qubit:chromeDensity";
 
-const AGENT_CONTROL_MODES = new Set<AgentControlMode>([
-  "agent",
-  "ask",
-  "plan",
-  "goal",
-  "diagnose",
-]);
+const AGENT_CONTROL_MODES = new Set<AgentControlMode>(["agent", "ask", "plan", "goal", "diagnose"]);
 
 function readAgentControlMode(): AgentControlMode {
   try {
@@ -543,7 +551,9 @@ function loadTraderConfig(): TraderAgentConfigState {
     const j = JSON.parse(raw) as Partial<TraderAgentConfigState>;
     return {
       triggerMode:
-        j.triggerMode === "interval" || j.triggerMode === "strategy_signal" || j.triggerMode === "manual"
+        j.triggerMode === "interval" ||
+        j.triggerMode === "strategy_signal" ||
+        j.triggerMode === "manual"
           ? j.triggerMode
           : "manual",
       intervalSec: typeof j.intervalSec === "number" && j.intervalSec >= 10 ? j.intervalSec : 60,
@@ -749,12 +759,7 @@ export const useAppStore = create<AppState>((set) => ({
   setProAgentLifecycle: (proAgentLifecycle) => set({ proAgentLifecycle }),
   chartOverlays: { ...defaultChartOverlays },
   toggleChartOverlay: (key) =>
-    set((s) => {
-      const next = { ...s.chartOverlays, [key]: !s.chartOverlays[key] };
-      if (key === "rsi14" && next.rsi14) next.macd = false;
-      if (key === "macd" && next.macd) next.rsi14 = false;
-      return { chartOverlays: next };
-    }),
+    set((s) => ({ chartOverlays: { ...s.chartOverlays, [key]: !s.chartOverlays[key] } })),
   idePanels: { left: true, chart: true, backtest: true },
   toggleIdePanelVisible: (key) =>
     set((s) => ({ idePanels: { ...s.idePanels, [key]: !s.idePanels[key] } })),
@@ -774,7 +779,7 @@ export const useAppStore = create<AppState>((set) => ({
   setIdeActiveStrategyScriptId: (v) => set({ ideActiveStrategyScriptId: v }),
   ideAiPrompt: "",
   setIdeAiPrompt: (v) => set({ ideAiPrompt: v }),
-  ideLeftTab: "editor",
+  ideLeftTab: "watchlist",
   setIdeLeftTab: (v) => set({ ideLeftTab: v }),
   chatDraftPrefill: null,
   setChatDraftPrefill: (v) => set({ chatDraftPrefill: v }),
@@ -794,7 +799,8 @@ export const useAppStore = create<AppState>((set) => ({
   chatMessages: [],
   setChatMessages: (chatMessages) =>
     set((state) => ({
-      chatMessages: typeof chatMessages === "function" ? chatMessages(state.chatMessages) : chatMessages,
+      chatMessages:
+        typeof chatMessages === "function" ? chatMessages(state.chatMessages) : chatMessages,
     })),
   traderMarkers: [],
   pushTraderMarker: (m) =>

@@ -189,6 +189,11 @@ export const TeamDashboardPanel: FC = () => {
   const [workflowOptions, setWorkflowOptions] = useState<Array<Record<string, unknown>>>([]);
   const [workflowKindFilter, setWorkflowKindFilter] = useState<WorkflowKind | "all">("all");
   const [running, setRunning] = useState(false);
+  /**
+   * interrupt 已被服务端确认后，列表轮询短暂返回旧 running 状态时的本地终态闩锁。
+   * 下一次从 composer / resume 明确启动同一 workflow 时会清除。
+   */
+  const [stoppedWorkflowId, setStoppedWorkflowId] = useState<string | null>(null);
   /** 右侧 composer 对话走 Orchestrator ReAct；与团队运行态分离。 */
   const [orchestratorChatInFlight, setOrchestratorChatInFlight] = useState(false);
   /**
@@ -215,14 +220,20 @@ export const TeamDashboardPanel: FC = () => {
    */
   const [agentHeartbeats, setAgentHeartbeats] =
     useState<import("../api/backend").WorkflowAgentHeartbeatsResponse | null>(null);
+  /** 心跳快照是运行状态的服务端权威读模型；连接状态单独保留，避免重连窗口误报运行。 */
+  const [heartbeatSyncState, setHeartbeatSyncState] = useState<
+    "idle" | "connecting" | "live" | "degraded" | "unavailable"
+  >("idle");
   useEffect(() => {
     if (!workflowRunId.trim()) {
       setAgentHeartbeats(null);
+      setHeartbeatSyncState("idle");
       return;
     }
     let cancelled = false;
     let unsubscribe: (() => void) | null = null;
     let didFallbackToPoll = false;
+    setHeartbeatSyncState("connecting");
 
     void (async () => {
       const {
@@ -237,22 +248,31 @@ export const TeamDashboardPanel: FC = () => {
           onSnapshot: (snap) => {
             if (cancelled) return;
             setAgentHeartbeats(snap);
+            setHeartbeatSyncState("live");
           },
           onEnd: () => {
             /** 心跳流结束通常意味着本轮 Agent 已无存活实例 → 同步 UI 空闲。 */
             if (cancelled) return;
             setOrchestratorChatInFlight(false);
             setRunProgress("");
+            setHeartbeatSyncState("live");
           },
           onError: async () => {
             if (cancelled || didFallbackToPoll) return;
             didFallbackToPoll = true;
+            setHeartbeatSyncState("degraded");
             /** SSE 失败 → 单次 polling 兜底（不再继续轮询，避免回到老的浪费节奏）。 */
             try {
               const fallback = await getWorkflowAgentHeartbeats(workflowRunId);
-              if (!cancelled) setAgentHeartbeats(fallback);
+              if (!cancelled) {
+                setAgentHeartbeats(fallback);
+                setHeartbeatSyncState("degraded");
+              }
             } catch {
-              if (!cancelled) setAgentHeartbeats(null);
+              if (!cancelled) {
+                setAgentHeartbeats(null);
+                setHeartbeatSyncState("unavailable");
+              }
             }
           },
         },
@@ -1559,6 +1579,21 @@ export const TeamDashboardPanel: FC = () => {
     [workflowOptions, workflowRunId]
   );
 
+  /**
+   * 运行态优先取 heartbeat SSE 的 workflow status：它是服务端刚读取 DB 后生成的
+   * 快照，优先级高于左栏 15 秒刷新得到的旧列表行。没有快照时才降级用列表状态。
+   */
+  const authoritativeWorkflowStatus = useMemo(() => {
+    if (agentHeartbeats?.workflowRunId === workflowRunId.trim()) {
+      return agentHeartbeats.status;
+    }
+    return selectedWorkflowRow?.status ? String(selectedWorkflowRow.status) : null;
+  }, [agentHeartbeats, selectedWorkflowRow, workflowRunId]);
+  const authoritativeStatusObservedAt =
+    agentHeartbeats?.workflowRunId === workflowRunId.trim()
+      ? agentHeartbeats.summary.asOf
+      : null;
+
   useEffect(() => {
     if (
       workflowSessionId &&
@@ -1579,9 +1614,9 @@ export const TeamDashboardPanel: FC = () => {
    */
   const selectedWorkflowCompleted = useMemo(() => {
     if (running) return false;
-    const st = selectedWorkflowRow?.status;
+    const st = authoritativeWorkflowStatus;
     return st === "completed" || st === "partial" || st === "failed" || st === "cancelled";
-  }, [selectedWorkflowRow, running]);
+  }, [authoritativeWorkflowStatus, running]);
 
   const selectedWorkflowKind = useMemo(
     () => (selectedWorkflowRow ? classifyWorkflow(selectedWorkflowRow) : null),
@@ -1795,12 +1830,15 @@ export const TeamDashboardPanel: FC = () => {
   }, [workflowRunId]);
 
   useEffect(() => {
-    const st = selectedWorkflowRow?.status
-      ? String(selectedWorkflowRow.status)
-      : "";
+    const st = authoritativeWorkflowStatus ?? "";
+    const locallyStopped = stoppedWorkflowId === workflowRunId.trim();
     // 用服务端工作流状态校准本地 running，避免超时/幽灵 turn 后 UI 仍以为在跑。
     // 注意：切任务时若仍带着上一轮 chatInFlight，本 effect 会早退一帧；
     // 切换清理 effect 已置 false，下一帧会按新 workflow 的 DB 状态校准。
+    if (locallyStopped) {
+      setRunning(false);
+      return;
+    }
     if (orchestratorChatInFlight) return;
     if (st === "running") {
       setRunning(true);
@@ -1809,16 +1847,15 @@ export const TeamDashboardPanel: FC = () => {
       // （新建 skipDispatch 工作流是 pending，绝不能继承上一任务的 running）
       setRunning(false);
     }
-  }, [selectedWorkflowRow?.status, selectedWorkflowRow?.id, orchestratorChatInFlight]);
+  }, [authoritativeWorkflowStatus, orchestratorChatInFlight, stoppedWorkflowId, workflowRunId]);
 
   useEffect(() => {
-    const st = selectedWorkflowRow?.status
-      ? String(selectedWorkflowRow.status)
-      : "";
+    const st = authoritativeWorkflowStatus ?? "";
+    const locallyStopped = stoppedWorkflowId === workflowRunId.trim();
     // pending = 已创建未开跑，不能显示 Agent: RUNNING（之前把 pending 算进 running）
     const next = teamPendingHitl
       ? "awaiting_hitl"
-      : running || orchestratorChatInFlight || st === "running"
+      : !locallyStopped && (running || orchestratorChatInFlight || st === "running")
         ? "running"
         : "idle";
     setProAgentLifecycle(next);
@@ -1826,7 +1863,9 @@ export const TeamDashboardPanel: FC = () => {
     teamPendingHitl,
     running,
     orchestratorChatInFlight,
-    selectedWorkflowRow?.status,
+    authoritativeWorkflowStatus,
+    stoppedWorkflowId,
+    workflowRunId,
     setProAgentLifecycle,
   ]);
 
@@ -1886,6 +1925,7 @@ export const TeamDashboardPanel: FC = () => {
       return;
     }
     setError(null);
+    setStoppedWorkflowId(null);
     if (!options?.skipEcho) pushUserEcho(msg);
     if (!options?.message) setTeamAnalysisContext("");
     setOrchestratorChatInFlight(true);
@@ -3388,6 +3428,7 @@ export const TeamDashboardPanel: FC = () => {
               );
             }}
             onWorkflowResumed={() => {
+              setStoppedWorkflowId(null);
               setRunning(true);
               setOrchestratorChatInFlight(true);
               setRunProgress("正在从检查点继续…");
@@ -3395,10 +3436,10 @@ export const TeamDashboardPanel: FC = () => {
               void refreshWorkflowOptions();
             }}
             workflowStatus={
-              selectedWorkflowRow?.status
-                ? String(selectedWorkflowRow.status)
-                : null
+              authoritativeWorkflowStatus
             }
+            runtimeSyncState={heartbeatSyncState}
+            runtimeObservedAt={authoritativeStatusObservedAt}
             composerValue={teamAnalysisContext}
             onComposerChange={setTeamAnalysisContext}
             fsWorkspaceId={activeFsWorkspaceId}
@@ -3428,6 +3469,7 @@ export const TeamDashboardPanel: FC = () => {
               if (!wf) throw new Error("请先选择工作流");
               // 乐观空闲：按钮立刻反馈，不等后端 cancel 回包
               pendingFollowUpsRef.current = [];
+              setStoppedWorkflowId(wf);
               setOrchestratorChatInFlight(false);
               setRunning(false);
               setRunProgress("");
@@ -3453,9 +3495,19 @@ export const TeamDashboardPanel: FC = () => {
                   })),
                 ];
               });
-              await interruptWorkflow(wf);
-              void loadTeamGraph({ preserveSelection: true });
-              void refreshWorkflowOptions();
+              try {
+                const interrupted = await interruptWorkflow(wf);
+                // Stop 与已自然结束的竞态：不要把 completed/failed 误标成“已停止”。
+                if (interrupted.status !== "cancelled") {
+                  setStoppedWorkflowId((current) => (current === wf ? null : current));
+                  throw new Error(`工作流已处于 ${interrupted.status}，未执行停止操作`);
+                }
+                void loadTeamGraph({ preserveSelection: true });
+                void refreshWorkflowOptions();
+              } catch (error) {
+                setStoppedWorkflowId((current) => current === wf ? null : current);
+                throw error;
+              }
             }}
             plan={teamPlan}
             planSegments={teamPlanSegments}

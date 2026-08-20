@@ -154,9 +154,20 @@ function inferFeedMeta(provider: string): {
       licenseUse: "observe_only",
     };
   }
-  if (id.includes("futu") || id.includes("ib") || id.includes("supermind") || id.includes("ths")) {
+  if (
+    id.includes("futu") ||
+    id.includes("ib") ||
+    id.includes("alpaca") ||
+    id.includes("qmt") ||
+    id.includes("supermind") ||
+    id.includes("ths")
+  ) {
     const upstreamFamily = id.includes("futu")
       ? "futu"
+      : id.includes("alpaca")
+        ? "alpaca"
+        : id.includes("qmt")
+          ? "qmt"
       : id.includes("supermind") || id.includes("ths")
         ? "supermind"
         : "ib";

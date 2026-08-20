@@ -35,6 +35,17 @@ export QUBIT_MARKET_STREAM_PROVIDER=futu
 1. 在 `providers/` 实现 `start/stop/subscribe/unsubscribe`，通过 `emit(event)` 推送。
 2. 在 `server.py` `_build_provider` 注册 id。
 3. 在 TS `broker-market-bridge.ts` 的 `BUILTIN`（或 `registerBrokerMarketBridge`）增加描述符与 env key。
+
+## Built-in broker bridges
+
+| Provider | Markets | Local prerequisite | Environment URL |
+|---|---|---|---|
+| Futu OpenD | CN / HK / US | OpenD + `futu-api` | `QUBIT_FUTU_MARKET_WS_URL` |
+| IBKR | US / HK / futures / listed options | TWS or IB Gateway + `ib-insync` + market-data entitlement | `QUBIT_IB_MARKET_WS_URL` |
+| Alpaca | US stocks (quote/trade) | API key/secret; set `QUBIT_ALPACA_API_KEY_ID`, `QUBIT_ALPACA_API_SECRET` | `QUBIT_ALPACA_MARKET_WS_URL` |
+| QMT / xtquant | CN | Windows miniQMT launched by a participating broker | `QUBIT_QMT_MARKET_WS_URL` |
+
+Run any bridge on its own local port, for example `python -m market_bridge.server --provider ib --port 8766`, then set the matching `QUBIT_*_MARKET_WS_URL`. IB depth and time-and-sales, as well as all QMT data, depend on the account's vendor entitlement. Alpaca stock bridge intentionally emits only latest quote/trade; it does not fabricate level-2 depth.
 4. 控制面自动出现对应 `*_bridge` L2 源（见 `market-data-source-control.ts`）。
 
 事件契约见仓库根目录 `docs/market-data-realtime.md`。

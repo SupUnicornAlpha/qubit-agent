@@ -2,8 +2,8 @@
  * 可安装 UI 主题包注册表。
  *
  * 主题包是纯声明式 JSON：token 用于所有页面，quantTokens 专门覆盖量化工作台。
- * css 为可选的、已作用域到 `html[data-qb-style="<id>"]` 的增强样式。它不加载或执行
- * JavaScript；导入主题等同于信任该主题的 CSS。
+ * surfaces 是面向主要工作区的低代码外观配方；css 为可选的、已作用域到
+ * `html[data-qb-style="<id>"]` 的高级增强。它们都不加载或执行 JavaScript。
  */
 
 export const BUILTIN_STYLE_IDS = [
@@ -17,6 +17,19 @@ export const BUILTIN_STYLE_IDS = [
 
 export type BuiltinStyleId = (typeof BUILTIN_STYLE_IDS)[number];
 export type ThemeColorScheme = "light" | "dark";
+export type ThemeSurfaceId = "app" | "chrome" | "team" | "workspace" | "chart";
+
+/**
+ * 可由 JSON 主题直接描述的玻璃/面板质感。复杂的局部结构仍可使用受作用域限制的 css。
+ */
+export interface ThemeSurfaceRecipe {
+  background?: string;
+  borderColor?: string;
+  shadow?: string;
+  radius?: string;
+  blurPx?: number;
+  saturationPct?: number;
+}
 
 export interface ThemePackManifest {
   format: "qubit-ui-theme";
@@ -29,6 +42,8 @@ export interface ThemePackManifest {
   tokens: Record<string, string>;
   /** 量化工坊 CSS custom properties，例如 --qb-bg-surface / --qb-quant-accent-1。 */
   quantTokens: Record<string, string>;
+  /** 主工作区的可配置外观配方，无需编写选择器或 CSS。 */
+  surfaces?: Partial<Record<ThemeSurfaceId, ThemeSurfaceRecipe>>;
   /** 可选视觉强化 CSS；必须显式包含该主题自己的 data-qb-style 作用域。 */
   css?: string;
 }
@@ -46,6 +61,14 @@ const STYLE_ELEMENT_PREFIX = "qb-installed-theme-";
 const CHANGE_EVENT = "qb-theme-packs-change";
 const ID_PATTERN = /^[a-z][a-z0-9-]{1,63}$/;
 const TOKEN_PATTERN = /^--qb-[a-z0-9-]+$/;
+const SURFACE_IDS: readonly ThemeSurfaceId[] = ["app", "chrome", "team", "workspace", "chart"];
+const SURFACE_SELECTORS: Record<ThemeSurfaceId, string> = {
+  app: ".qb-app-root",
+  chrome: ".qb-topbar, .qb-sidebar-shell, .qb-pro-agent-panel, .qb-pro-statusbar",
+  team: "[data-qb-team-shell], [data-qb-team-research-panel], [data-qb-team-graph-host]",
+  workspace: ".qb-pro-workbench__center, [data-qb-news-page]",
+  chart: "[data-qb-chart-surface]",
+};
 
 const BUILTIN_STYLES: ThemeStyleDefinition[] = [
   { id: "default", name: "默认", builtin: true },
@@ -82,11 +105,36 @@ function tokenDeclarations(tokens: Record<string, string>): string {
     .join("\n");
 }
 
+function surfaceDeclarations(recipe: ThemeSurfaceRecipe): string {
+  const declarations: string[] = [];
+  if (recipe.background) declarations.push(`  background: ${recipe.background} !important;`);
+  if (recipe.borderColor) declarations.push(`  border-color: ${recipe.borderColor} !important;`);
+  if (recipe.shadow) declarations.push(`  box-shadow: ${recipe.shadow} !important;`);
+  if (recipe.radius) declarations.push(`  border-radius: ${recipe.radius} !important;`);
+  if (recipe.blurPx !== undefined || recipe.saturationPct !== undefined) {
+    const blur = recipe.blurPx ?? 0;
+    const saturation = recipe.saturationPct ?? 100;
+    declarations.push(`  backdrop-filter: blur(${blur}px) saturate(${saturation}%);`);
+    declarations.push(`  -webkit-backdrop-filter: blur(${blur}px) saturate(${saturation}%);`);
+  }
+  return declarations.join("\n");
+}
+
+function surfaceCss(manifest: ThemePackManifest): string {
+  if (!manifest.surfaces) return "";
+  const scope = `html[data-qb-style="${manifest.id}"]`;
+  return SURFACE_IDS.flatMap((surface) => {
+    const recipe = manifest.surfaces?.[surface];
+    if (!recipe) return [];
+    return [`${scope} ${SURFACE_SELECTORS[surface]} {\n${surfaceDeclarations(recipe)}\n}`];
+  }).join("\n");
+}
+
 function themeCss(manifest: ThemePackManifest): string {
   const selector = `html[data-qb-style="${manifest.id}"]`;
   const rootTokens = { "color-scheme": manifest.colorScheme, ...manifest.tokens };
   const quantTokens = manifest.quantTokens;
-  return `${selector} {\n${tokenDeclarations(rootTokens)}\n}\n${selector} [data-qb-quant-shell] {\n${tokenDeclarations(quantTokens)}\n}\n${manifest.css ?? ""}`;
+  return `${selector} {\n${tokenDeclarations(rootTokens)}\n}\n${selector} [data-qb-quant-shell] {\n${tokenDeclarations(quantTokens)}\n}\n${surfaceCss(manifest)}\n${manifest.css ?? ""}`;
 }
 
 function installStyle(manifest: ThemePackManifest): void {
@@ -128,6 +176,27 @@ export function validateThemePack(value: unknown):
     for (const [key, token] of Object.entries(section)) {
       if (!TOKEN_PATTERN.test(key) || typeof token !== "string" || token.length > 500) {
         return { ok: false, error: "主题 token 必须是 --qb-* 格式且值不超过 500 字符" };
+      }
+    }
+  }
+  if (pack.surfaces !== undefined) {
+    if (!pack.surfaces || typeof pack.surfaces !== "object" || Array.isArray(pack.surfaces)) {
+      return { ok: false, error: "surfaces 必须是对象" };
+    }
+    for (const [surface, recipe] of Object.entries(pack.surfaces)) {
+      if (!(SURFACE_IDS as readonly string[]).includes(surface) || !recipe || typeof recipe !== "object" || Array.isArray(recipe)) {
+        return { ok: false, error: "surfaces 仅支持 app、chrome、team、workspace、chart 配方" };
+      }
+      const candidate = recipe as ThemeSurfaceRecipe;
+      for (const value of [candidate.background, candidate.borderColor, candidate.shadow, candidate.radius]) {
+        if (value !== undefined && (typeof value !== "string" || value.length > 500 || /[;{}<>]/.test(value))) {
+          return { ok: false, error: "surface 配方中的 CSS 值无效" };
+        }
+      }
+      for (const value of [candidate.blurPx, candidate.saturationPct]) {
+        if (value !== undefined && (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 300)) {
+          return { ok: false, error: "surface 配方中的数值必须在 0-300 之间" };
+        }
       }
     }
   }

@@ -8,6 +8,7 @@ import {
   loadBuiltinConnectorSettings,
 } from "../config/builtin-connector-settings";
 import { marketDataProxyForPython } from "./market-data-network";
+import type { OptionChain } from "./options-chain";
 
 /**
  * yfinance Python bridge — sister to `akshare-klines.ts`.
@@ -50,8 +51,8 @@ async function getYfinanceBridge(): Promise<PythonConnectorBridgeImpl> {
         name: "yfinance-python",
         version: "1.0.0",
         connectorType: "data",
-        capabilities: ["fetch_bars", "fetch_dividends", "fetch_earnings", "fetch_asset_info"],
-        assetClasses: ["stock", "crypto"],
+        capabilities: ["fetch_bars", "fetch_dividends", "fetch_earnings", "fetch_asset_info", "fetch_option_chain"],
+        assetClasses: ["stock", "option", "crypto"],
         latencyProfile: "batch",
         description:
           "yfinance Python subprocess bridge for OHLCV / dividends / earnings / asset info",
@@ -189,4 +190,19 @@ export async function fetchYfinanceAssetInfo(
     exchange: params.exchange ?? "",
     proxyUrl: marketDataProxyForPython(settings, "yfinance"),
   })) as YfinanceAssetInfo;
+}
+
+/** 通过 yfinance 的持久 Yahoo 会话读取美股期权链。 */
+export async function fetchYfinanceOptionChain(params: {
+  symbol: string;
+  expiry?: string;
+  settings: BuiltinConnectorInitConfigs;
+}): Promise<OptionChain> {
+  const client = await getYfinanceBridge();
+  return (await client.execute("fetch_option_chain", {
+    symbol: params.symbol,
+    exchange: "US",
+    ...(params.expiry?.trim() ? { expiry: params.expiry } : {}),
+    proxyUrl: marketDataProxyForPython(params.settings, "yfinance"),
+  })) as OptionChain;
 }

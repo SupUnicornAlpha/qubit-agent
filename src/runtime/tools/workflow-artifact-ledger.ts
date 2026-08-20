@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq, gt, isNull, or } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { workflowArtifactLedger } from "../../db/sqlite/schema";
+import { appendHarnessEventSafe } from "../harness/event-ledger";
 import type { DataGap } from "./data-gap";
 import { resolveToolCallCachePolicy } from "./tool-call-dedup";
 
@@ -95,7 +96,28 @@ export async function recordWorkflowToolArtifact(input: {
         updatedAt: nowIso,
       },
     });
-  return findWorkflowArtifactByFingerprint(input.workflowRunId, input.fingerprint, now);
+  const artifact = await findWorkflowArtifactByFingerprint(
+    input.workflowRunId,
+    input.fingerprint,
+    now
+  );
+  if (artifact) {
+    await appendHarnessEventSafe({
+      workflowRunId: input.workflowRunId,
+      eventType: "artifact.created",
+      payload: {
+        artifactId: artifact.id,
+        artifactKind: artifact.kind,
+        toolName: artifact.toolName,
+        fingerprint: artifact.fingerprint,
+        asOf: artifact.asOf,
+        freshnessMs: artifact.freshnessMs,
+        /** Artifact Ledger is an upsert cache; this event means created or refreshed. */
+        action: "upserted",
+      },
+    });
+  }
+  return artifact;
 }
 
 /** Persist a known data gap so A2A re-dispatch does not retry an impossible request. */
@@ -144,7 +166,25 @@ export async function recordWorkflowDataGap(input: {
         updatedAt: nowIso,
       },
     });
-  return findWorkflowArtifactByFingerprint(input.workflowRunId, input.fingerprint, now);
+  const artifact = await findWorkflowArtifactByFingerprint(
+    input.workflowRunId,
+    input.fingerprint,
+    now
+  );
+  if (artifact) {
+    await appendHarnessEventSafe({
+      workflowRunId: input.workflowRunId,
+      eventType: "artifact.created",
+      payload: {
+        artifactId: artifact.id,
+        artifactKind: artifact.kind,
+        toolName: artifact.toolName,
+        fingerprint: artifact.fingerprint,
+        action: "upserted",
+      },
+    });
+  }
+  return artifact;
 }
 
 /** Returns only non-expired durable facts. */

@@ -2,13 +2,27 @@ import {
   getOrCreateMarketSnapshot,
   isMarketSnapshotGetEnabled,
 } from "../market/contracts/market-snapshot-service";
+import { loadBuiltinConnectorSettings } from "../config/builtin-connector-settings";
 import { computeDateRangeForLimit, queryBarsRange } from "../market/klines-query";
 import { getMarketDataReadiness } from "../market/market-data-health";
 import { listMarketDataSources } from "../market/market-data-source-control";
 import { queryMarketNewsBrief } from "../market/news-brief-query";
+import { queryMarketQuote } from "../market/microstructure-query";
+import { fetchOptionChain, type OptionChainRequestSource } from "../market/options-chain";
+import {
+  analyzeOptionStrategy,
+  isOptionStrategyName,
+  type OptionStrategyInput,
+  type StrategyLegInput,
+} from "../market/options-strategy";
 import { extractSymbolArgs, requireSymbols } from "../market/normalize-symbol-args";
 import { detectRegimeFromBars } from "../market/regime";
 import { resolveTickerMarket } from "../market/resolve-ticker-market";
+import {
+  getIdeMarketSubscriptions,
+  getMarketWatchlist,
+} from "../market/watchlist-service";
+import { marketStreamGateway } from "../market/market-stream-gateway";
 import {
   computeBollinger,
   computeMacd,
@@ -22,6 +36,156 @@ import type { BuiltinToolHandler } from "./types";
 
 /** Read-only market lookup and deterministic indicator-analysis handlers. */
 export const MARKET_ANALYSIS_HANDLERS: Record<string, BuiltinToolHandler> = {
+  /**
+   * User's local IDE subscription list + only the quote values already pushed
+   * into the IDE stream. This is deliberately a no-network read: it gives an
+   * Agent the exact meaning of “my watchlist” without turning memory into a
+   * market-data source or silently querying a broker/public provider.
+   */
+  "market.ide_subscription.get": async () => {
+    const subscription = await getIdeMarketSubscriptions();
+    const entries = subscription.entries.map((entry) => {
+      const cachedQuote = marketStreamGateway.getCachedQuote(entry);
+      return {
+        ...entry,
+        cachedQuote,
+        quoteState: cachedQuote ? "ide_stream_cached" : "not_in_ide_stream_cache",
+      };
+    });
+    return {
+      source: subscription.source,
+      networkAccessed: false,
+      entries,
+      count: entries.length,
+      stream: marketStreamGateway.snapshot(),
+      guidance:
+        "这是 IDE 本机自选与已到达的订阅缓存，不读取 Agent 记忆、不调用券商也不访问公共行情。需要券商实时行情时，明确对其中的 symbols 调用 market.broker_quote.get。",
+    };
+  },
+
+  /**
+   * Explicit one-shot broker quote read. It requires a configured bridge and
+   * never degrades into Eastmoney/Yahoo/etc., so its source semantics remain
+   * auditable and distinct from the IDE subscription cache.
+   */
+  "market.broker_quote.get": async (_ctx, params) => {
+    const symbols = requireSymbols(params, {
+      arity: "either",
+      toolName: "market.broker_quote.get",
+    });
+    const requestedExchange = typeof params.exchange === "string" ? params.exchange : undefined;
+    const provider =
+      typeof params.provider === "string"
+        ? params.provider
+        : typeof params.bridge === "string"
+          ? params.bridge
+          : undefined;
+    const timeoutCandidate = Number(params.timeoutMs ?? params.timeout_ms ?? 5_000);
+    const timeoutMs = Math.max(1_000, Math.min(Number.isFinite(timeoutCandidate) ? timeoutCandidate : 5_000, 15_000));
+    const results = await Promise.allSettled(
+      symbols.map(async (symbol) => {
+        const resolution = resolveTickerMarket(symbol, {
+          ...(requestedExchange ? { hintExchange: requestedExchange } : {}),
+        });
+        const quote = await marketStreamGateway.requestBrokerQuote(
+          {
+            symbol: resolution.symbol,
+            exchange: resolution.exchange,
+            ...(provider ? { provider } : {}),
+          },
+          timeoutMs
+        );
+        return { ...quote, market: resolution.market };
+      })
+    );
+    const quotes = results.flatMap((row) => (row.status === "fulfilled" ? [row.value] : []));
+    const errors = results.flatMap((row, index) =>
+      row.status === "rejected"
+        ? [
+            {
+              symbol: symbols[index] ?? "",
+              error: row.reason instanceof Error ? row.reason.message : String(row.reason),
+            },
+          ]
+        : []
+    );
+    return {
+      source: "broker_market_bridge",
+      networkAccessed: true,
+      fallbackUsed: false,
+      quotes,
+      errors,
+      count: quotes.length,
+      guidance:
+        "只接受已配置券商/交易桥的推送；桥未配置、无权限或超时会直接返回 error，绝不降级为公共行情源。",
+    };
+  },
+
+  /**
+   * A local, read-only options strategy module. It fetches the chain needed for
+   * the requested template and returns deterministic P&L/Greeks; it never
+   * creates an order intent or uses a public fallback as a broker quote.
+   */
+  "market.options.strategy_analyze": async (_ctx, params) => {
+    const symbol = String(params.symbol ?? params.underlying ?? "").trim();
+    if (!symbol) throw new Error("market.options.strategy_analyze: symbol is required");
+    const strategy = String(params.strategy ?? "single").trim().toLowerCase();
+    if (!isOptionStrategyName(strategy)) throw new Error("market.options.strategy_analyze: invalid strategy");
+    const sourceRaw = String(params.source ?? "auto").trim().toLowerCase();
+    if (!["auto", "futu", "alpaca", "research"].includes(sourceRaw)) {
+      throw new Error("market.options.strategy_analyze: source must be auto, futu, alpaca, or research");
+    }
+    const exchange = typeof params.exchange === "string" ? params.exchange.trim() : "";
+    const expiry = typeof params.expiry === "string" ? params.expiry.trim() : "";
+    const requestedFarExpiry = typeof params.farExpiry === "string" ? params.farExpiry.trim() : "";
+    const settings = await loadBuiltinConnectorSettings();
+    const source = sourceRaw as OptionChainRequestSource;
+    const chain = await fetchOptionChain({ symbol, ...(exchange ? { exchange } : {}), ...(expiry ? { expiry } : {}), source, settings });
+    const needsFarExpiry = strategy === "calendar" || strategy === "diagonal";
+    const farExpiry = requestedFarExpiry || chain.expirations.find((value) => !expiry || !value.startsWith(expiry));
+    const farChain = needsFarExpiry && farExpiry
+      ? await fetchOptionChain({ symbol, ...(exchange ? { exchange } : {}), expiry: farExpiry, source, settings })
+      : null;
+    const quote = await queryMarketQuote({ symbol, ...(exchange ? { exchange } : {}) }).catch(() => null);
+    const numberParam = (key: string) => {
+      const value = Number(params[key]);
+      return Number.isFinite(value) ? value : undefined;
+    };
+    const input: OptionStrategyInput = {
+      strategy,
+      ...(numberParam("centerStrike") !== undefined ? { centerStrike: numberParam("centerStrike") } : {}),
+      ...(numberParam("widthSteps") !== undefined ? { widthSteps: numberParam("widthSteps") } : {}),
+      ...(numberParam("quantity") !== undefined ? { quantity: numberParam("quantity") } : {}),
+      ...(params.singleRight === "call" || params.singleRight === "put" ? { singleRight: params.singleRight } : {}),
+      ...(params.singleSide === "buy" || params.singleSide === "sell" ? { singleSide: params.singleSide } : {}),
+      ...(params.direction === "bullish" || params.direction === "bearish" ? { direction: params.direction } : {}),
+      ...(Array.isArray(params.legs) ? { legs: parseOptionStrategyLegs(params.legs) } : {}),
+    };
+    const analysis = analyzeOptionStrategy(input, farChain ? [chain, farChain] : [chain], quote?.lastPrice ?? null);
+    return {
+      ...analysis,
+      underlying: chain.underlying,
+      spot: quote?.lastPrice ?? null,
+      source: chain.source,
+      feedClass: chain.feedClass,
+      licenseUse: chain.licenseUse,
+      fetchedAt: chain.fetchedAt,
+      networkAccessed: true,
+      guidance:
+        "只读策略分析，不创建订单或持仓。期权链的 feedClass/licenseUse 决定可用范围；L0 research_fallback 仅可研究，不能用于交易决策或订单准入。"
+    };
+  },
+
+  /** 用户级行情上下文；含本机自选和已关联券商的只读持仓。 */
+  "market.watchlist.get": async () => {
+    const watchlist = await getMarketWatchlist();
+    return {
+      ...watchlist,
+      guidance:
+        "兼容工具：自选为用户本机维护；broker_position 仅代表已关联账户返回的持仓。新实现请先用 market.ide_subscription.get 读取 IDE 自选，再按需用 market.broker_quote.get 获取券商行情。",
+    };
+  },
+
   "market.resolve_symbol": async (_ctx, params) => {
     const contract = isToolContractEnabled() ? getToolContract("market.resolve_symbol") : undefined;
     const canonical = contract ? applyToolContract(contract, params) : params;
@@ -226,3 +390,28 @@ export const MARKET_ANALYSIS_HANDLERS: Record<string, BuiltinToolHandler> = {
     };
   },
 };
+
+function parseOptionStrategyLegs(value: unknown[]): StrategyLegInput[] {
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const row = item as Record<string, unknown>;
+    const action = row.action === "buy" || row.action === "sell" ? row.action : null;
+    if (!action) return [];
+    const number = (key: string) => {
+      const candidate = Number(row[key]);
+      return Number.isFinite(candidate) ? candidate : undefined;
+    };
+    const right = row.right === "call" || row.right === "put" ? row.right : undefined;
+    const expiry = typeof row.expiry === "string" && row.expiry.trim() ? row.expiry.trim() : undefined;
+    const leg: StrategyLegInput = {
+      action,
+      ...(right ? { right } : {}),
+      ...(number("strike") !== undefined ? { strike: number("strike") } : {}),
+      ...(number("quantity") !== undefined ? { quantity: number("quantity") } : {}),
+      ...(number("entryPrice") !== undefined ? { entryPrice: number("entryPrice") } : {}),
+      ...(number("underlyingShares") !== undefined ? { underlyingShares: number("underlyingShares") } : {}),
+      ...(expiry ? { expiry } : {}),
+    };
+    return [leg];
+  });
+}

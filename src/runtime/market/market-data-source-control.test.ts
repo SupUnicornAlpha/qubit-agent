@@ -23,6 +23,8 @@ describe("market data source control plane", () => {
     const ids = rows.map((row) => row.id).sort();
     expect(ids).toContain("eastmoney");
     expect(ids).toContain("futu_bridge");
+    expect(ids).toContain("alpaca_bridge");
+    expect(ids).toContain("qmt_bridge");
     expect(ids).toContain("yfinance");
     expect(rows.find((row) => row.id === "tushare_daily")?.credentialsReady).toBe(false);
     expect(rows.find((row) => row.id === "wind")?.credentialsReady).toBe(false);

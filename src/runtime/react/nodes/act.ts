@@ -24,6 +24,7 @@ import {
 } from "../../tools/tool-call-dedup";
 import { parseToolCallFromReason } from "../../tools/tool-call-format";
 import {
+  recordToolCallAdmitted,
   recordToolCallError,
   recordToolCallSandboxBlocked,
   recordToolCallStart,
@@ -771,6 +772,7 @@ export async function actNode(
     };
   }
 
+  await recordToolCallAdmitted({ toolCallId });
   const startedAt = Date.now();
   const execution = await executeAdmittedTool({
     state,

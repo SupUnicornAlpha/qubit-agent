@@ -75,6 +75,8 @@ export const ANALYST_DEBATE_SCENARIO: ResearchScenarioSpec = {
     builtinTools: [
       "update_plan",
       "agent.invoke",
+      "market.ide_subscription.get",
+      "market.broker_quote.get",
       "market.snapshot.get",
       "research.thesis.write",
       "portfolio.construct",

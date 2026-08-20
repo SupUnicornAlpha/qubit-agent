@@ -134,6 +134,10 @@ export interface OrchestratorChatPanelProps {
   sendDisabledReason: string;
   /** 当前工作流 DB 状态（用于 resume 条在 pending/running 时立即隐藏） */
   workflowStatus?: string | null;
+  /** 服务端运行态快照的传输状态；状态页重连时不把旧本地布尔值当事实。 */
+  runtimeSyncState?: "idle" | "connecting" | "live" | "degraded" | "unavailable";
+  /** 服务端最后一次确认工作流状态的时间。 */
+  runtimeObservedAt?: string | null;
 }
 
 const MODE_OPTIONS: ReadonlyArray<{ id: OrchestratorHitlMode; label: string; hint: string }> = [
@@ -179,6 +183,8 @@ export function OrchestratorChatPanel({
   sendDisabled,
   sendDisabledReason,
   workflowStatus = null,
+  runtimeSyncState = "idle",
+  runtimeObservedAt = null,
   fsWorkspaceId = null,
 }: OrchestratorChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -188,6 +194,11 @@ export function OrchestratorChatPanel({
    * Scrolling up pauses follow so streaming/tool rows do not yank the viewport.
    */
   const [chatAutoFollow, setChatAutoFollow] = useState(true);
+  /**
+   * Stop 请求已经被后端确认后，工作流列表的旧 `running` 轮询结果不能再把
+   * 对话栏“复活”。新一轮 composer turn（chatInFlight=true）才会清除此闩锁。
+   */
+  const [stopAcknowledged, setStopAcknowledged] = useState(false);
   const [chatAtBottom, setChatAtBottom] = useState(true);
   const chatAutoFollowRef = useRef(true);
   /** Suppress onScroll while we programmatically pin to bottom (avoids false "user scrolled up"). */
@@ -255,6 +266,23 @@ export function OrchestratorChatPanel({
   });
   const subConversationRef = useRef<HTMLDivElement | null>(null);
   const wfId = workflowRunId.trim();
+
+  useEffect(() => {
+    if (chatInFlight) setStopAcknowledged(false);
+  }, [chatInFlight]);
+
+  // 切换工作流时不能沿用上一条工作流的 Stop 闩锁。
+  useEffect(() => {
+    setStopAcknowledged(false);
+  }, [workflowRunId]);
+
+  useEffect(() => {
+    if (injectHint !== "已停止当前 Agent 运行") return;
+    const timer = window.setTimeout(() => {
+      setInjectHint((current) => current === "已停止当前 Agent 运行" ? null : current);
+    }, 4_000);
+    return () => window.clearTimeout(timer);
+  }, [injectHint]);
   const focusedSubAgent = useMemo(
     () => subAgentRuns.find((run) => run.role === focusedSubAgentRole) ?? null,
     [subAgentRuns, focusedSubAgentRole]
@@ -401,19 +429,27 @@ export function OrchestratorChatPanel({
    * showActive：本轮在飞 / 专家或工具仍在跑。thinking 文本在 final 后可能残留，
    * 只在 chatInFlight/running 时计入，避免「其实跑完了还显示运行中」。
    */
-  const toolsRunning = useMemo(
+  const rawToolsRunning = useMemo(
     () =>
       buildChatExecutionActivity(streamEvents, true).tools.some(
         (tool) => tool.status === "running"
       ),
     [streamEvents]
   );
-  const expertsActive = subAgentRuns.some(
+  const rawExpertsActive = subAgentRuns.some(
     (run) => run.status === "running" || run.status === "queued"
   );
-  const liveTurn =
-    running || chatInFlight || expertsActive || toolsRunning;
-  const thinking = Boolean(thinkingText?.trim()) && (running || chatInFlight);
+  const displayedSubAgentRuns = stopAcknowledged
+    ? subAgentRuns.map((run) =>
+        run.status === "running" || run.status === "queued"
+          ? { ...run, status: "done" as const, headline: "运行已停止（保留已产生的轨迹）" }
+          : run
+      )
+    : subAgentRuns;
+  const toolsRunning = !stopAcknowledged && rawToolsRunning;
+  const expertsActive = !stopAcknowledged && rawExpertsActive;
+  const liveTurn = !stopAcknowledged && (running || chatInFlight || expertsActive || toolsRunning);
+  const thinking = !stopAcknowledged && Boolean(thinkingText?.trim()) && (running || chatInFlight);
   const showActive = liveTurn || thinking;
   /** 有实质工作在飞时，发送走追加；否则开新 turn */
   const composerMode: "chat" | "inject" = liveTurn ? "inject" : "chat";
@@ -466,6 +502,7 @@ export function OrchestratorChatPanel({
     setInjectHint(null);
     try {
       await onInterrupt();
+      setStopAcknowledged(true);
       setInjectHint("已停止当前 Agent 运行");
     } catch (e) {
       setInjectHint(`停止失败：${(e as Error).message}`);
@@ -521,15 +558,21 @@ export function OrchestratorChatPanel({
           : `${selectedAgentMode.hint}（Cmd/Ctrl+Enter 发送）`;
 
   return (
-    <div style={styles.root}>
+    <div style={styles.root} data-qb-orchestrator-panel>
       {/* Header：标题 + 运行徽标 */}
       <div style={styles.header}>
         <div style={styles.titleRow}>
           <span style={styles.title}>Orchestrator</span>
           {showActive ? (
             <span style={styles.runningBadge}>● 运行中</span>
+          ) : stopAcknowledged || workflowStatus === "cancelled" ? (
+            <span style={styles.stoppedBadge}>■ 已停止</span>
           ) : pendingHitlRequestId ? (
             <span style={styles.hitlBadge}>⏸ 待确认</span>
+          ) : runtimeSyncState === "connecting" ? (
+            <span style={styles.syncBadge}>◌ 同步中</span>
+          ) : runtimeSyncState === "unavailable" ? (
+            <span style={styles.syncBadge}>◌ 状态待同步</span>
           ) : (
             <span style={styles.idleBadge}>○ 空闲</span>
           )}
@@ -538,6 +581,11 @@ export function OrchestratorChatPanel({
           <span style={styles.scopeHint}>
             显示 Orchestrator 对你的输出、工具调用，以及已派发专家的实时进度。点击专家可跳转到独立子对话查看完整轨迹。
           </span>
+          {runtimeObservedAt ? (
+            <span style={styles.runtimeSource} title={`服务端确认时间：${runtimeObservedAt}`}>
+              {runtimeSyncState === "live" ? "服务端已确认" : "最近服务端快照"} · {new Date(runtimeObservedAt).toLocaleTimeString()}
+            </span>
+          ) : null}
         </div>
       </div>
 
@@ -546,12 +594,12 @@ export function OrchestratorChatPanel({
         <div style={styles.statusRail} data-qb-orch-status-rail="pinned">
           <StatusRailToolbar pinned onToggle={toggleStatusRailPinned} />
           <StatusRailContent
-            running={running}
-            chatInFlight={chatInFlight}
+            running={running && !stopAcknowledged}
+            chatInFlight={chatInFlight && !stopAcknowledged}
             pendingHitlRequestId={pendingHitlRequestId}
             activity={activity}
             streamEvents={streamEvents}
-            subAgentRuns={subAgentRuns}
+            subAgentRuns={displayedSubAgentRuns}
             thinkingText={thinkingText}
             showActive={showActive}
             focusedSubAgentRole={focusedSubAgentRole}
@@ -573,12 +621,12 @@ export function OrchestratorChatPanel({
           <div style={styles.statusRailInScroll} data-qb-orch-status-rail="scroll">
             <StatusRailToolbar pinned={false} onToggle={toggleStatusRailPinned} />
             <StatusRailContent
-              running={running}
-              chatInFlight={chatInFlight}
+              running={running && !stopAcknowledged}
+              chatInFlight={chatInFlight && !stopAcknowledged}
               pendingHitlRequestId={pendingHitlRequestId}
               activity={activity}
               streamEvents={streamEvents}
-              subAgentRuns={subAgentRuns}
+              subAgentRuns={displayedSubAgentRuns}
               thinkingText={thinkingText}
               showActive={showActive}
               focusedSubAgentRole={focusedSubAgentRole}
@@ -1075,6 +1123,23 @@ const styles: Record<string, CSSProperties> = {
     color: "#fbbf24",
     fontWeight: 600,
   },
+  stoppedBadge: {
+    fontSize: 10,
+    padding: "1px 7px",
+    borderRadius: 999,
+    border: "1px solid rgba(74, 222, 128, 0.45)",
+    background: "rgba(34, 197, 94, 0.1)",
+    color: "#86efac",
+    fontWeight: 600,
+  },
+  syncBadge: {
+    fontSize: 10,
+    padding: "1px 7px",
+    borderRadius: 999,
+    border: "1px solid #52525b",
+    color: "#a1a1aa",
+    fontWeight: 600,
+  },
   idleBadge: {
     fontSize: 10,
     padding: "1px 7px",
@@ -1082,6 +1147,12 @@ const styles: Record<string, CSSProperties> = {
     border: "1px solid #3f3f46",
     color: "#71717a",
     fontWeight: 600,
+  },
+  runtimeSource: {
+    display: "block",
+    marginTop: 3,
+    fontSize: 10,
+    color: "#71717a",
   },
   interruptBtn: {
     marginLeft: "auto",

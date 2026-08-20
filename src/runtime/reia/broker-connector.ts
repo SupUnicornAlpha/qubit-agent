@@ -446,7 +446,7 @@ class MockCnBrokerConnector implements BrokerConnector {
   readonly mode = "mock" as const;
 
   constructor(
-    readonly provider: Extract<BrokerProvider, "supermind" | "eastmoney_emt">,
+    readonly provider: Extract<BrokerProvider, "supermind" | "eastmoney_emt" | "qmt">,
     readonly accountRef = `${provider}-mock`
   ) {}
 
@@ -794,6 +794,7 @@ const DEFAULT_MOCK: Record<BrokerProvider, BrokerConnector> = {
   alpaca: new MockAlpacaConnector(),
   supermind: new MockCnBrokerConnector("supermind"),
   eastmoney_emt: new MockCnBrokerConnector("eastmoney_emt"),
+  qmt: new MockCnBrokerConnector("qmt"),
 };
 
 export function getBrokerConnector(provider: BrokerProvider): BrokerConnector {
@@ -805,7 +806,7 @@ export function createBrokerConnector(config: BrokerRuntimeConfig): BrokerConnec
     if (config.provider === "futu") return new MockFutuConnector(config.accountRef);
     if (config.provider === "ccxt") return new MockCcxtConnector(config.accountRef);
     if (config.provider === "alpaca") return new MockAlpacaConnector(config.accountRef);
-    if (config.provider === "supermind" || config.provider === "eastmoney_emt") {
+    if (config.provider === "supermind" || config.provider === "eastmoney_emt" || config.provider === "qmt") {
       return new MockCnBrokerConnector(config.provider, config.accountRef);
     }
     return new MockIbConnector(config.accountRef);

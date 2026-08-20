@@ -1,7 +1,6 @@
 import type { ChangeEvent, CSSProperties, FC } from "react";
 import { useEffect, useState } from "react";
 import { type UiStyleId, useAppStore } from "../../store";
-import vistaGlassTheme from "../../theme/vista-glass.theme.json";
 import {
   installThemePack,
   listThemeStyles,
@@ -24,18 +23,16 @@ export const ThemeManagementPanel: FC = () => {
     event.target.value = "";
     if (!file) return;
     try {
-      const manifest = installThemePack(JSON.parse(await file.text()));
+      const source = (await file.text()).replace(/^\uFEFF/, "").trim();
+      if (!source.startsWith("{")) {
+        throw new Error(`「${file.name}」不是主题 JSON；请选择 .json 文件本身，而不是文件路径、链接或文档。`);
+      }
+      const manifest = installThemePack(JSON.parse(source));
       setUiStyle(manifest.id);
       setMessage(`已安装 ${manifest.name} ${manifest.version}，并切换到该主题。`);
     } catch (error) {
       setMessage(`导入失败：${error instanceof Error ? error.message : "主题包无效"}`);
     }
-  };
-
-  const installVistaSample = () => {
-    const manifest = installThemePack(vistaGlassTheme);
-    setUiStyle(manifest.id);
-    setMessage("已安装并切换到 Vista Glass 示例主题。");
   };
 
   const remove = (style: ThemeStyleDefinition) => {
@@ -51,13 +48,10 @@ export const ThemeManagementPanel: FC = () => {
         <div>
           <h3 id="theme-management-title" style={stylesCss.title}>主题管理</h3>
           <p style={stylesCss.subtitle}>
-            像 IDE 一样集中管理界面主题。主题包是本机安装的 JSON 配置，不运行脚本；量化工坊会读取同一套主题令牌。
+            像 IDE 一样集中管理界面主题。主题包是本机安装的 JSON 配置，不运行脚本；量化工坊、团队和图表工作区会读取同一套主题令牌与表面配方。
           </p>
         </div>
         <div style={stylesCss.actions}>
-          <button type="button" className="qb-btn-secondary" onClick={installVistaSample}>
-            安装 Vista Glass 示例
-          </button>
           <label className="qb-btn-primary-brand" style={stylesCss.importButton}>
             导入主题包
             <input type="file" accept="application/json,.json" hidden onChange={(event) => void install(event)} />
@@ -104,7 +98,7 @@ export const ThemeManagementPanel: FC = () => {
         })}
       </div>
       <p style={stylesCss.footer}>
-        导入相同 id 的 JSON 即可升级主题。主题格式与量化令牌说明见仓库 docs/theme-packs.md。
+        导入相同 id 的 JSON 即可升级主题。主题格式、工作区配方与量化令牌说明见仓库 docs/theme-packs.md；后续插件中心可复用同一主题包格式。
       </p>
     </section>
   );

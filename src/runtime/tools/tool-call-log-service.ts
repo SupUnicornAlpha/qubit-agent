@@ -24,6 +24,7 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { mcpCallLog, toolCallLog } from "../../db/sqlite/schema";
+import { appendHarnessEventForToolCallSafe, appendHarnessEventSafe } from "../harness/event-ledger";
 import { classifyToolError } from "../react/nodes/tool-error-classifier";
 
 export type ToolTargetKind = "mcp" | "tool" | "connector";
@@ -124,6 +125,27 @@ export async function recordToolCallStart(input: RecordToolCallStartInput): Prom
       latencyMs: null,
     });
   }
+  await appendHarnessEventSafe({
+    workflowRunId: input.workflowRunId,
+    traceId: input.traceId,
+    stepId: input.agentStepId,
+    toolCallId: input.toolCallId,
+    eventType: "tool.started",
+    payload: {
+      toolName: input.targetName,
+      toolKind: input.toolKind,
+      targetKind: input.targetKind,
+      governance: input.governance ?? null,
+    },
+  });
+}
+
+/** Called after the concrete sandbox check allows the already-recorded request. */
+export async function recordToolCallAdmitted(input: { toolCallId: string }): Promise<void> {
+  await appendHarnessEventForToolCallSafe({
+    toolCallId: input.toolCallId,
+    eventType: "tool.admitted",
+  });
 }
 
 /**
@@ -169,6 +191,15 @@ export async function recordToolCallSandboxBlocked(
       })
       .where(eq(mcpCallLog.id, input.toolCallId));
   }
+  await appendHarnessEventForToolCallSafe({
+    toolCallId: input.toolCallId,
+    eventType: "tool.rejected",
+    payload: {
+      reason: input.reason ?? "blocked by sandbox",
+      violationType: input.violationType ?? null,
+      capabilityGate: input.capabilityGate ?? false,
+    },
+  });
 }
 
 export interface RecordToolCallTimeoutInput extends BaseFinalizeInput {
@@ -201,6 +232,16 @@ export async function recordToolCallTimeout(input: RecordToolCallTimeoutInput): 
       })
       .where(eq(mcpCallLog.id, input.toolCallId));
   }
+  await appendHarnessEventForToolCallSafe({
+    toolCallId: input.toolCallId,
+    eventType: "tool.completed",
+    payload: {
+      status: "timeout",
+      latencyMs: input.latencyMs,
+      reason: input.reason ?? "tool timeout",
+      violationType: input.violationType ?? null,
+    },
+  });
 }
 
 export interface RecordToolCallErrorInput extends BaseFinalizeInput {
@@ -265,6 +306,18 @@ export async function recordToolCallError(input: RecordToolCallErrorInput): Prom
       })
       .where(eq(mcpCallLog.id, input.toolCallId));
   }
+  await appendHarnessEventForToolCallSafe({
+    toolCallId: input.toolCallId,
+    eventType: "tool.completed",
+    payload: {
+      status: "error",
+      latencyMs: input.latencyMs,
+      errorSource: input.errorSource,
+      errorCode,
+      contractCode: input.contractCode ?? null,
+      contractRejected: input.contractRejected ?? false,
+    },
+  });
 }
 
 export interface RecordToolCallSuccessInput extends BaseFinalizeInput {
@@ -293,4 +346,13 @@ export async function recordToolCallSuccess(input: RecordToolCallSuccessInput): 
       })
       .where(eq(mcpCallLog.id, input.toolCallId));
   }
+  await appendHarnessEventForToolCallSafe({
+    toolCallId: input.toolCallId,
+    eventType: "tool.completed",
+    payload: {
+      status: "success",
+      latencyMs: input.latencyMs,
+      responseKeys: Object.keys(input.responsePayload).slice(0, 40),
+    },
+  });
 }

@@ -18,6 +18,7 @@ import {
   uninstallHarnessPackage,
   verifyHarnessPackage,
 } from "../runtime/harness/package-manager";
+import { builtinFinancialProfiles } from "../runtime/harness/system-profiles";
 
 /**
  * Package-management API for declarative Harness capabilities.
@@ -70,15 +71,44 @@ harnessRouter.get("/profiles", async (c) => {
     data: {
       activeProfileIds: state.activeProfileIds,
       activation: getHarnessProfileActivation(),
-      available: state.packages.flatMap((pkg) =>
-        pkg.profiles.map((profile) => ({
+      available: [
+        ...builtinFinancialProfiles.map((profile) => ({
           id: profile.id,
           title: profile.title,
-          packageId: pkg.id,
-          packageVersion: pkg.version,
+          description: profile.description,
+          source: "system" as const,
+          packageId: "builtin:financial",
+          packageVersion: "1.0.0",
           resolverAllowlisted: resolverAllowlist.has(profile.id),
-        }))
-      ),
+          parameters: Object.entries(profile.parameters ?? {}).map(([id, parameter]) => ({
+            id,
+            type: parameter.type,
+            title: parameter.title,
+            description: parameter.description,
+            ...(parameter.default !== undefined ? { default: parameter.default } : {}),
+            ...(parameter.values ? { values: [...parameter.values] } : {}),
+          })),
+        })),
+        ...state.packages.flatMap((pkg) =>
+          pkg.profiles.map((profile) => ({
+            id: profile.id,
+            title: profile.title,
+            description: profile.description,
+            source: "package" as const,
+            packageId: pkg.id,
+            packageVersion: pkg.version,
+            resolverAllowlisted: resolverAllowlist.has(profile.id),
+            parameters: Object.entries(profile.parameters ?? {}).map(([id, parameter]) => ({
+              id,
+              type: parameter.type,
+              title: parameter.title,
+              description: parameter.description,
+              ...(parameter.default !== undefined ? { default: parameter.default } : {}),
+              ...(parameter.values ? { values: [...parameter.values] } : {}),
+            })),
+          }))
+        ),
+      ],
       rejected: state.rejected,
     },
   });

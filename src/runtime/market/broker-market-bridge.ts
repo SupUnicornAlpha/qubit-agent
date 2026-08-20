@@ -11,12 +11,14 @@ import type { MarketCode } from "./resolve-ticker-market";
 export const BROKER_MARKET_BRIDGE_SOURCE_IDS = [
   "futu_bridge",
   "ib_bridge",
+  "alpaca_bridge",
+  "qmt_bridge",
   "supermind_bridge",
 ] as const;
 
 export type BrokerMarketBridgeSourceId = (typeof BROKER_MARKET_BRIDGE_SOURCE_IDS)[number];
 
-export type BrokerMarketBridgeId = "futu" | "ib" | "supermind";
+export type BrokerMarketBridgeId = "futu" | "ib" | "alpaca" | "qmt" | "supermind";
 
 export interface BrokerMarketBridgeDescriptor {
   id: BrokerMarketBridgeId;
@@ -28,7 +30,7 @@ export interface BrokerMarketBridgeDescriptor {
   /** Env keys checked in order; first non-empty wins. */
   envKeys: string[];
   /** upstreamFamily for quality / mirror metadata. */
-  upstreamFamily: "futu" | "ib" | "supermind";
+  upstreamFamily: "futu" | "ib" | "alpaca" | "qmt" | "supermind";
 }
 
 const BUILTIN: BrokerMarketBridgeDescriptor[] = [
@@ -49,6 +51,24 @@ const BUILTIN: BrokerMarketBridgeDescriptor[] = [
     markets: ["US", "HK", "FUTURES", "OPTION"],
     envKeys: ["QUBIT_IB_MARKET_WS_URL", "QUBIT_BROKER_MARKET_WS_URL_IB"],
     upstreamFamily: "ib",
+  },
+  {
+    id: "alpaca",
+    sourceId: "alpaca_bridge",
+    name: "Alpaca Market Data Bridge",
+    vendor: "Alpaca",
+    markets: ["US", "OPTION"],
+    envKeys: ["QUBIT_ALPACA_MARKET_WS_URL", "QUBIT_BROKER_MARKET_WS_URL_ALPACA"],
+    upstreamFamily: "alpaca",
+  },
+  {
+    id: "qmt",
+    sourceId: "qmt_bridge",
+    name: "QMT / xtquant Market Bridge",
+    vendor: "迅投 QMT（由券商开通）",
+    markets: ["CN"],
+    envKeys: ["QUBIT_QMT_MARKET_WS_URL", "QUBIT_BROKER_MARKET_WS_URL_QMT"],
+    upstreamFamily: "qmt",
   },
   {
     id: "supermind",
@@ -204,7 +224,11 @@ export function selectBrokerMarketBridge(input: {
   const market = String(input.market || "").toUpperCase();
   const candidates = [...registry.values()].filter((d) => d.markets.some((m) => m === market));
   const order: BrokerMarketBridgeId[] =
-    market === "US" ? ["ib", "futu", "supermind"] : ["futu", "supermind", "ib"];
+    market === "US" || market === "OPTION"
+      ? ["ib", "alpaca", "futu", "supermind", "qmt"]
+      : market === "CN"
+        ? ["qmt", "futu", "supermind", "ib", "alpaca"]
+        : ["futu", "ib", "alpaca", "supermind", "qmt"];
 
   const scored: Array<{
     desc: BrokerMarketBridgeDescriptor;

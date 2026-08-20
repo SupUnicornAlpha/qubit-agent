@@ -318,41 +318,42 @@ class HeartbeatStreamBus {
         try {
           this.safeEnqueue(controller, this.encoder.encode(": stream-open\n\n"));
 
-          /** 立即推一条 snapshot：让前端不用等第一个 4s tick */
-          if (state.lastPayload) {
-            this.safeEnqueue(controller, this.encodeEvent("heartbeat", state.lastPayload));
-          } else {
-            const initial = await computeWorkflowHeartbeat(workflowRunId);
-            if (initial.kind === "ok") {
-              state.lastPayload = initial.snapshot;
-              this.safeEnqueue(controller, this.encodeEvent("heartbeat", initial.snapshot));
-              if (isWorkflowTerminalStatus(initial.snapshot.status)) {
-                this.safeEnqueue(
-                  controller,
-                  this.encodeEvent("heartbeat_end", {
-                    workflowRunId,
-                    status: initial.snapshot.status,
-                  })
-                );
-                /** 终态 workflow：单条快照就够了，不再开 timer，下面延迟关闭 */
-                state.controllers.delete(controller);
-                this.safeClose(controller);
-                if (state.controllers.size === 0) this.streamsByRun.delete(workflowRunId);
-                return;
-              }
-            } else {
+          /**
+           * 每次连接都即时重新计算，而不是复用上一订阅者的 lastPayload。
+           * 后者最多会保留一个 tick（4 秒）的旧 running 快照；正好在前端热更新/重连
+           * 后会把“已停止”误报为运行中。lastPayload 仍用于诊断与 tick 缓存，但不作为
+           * 新订阅的权威首帧。
+           */
+          const initial = await computeWorkflowHeartbeat(workflowRunId);
+          if (initial.kind === "ok") {
+            state.lastPayload = initial.snapshot;
+            this.safeEnqueue(controller, this.encodeEvent("heartbeat", initial.snapshot));
+            if (isWorkflowTerminalStatus(initial.snapshot.status)) {
               this.safeEnqueue(
                 controller,
-                this.encodeEvent("heartbeat_error", {
+                this.encodeEvent("heartbeat_end", {
                   workflowRunId,
-                  error: "workflow_not_found",
+                  status: initial.snapshot.status,
                 })
               );
+              /** 终态 workflow：单条快照就够了，不再开 timer，下面延迟关闭 */
               state.controllers.delete(controller);
               this.safeClose(controller);
               if (state.controllers.size === 0) this.streamsByRun.delete(workflowRunId);
               return;
             }
+          } else {
+            this.safeEnqueue(
+              controller,
+              this.encodeEvent("heartbeat_error", {
+                workflowRunId,
+                error: "workflow_not_found",
+              })
+            );
+            state.controllers.delete(controller);
+            this.safeClose(controller);
+            if (state.controllers.size === 0) this.streamsByRun.delete(workflowRunId);
+            return;
           }
         } catch (err) {
           console.error("[heartbeat-stream] initial push failed", err);

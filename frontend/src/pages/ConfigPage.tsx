@@ -1,9 +1,64 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FC } from "react";
-import { getAgentsConfig, getDefaultWorkspace, getModelConfig, getBuiltinConnectorConfig, getWindSessionStatus, loginWindSession, reconnectWindSession, listMcpBindings, listMcpMarketCatalog, listMcpProjectInstalls, listMcpSources, listMcpServers, appendAgentDraftSkills, deleteSkillMarketInstall, getSkillMarketStatus, installManualSkill, installSkillFromMarket, listSkillMarketInstalls, listAgentDefinitions, refreshSkillMarketRegistry, searchSkillMarket, getAgentDefinitionMemoryStats, getAgentDefinitionPack, listProjects, reloadAgents, saveModelConfig, testEmbeddingModelConfig, saveBuiltinConnectorConfig, testMcpCall, testMcpProjectInstall, upsertMcpBinding, upsertMcpSource, upsertMcpServer, installMcpMarket, syncMcpSource, uninstallMcpProjectInstall } from "../api/backend";
-import type { AgentDefinitionBundle, AgentDefinitionRecord, AgentMemoryStatsResponse, AgentPackResponse, McpServerConfigRecord, McpCatalogItemRecord, McpProjectInstallRecord, McpRegistrySourceRecord, McpToolBindingRecord, OpenSkillMarketEntryDto, SkillMarketInstallRecord, SkillMarketStatusDto, BuiltinConnectorConfig } from "../api/types";
+import {
+  getAgentsConfig,
+  getDefaultWorkspace,
+  getModelConfig,
+  getBuiltinConnectorConfig,
+  getWindSessionStatus,
+  loginWindSession,
+  reconnectWindSession,
+  listMcpBindings,
+  listMcpMarketCatalog,
+  listMcpProjectInstalls,
+  listMcpSources,
+  listMcpServers,
+  appendAgentDraftSkills,
+  deleteSkillMarketInstall,
+  getSkillMarketStatus,
+  installManualSkill,
+  installSkillFromMarket,
+  listSkillMarketInstalls,
+  listAgentDefinitions,
+  refreshSkillMarketRegistry,
+  searchSkillMarket,
+  getAgentDefinitionMemoryStats,
+  getAgentDefinitionPack,
+  listProjects,
+  reloadAgents,
+  saveModelConfig,
+  testEmbeddingModelConfig,
+  saveBuiltinConnectorConfig,
+  testMcpCall,
+  testMcpProjectInstall,
+  upsertMcpBinding,
+  upsertMcpSource,
+  upsertMcpServer,
+  installMcpMarket,
+  syncMcpSource,
+  uninstallMcpProjectInstall,
+} from "../api/backend";
+import type {
+  AgentDefinitionBundle,
+  AgentDefinitionRecord,
+  AgentMemoryStatsResponse,
+  AgentPackResponse,
+  McpServerConfigRecord,
+  McpCatalogItemRecord,
+  McpProjectInstallRecord,
+  McpRegistrySourceRecord,
+  McpToolBindingRecord,
+  OpenSkillMarketEntryDto,
+  SkillMarketInstallRecord,
+  SkillMarketStatusDto,
+  BuiltinConnectorConfig,
+} from "../api/types";
 import { useAppStore } from "../store";
 import { agentDisplayLabel } from "../lib/agentDisplay";
-import { ConfigAgentPanel, parseAgentMcpServerNames, type AgentConfigUiTab } from "../components/config/ConfigAgentPanel";
+import {
+  ConfigAgentPanel,
+  parseAgentMcpServerNames,
+  type AgentConfigUiTab,
+} from "../components/config/ConfigAgentPanel";
 import { resolveExecutionKind, type ExecutionKind } from "../lib/executionKind";
 import { IntegrationCenterPanel } from "../components/config/IntegrationCenterPanel";
 import { MarketDataSourcesPanel } from "../components/config/MarketDataSourcesPanel";
@@ -40,7 +95,9 @@ export const ConfigPanel: FC = () => {
   const [fileAgentMd, setFileAgentMd] = useState("");
   const [fileUserMd, setFileUserMd] = useState("");
   const [fileMemoryMd, setFileMemoryMd] = useState("");
-  const [draftPromptMode, setDraftPromptMode] = useState<"db_primary" | "file_primary" | "merged">("db_primary");
+  const [draftPromptMode, setDraftPromptMode] = useState<"db_primary" | "file_primary" | "merged">(
+    "db_primary"
+  );
   const [draftMemoryNamespace, setDraftMemoryNamespace] = useState("");
   const [draftConfigRootUri, setDraftConfigRootUri] = useState("");
   const [draftMcpServerNames, setDraftMcpServerNames] = useState<string[]>([]);
@@ -100,7 +157,9 @@ export const ConfigPanel: FC = () => {
     | "synthetic"
   >("auto");
   const [cryptoUseTestnet, setCryptoUseTestnet] = useState(false);
-  const [marketDataNetworkMode, setMarketDataNetworkMode] = useState<"auto" | "direct" | "proxy">("auto");
+  const [marketDataNetworkMode, setMarketDataNetworkMode] = useState<"auto" | "direct" | "proxy">(
+    "auto"
+  );
   const [marketDataProxyUrl, setMarketDataProxyUrl] = useState("");
   const [newsApiBaseUrl, setNewsApiBaseUrl] = useState("");
   const [newsApiKey, setNewsApiKey] = useState("");
@@ -150,7 +209,9 @@ export const ConfigPanel: FC = () => {
   const [catalogServerName, setCatalogServerName] = useState("");
   const [selectedMcpServer, setSelectedMcpServer] = useState("");
   const [newMcpServerName, setNewMcpServerName] = useState("");
-  const [newMcpServerTransport, setNewMcpServerTransport] = useState<"stdio" | "http" | "ws">("stdio");
+  const [newMcpServerTransport, setNewMcpServerTransport] = useState<"stdio" | "http" | "ws">(
+    "stdio"
+  );
   const [newMcpServerCommand, setNewMcpServerCommand] = useState("");
   const [newMcpServerUrl, setNewMcpServerUrl] = useState("");
   const [mcpToolName, setMcpToolName] = useState("");
@@ -161,7 +222,10 @@ export const ConfigPanel: FC = () => {
   const [mcpAdvancedJsonDraft, setMcpAdvancedJsonDraft] = useState("");
   const [mcpAdvancedJsonError, setMcpAdvancedJsonError] = useState("");
   const [mcpProbeByServer, setMcpProbeByServer] = useState<
-    Record<string, { status: "idle" | "checking" | "ok" | "error"; message?: string; checkedAt?: string }>
+    Record<
+      string,
+      { status: "idle" | "checking" | "ok" | "error"; message?: string; checkedAt?: string }
+    >
   >({});
   // 定时任务 / 集成 / IM：状态由各自的子面板（ScheduledJobsPanel / IntegrationCenterPanel）自管，
   // 这里只透传 workspace/project 上下文。
@@ -186,23 +250,23 @@ export const ConfigPanel: FC = () => {
     const kds = d["klinesDataSource"];
     setKlinesDataSource(
       kds === "tushare_daily" ||
-      kds === "yahoo_chart" ||
-      kds === "eastmoney" ||
-      kds === "akshare" ||
-      kds === "akshare_tencent" ||
-      kds === "yfinance" ||
-      kds === "binance_crypto" ||
-      kds === "wind" ||
-      kds === "futu_bridge" ||
-      kds === "futu" ||
-      kds === "ib_bridge" ||
-      kds === "ib" ||
-      kds === "supermind_bridge" ||
-      kds === "supermind" ||
-      kds === "ifind" ||
-      kds === "ths" ||
-      kds === "synthetic" ||
-      kds === "auto"
+        kds === "yahoo_chart" ||
+        kds === "eastmoney" ||
+        kds === "akshare" ||
+        kds === "akshare_tencent" ||
+        kds === "yfinance" ||
+        kds === "binance_crypto" ||
+        kds === "wind" ||
+        kds === "futu_bridge" ||
+        kds === "futu" ||
+        kds === "ib_bridge" ||
+        kds === "ib" ||
+        kds === "supermind_bridge" ||
+        kds === "supermind" ||
+        kds === "ifind" ||
+        kds === "ths" ||
+        kds === "synthetic" ||
+        kds === "auto"
         ? kds === "futu"
           ? "futu_bridge"
           : kds === "ib"
@@ -215,7 +279,9 @@ export const ConfigPanel: FC = () => {
     const testnet = d["cryptoUseTestnet"];
     setCryptoUseTestnet(testnet === true || testnet === "true");
     const networkMode = d["marketDataNetworkMode"];
-    setMarketDataNetworkMode(networkMode === "direct" || networkMode === "proxy" ? networkMode : "auto");
+    setMarketDataNetworkMode(
+      networkMode === "direct" || networkMode === "proxy" ? networkMode : "auto"
+    );
     setMarketDataProxyUrl(typeof d.marketDataProxyUrl === "string" ? d.marketDataProxyUrl : "");
     setNewsApiBaseUrl(typeof n.newsApiBaseUrl === "string" ? n.newsApiBaseUrl : "");
     setNewsApiKey(typeof n.newsApiKey === "string" ? n.newsApiKey : "");
@@ -290,7 +356,9 @@ export const ConfigPanel: FC = () => {
       preferAgentDefinitionIdRef.current = null;
       const resolvedId =
         (preferred && list.some((x) => x.definition.id === preferred) ? preferred : null) ??
-        (selectedDefinitionId && list.some((x) => x.definition.id === selectedDefinitionId) ? selectedDefinitionId : null) ??
+        (selectedDefinitionId && list.some((x) => x.definition.id === selectedDefinitionId)
+          ? selectedDefinitionId
+          : null) ??
         list[0]!.definition.id;
       const b = list.find((x) => x.definition.id === resolvedId) ?? list[0]!;
       const selectionChanged = resolvedId !== selectedDefinitionId;
@@ -299,10 +367,14 @@ export const ConfigPanel: FC = () => {
         prevAgentDefId.current = "";
         setDraftPrompt(b.draft?.systemPrompt ?? b.definition.systemPrompt);
         setDraftSoul(b.profile?.soulFileRef ?? "");
-        setDraftPromptMode((b.profile?.promptMode as "db_primary" | "file_primary" | "merged") ?? "db_primary");
+        setDraftPromptMode(
+          (b.profile?.promptMode as "db_primary" | "file_primary" | "merged") ?? "db_primary"
+        );
         setDraftMemoryNamespace(b.profile?.memoryNamespace ?? "");
         setDraftConfigRootUri(b.profile?.configRootUri ?? "");
-        setDraftMcpServerNames(parseAgentMcpServerNames(b.draft?.mcpServersJson ?? b.definition.mcpServersJson));
+        setDraftMcpServerNames(
+          parseAgentMcpServerNames(b.draft?.mcpServersJson ?? b.definition.mcpServersJson)
+        );
         setDraftPromptTemplateRef(b.profile?.promptTemplateRef ?? "");
         setDraftLlmProvider(b.draft?.llmProvider ?? b.definition.llmProvider ?? "");
         setDraftExecutionKind(
@@ -472,7 +544,9 @@ export const ConfigPanel: FC = () => {
   useEffect(() => {
     if (!definitions.length) return;
     setSkillAppendDefinitionId((prev) =>
-      prev && definitions.some((b) => b.definition.id === prev) ? prev : definitions[0]!.definition.id
+      prev && definitions.some((b) => b.definition.id === prev)
+        ? prev
+        : definitions[0]!.definition.id
     );
   }, [definitions]);
 
@@ -483,7 +557,10 @@ export const ConfigPanel: FC = () => {
 
   useEffect(() => {
     if (!selectedDefinitionId) return;
-    void Promise.all([getAgentDefinitionPack(selectedDefinitionId), getAgentDefinitionMemoryStats(selectedDefinitionId)])
+    void Promise.all([
+      getAgentDefinitionPack(selectedDefinitionId),
+      getAgentDefinitionMemoryStats(selectedDefinitionId),
+    ])
       .then(([pack, mem]) => {
         setAgentPack(pack);
         setAgentMemoryStats(mem);
@@ -510,10 +587,14 @@ export const ConfigPanel: FC = () => {
     if (!b) return;
     setDraftPrompt(b.draft?.systemPrompt ?? b.definition.systemPrompt);
     setDraftSoul(b.profile?.soulFileRef ?? "");
-    setDraftPromptMode((b.profile?.promptMode as "db_primary" | "file_primary" | "merged") ?? "db_primary");
+    setDraftPromptMode(
+      (b.profile?.promptMode as "db_primary" | "file_primary" | "merged") ?? "db_primary"
+    );
     setDraftMemoryNamespace(b.profile?.memoryNamespace ?? "");
     setDraftConfigRootUri(b.profile?.configRootUri ?? "");
-    setDraftMcpServerNames(parseAgentMcpServerNames(b.draft?.mcpServersJson ?? b.definition.mcpServersJson));
+    setDraftMcpServerNames(
+      parseAgentMcpServerNames(b.draft?.mcpServersJson ?? b.definition.mcpServersJson)
+    );
     setDraftDisplayName(b.profile?.displayName?.trim() || agentDisplayLabel(b));
     setDraftDescription(b.profile?.description ?? "");
     setDraftExecutionKind(
@@ -529,7 +610,9 @@ export const ConfigPanel: FC = () => {
     setDraftTools(parseStrList(b.draft?.toolsJson ?? b.definition.toolsJson));
     setDraftMaxIterations(b.draft?.maxIterations ?? b.definition.maxIterations ?? 20);
     setDraftSkills(parseStrList(b.draft?.skillsJson ?? b.definition.skillsJson));
-    setDraftSubscriptions(parseStrList(b.draft?.subscriptionsJson ?? b.definition.subscriptionsJson));
+    setDraftSubscriptions(
+      parseStrList(b.draft?.subscriptionsJson ?? b.definition.subscriptionsJson)
+    );
     setDraftPromptTemplateRef(b.profile?.promptTemplateRef ?? "");
     setDraftLlmProvider(b.draft?.llmProvider ?? b.definition.llmProvider ?? "");
   }, [selectedDefinitionId, definitions]);
@@ -611,7 +694,11 @@ export const ConfigPanel: FC = () => {
       const tools = (caps as { tools?: unknown }).tools;
       if (Array.isArray(tools)) {
         for (const item of tools) {
-          if (item && typeof item === "object" && typeof (item as { name?: unknown }).name === "string") {
+          if (
+            item &&
+            typeof item === "object" &&
+            typeof (item as { name?: unknown }).name === "string"
+          ) {
             const name = (item as { name: string }).name.trim();
             if (name && name !== "*") return name;
           }
@@ -642,7 +729,11 @@ export const ConfigPanel: FC = () => {
         ...prev,
         [key]: {
           status: "error",
-          message: !row.enabled ? "Server 已禁用" : row.transport === "stdio" ? "缺少 command" : "缺少 url",
+          message: !row.enabled
+            ? "Server 已禁用"
+            : row.transport === "stdio"
+              ? "缺少 command"
+              : "缺少 url",
           checkedAt: new Date().toISOString(),
         },
       }));
@@ -792,8 +883,11 @@ export const ConfigPanel: FC = () => {
             enabled: ben,
             timeoutMs,
             retryPolicyJson:
-              retry && typeof retry === "object" ? (retry as Record<string, unknown>) : { maxAttempts: 2, backoffMs: 300 },
-            rateLimitJson: rate && typeof rate === "object" ? (rate as Record<string, unknown>) : {},
+              retry && typeof retry === "object"
+                ? (retry as Record<string, unknown>)
+                : { maxAttempts: 2, backoffMs: 300 },
+            rateLimitJson:
+              rate && typeof rate === "object" ? (rate as Record<string, unknown>) : {},
           });
         } catch (e) {
           setMcpAdvancedJsonError(e instanceof Error ? e.message : String(e));
@@ -1000,7 +1094,9 @@ export const ConfigPanel: FC = () => {
           type="button"
           className="qb-btn-secondary"
           onClick={() =>
-            void reloadAgents().then((res) => setReloadSummary({ before: res.before, after: res.after }))
+            void reloadAgents().then((res) =>
+              setReloadSummary({ before: res.before, after: res.after })
+            )
           }
         >
           触发 reload
@@ -1018,6 +1114,7 @@ export const ConfigPanel: FC = () => {
             ["llm", "LLM"],
             ["datasources", "数据源 / 工具"],
             ["plugins", "插件"],
+            ["harness", "Harness"],
             ["mcp", "MCP"],
             ["skills", "Skills"],
             ["agent", "Agent"],
@@ -1046,8 +1143,8 @@ export const ConfigPanel: FC = () => {
           <>
             <h3 style={styles.subTitle}>默认 LLM 配置（降级模型）</h3>
             <p className="qb-config-hint">
-              此处配置的模型作为<strong>系统默认</strong>，当 Agent 未指定 provider 或
-              指定 provider 不可用时自动降级到这里。保存写入 <code>.qubit/model.json</code>。
+              此处配置的模型作为<strong>系统默认</strong>，当 Agent 未指定 provider 或 指定 provider
+              不可用时自动降级到这里。保存写入 <code>.qubit/model.json</code>。
             </p>
             <div style={styles.form}>
               <select
@@ -1055,7 +1152,14 @@ export const ConfigPanel: FC = () => {
                 value={provider}
                 onChange={(e) =>
                   setProvider(
-                    e.target.value as "openai" | "anthropic" | "ollama" | "deepseek" | "qwen" | "zhipu" | "mock"
+                    e.target.value as
+                      | "openai"
+                      | "anthropic"
+                      | "ollama"
+                      | "deepseek"
+                      | "qwen"
+                      | "zhipu"
+                      | "mock"
                   )
                 }
               >
@@ -1067,7 +1171,11 @@ export const ConfigPanel: FC = () => {
                 <option value="qwen">qwen</option>
                 <option value="zhipu">zhipu</option>
               </select>
-              <input style={styles.input} value={modelName} onChange={(e) => setModelName(e.target.value)} />
+              <input
+                style={styles.input}
+                value={modelName}
+                onChange={(e) => setModelName(e.target.value)}
+              />
               <input
                 style={styles.input}
                 type="password"
@@ -1076,7 +1184,11 @@ export const ConfigPanel: FC = () => {
                 placeholder={modelApiKeyConfigured ? "已配置；输入新值可替换" : "输入 API Key"}
                 onChange={(e) => setModelApiKey(e.target.value)}
               />
-              <input style={styles.input} value={modelBaseUrl} onChange={(e) => setModelBaseUrl(e.target.value)} />
+              <input
+                style={styles.input}
+                value={modelBaseUrl}
+                onChange={(e) => setModelBaseUrl(e.target.value)}
+              />
               <button
                 className="qb-btn-primary-brand"
                 onClick={() => {
@@ -1097,9 +1209,9 @@ export const ConfigPanel: FC = () => {
 
             <h3 style={{ ...styles.subTitle, marginTop: 24 }}>Embedding 模型（向量化）</h3>
             <p className="qb-config-hint">
-              用于 Experience / Memory 等落库前的文本向量化。默认走 OpenAI-compatible
-              Embeddings API（如 <code>text-embedding-3-small</code>）。API Key / Base URL
-              留空时复用上方默认 LLM 凭证，再回退 <code>OPENAI_API_KEY</code>。
+              用于 Experience / Memory 等落库前的文本向量化。默认走 OpenAI-compatible Embeddings
+              API（如 <code>text-embedding-3-small</code>）。API Key / Base URL 留空时复用上方默认
+              LLM 凭证，再回退 <code>OPENAI_API_KEY</code>。
             </p>
             <div style={styles.form}>
               <label
@@ -1176,9 +1288,7 @@ export const ConfigPanel: FC = () => {
                       embedding: {
                         enabled: embeddingEnabled,
                         model: embeddingModel.trim() || "text-embedding-3-small",
-                        ...(embeddingApiKey.trim()
-                          ? { apiKey: embeddingApiKey.trim() }
-                          : {}),
+                        ...(embeddingApiKey.trim() ? { apiKey: embeddingApiKey.trim() } : {}),
                         baseUrl: embeddingBaseUrl.trim() || undefined,
                         dimensions: dimParsed,
                       },
@@ -1246,8 +1356,8 @@ export const ConfigPanel: FC = () => {
 
             <h3 style={{ ...styles.subTitle, marginTop: 24 }}>多 LLM Provider（per-Agent 路由）</h3>
             <p className="qb-config-hint">
-              新增不同的模型 provider 后，可在 Agent 编辑页把指定 Agent 路由到不同模型
-              （如 def-research 用 Claude、def-orchestrator 用 GPT）。任一 provider 失败
+              新增不同的模型 provider 后，可在 Agent 编辑页把指定 Agent 路由到不同模型 （如
+              def-research 用 Claude、def-orchestrator 用 GPT）。任一 provider 失败
               会自动降级到上方的默认模型。
             </p>
             <LlmProvidersList />
@@ -1256,20 +1366,40 @@ export const ConfigPanel: FC = () => {
         {activeConfigSubPage === "datasources" ? (
           <>
             <MarketDataSourcesPanel />
-            <div style={{ height: 1, margin: "20px 0", background: "var(--qb-sidebar-border, #27272a)" }} />
+            <div
+              style={{
+                height: 1,
+                margin: "20px 0",
+                background: "var(--qb-sidebar-border, #27272a)",
+              }}
+            />
             <ToolSurfacePanel />
-            <div style={{ height: 1, margin: "20px 0", background: "var(--qb-sidebar-border, #27272a)" }} />
+            <div
+              style={{
+                height: 1,
+                margin: "20px 0",
+                background: "var(--qb-sidebar-border, #27272a)",
+              }}
+            />
             <h3 style={styles.subTitle}>连接凭证与网络（qubit-data / qubit-news）</h3>
             <p className="qb-config-hint qb-config-hint--tight">
               凭证写入本机数据库，启动与保存后注入连接器。上方「行情数据源控制面」决定启用/优先级与
               Prime 档位；此处配置 token、Wind、代理与新闻 API。
-              <br />
-              K 线默认路由 <code style={{ fontSize: 11 }}>klinesDataSource=auto</code>：历史
+              <br />K 线默认路由 <code style={{ fontSize: 11 }}>klinesDataSource=auto</code>：历史
               OHLCV 按健康与凭证排序（Wind / <strong>同花顺 iFinD</strong> / Futu / IB / 东方财富 /
-              Binance / Tushare / Yahoo）。券商桥同时可提供实时 L2：已打通且健康时订阅行情会自动优先选用。
+              Binance / Tushare / Yahoo）。券商桥同时可提供实时
+              L2：已打通且健康时订阅行情会自动优先选用。
             </p>
             <div style={{ ...styles.form, flexWrap: "wrap" }}>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--qb-body-fg)" }}>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  fontSize: 13,
+                  color: "var(--qb-body-fg)",
+                }}
+              >
                 <span style={{ whiteSpace: "nowrap" }}>K 线数据源</span>
                 <select
                   style={styles.select}
@@ -1301,18 +1431,32 @@ export const ConfigPanel: FC = () => {
                   <option value="supermind_bridge">
                     同花顺 iFinD（历史 K 线；需 iFinDPy；SuperMind 回测 history 不可外置）
                   </option>
-                  <option value="futu_bridge">Futu OpenD（历史 K 线 + 实时桥，需 OpenD + futu-api）</option>
+                  <option value="futu_bridge">
+                    Futu OpenD（历史 K 线 + 实时桥，需 OpenD + futu-api）
+                  </option>
                   <option value="ib_bridge">IB Gateway/TWS（历史 K 线，需 ib_insync）</option>
                   <option value="binance_crypto">Binance（加密货币 K 线 / 报价，公开 API）</option>
-                  <option value="akshare">AKShare（A 股，需 Python: pip install akshare pandas）</option>
+                  <option value="akshare">
+                    AKShare（A 股，需 Python: pip install akshare pandas）
+                  </option>
                   <option value="akshare_tencent">腾讯证券 / AKShare（日线独立备用源）</option>
                   <option value="yahoo_chart">Yahoo Finance Chart（TS 直连，免依赖）</option>
-                  <option value="yfinance">yfinance（Python，含分红/财报/资产信息；pip install yfinance pandas）</option>
+                  <option value="yfinance">
+                    yfinance（Python，含分红/财报/资产信息；pip install yfinance pandas）
+                  </option>
                   <option value="tushare_daily">Tushare 日线（需 token）</option>
                   <option value="synthetic">不拉外源（K 线为空，用于禁用行情）</option>
                 </select>
               </label>
-              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--qb-body-fg)" }}>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  fontSize: 13,
+                  color: "var(--qb-body-fg)",
+                }}
+              >
                 <input
                   type="checkbox"
                   checked={cryptoUseTestnet}
@@ -1328,12 +1472,22 @@ export const ConfigPanel: FC = () => {
                 onChange={(e) => setTushareToken(e.target.value)}
                 placeholder="Tushare token（仅在选择 Tushare 或自动且有 token 时使用）"
               />
-              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--qb-body-fg)" }}>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  fontSize: 13,
+                  color: "var(--qb-body-fg)",
+                }}
+              >
                 <span style={{ whiteSpace: "nowrap" }}>行情网络</span>
                 <select
                   style={styles.select}
                   value={marketDataNetworkMode}
-                  onChange={(e) => setMarketDataNetworkMode(e.target.value as "auto" | "direct" | "proxy")}
+                  onChange={(e) =>
+                    setMarketDataNetworkMode(e.target.value as "auto" | "direct" | "proxy")
+                  }
                 >
                   <option value="auto">自动（配置代理 → 环境代理 → 直连）</option>
                   <option value="direct">强制直连</option>
@@ -1347,7 +1501,7 @@ export const ConfigPanel: FC = () => {
                 placeholder="代理 URL，例如 http://127.0.0.1:7896"
               />
             </div>
-            {(klinesDataSource === "wind" || klinesDataSource === "auto") ? (
+            {klinesDataSource === "wind" || klinesDataSource === "auto" ? (
               <div style={{ ...styles.form, flexWrap: "wrap", alignItems: "flex-end" }}>
                 <input
                   style={{ ...styles.input, minWidth: 160 }}
@@ -1374,7 +1528,15 @@ export const ConfigPanel: FC = () => {
                   placeholder="等待秒"
                   title="w.start 等待 Wind 终端响应的最长时间（秒）"
                 />
-                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--qb-body-fg)" }}>
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    fontSize: 13,
+                    color: "var(--qb-body-fg)",
+                  }}
+                >
                   <input
                     type="checkbox"
                     checked={windAutoLogin}
@@ -1450,18 +1612,27 @@ export const ConfigPanel: FC = () => {
                   重新连接
                 </button>
                 {windSession ? (
-                  <span style={{ fontSize: 12, color: windSession.connected ? "var(--qb-success-fg, #0a0)" : "var(--qb-warn-fg, #a60)" }}>
+                  <span
+                    style={{
+                      fontSize: 12,
+                      color: windSession.connected
+                        ? "var(--qb-success-fg, #0a0)"
+                        : "var(--qb-warn-fg, #a60)",
+                    }}
+                  >
                     {windSession.connected
                       ? `已连接${windSession.userId ? ` · ${windSession.userId}` : ""}`
                       : `未连接 · ${windSession.message}`}
                   </span>
                 ) : null}
                 {windSessionError ? (
-                  <span style={{ fontSize: 12, color: "var(--qb-danger-fg, #c00)" }}>{windSessionError}</span>
+                  <span style={{ fontSize: 12, color: "var(--qb-danger-fg, #c00)" }}>
+                    {windSessionError}
+                  </span>
                 ) : null}
               </div>
             ) : null}
-            {(klinesDataSource === "supermind_bridge" || klinesDataSource === "auto") ? (
+            {klinesDataSource === "supermind_bridge" || klinesDataSource === "auto" ? (
               <div style={{ ...styles.form, flexWrap: "wrap", alignItems: "flex-end" }}>
                 <input
                   style={{ ...styles.input, minWidth: 160 }}
@@ -1511,7 +1682,15 @@ export const ConfigPanel: FC = () => {
                 onChange={(e) => setNewsTimeoutMs(Number(e.target.value))}
                 placeholder="超时 ms"
               />
-              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--qb-body-fg)" }}>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  fontSize: 13,
+                  color: "var(--qb-body-fg)",
+                }}
+              >
                 <input
                   type="checkbox"
                   checked={newsSyntheticWhenEmpty}
@@ -1558,11 +1737,20 @@ export const ConfigPanel: FC = () => {
             onOpenSkills={() => setConfigSubPage("skills")}
           />
         ) : null}
+        {activeConfigSubPage === "harness" ? (
+          <PluginsPanel
+            projectId={currentProjectId}
+            view="harness"
+            onOpenMcp={() => setConfigSubPage("mcp")}
+            onOpenSkills={() => setConfigSubPage("skills")}
+          />
+        ) : null}
         {activeConfigSubPage === "mcp" ? (
           <>
             <h3 style={styles.subTitle}>已注册的 MCP</h3>
             <p className="qb-config-hint">
-              保存并启用 Server 即可使用；默认自动覆盖全部工具（通配策略）。点击卡片打开<strong>高级 JSON 编辑</strong>，打开时会尝试探测连通性。
+              保存并启用 Server 即可使用；默认自动覆盖全部工具（通配策略）。点击卡片打开
+              <strong>高级 JSON 编辑</strong>，打开时会尝试探测连通性。
             </p>
             <div style={styles.meta}>
               <span>Server: {mcpServers.length}</span>
@@ -1571,26 +1759,40 @@ export const ConfigPanel: FC = () => {
             </div>
             <div style={styles.grid}>
               {mcpServers.length === 0 ? (
-                <div style={{ ...styles.card, color: "var(--qb-main-meta)", fontSize: 13 }}>暂无 MCP，可从下方市场安装或使用「快速添加」。</div>
+                <div style={{ ...styles.card, color: "var(--qb-main-meta)", fontSize: 13 }}>
+                  暂无 MCP，可从下方市场安装或使用「快速添加」。
+                </div>
               ) : null}
               {mcpServers.map((row) => {
                 const probe = mcpProbeByServer[row.name];
                 const specOk = mcpConnectionSpecOk(row);
                 const bindCount = mcpServerBindingCount.get(row.name) ?? 0;
-                const shortMsg = (m?: string) => (!m ? "" : m.length > 56 ? `${m.slice(0, 56)}…` : m);
-                const cfgPill =
-                  !row.enabled
-                    ? { bg: "var(--qb-pill-disabled-bg)", color: "var(--qb-pill-disabled-fg)", text: "配置：已禁用" }
-                    : !specOk
-                      ? {
-                          bg: "var(--qb-pill-warn-bg)",
-                          color: "var(--qb-pill-warn-fg)",
-                          text: row.transport === "stdio" ? "配置：缺少 command" : "配置：缺少 url",
-                        }
-                      : { bg: "var(--qb-pill-ok-bg)", color: "var(--qb-pill-ok-fg)", text: "配置：就绪" };
+                const shortMsg = (m?: string) =>
+                  !m ? "" : m.length > 56 ? `${m.slice(0, 56)}…` : m;
+                const cfgPill = !row.enabled
+                  ? {
+                      bg: "var(--qb-pill-disabled-bg)",
+                      color: "var(--qb-pill-disabled-fg)",
+                      text: "配置：已禁用",
+                    }
+                  : !specOk
+                    ? {
+                        bg: "var(--qb-pill-warn-bg)",
+                        color: "var(--qb-pill-warn-fg)",
+                        text: row.transport === "stdio" ? "配置：缺少 command" : "配置：缺少 url",
+                      }
+                    : {
+                        bg: "var(--qb-pill-ok-bg)",
+                        color: "var(--qb-pill-ok-fg)",
+                        text: "配置：就绪",
+                      };
                 const reachPill =
                   probe?.status === "checking"
-                    ? { bg: "var(--qb-pill-info-bg)", color: "var(--qb-pill-info-fg)", text: "连通：检测中…" }
+                    ? {
+                        bg: "var(--qb-pill-info-bg)",
+                        color: "var(--qb-pill-info-fg)",
+                        text: "连通：检测中…",
+                      }
                     : probe?.status === "ok"
                       ? {
                           bg: "var(--qb-pill-success-bg)",
@@ -1604,8 +1806,16 @@ export const ConfigPanel: FC = () => {
                             text: `连通：失败${probe.message ? ` · ${shortMsg(probe.message)}` : ""}`,
                           }
                         : specOk
-                          ? { bg: "var(--qb-pill-muted-bg)", color: "var(--qb-pill-muted-fg)", text: "连通：打开卡片以检测" }
-                          : { bg: "var(--qb-pill-muted-bg)", color: "var(--qb-pill-muted-fg)", text: "连通：待检测" };
+                          ? {
+                              bg: "var(--qb-pill-muted-bg)",
+                              color: "var(--qb-pill-muted-fg)",
+                              text: "连通：打开卡片以检测",
+                            }
+                          : {
+                              bg: "var(--qb-pill-muted-bg)",
+                              color: "var(--qb-pill-muted-fg)",
+                              text: "连通：待检测",
+                            };
                 const dotColor =
                   probe?.status === "checking"
                     ? "#60a5fa"
@@ -1637,7 +1847,9 @@ export const ConfigPanel: FC = () => {
                           ...styles.mcpStatusDot,
                           background: dotColor,
                           boxShadow:
-                            probe?.status === "checking" ? "0 0 0 3px rgba(96,165,250,0.35)" : undefined,
+                            probe?.status === "checking"
+                              ? "0 0 0 3px rgba(96,165,250,0.35)"
+                              : undefined,
                         }}
                         aria-hidden
                       />
@@ -1653,8 +1865,22 @@ export const ConfigPanel: FC = () => {
                       </div>
                     </div>
                     <div style={styles.mcpCardPillRow}>
-                      <span style={{ ...styles.mcpCardPill, background: cfgPill.bg, color: cfgPill.color }}>{cfgPill.text}</span>
-                      <span style={{ ...styles.mcpCardPill, background: reachPill.bg, color: reachPill.color }}>
+                      <span
+                        style={{
+                          ...styles.mcpCardPill,
+                          background: cfgPill.bg,
+                          color: cfgPill.color,
+                        }}
+                      >
+                        {cfgPill.text}
+                      </span>
+                      <span
+                        style={{
+                          ...styles.mcpCardPill,
+                          background: reachPill.bg,
+                          color: reachPill.color,
+                        }}
+                      >
                         {reachPill.text}
                       </span>
                     </div>
@@ -1675,7 +1901,9 @@ export const ConfigPanel: FC = () => {
                 <select
                   style={styles.select}
                   value={newMcpServerTransport}
-                  onChange={(e) => setNewMcpServerTransport(e.target.value as "stdio" | "http" | "ws")}
+                  onChange={(e) =>
+                    setNewMcpServerTransport(e.target.value as "stdio" | "http" | "ws")
+                  }
                 >
                   <option value="stdio">stdio</option>
                   <option value="http">http</option>
@@ -1693,16 +1921,24 @@ export const ConfigPanel: FC = () => {
                   onChange={(e) => setNewMcpServerUrl(e.target.value)}
                   placeholder="url (http/ws)"
                 />
-                <button className="qb-btn-secondary" type="button" onClick={() => void upsertMcpServerNow()}>
+                <button
+                  className="qb-btn-secondary"
+                  type="button"
+                  onClick={() => void upsertMcpServerNow()}
+                >
                   保存 Server
                 </button>
               </div>
             </details>
 
             <details className="qb-mcp-details" style={styles.mcpDetails}>
-              <summary style={styles.mcpDetailsSummary}>高级：超时 / 重试策略与快速测试（可选）</summary>
+              <summary style={styles.mcpDetailsSummary}>
+                高级：超时 / 重试策略与快速测试（可选）
+              </summary>
               <p className="qb-config-hint" style={{ marginTop: 0 }}>
-                保存 Server 已自动启用全部工具。此处仅在需要按工具覆盖 timeout、或手动探测某个工具时使用；tool name 填 <code>*</code> 表示整 server 默认策略。
+                保存 Server 已自动启用全部工具。此处仅在需要按工具覆盖
+                timeout、或手动探测某个工具时使用；tool name 填 <code>*</code> 表示整 server
+                默认策略。
               </p>
               <div style={{ ...styles.form, paddingBottom: 10, flexWrap: "wrap" }}>
                 <select
@@ -1729,10 +1965,18 @@ export const ConfigPanel: FC = () => {
                   onChange={(e) => setMcpTimeoutMs(Number(e.target.value))}
                   placeholder="timeout ms"
                 />
-                <button className="qb-btn-secondary" type="button" onClick={() => void saveMcpBindingNow()}>
+                <button
+                  className="qb-btn-secondary"
+                  type="button"
+                  onClick={() => void saveMcpBindingNow()}
+                >
                   保存策略
                 </button>
-                <button className="qb-btn-primary-brand" type="button" onClick={() => void testMcpNow()}>
+                <button
+                  className="qb-btn-primary-brand"
+                  type="button"
+                  onClick={() => void testMcpNow()}
+                >
                   测试 MCP
                 </button>
               </div>
@@ -1740,7 +1984,10 @@ export const ConfigPanel: FC = () => {
 
             <h3 style={{ ...styles.subTitle, marginTop: 18 }}>MCP 市场</h3>
             <p className="qb-config-hint">
-              来自开放注册表的条目；卡片展示目录中的<strong>能力声明</strong>（capabilities、默认工具、启动命令摘要）。市场列表<strong>分页加载</strong>（每页 {MCP_MARKET_PAGE_SIZE} 条），避免一次渲染数千卡片卡顿。「同步目录」从官方 Registry 拉取元数据（可能较慢）；「搜索/刷新」仅查询本地已同步目录。
+              来自开放注册表的条目；卡片展示目录中的<strong>能力声明</strong>
+              （capabilities、默认工具、启动命令摘要）。市场列表<strong>分页加载</strong>（每页{" "}
+              {MCP_MARKET_PAGE_SIZE} 条），避免一次渲染数千卡片卡顿。「同步目录」从官方 Registry
+              拉取元数据（可能较慢）；「搜索/刷新」仅查询本地已同步目录。
             </p>
 
             <details className="qb-mcp-details" style={styles.mcpDetails}>
@@ -1761,7 +2008,9 @@ export const ConfigPanel: FC = () => {
                 <select
                   style={styles.select}
                   value={sourceAuthType}
-                  onChange={(e) => setSourceAuthType(e.target.value as "none" | "bearer" | "api_key")}
+                  onChange={(e) =>
+                    setSourceAuthType(e.target.value as "none" | "bearer" | "api_key")
+                  }
                 >
                   <option value="none">none</option>
                   <option value="bearer">bearer</option>
@@ -1773,17 +2022,26 @@ export const ConfigPanel: FC = () => {
                   onChange={(e) => setSourceAuthRef(e.target.value)}
                   placeholder="auth ref (optional)"
                 />
-                <button className="qb-btn-secondary" type="button" onClick={() => void saveSourceNow()}>
+                <button
+                  className="qb-btn-secondary"
+                  type="button"
+                  onClick={() => void saveSourceNow()}
+                >
                   保存源
                 </button>
               </div>
             </details>
 
             <div style={{ ...styles.form, flexWrap: "wrap", marginBottom: 10 }}>
-              <select style={styles.select} value={selectedSourceId} onChange={(e) => setSelectedSourceId(e.target.value)}>
+              <select
+                style={styles.select}
+                value={selectedSourceId}
+                onChange={(e) => setSelectedSourceId(e.target.value)}
+              >
                 {mcpSources.map((item) => (
                   <option key={item.id} value={item.id}>
-                    {item.name} · {item.isDefault ? "default" : "custom"} · {item.enabled ? "enabled" : "disabled"}
+                    {item.name} · {item.isDefault ? "default" : "custom"} ·{" "}
+                    {item.enabled ? "enabled" : "disabled"}
                   </option>
                 ))}
               </select>
@@ -1822,7 +2080,12 @@ export const ConfigPanel: FC = () => {
 
             <div className="qb-mcp-market-grid" style={styles.mcpMarketGrid}>
               {!mcpMarketLoading && mcpMarketItems.length === 0 ? (
-                <div className="qb-mcp-market-card qb-mcp-market-card--empty" style={{ ...styles.mcpMarketCard, color: "var(--qb-main-meta)" }}>暂无目录项，请先同步注册表或检查网络。</div>
+                <div
+                  className="qb-mcp-market-card qb-mcp-market-card--empty"
+                  style={{ ...styles.mcpMarketCard, color: "var(--qb-main-meta)" }}
+                >
+                  暂无目录项，请先同步注册表或检查网络。
+                </div>
               ) : null}
               {mcpMarketItems.map((item) => {
                 const caps = Array.isArray(item.defaultCapabilitiesJson)
@@ -1831,7 +2094,11 @@ export const ConfigPanel: FC = () => {
                 const defaultTool = item.defaultToolName;
                 const cmdPreview = item.command ?? "";
                 const riskBorder =
-                  item.riskLevel === "high" ? "#991b1b" : item.riskLevel === "medium" ? "#a16207" : "#166534";
+                  item.riskLevel === "high"
+                    ? "#991b1b"
+                    : item.riskLevel === "medium"
+                      ? "#a16207"
+                      : "#166534";
                 const selected = selectedCatalogId === item.id;
                 return (
                   <div
@@ -1852,7 +2119,8 @@ export const ConfigPanel: FC = () => {
                         setSelectedCatalogId(item.id);
                         setCatalogServerName(item.slug.replace(/[^a-z0-9_-]/gi, "-"));
                         if (defaultTool) setMcpToolName(defaultTool);
-                        if (Number.isFinite(item.defaultTimeoutMs)) setMcpTimeoutMs(item.defaultTimeoutMs);
+                        if (Number.isFinite(item.defaultTimeoutMs))
+                          setMcpTimeoutMs(item.defaultTimeoutMs);
                       }
                     }}
                     style={{
@@ -1862,7 +2130,12 @@ export const ConfigPanel: FC = () => {
                   >
                     <div style={styles.mcpMarketCardHeader}>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div className="qb-mcp-market-card__title" style={{ ...styles.cardName, color: "var(--qb-body-fg)" }}>{item.name}</div>
+                        <div
+                          className="qb-mcp-market-card__title"
+                          style={{ ...styles.cardName, color: "var(--qb-body-fg)" }}
+                        >
+                          {item.name}
+                        </div>
                         <div className="qb-mcp-market-meta" style={styles.mcpMarketMeta}>
                           {item.provider} · v{item.version} · {item.transport}{" "}
                           <span
@@ -1882,21 +2155,36 @@ export const ConfigPanel: FC = () => {
                         </div>
                       </div>
                     </div>
-                    <p className="qb-mcp-market-desc" style={styles.mcpMarketDesc}>{item.description || "（无描述）"}</p>
+                    <p className="qb-mcp-market-desc" style={styles.mcpMarketDesc}>
+                      {item.description || "（无描述）"}
+                    </p>
                     <div style={styles.mcpMarketChips}>
-                      {caps.length ? caps.map((c) => (
-                        <span key={c} className="qb-mcp-market-chip" style={styles.mcpMarketChip}>
-                          {c}
+                      {caps.length ? (
+                        caps.map((c) => (
+                          <span key={c} className="qb-mcp-market-chip" style={styles.mcpMarketChip}>
+                            {c}
+                          </span>
+                        ))
+                      ) : (
+                        <span
+                          className="qb-mcp-market-chip"
+                          style={{ ...styles.mcpMarketChip, opacity: 0.75 }}
+                        >
+                          未声明 capabilities
                         </span>
-                      )) : (
-                        <span className="qb-mcp-market-chip" style={{ ...styles.mcpMarketChip, opacity: 0.75 }}>未声明 capabilities</span>
                       )}
                       {defaultTool ? (
-                        <span className="qb-mcp-market-chip" style={styles.mcpMarketChip}>默认工具: {defaultTool}</span>
+                        <span className="qb-mcp-market-chip" style={styles.mcpMarketChip}>
+                          默认工具: {defaultTool}
+                        </span>
                       ) : null}
                     </div>
                     {cmdPreview ? (
-                      <div className="qb-mcp-market-cmd" style={styles.mcpMarketCmd} title={cmdPreview}>
+                      <div
+                        className="qb-mcp-market-cmd"
+                        style={styles.mcpMarketCmd}
+                        title={cmdPreview}
+                      >
                         {cmdPreview.length > 120 ? `${cmdPreview.slice(0, 120)}…` : cmdPreview}
                       </div>
                     ) : null}
@@ -1919,7 +2207,15 @@ export const ConfigPanel: FC = () => {
             </div>
 
             {mcpMarketTotalPages > 1 ? (
-              <div style={{ ...styles.form, flexWrap: "wrap", marginTop: 10, marginBottom: 4, alignItems: "center" }}>
+              <div
+                style={{
+                  ...styles.form,
+                  flexWrap: "wrap",
+                  marginTop: 10,
+                  marginBottom: 4,
+                  alignItems: "center",
+                }}
+              >
                 <button
                   type="button"
                   className="qb-btn-ghost qb-btn--compact"
@@ -1949,10 +2245,19 @@ export const ConfigPanel: FC = () => {
                 onChange={(e) => setCatalogServerName(e.target.value)}
                 placeholder="安装后的 server 名（可改）"
               />
-              <button className="qb-btn-secondary" type="button" onClick={() => void installMarketItemNow()} disabled={!currentProjectId}>
+              <button
+                className="qb-btn-secondary"
+                type="button"
+                onClick={() => void installMarketItemNow()}
+                disabled={!currentProjectId}
+              >
                 安装当前选中条目
               </button>
-              <button className="qb-btn-primary-brand" type="button" onClick={() => void testProjectInstallNow()}>
+              <button
+                className="qb-btn-primary-brand"
+                type="button"
+                onClick={() => void testProjectInstallNow()}
+              >
                 测试最近安装
               </button>
             </div>
@@ -1978,7 +2283,9 @@ export const ConfigPanel: FC = () => {
             <details style={{ ...styles.mcpDetails, marginTop: 14 }}>
               <summary style={styles.mcpDetailsSummary}>高级：诊断与原始 JSON</summary>
               <div style={{ display: "flex", flexDirection: "column", gap: 10, paddingBottom: 10 }}>
-                <div style={{ fontSize: 12, color: "var(--qb-main-meta)" }}>最近一次操作 / 测试结果</div>
+                <div style={{ fontSize: 12, color: "var(--qb-main-meta)" }}>
+                  最近一次操作 / 测试结果
+                </div>
                 <pre className="qb-config-stream-box">{mcpTestOutput || "暂无输出"}</pre>
                 <details style={styles.mcpDetailsNested}>
                   <summary style={styles.mcpDetailsSummarySmall}>注册表源 (mcpSources)</summary>
@@ -1986,7 +2293,9 @@ export const ConfigPanel: FC = () => {
                 </details>
                 <details style={styles.mcpDetailsNested}>
                   <summary style={styles.mcpDetailsSummarySmall}>市场安装记录</summary>
-                  <pre className="qb-config-stream-box">{JSON.stringify(mcpMarketInstalls, null, 2)}</pre>
+                  <pre className="qb-config-stream-box">
+                    {JSON.stringify(mcpMarketInstalls, null, 2)}
+                  </pre>
                 </details>
                 <details style={styles.mcpDetailsNested}>
                   <summary style={styles.mcpDetailsSummarySmall}>策略列表（含默认 *）</summary>
@@ -2011,7 +2320,10 @@ export const ConfigPanel: FC = () => {
                   onClick={(e) => e.stopPropagation()}
                 >
                   <div style={styles.mcpModalHeader}>
-                    <h4 id="mcp-adv-title" style={{ margin: 0, fontSize: 15, color: "var(--qb-body-fg)" }}>
+                    <h4
+                      id="mcp-adv-title"
+                      style={{ margin: 0, fontSize: 15, color: "var(--qb-body-fg)" }}
+                    >
                       高级编辑 · {mcpServers.find((s) => s.id === focusedMcpServerId)?.name ?? ""}
                     </h4>
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -2026,18 +2338,26 @@ export const ConfigPanel: FC = () => {
                       >
                         探测连通性
                       </button>
-                      <button type="button" className="qb-btn-secondary" onClick={() => setMcpAdvancedEditorOpen(false)}>
+                      <button
+                        type="button"
+                        className="qb-btn-secondary"
+                        onClick={() => setMcpAdvancedEditorOpen(false)}
+                      >
                         关闭
                       </button>
                     </div>
                   </div>
                   <div style={styles.mcpModalBody}>
                     <p className="qb-config-hint qb-config-hint--tight">
-                      编辑 <code style={{ fontSize: 11 }}>server</code> 与可选的 <code style={{ fontSize: 11 }}>binding</code>
-                      。保存将调用 upsert 接口写入数据库。将 <code style={{ fontSize: 11 }}>binding</code> 设为{" "}
+                      编辑 <code style={{ fontSize: 11 }}>server</code> 与可选的{" "}
+                      <code style={{ fontSize: 11 }}>binding</code>
+                      。保存将调用 upsert 接口写入数据库。将{" "}
+                      <code style={{ fontSize: 11 }}>binding</code> 设为{" "}
                       <code style={{ fontSize: 11 }}>null</code> 可仅更新 server（不删除已有绑定）。
                     </p>
-                    {mcpAdvancedJsonError ? <div style={styles.errorBox}>{mcpAdvancedJsonError}</div> : null}
+                    {mcpAdvancedJsonError ? (
+                      <div style={styles.errorBox}>{mcpAdvancedJsonError}</div>
+                    ) : null}
                     {(() => {
                       const row = mcpServers.find((s) => s.id === focusedMcpServerId);
                       const probe = row ? mcpProbeByServer[row.name] : undefined;
@@ -2078,8 +2398,12 @@ export const ConfigPanel: FC = () => {
                           }}
                         >
                           <div style={styles.mcpProbePanelHeader}>
-                            <span style={{ fontWeight: 600, color: "var(--qb-body-fg)" }}>连通性探测</span>
-                            <span style={{ color: statusColor, fontWeight: 600 }}>{statusLabel}</span>
+                            <span style={{ fontWeight: 600, color: "var(--qb-body-fg)" }}>
+                              连通性探测
+                            </span>
+                            <span style={{ color: statusColor, fontWeight: 600 }}>
+                              {statusLabel}
+                            </span>
                             {probe?.checkedAt ? (
                               <span style={{ color: "var(--qb-main-meta)", fontSize: 11 }}>
                                 {new Date(probe.checkedAt).toLocaleString()}
@@ -2115,10 +2439,18 @@ export const ConfigPanel: FC = () => {
                     />
                   </div>
                   <div style={styles.mcpModalFooter}>
-                    <button type="button" className="qb-btn-secondary" onClick={() => setMcpAdvancedEditorOpen(false)}>
+                    <button
+                      type="button"
+                      className="qb-btn-secondary"
+                      onClick={() => setMcpAdvancedEditorOpen(false)}
+                    >
                       取消
                     </button>
-                    <button type="button" className="qb-btn-primary-brand" onClick={() => void saveMcpAdvancedJson()}>
+                    <button
+                      type="button"
+                      className="qb-btn-primary-brand"
+                      onClick={() => void saveMcpAdvancedJson()}
+                    >
                       保存 JSON
                     </button>
                   </div>
@@ -2136,14 +2468,23 @@ export const ConfigPanel: FC = () => {
                 SkillsMP
               </a>{" "}
               实时搜索（与 Claude Code / Codex 等生态兼容）。可选加载{" "}
-              <a href="https://github.com/coolzwc/open-skill-market" target="_blank" rel="noreferrer">
+              <a
+                href="https://github.com/coolzwc/open-skill-market"
+                target="_blank"
+                rel="noreferrer"
+              >
                 Open Skill Market
               </a>{" "}
               全量 <code>skills.json</code>（体积大、首次较慢）。MCP 目录默认对接 Anthropic 官方{" "}
-              <a href="https://registry.modelcontextprotocol.io/docs" target="_blank" rel="noreferrer">
+              <a
+                href="https://registry.modelcontextprotocol.io/docs"
+                target="_blank"
+                rel="noreferrer"
+              >
                 MCP Registry
               </a>{" "}
-              （<code>v0.1/servers</code>）。服务端可配置环境变量 <code>SKILLSMP_API_KEY</code> 提高 SkillsMP 配额。
+              （<code>v0.1/servers</code>）。服务端可配置环境变量 <code>SKILLSMP_API_KEY</code> 提高
+              SkillsMP 配额。
             </p>
             <div style={styles.meta}>
               <span>Open 索引: {skillMarketStatus?.loaded ? "已加载" : "未加载"}</span>
@@ -2186,8 +2527,12 @@ export const ConfigPanel: FC = () => {
                 刷新状态
               </button>
             </div>
-            <h4 style={{ ...styles.subTitle, fontSize: 14, margin: "14px 0 8px" }}>手工添加 Skill</h4>
-            <div style={{ ...styles.form, flexWrap: "wrap", marginBottom: 10, alignItems: "center" }}>
+            <h4 style={{ ...styles.subTitle, fontSize: 14, margin: "14px 0 8px" }}>
+              手工添加 Skill
+            </h4>
+            <div
+              style={{ ...styles.form, flexWrap: "wrap", marginBottom: 10, alignItems: "center" }}
+            >
               <input
                 style={{ ...styles.input, minWidth: 180 }}
                 value={manualSkillName}
@@ -2235,7 +2580,9 @@ export const ConfigPanel: FC = () => {
             </div>
             {manualSkillError ? <div style={styles.errorBox}>{manualSkillError}</div> : null}
             <h4 style={{ ...styles.subTitle, fontSize: 14, margin: "14px 0 8px" }}>搜索市场</h4>
-            <div style={{ ...styles.form, flexWrap: "wrap", marginBottom: 10, alignItems: "center" }}>
+            <div
+              style={{ ...styles.form, flexWrap: "wrap", marginBottom: 10, alignItems: "center" }}
+            >
               <label style={{ ...styles.chatMeta, display: "flex", alignItems: "center", gap: 6 }}>
                 来源
                 <select
@@ -2294,7 +2641,8 @@ export const ConfigPanel: FC = () => {
                   ) : skillSearchHits.length === 0 ? (
                     <tr>
                       <td colSpan={5} style={{ padding: 12, color: "var(--qb-main-meta)" }}>
-                        无结果。SkillsMP 需网络可达；Open Skill Market 请先点击「加载全量索引」后再搜索。
+                        无结果。SkillsMP 需网络可达；Open Skill Market
+                        请先点击「加载全量索引」后再搜索。
                       </td>
                     </tr>
                   ) : (
@@ -2305,21 +2653,35 @@ export const ConfigPanel: FC = () => {
                     [...skillSearchHits]
                       .sort((a, b) => (b.stars ?? -1) - (a.stars ?? -1))
                       .map((row) => (
-                        <tr key={row.id} style={{ borderTop: "1px solid #27272a", color: "var(--qb-body-fg)" }}>
-                          <td style={{ padding: "8px", fontFamily: "ui-monospace, monospace", wordBreak: "break-all" }}>
+                        <tr
+                          key={row.id}
+                          style={{ borderTop: "1px solid #27272a", color: "var(--qb-body-fg)" }}
+                        >
+                          <td
+                            style={{
+                              padding: "8px",
+                              fontFamily: "ui-monospace, monospace",
+                              wordBreak: "break-all",
+                            }}
+                          >
                             {row.name}
                           </td>
                           <td style={{ padding: "8px", maxWidth: 360 }}>
-                            {row.description.length > 160 ? `${row.description.slice(0, 160)}…` : row.description}
+                            {row.description.length > 160
+                              ? `${row.description.slice(0, 160)}…`
+                              : row.description}
                           </td>
                           <td
                             style={{
                               padding: "8px",
                               whiteSpace: "nowrap",
                               fontVariantNumeric: "tabular-nums",
-                              color: row.stars != null ? "var(--qb-body-fg)" : "var(--qb-main-meta)",
+                              color:
+                                row.stars != null ? "var(--qb-body-fg)" : "var(--qb-main-meta)",
                             }}
-                            title={row.stars != null ? `GitHub stars: ${row.stars}` : "GitHub stars 未知"}
+                            title={
+                              row.stars != null ? `GitHub stars: ${row.stars}` : "GitHub stars 未知"
+                            }
                           >
                             {row.stars != null ? row.stars.toLocaleString() : "—"}
                           </td>
@@ -2363,7 +2725,9 @@ export const ConfigPanel: FC = () => {
               </table>
             </div>
             {skillMarketTotalPages > 1 ? (
-              <div style={{ ...styles.form, flexWrap: "wrap", marginBottom: 14, alignItems: "center" }}>
+              <div
+                style={{ ...styles.form, flexWrap: "wrap", marginBottom: 14, alignItems: "center" }}
+              >
                 <button
                   type="button"
                   className="qb-btn-ghost qb-btn--compact"
@@ -2387,7 +2751,9 @@ export const ConfigPanel: FC = () => {
             ) : null}
             <h4 style={{ ...styles.subTitle, fontSize: 14, margin: "14px 0 8px" }}>本项目已安装</h4>
             {!currentProjectId ? (
-              <p className="qb-config-hint">加载配置后可按项目记录安装；请先进入配置中心触发加载。</p>
+              <p className="qb-config-hint">
+                加载配置后可按项目记录安装；请先进入配置中心触发加载。
+              </p>
             ) : (
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -2409,16 +2775,25 @@ export const ConfigPanel: FC = () => {
                       </tr>
                     ) : (
                       skillInstalls.map((row) => (
-                        <tr key={row.id} style={{ borderTop: "1px solid #27272a", color: "var(--qb-body-fg)" }}>
-                          <td style={{ padding: "8px", fontFamily: "ui-monospace, monospace" }}>{row.skillName}</td>
+                        <tr
+                          key={row.id}
+                          style={{ borderTop: "1px solid #27272a", color: "var(--qb-body-fg)" }}
+                        >
+                          <td style={{ padding: "8px", fontFamily: "ui-monospace, monospace" }}>
+                            {row.skillName}
+                          </td>
                           <td style={{ padding: "8px", maxWidth: 280 }}>
-                            {row.description.length > 120 ? `${row.description.slice(0, 120)}…` : row.description}
+                            {row.description.length > 120
+                              ? `${row.description.slice(0, 120)}…`
+                              : row.description}
                           </td>
                           <td style={{ padding: "8px", whiteSpace: "nowrap" }}>
                             {/* 直接复用 OriginBadge 的 SkillsMP / Open Skill Market 预设；其它 registry 名也能兜底渲染 */}
                             <OriginBadge origin={row.registry} style={{ marginLeft: 0 }} />
                           </td>
-                          <td style={{ padding: "8px", wordBreak: "break-all", fontSize: 11 }}>{row.externalSkillId}</td>
+                          <td style={{ padding: "8px", wordBreak: "break-all", fontSize: 11 }}>
+                            {row.externalSkillId}
+                          </td>
                           <td style={{ padding: "8px", whiteSpace: "nowrap" }}>
                             <button
                               type="button"
@@ -2431,10 +2806,14 @@ export const ConfigPanel: FC = () => {
                               type="button"
                               className="qb-btn-secondary qb-btn--compact"
                               disabled={
-                                !definitions.find((b) => b.definition.id === skillAppendDefinitionId)?.draft
+                                !definitions.find(
+                                  (b) => b.definition.id === skillAppendDefinitionId
+                                )?.draft
                               }
                               title={
-                                !definitions.find((b) => b.definition.id === skillAppendDefinitionId)?.draft
+                                !definitions.find(
+                                  (b) => b.definition.id === skillAppendDefinitionId
+                                )?.draft
                                   ? "请先在 Agent 页为该定义保存草稿"
                                   : undefined
                               }
@@ -2470,7 +2849,9 @@ export const ConfigPanel: FC = () => {
               </div>
             )}
             <div style={{ ...styles.form, flexWrap: "wrap", marginTop: 12, alignItems: "center" }}>
-              <span style={{ fontSize: 12, color: "var(--qb-main-meta)" }}>追加到 Agent 草稿时选择：</span>
+              <span style={{ fontSize: 12, color: "var(--qb-main-meta)" }}>
+                追加到 Agent 草稿时选择：
+              </span>
               {definitions.length === 0 ? (
                 <span className="qb-config-hint">无 Agent 定义</span>
               ) : (
@@ -2490,21 +2871,27 @@ export const ConfigPanel: FC = () => {
             </div>
 
             {!currentProjectId ? (
-              <p className="qb-config-hint">加载配置后可按项目记录归纳；请先进入配置中心触发加载。</p>
+              <p className="qb-config-hint">
+                加载配置后可按项目记录归纳；请先进入配置中心触发加载。
+              </p>
             ) : (
               <SkillsLibraryPanel projectId={currentProjectId} />
             )}
           </>
         ) : null}
         {activeConfigSubPage === "schedule" ? (
-          <ScheduledJobsPanel workspaceId={currentWorkspaceId || undefined} projectId={currentProjectId || null} />
+          <ScheduledJobsPanel
+            workspaceId={currentWorkspaceId || undefined}
+            projectId={currentProjectId || null}
+          />
         ) : null}
         {activeConfigSubPage === "runtime" ? (
           <>
             <h3 style={styles.subTitle}>系统运行时</h3>
             <p className="qb-config-hint">
-              展示 Python 沙箱（code.run_python 与 qlib/signal/backtest 算子共用）的解释器路径和关键依赖。
-              红灯时沙箱会 fail-fast 拒绝执行；黄灯（可选依赖缺失）只影响部分高级能力。
+              展示 Python 沙箱（code.run_python 与 qlib/signal/backtest
+              算子共用）的解释器路径和关键依赖。 红灯时沙箱会 fail-fast
+              拒绝执行；黄灯（可选依赖缺失）只影响部分高级能力。
             </p>
             <PythonRuntimeCard />
           </>

@@ -100,10 +100,13 @@ html[data-qb-style="industrial"] {
   --qb-stream-box-border: var(--qb-ind-border);
 
   --qb-chat-main-bg: #111111;
+  --qb-chat-page-bg: var(--qb-ind-panel-inset);
   --qb-chat-sidebar-bg: #141414;
   --qb-chat-border: var(--qb-ind-border);
   --qb-chat-bubble-agent-bg: var(--qb-ind-panel);
   --qb-chat-bubble-user-bg: rgba(255, 87, 34, 0.18);
+  --qb-chat-bubble-border: var(--qb-ind-border-strong);
+  --qb-chat-meta-fg: var(--qb-ind-muted);
   --qb-chat-session-active-border: var(--qb-ind-orange);
 
   --qb-monitor-title-fg: var(--qb-ind-text);
@@ -492,6 +495,86 @@ html[data-qb-style="industrial"] [data-qb-chat-panel] .qb-chat-main,
 html[data-qb-style="industrial"] [data-qb-ide-workbench] .qb-explorer-panel {
   background: var(--qb-ind-panel) !important;
   border-color: var(--qb-ind-border) !important;
+}
+
+/*
+ * 右侧 Agent Dock 不在研究团队画布的 DOM 树内，不能继承 team-industrial.css
+ * 的面板处理。这里显式覆盖其壳、普通对话和 Orchestrator 对话，避免主题包的
+ * 通用 chrome 色把它染成独立的蓝色面板。
+ */
+html[data-qb-style="industrial"] .qb-pro-agent-panel {
+  background: var(--qb-ind-panel-inset) !important;
+  border-left-color: var(--qb-ind-border-strong) !important;
+  color: var(--qb-ind-text);
+  box-shadow: inset 2px 0 0 rgba(38, 198, 218, 0.28);
+}
+
+html[data-qb-style="industrial"] .qb-pro-agent-panel__header {
+  min-height: 36px;
+  background: linear-gradient(180deg, #191919, #121212) !important;
+  border-bottom-color: var(--qb-ind-border-strong) !important;
+  color: var(--qb-ind-text) !important;
+  font-family: var(--qb-font-display);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+html[data-qb-style="industrial"] .qb-pro-agent-panel__header strong {
+  color: var(--qb-ind-cyan);
+}
+
+html[data-qb-style="industrial"] .qb-pro-agent-panel__source {
+  border-color: var(--qb-ind-border-strong);
+  color: var(--qb-ind-muted);
+}
+
+html[data-qb-style="industrial"] .qb-pro-agent-panel__header button {
+  border: 1px solid transparent;
+  border-radius: 0;
+  color: var(--qb-ind-muted);
+}
+
+html[data-qb-style="industrial"] .qb-pro-agent-panel__header button:hover {
+  border-color: rgba(255, 87, 34, 0.55);
+  background: rgba(255, 87, 34, 0.12);
+  color: var(--qb-ind-orange-bright);
+}
+
+html[data-qb-style="industrial"] .qb-pro-agent-panel__body,
+html[data-qb-style="industrial"] .qb-pro-agent-panel__body .qb-chat-panel,
+html[data-qb-style="industrial"] .qb-pro-agent-panel__body [data-qb-orchestrator-panel] {
+  background: var(--qb-ind-panel-inset) !important;
+}
+
+html[data-qb-style="industrial"] .qb-pro-agent-panel [data-qb-orchestrator-panel] {
+  color: var(--qb-ind-text);
+}
+
+html[data-qb-style="industrial"] .qb-pro-agent-panel [data-qb-orchestrator-chat] {
+  background: #0b0b0b !important;
+  border-top: 1px solid rgba(46, 46, 46, 0.72);
+  border-bottom: 1px solid rgba(46, 46, 46, 0.72);
+  padding-left: 8px !important;
+  padding-right: 8px !important;
+}
+
+html[data-qb-style="industrial"] .qb-pro-agent-panel [data-qb-orch-status-rail] {
+  border-color: var(--qb-ind-border-strong) !important;
+}
+
+html[data-qb-style="industrial"] .qb-pro-agent-panel [data-qb-orchestrator-panel] textarea,
+html[data-qb-style="industrial"] .qb-pro-agent-panel [data-qb-orchestrator-panel] select {
+  border-radius: 0 !important;
+  background: #171717 !important;
+  border-color: var(--qb-ind-border-strong) !important;
+  color: var(--qb-ind-text) !important;
+}
+
+html[data-qb-style="industrial"] .qb-pro-agent-panel [data-qb-orchestrator-panel] textarea:focus,
+html[data-qb-style="industrial"] .qb-pro-agent-panel [data-qb-orchestrator-panel] select:focus {
+  border-color: var(--qb-ind-cyan) !important;
+  outline: none;
+  box-shadow: 0 0 0 1px rgba(38, 198, 218, 0.28);
 }
 
 html[data-qb-style="industrial"] [data-qb-ide-workbench] {

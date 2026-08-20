@@ -166,7 +166,7 @@ const pack: LocalePack = {
         team: "Research",
         trader: "Trading",
         quant: "Quant Workbench",
-        chart: "News",
+        chart: "Markets",
         chat: "Chat",
         monitor: "Monitor",
         broker: "Broker Accounts",
@@ -216,6 +216,7 @@ const pack: LocalePack = {
       leftColumn: {
         ariaLabel: "Left workbench tools",
         editor: "Code editor",
+        watchlist: "Watchlist / positions",
         editorEmptyTitle: "Workspace file editor",
         editorEmptyBody:
           "Chat lives in the right Agent panel. Edit workspace files here with Monaco — open .md / .py / .ts from the Explorer.",
@@ -246,8 +247,10 @@ const pack: LocalePack = {
         overlays: {
           sma20: "SMA20 (overlay)",
           ema20: "EMA20 (overlay)",
+          vwap: "VWAP (overlay)",
           rsi14: "RSI14 (sub-pane)",
-          macd: "MACD (sub-pane, exclusive with RSI)",
+          macd: "MACD (sub-pane)",
+          kdj: "KDJ (sub-pane)",
           bb20: "Bollinger Bands (20, 2)",
         },
         panelToggles: {
@@ -266,7 +269,7 @@ const pack: LocalePack = {
       },
       backtest: {
         dockAriaLabel: "Backtest & tuning",
-        tabs: { backtest: "Backtest", tune: "Auto-tune" },
+        tabs: { backtest: "Backtest", tune: "Auto-tune", options: "Option chain" },
         kind: {
           label: "Strategy source",
           python: "Left-side Python (on_init / on_bar)",

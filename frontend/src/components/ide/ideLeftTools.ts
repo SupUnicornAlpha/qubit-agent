@@ -10,7 +10,7 @@
  *
  * Diff：已作为 IdeEditorPane 的 surface（相对磁盘基线），不必再占左栏工具 Tab。
  */
-export type IdeLeftTabId = "editor";
+export type IdeLeftTabId = "editor" | "watchlist";
 
 export type IdeLeftToolDescriptor = {
   id: IdeLeftTabId;
@@ -20,7 +20,8 @@ export type IdeLeftToolDescriptor = {
 };
 
 export const IDE_LEFT_TOOLS: readonly IdeLeftToolDescriptor[] = [
-  { id: "editor", titleKey: "ide.leftColumn.editor", order: 10 },
+  { id: "watchlist", titleKey: "ide.leftColumn.watchlist", order: 10 },
+  { id: "editor", titleKey: "ide.leftColumn.editor", order: 20 },
 ] as const;
 
 export function listIdeLeftTools(): IdeLeftToolDescriptor[] {

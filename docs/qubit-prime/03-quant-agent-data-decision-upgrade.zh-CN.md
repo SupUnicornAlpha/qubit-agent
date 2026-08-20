@@ -91,7 +91,7 @@ flowchart LR
 | 下单 / 持仓 / 成交 | `python_connectors/broker_http_server.py` → `broker_gateway/*` | 新增 adapter + `BrokerProvider` |
 | 实时 quote / trade 推流 | `python_connectors/market_bridge/` + Bun `broker-market-bridge.ts` | 注册 descriptor + provider + env URL |
 
-内置桥：`futu`（OpenQuote）、`ib` / `supermind`（槽位，不伪造价格）。控制面源 id：`futu_bridge` / `ib_bridge` / `supermind_bridge`（`feedClass=L2_realtime_observe`，`streamOnly`，不进入历史 K 线 plan）。详见 [market-data-realtime.md](../market-data-realtime.md) 与 `python_connectors/market_bridge/README.md`。
+内置桥：`futu`（OpenQuote）、`ib`（TWS/Gateway）、`alpaca`（美股 quote/trade）、`qmt`（Windows miniQMT）与 `supermind`（交易侧槽位）。控制面源 id：`futu_bridge` / `ib_bridge` / `alpaca_bridge` / `qmt_bridge` / `supermind_bridge`；其中 Alpaca/QMT 是实时桥，不进入历史 K 线 plan。详见 [market-data-realtime.md](../market-data-realtime.md) 与 `python_connectors/market_bridge/README.md`。
 
 **Futu 打通**：官方插件 `connector:futu` + `futu-runtime.ts` 读取券商账户 OpenD 配置，自动拉起交易 HTTP（:18765）与行情 WS（:8765），并写入 `QUBIT_FUTU_MARKET_WS_URL`。保存 Futu sandbox/live 账户或调用 `POST /market/stream/bridges/futu/ensure` 即可。
 
@@ -100,7 +100,7 @@ flowchart LR
 | Provider | 交易 HTTP | 行情 WS 桥 | 备注 |
 |----------|-----------|------------|------|
 | futu | ✅ OpenSecTradeContext | ✅ OpenQuote（需 OpenD + 行情权限） | 交易/行情可同机双进程 |
-| ib | ✅ ib_insync | 🟡 stub 槽位 | 行情需再接 reqMktData |
+| ib | ✅ ib_insync | ✅ TWS/Gateway quote / depth / trade | 需订阅对应行情权限 |
 | supermind（同花顺） | ✅ tick_trade_api | 🟡 stub 槽位 | SDK 偏交易；行情 API 待厂商环境 |
 | alpaca / ccxt | ✅ | — | 美股/加密；行情另走交易所源 |
 | eastmoney_emt | ✅（Windows） | — | 交易专用 |
@@ -308,7 +308,7 @@ Core 不订阅 tick，也不理解 `SSE`、`Wind` 或 `order book`。它只看�
 | 现有实现 | Prime 迁移位置 | 首步 |
 |----------|---------------|------|
 | `src/runtime/market/market-stream-gateway.ts` | OUT 数据面 gateway | 镜像写 `MarketEvent v2`、补 `dataRef` |
-| `src/runtime/market/broker-market-bridge.ts` | OUT 券商行情桥注册表 | 可插拔 futu/ib/supermind；与交易 HTTP 分离 |
+| `src/runtime/market/broker-market-bridge.ts` | OUT 券商行情桥注册表 | 可插拔 futu/ib/alpaca/qmt/supermind；与交易 HTTP 分离 |
 | `python_connectors/market_bridge/` | OUT 行情 WS 桥进程 | OpenQuote / stub；契约对齐 realtime 文档 |
 | `python_connectors/broker_http_server.py` | OUT 交易 HTTP 桥 | 保持与行情桥进程隔离 |
 | `src/runtime/market/market-data-source-control.ts` | OUT 控制面 / HOST 配置 | 增加许可、feed class、upstream independence |

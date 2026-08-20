@@ -757,6 +757,20 @@
       "when": 1815264000000,
       "tag": "0108_genome_multidimensional_fitness",
       "breakpoints": true
+    },
+    {
+      "idx": 108,
+      "version": "7",
+      "when": 1815350400000,
+      "tag": "0109_broker_qmt_provider",
+      "breakpoints": true
+    },
+    {
+      "idx": 109,
+      "version": "7",
+      "when": 1815436800000,
+      "tag": "0110_harness_event_ledger",
+      "breakpoints": true
     }
   ]
 }

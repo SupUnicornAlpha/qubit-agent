@@ -1,15 +1,19 @@
 import type { CSSProperties, FC } from "react";
 import { useTranslation } from "../../i18n";
+import { useAppStore } from "../../store";
+import { MarketWatchlistPanel } from "../market/MarketWatchlistPanel";
 import { IdeEditorPane } from "./IdeEditorPane";
-import { listIdeLeftTools } from "./ideLeftTools";
+import { listIdeLeftTools, type IdeLeftTabId } from "./ideLeftTools";
 
 /**
- * IDE 左栏：默认仅代码编辑。工具数 > 1 时显示 Tab（见 ideLeftTools 注册表）。
+ * IDE 左栏：默认展示自选/行情上下文；代码编辑器作为可切换工作表面。
  */
 export const IdeLeftColumn: FC = () => {
   const { t } = useTranslation();
   const tools = listIdeLeftTools();
   const showTabs = tools.length > 1;
+  const activeTab = useAppStore((s) => s.ideLeftTab) as IdeLeftTabId;
+  const setActiveTab = useAppStore((s) => s.setIdeLeftTab);
 
   return (
     <div style={styles.root} data-qb-ide-left-column>
@@ -21,8 +25,9 @@ export const IdeLeftColumn: FC = () => {
                 key={tool.id}
                 type="button"
                 role="tab"
-                aria-selected
-                className="qb-segmented__tab qb-segmented__tab--active"
+                aria-selected={activeTab === tool.id}
+                onClick={() => setActiveTab(tool.id)}
+                className={`qb-segmented__tab${activeTab === tool.id ? " qb-segmented__tab--active" : ""}`}
               >
                 {t(tool.titleKey)}
               </button>
@@ -31,7 +36,7 @@ export const IdeLeftColumn: FC = () => {
         </div>
       ) : null}
       <div style={styles.body}>
-        <IdeEditorPane />
+        {activeTab === "editor" ? <IdeEditorPane /> : <MarketWatchlistPanel compact />}
       </div>
     </div>
   );

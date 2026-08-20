@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { Hono } from "hono";
 import { getDb } from "../db/sqlite/client";
 import {
@@ -9,6 +9,7 @@ import {
   chatMessage,
   chatMessageWorkflowLink,
   chatSession,
+  researchTeamInteraction,
   sandboxViolationLog,
   toolCallLog,
   workflowRun,
@@ -64,6 +65,10 @@ import {
 import { getToolDiagnostics } from "../runtime/monitor/tools-diagnostics";
 import { type ToolKind, getToolsSummary } from "../runtime/monitor/tools-summary";
 import { getWorkflowObservability } from "../runtime/monitor/workflow-observability";
+import {
+  isResearchTeamPlaceholderTitle,
+  summarizeResearchQuestionTitle,
+} from "../runtime/workflow/workflow-title";
 import type { Experience } from "../types/entities";
 
 export const monitorRouter = new Hono();
@@ -559,7 +564,49 @@ monitorRouter.get("/workflows", async (c) => {
     : await baseQuery.orderBy(desc(workflowRun.startedAt)).limit(limit);
 
   const filtered = includeCancelled ? rows : rows.filter((r) => r.status !== "cancelled");
-  return c.json({ data: filtered });
+
+  /**
+   * 一次性兼容旧版「研究团队 · 范围 · 标的 · 时间」标题：当交互日志里有首条
+   * 用户问题时，以它回填为短标题。没有原始问题的旧记录保持原样，绝不猜测内容。
+   * 正常情况下新 workflow 已在首条对话写入时完成命名，因此这里不会产生额外写入。
+   */
+  const placeholderIds = filtered
+    .filter((row) => isResearchTeamPlaceholderTitle(row.goal))
+    .map((row) => row.id);
+  const inferredTitles = new Map<string, string>();
+  if (placeholderIds.length > 0) {
+    const userMessages = await db
+      .select({
+        workflowRunId: researchTeamInteraction.workflowRunId,
+        contentText: researchTeamInteraction.contentText,
+      })
+      .from(researchTeamInteraction)
+      .where(
+        and(
+          inArray(researchTeamInteraction.workflowRunId, placeholderIds),
+          eq(researchTeamInteraction.fromRole, "user"),
+          eq(researchTeamInteraction.kind, "llm_message")
+        )
+      )
+      .orderBy(asc(researchTeamInteraction.createdAt));
+
+    for (const row of userMessages) {
+      if (inferredTitles.has(row.workflowRunId) || !row.contentText.trim()) continue;
+      inferredTitles.set(row.workflowRunId, summarizeResearchQuestionTitle(row.contentText));
+    }
+    await Promise.all(
+      [...inferredTitles.entries()].map(([id, goal]) =>
+        db.update(workflowRun).set({ goal }).where(eq(workflowRun.id, id))
+      )
+    );
+  }
+
+  return c.json({
+    data: filtered.map((row) => {
+      const inferredTitle = inferredTitles.get(row.id);
+      return { ...row, ...(inferredTitle ? { goal: inferredTitle } : {}) };
+    }),
+  });
 });
 
 monitorRouter.get("/workflows/:id/observability", async (c) => {

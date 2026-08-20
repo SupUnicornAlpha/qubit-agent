@@ -1,94 +1,102 @@
-import { backendFetchUrl, httpDelete, httpGet, httpPatch, httpPost, httpPut } from "./client";
+import { normalizeFusionApiToTeamResult } from "../lib/fusionNormalize";
+import {
+  backendFetchUrl,
+  backendWebSocketUrl,
+  httpDelete,
+  httpGet,
+  httpPatch,
+  httpPost,
+  httpPut,
+} from "./client";
 import type {
-  AgentLoopKind,
-  AgentSkillRecord,
-  AgentSkillState,
-  AgentSummary,
   AgentDefinitionBundle,
+  AgentDefinitionDraftRecord,
+  AgentLoopKind,
   AgentMemoryStatsResponse,
   AgentPackResponse,
   AgentPromptPreviewResponse,
-  AgentsConfigResponse,
   AgentRoleCatalogItem,
-  DebateConfig,
-  DebateStreamEvent,
-  DebateTurnRecord,
-  DebateVerdictRecord,
-  DebateSessionRecord,
-  ExecutionSafetyCheckResult,
-  ExecutionSafetyConfig,
-  ExecutionConfirmTicketRecord,
-  EvalCaseResultRecord,
-  EvalDatasetRecord,
-  EvalRunRecord,
+  AgentRuntimeMetricRecord,
+  AgentSkillRecord,
+  AgentSkillState,
+  AgentSummary,
+  AgentsConfigResponse,
   AlertEventRecord,
+  AnalystSignalFusionRecord,
+  AnalystSignalRecord,
+  AnalystTeamGraphPayload,
+  AnalystTeamResult,
   BrokerAccountRecord,
   BrokerOrderEventRecord,
   BrokerProvider,
-  CommunicationChannelRecord,
-  CommunicationMessageLogRecord,
-  IntegrationAdapterDescriptor,
-  IntegrationKind,
-  McpServerConfigRecord,
-  McpToolBindingRecord,
-  McpRegistrySourceRecord,
-  McpCatalogPageResult,
-  McpCatalogItemRecord,
-  McpProjectInstallRecord,
-  McpCatalogRecord,
-  McpCatalogInstallRecord,
-  RiskConfig,
-  RiskVetoLogRecord,
-  GeneGenerationRecord,
-  GeneTrendPoint,
-  IntentDeviationRecord,
-  IntentOrderRecord,
-  ExecutionReportRecord,
-  StrategyGenomeRecord,
-  ScreenerCandidateRecord,
-  ScreenerRunRecord,
-  AnalystSignalRecord,
-  AnalystTeamResult,
-  AnalystTeamGraphPayload,
+  BuiltinConnectorConfig,
   ChatMessage,
   ChatSession,
+  CommunicationChannelRecord,
+  CommunicationMessageLogRecord,
+  DebateConfig,
+  DebateSessionRecord,
+  DebateStreamEvent,
+  DebateTurnRecord,
+  DebateVerdictRecord,
+  EvalCaseResultRecord,
+  EvalDatasetRecord,
+  EvalRunRecord,
+  ExecutionConfirmTicketRecord,
+  ExecutionReportRecord,
+  ExecutionSafetyCheckResult,
+  ExecutionSafetyConfig,
+  GeneGenerationRecord,
+  GeneTrendPoint,
   IndicatorStrategyScriptRecord,
-  ModelConfig,
-  BuiltinConnectorConfig,
-  SessionOverview,
-  WorkflowQualitySnapshotRecord,
-  WorkflowCompensationTaskRecord,
-  AgentRuntimeMetricRecord,
-  SessionAgentBoardItem,
-  SessionA2AMessageItem,
-  SubAgentTaskRecord,
-  AnalystSignalFusionRecord,
-  StepStreamEvent,
-  WorkflowDetail,
-  WorkflowObservability,
-  WorkflowTimeline,
-  WorkflowArtifactsDto,
-  WorkflowCreateInput,
-  ScheduledJobRecord,
-  ScheduledJobRunRecord,
+  IntegrationAdapterDescriptor,
+  IntegrationKind,
+  IntentDeviationRecord,
+  IntentOrderRecord,
   KlineBar,
   KlinesErrorPayload,
   KlinesResponseMeta,
-  OptionChain,
   MarketNewsBriefPayload,
-  WindSessionStatus,
-  AgentDefinitionDraftRecord,
+  McpCatalogInstallRecord,
+  McpCatalogItemRecord,
+  McpCatalogPageResult,
+  McpCatalogRecord,
+  McpProjectInstallRecord,
+  McpRegistrySourceRecord,
+  McpServerConfigRecord,
+  McpToolBindingRecord,
+  ModelConfig,
   OpenSkillMarketEntryDto,
-  SkillMarketPageResult,
-  SkillMarketInstallRecord,
-  SkillMarketStatusDto,
-  ToolCatalogEntry,
+  OptionChain,
   RecommendationRecord,
   RecommendationSide,
   RecommendationStats,
   RecommendationStatus,
+  RiskConfig,
+  RiskVetoLogRecord,
+  ScheduledJobRecord,
+  ScheduledJobRunRecord,
+  ScreenerCandidateRecord,
+  ScreenerRunRecord,
+  SessionA2AMessageItem,
+  SessionAgentBoardItem,
+  SessionOverview,
+  SkillMarketInstallRecord,
+  SkillMarketPageResult,
+  SkillMarketStatusDto,
+  StepStreamEvent,
+  StrategyGenomeRecord,
+  SubAgentTaskRecord,
+  ToolCatalogEntry,
+  WindSessionStatus,
+  WorkflowArtifactsDto,
+  WorkflowCompensationTaskRecord,
+  WorkflowCreateInput,
+  WorkflowDetail,
+  WorkflowObservability,
+  WorkflowQualitySnapshotRecord,
+  WorkflowTimeline,
 } from "./types";
-import { normalizeFusionApiToTeamResult } from "../lib/fusionNormalize";
 
 export async function runSystemBootstrap(input?: {
   skipPython?: boolean;
@@ -448,15 +456,51 @@ export async function getKlines(params: {
   }>(`/api/v1/market/klines?${q.toString()}`);
 }
 
-/** 研究级期权链。Yahoo 公共数据仅用于研究和展示，不应作为交易报价。 */
+/** 券商优先期权链；source=futu 禁止公开源降级，research 为明确研究级模式。 */
 export async function getOptionChain(params: {
   symbol: string;
+  exchange?: string;
   expiry?: string;
+  source?: "auto" | "futu" | "alpaca" | "research";
 }): Promise<OptionChain> {
   const q = new URLSearchParams({ symbol: params.symbol });
+  if (params.exchange) q.set("exchange", params.exchange);
   if (params.expiry) q.set("expiry", params.expiry);
+  if (params.source) q.set("source", params.source);
   const response = await httpGet<{ ok: boolean; data: OptionChain }>(
     `/api/v1/market/options/chain?${q.toString()}`
+  );
+  return response.data;
+}
+
+/** 本机只读期权策略分析模块；服务端使用当前链快照构造多腿策略。 */
+export async function getOptionStrategyAnalysis(params: {
+  symbol: string;
+  strategy: string;
+  exchange?: string;
+  expiry?: string;
+  farExpiry?: string;
+  source?: "auto" | "futu" | "alpaca" | "research";
+  centerStrike?: number;
+  widthSteps?: number;
+  quantity?: number;
+  singleRight?: "call" | "put";
+  singleSide?: "buy" | "sell";
+  direction?: "bullish" | "bearish";
+}): Promise<import("./types").OptionStrategyAnalysis> {
+  const query = new URLSearchParams({ symbol: params.symbol, strategy: params.strategy });
+  if (params.exchange) query.set("exchange", params.exchange);
+  if (params.expiry) query.set("expiry", params.expiry);
+  if (params.farExpiry) query.set("farExpiry", params.farExpiry);
+  if (params.source) query.set("source", params.source);
+  if (params.centerStrike != null) query.set("centerStrike", String(params.centerStrike));
+  if (params.widthSteps != null) query.set("widthSteps", String(params.widthSteps));
+  if (params.quantity != null) query.set("quantity", String(params.quantity));
+  if (params.singleRight) query.set("singleRight", params.singleRight);
+  if (params.singleSide) query.set("singleSide", params.singleSide);
+  if (params.direction) query.set("direction", params.direction);
+  const response = await httpGet<{ ok: boolean; data: import("./types").OptionStrategyAnalysis }>(
+    `/api/v1/market/options/strategy-analyze?${query.toString()}`
   );
   return response.data;
 }
@@ -471,6 +515,132 @@ export async function getMarketQuote(params: {
     ok: boolean;
     data: import("./types").MarketQuote;
   }>(`/api/v1/market/quote?${query.toString()}`);
+  return response.data;
+}
+
+/**
+ * 用一条 WebSocket 批量订阅自选报价。后端会优先使用券商/交易所推流，
+ * 无可用推流时才由网关按 2 秒节奏轮询；调用方可根据 `event.source` 明示来源。
+ */
+export function subscribeMarketQuoteStream(params: {
+  subscriptions: Array<{
+    symbol: string;
+    exchange?: string;
+    timeframe?: string;
+    channels?: Array<"quote" | "order_book" | "trade" | "bar">;
+  }>;
+  onEvent: (event: import("./types").MarketStreamEvent) => void;
+  onConnectionChange?: (
+    status: "connecting" | "connected" | "reconnecting" | "stale" | "closed"
+  ) => void;
+}): () => void {
+  const subscriptions = params.subscriptions
+    .filter((subscription) => subscription.symbol.trim())
+    .slice(0, 30)
+    .map((subscription) => ({
+      symbol: subscription.symbol.trim(),
+      ...(subscription.exchange?.trim() ? { exchange: subscription.exchange.trim() } : {}),
+      timeframe: subscription.timeframe ?? "1m",
+      channels:
+        subscription.channels && subscription.channels.length > 0
+          ? [...new Set(subscription.channels)]
+          : ["quote"],
+    }));
+  if (subscriptions.length === 0) return () => undefined;
+
+  let disposed = false;
+  let socket: WebSocket | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let staleTimer: ReturnType<typeof setInterval> | null = null;
+  let reconnectAttempt = 0;
+  let lastMessageAt = Date.now();
+
+  const scheduleReconnect = () => {
+    if (disposed || reconnectTimer) return;
+    reconnectAttempt += 1;
+    params.onConnectionChange?.("reconnecting");
+    const delayMs = Math.min(15_000, 500 * 2 ** Math.min(reconnectAttempt, 5));
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connect();
+    }, delayMs);
+  };
+
+  const connect = () => {
+    if (disposed) return;
+    params.onConnectionChange?.("connecting");
+    socket = new WebSocket(backendWebSocketUrl("market"));
+    socket.addEventListener("open", () => {
+      reconnectAttempt = 0;
+      lastMessageAt = Date.now();
+      params.onConnectionChange?.("connected");
+      socket?.send(JSON.stringify({ action: "subscribe_market_batch", subscriptions }));
+    });
+    socket.addEventListener("message", (message) => {
+      lastMessageAt = Date.now();
+      try {
+        const envelope = JSON.parse(String(message.data)) as {
+          topic?: string;
+          payload?: import("./types").MarketStreamEvent;
+        };
+        if (envelope.topic === "market" && envelope.payload?.kind) params.onEvent(envelope.payload);
+      } catch {
+        // A malformed single packet must not tear down the whole quote subscription.
+      }
+    });
+    socket.addEventListener("close", scheduleReconnect);
+    socket.addEventListener("error", () => socket?.close());
+  };
+
+  connect();
+  staleTimer = setInterval(() => {
+    if (Date.now() - lastMessageAt > 45_000) {
+      params.onConnectionChange?.("stale");
+      socket?.close();
+    } else if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ action: "ping" }));
+    }
+  }, 15_000);
+
+  return () => {
+    disposed = true;
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    if (staleTimer) clearInterval(staleTimer);
+    if (socket?.readyState === WebSocket.OPEN)
+      socket.send(JSON.stringify({ action: "unsubscribe_market" }));
+    socket?.close();
+    params.onConnectionChange?.("closed");
+  };
+}
+
+export async function getMarketWatchlist(): Promise<import("./types").MarketWatchlistSnapshot> {
+  const response = await httpGet<{ ok: boolean; data: import("./types").MarketWatchlistSnapshot }>(
+    "/api/v1/market/watchlist"
+  );
+  return response.data;
+}
+
+export async function addMarketWatchlistItem(input: {
+  symbol: string;
+  exchange?: string;
+  label?: string;
+}): Promise<import("./types").MarketWatchlistSnapshot> {
+  const response = await httpPost<{ ok: boolean; data: import("./types").MarketWatchlistSnapshot }>(
+    "/api/v1/market/watchlist",
+    input
+  );
+  return response.data;
+}
+
+export async function removeMarketWatchlistItem(
+  symbol: string,
+  exchange?: string
+): Promise<import("./types").MarketWatchlistSnapshot> {
+  const query = exchange ? `?exchange=${encodeURIComponent(exchange)}` : "";
+  const response = await httpDelete<{
+    ok: boolean;
+    data: import("./types").MarketWatchlistSnapshot;
+  }>(`/api/v1/market/watchlist/${encodeURIComponent(symbol)}${query}`);
   return response.data;
 }
 
@@ -1188,6 +1358,10 @@ export async function runOrchestratorChat(
 export async function interruptWorkflow(workflowId: string): Promise<{
   workflowRunId: string;
   requested: boolean;
+  /** 服务端已写入的权威工作流状态；200 后应以此为准而非旧列表轮询结果。 */
+  status: string;
+  /** 服务端确认停止状态的时间。 */
+  acknowledgedAt: string;
   coreCancelled?: boolean;
   turnId?: string;
   coreReason?: string;
@@ -1197,6 +1371,8 @@ export async function interruptWorkflow(workflowId: string): Promise<{
     data: {
       workflowRunId: string;
       requested: boolean;
+      status: string;
+      acknowledgedAt: string;
       coreCancelled?: boolean;
       turnId?: string;
       coreReason?: string;
@@ -1965,6 +2141,11 @@ export async function backtestStrategyContractApi(input: {
     primarySymbol: string;
     tradeCount: number;
     intentCount?: number;
+    trades?: Array<{
+      time?: string;
+      side?: "buy" | "sell" | string;
+      reason?: string;
+    }>;
   };
 }> {
   try {
@@ -4378,9 +4559,20 @@ export interface HarnessPackageVersionDto {
 export interface HarnessPackageProfileDto {
   id: string;
   title: string;
+  description: string;
+  /** 系统随 Host 发布；package 则来自已验证的外部能力包。 */
+  source?: "system" | "package";
   packageId: string;
   packageVersion: string;
   resolverAllowlisted: boolean;
+  parameters: Array<{
+    id: string;
+    type: "string" | "number" | "boolean" | "enum";
+    title: string;
+    description?: string;
+    default?: string | number | boolean;
+    values?: string[];
+  }>;
 }
 
 export interface HarnessProfileActivationDto {
@@ -4411,6 +4603,29 @@ export interface HarnessPackageProfilesDto {
   activation: HarnessProfileActivationDto;
   available: HarnessPackageProfileDto[];
   rejected: Array<{ packageId: string; reason: string }>;
+}
+
+export interface HarnessProfileActivationHistoryDto {
+  revision: number;
+  changedAt: string;
+  source: "api" | "package-uninstall";
+  previousProfileIds: string[];
+  profileIds: string[];
+  changedParameterProfiles: string[];
+}
+
+export interface HarnessTrustDto {
+  trustedKeyIds: string[];
+  revokedKeyIds: string[];
+  keyRotationSupported: boolean;
+}
+
+export interface HarnessMarketplaceItemDto {
+  id: string;
+  version: string;
+  title: string;
+  description: string;
+  verification: { ok: boolean; keyId?: string; code?: string; message?: string };
 }
 
 export interface HarnessRecentEventDto {
@@ -4477,9 +4692,33 @@ export async function getHarnessPackageProfiles(): Promise<HarnessPackageProfile
   return res.data;
 }
 
-export async function setActiveHarnessPackageProfiles(profileIds: string[]): Promise<string[]> {
-  const res = await httpPut<{ data: { activeProfileIds: string[] } }>("/api/v1/harness/profiles", { profileIds });
-  return res.data.activeProfileIds;
+export async function setActiveHarnessPackageProfiles(input: {
+  profileIds: string[];
+  parameterOverrides?: Record<string, Record<string, string | number | boolean>>;
+}): Promise<HarnessProfileActivationDto> {
+  const res = await httpPut<{
+    data: { activeProfileIds: string[]; activation: HarnessProfileActivationDto };
+  }>("/api/v1/harness/profiles", input);
+  return res.data.activation;
+}
+
+export async function getHarnessProfileActivationHistory(): Promise<
+  HarnessProfileActivationHistoryDto[]
+> {
+  const res = await httpGet<{ data: HarnessProfileActivationHistoryDto[] }>(
+    "/api/v1/harness/profiles/history"
+  );
+  return res.data;
+}
+
+export async function getHarnessTrust(): Promise<HarnessTrustDto> {
+  const res = await httpGet<{ data: HarnessTrustDto }>("/api/v1/harness/trust");
+  return res.data;
+}
+
+export async function listHarnessMarketplace(): Promise<HarnessMarketplaceItemDto[]> {
+  const res = await httpGet<{ data: HarnessMarketplaceItemDto[] }>("/api/v1/harness/marketplace");
+  return res.data;
 }
 
 export async function getHarnessHealth(): Promise<HarnessHealthDto> {
@@ -4694,10 +4933,9 @@ export async function getTradingModuleStatus(): Promise<TradingModuleStatus> {
 }
 
 export async function setTradingModuleStatus(enabled: boolean): Promise<TradingModuleStatus> {
-  const res = await httpPut<{ ok: boolean; data: TradingModuleStatus }>(
-    "/api/v1/trader/module",
-    { enabled }
-  );
+  const res = await httpPut<{ ok: boolean; data: TradingModuleStatus }>("/api/v1/trader/module", {
+    enabled,
+  });
   return res.data;
 }
 

@@ -13,7 +13,12 @@ import { parseAgentPlanSnapshot } from "../agent-control-mode";
 import { dispatchTaskToRole } from "../agent-pool";
 import { logResearchTeamInteraction } from "../research-team/interaction-log";
 import { clearWorkflowCheckpointForNewTurn } from "../workflow/checkpoint-turn";
+import { clearWorkflowCancellation } from "../workflow/workflow-cancellation";
 import { createAndDispatchWorkflow } from "../workflow/workflow-service";
+import {
+  isResearchTeamPlaceholderTitle,
+  summarizeResearchQuestionTitle,
+} from "../workflow/workflow-title";
 import { buildWorkspaceBootstrapPack, openWorkspaceById, writeRunRecord } from "../workspace";
 import { publishTurnStarted } from "./client-event-bus";
 import {
@@ -374,6 +379,9 @@ export async function createConversationTurn(
     content: message,
   });
   const turnId = turn.userMessage.id;
+  // 复用同一个 workflow 开启新一轮对话时，解除上一轮 Stop 留下的进程内取消信号。
+  // 这与 workflow-service 的新建/复用路径保持一致，避免新 turn 一启动就被旧 Stop 取消。
+  clearWorkflowCancellation(workflow.id);
   let loopOptionsJson = mergeLoopOptions(
     (workflow.loopOptionsJson as Record<string, unknown> | null) ?? {},
     input
@@ -404,6 +412,13 @@ export async function createConversationTurn(
     promotePlanToGoal || continueExistingGoal
       ? currentPlan?.goal?.text?.trim() || workflow.goal
       : message;
+  /**
+   * 研究团队「新建工作流」先生成范围/时间占位标题；首条真实用户问题到来时，
+   * 用短摘要替换它。只命中占位格式，后续追问与用户自行命名的工作流均不会被改名。
+   */
+  const questionDerivedTitle = isResearchTeamPlaceholderTitle(workflow.goal)
+    ? summarizeResearchQuestionTitle(message)
+    : null;
   const nextPlan =
     promotePlanToGoal || continueExistingGoal
       ? {
@@ -425,9 +440,11 @@ export async function createConversationTurn(
       status: "running",
       startedAt: new Date().toISOString(),
       endedAt: null,
-      ...(input.agentMode === "goal" || input.agentMode === "plan" || turnMode === "new_goal"
-        ? { goal: goalText }
-        : {}),
+      ...(questionDerivedTitle
+        ? { goal: questionDerivedTitle }
+        : input.agentMode === "goal" || input.agentMode === "plan" || turnMode === "new_goal"
+          ? { goal: goalText }
+          : {}),
       planJson: nextPlan as never,
       loopOptionsJson: loopOptionsJson as never,
     })

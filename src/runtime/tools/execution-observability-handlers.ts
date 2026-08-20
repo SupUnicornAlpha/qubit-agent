@@ -19,12 +19,13 @@ const PROVIDERS = new Set<BrokerProvider>([
   "alpaca",
   "supermind",
   "eastmoney_emt",
+  "qmt",
 ]);
 
 function providerFrom(params: Record<string, unknown>): BrokerProvider {
   const provider = String(params.provider ?? "").trim() as BrokerProvider;
   if (!PROVIDERS.has(provider)) {
-    throw new Error("provider must be one of futu, ib, ccxt, alpaca, supermind, eastmoney_emt");
+    throw new Error("provider must be one of futu, ib, ccxt, alpaca, supermind, eastmoney_emt, qmt");
   }
   return provider;
 }

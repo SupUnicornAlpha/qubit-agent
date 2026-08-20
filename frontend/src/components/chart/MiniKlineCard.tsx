@@ -13,6 +13,7 @@ import {
 } from "lightweight-charts";
 import { getKlines } from "../../api/backend";
 import { barsToCandles, barsToVolume, normalizeKlineBars } from "../../lib/klineSeries";
+import { applyDefaultKlineViewport } from "../../lib/klineViewport";
 
 export type MiniKlineCardProps = {
   symbol: string;
@@ -42,6 +43,7 @@ export const MiniKlineCard: FC<MiniKlineCardProps> = ({
   const chartRef = useRef<IChartApi | null>(null);
   const candleRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const barCountRef = useRef(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [barCount, setBarCount] = useState(0);
@@ -55,7 +57,7 @@ export const MiniKlineCard: FC<MiniKlineCardProps> = ({
       width: el.clientWidth,
       height: Math.max(120, el.clientHeight),
     });
-    chart.timeScale().fitContent();
+    applyDefaultKlineViewport(chart, barCountRef.current, 72);
   }, []);
 
   useEffect(() => {
@@ -135,6 +137,7 @@ export const MiniKlineCard: FC<MiniKlineCardProps> = ({
         const bars = normalizeKlineBars(res.data, timeframe, limit);
         candleRef.current?.setData(barsToCandles(bars, timeframe));
         volRef.current?.setData(barsToVolume(bars, timeframe));
+        barCountRef.current = bars.length;
         setBarCount(bars.length);
         setLastClose(bars.length ? bars[bars.length - 1]!.close : null);
         layout();

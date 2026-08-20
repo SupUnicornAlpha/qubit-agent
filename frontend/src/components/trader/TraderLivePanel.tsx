@@ -1173,6 +1173,7 @@ export const TraderLivePanel: FC = () => {
                       <option value="ccxt">CCXT</option>
                       <option value="alpaca">Alpaca</option>
                       <option value="supermind">同花顺 SuperMind</option>
+                      <option value="qmt">QMT / xtquant</option>
                       <option value="eastmoney_emt">东方财富 EMT</option>
                     </select>
                   </label>

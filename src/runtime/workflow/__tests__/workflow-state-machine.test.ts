@@ -5,7 +5,10 @@
  * 不会误伤现网行为。
  */
 import { describe, expect, it } from "bun:test";
-import { _isAllowedTransitionForTest } from "../workflow-state-machine";
+import {
+  _isAllowedTransitionForTest,
+  _shouldKeepCancelledForTest,
+} from "../workflow-state-machine";
 
 describe("workflow-state-machine 合法迁移矩阵", () => {
   it("pending → running 允许（首次派发）", () => {
@@ -82,5 +85,12 @@ describe("workflow-state-machine 合法迁移矩阵", () => {
 
   it("pending → failed 允许（restoreRunningWorkflows 处理 stale pending）", () => {
     expect(_isAllowedTransitionForTest("pending", "failed")).toBe(true);
+  });
+
+  it("用户 Stop 后拒绝迟到 worker 将 cancelled 覆盖为运行/失败/HITL", () => {
+    expect(_shouldKeepCancelledForTest("cancelled", "running")).toBe(true);
+    expect(_shouldKeepCancelledForTest("cancelled", "failed")).toBe(true);
+    expect(_shouldKeepCancelledForTest("cancelled", "awaiting_approval")).toBe(true);
+    expect(_shouldKeepCancelledForTest("cancelled", "pending")).toBe(false);
   });
 });

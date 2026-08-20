@@ -11,6 +11,7 @@ import type {
   EastmoneyEmtProviderConfig,
   FutuProviderConfig,
   IbProviderConfig,
+  QmtProviderConfig,
   SuperMindProviderConfig,
 } from "../../api/types";
 
@@ -103,6 +104,7 @@ function buildProviderConfig(
   ccxt: CcxtProviderConfig,
   alpaca: AlpacaProviderConfig,
   supermind: SuperMindProviderConfig,
+  qmt: QmtProviderConfig,
   emtConnectionJson: string,
   emtConnectionEnv: string,
   emtConnectWaitSeconds: number,
@@ -137,6 +139,22 @@ function buildProviderConfig(
       accountId: supermind.accountId?.trim() || undefined,
       marketPriceType: supermind.marketPriceType,
       limitPriceType: supermind.limitPriceType,
+      market: "CN",
+    };
+  }
+  if (provider === "qmt") {
+    if (!qmt.accountId?.trim() || !qmt.qmtPath?.trim()) {
+      throw new Error("请填写 QMT 资金账户 ID 和 miniQMT userdata_mini 路径");
+    }
+    return {
+      accountId: qmt.accountId.trim(),
+      qmtPath: qmt.qmtPath.trim(),
+      accountType: qmt.accountType ?? "STOCK",
+      sessionId: qmt.sessionId,
+      strategyName: qmt.strategyName?.trim() || "qubit",
+      marketPriceType: qmt.marketPriceType,
+      limitPriceType: qmt.limitPriceType,
+      marketProtectionPrice: qmt.marketProtectionPrice,
       market: "CN",
     };
   }
@@ -193,6 +211,7 @@ export const BrokerAccountsPanel: FC = () => {
   const [supermindConfig, setSupermindConfig] = useState<SuperMindProviderConfig>({
     market: "CN",
   });
+  const [qmtConfig, setQmtConfig] = useState<QmtProviderConfig>({ accountType: "STOCK", market: "CN" });
   const [emtConnectionJson, setEmtConnectionJson] = useState("{}");
   const [emtConnectionEnv, setEmtConnectionEnv] = useState("QUBIT_EMT_CONNECTION_JSON");
   const [emtConnectWaitSeconds, setEmtConnectWaitSeconds] = useState(2);
@@ -255,6 +274,18 @@ export const BrokerAccountsPanel: FC = () => {
         limitPriceType: (cfg as SuperMindProviderConfig).limitPriceType,
         market: "CN",
       });
+    } else if (a.provider === "qmt") {
+      setQmtConfig({
+        accountId: (cfg as QmtProviderConfig).accountId,
+        qmtPath: (cfg as QmtProviderConfig).qmtPath,
+        accountType: (cfg as QmtProviderConfig).accountType ?? "STOCK",
+        sessionId: (cfg as QmtProviderConfig).sessionId,
+        strategyName: (cfg as QmtProviderConfig).strategyName ?? "qubit",
+        marketPriceType: (cfg as QmtProviderConfig).marketPriceType,
+        limitPriceType: (cfg as QmtProviderConfig).limitPriceType,
+        marketProtectionPrice: (cfg as QmtProviderConfig).marketProtectionPrice,
+        market: "CN",
+      });
     } else if (a.provider === "eastmoney_emt") {
       const emt = cfg as EastmoneyEmtProviderConfig;
       setEmtConnectionJson(JSON.stringify(emt.connectionSetting ?? {}, null, 2));
@@ -285,6 +316,7 @@ export const BrokerAccountsPanel: FC = () => {
           ccxtConfig,
           alpacaConfig,
           supermindConfig,
+          qmtConfig,
           emtConnectionJson,
           emtConnectionEnv,
           emtConnectWaitSeconds,
@@ -332,7 +364,7 @@ export const BrokerAccountsPanel: FC = () => {
     <div style={wrap}>
       <h2 style={title}>券商账户配置</h2>
       <p style={lead}>
-        登记富途、盈透、CCXT、Alpaca、同花顺 SuperMind 或东方财富 EMT 连接参数。{" "}
+        登记富途、盈透、CCXT、Alpaca、同花顺 SuperMind、QMT 或东方财富 EMT 连接参数。{" "}
         <strong>mock</strong> 为后端本地模拟；<strong>sandbox</strong> 对应富途模拟盘（TrdEnv.SIMULATE）；{" "}
         <strong>live</strong> 为实盘。保存 Futu 的 sandbox/live 账户时会自动默认交易桥{" "}
         <code style={{ fontSize: 12 }}>http://127.0.0.1:18765</code>，并尝试拉起交易 HTTP + 行情 WS
@@ -352,6 +384,7 @@ export const BrokerAccountsPanel: FC = () => {
             <option value="ccxt">CCXT 加密货币</option>
             <option value="alpaca">Alpaca 美股</option>
             <option value="supermind">同花顺 SuperMind</option>
+            <option value="qmt">QMT / xtquant（A 股）</option>
             <option value="eastmoney_emt">东方财富 EMT</option>
           </select>
         </div>
@@ -519,6 +552,32 @@ export const BrokerAccountsPanel: FC = () => {
           </div>
           <p style={{ ...lead, margin: 0, flexBasis: "100%" }}>
             实盘需在已开通权限并登录的 SuperMind Python 环境运行 HTTP Sidecar。
+          </p>
+        </div>
+      ) : provider === "qmt" ? (
+        <div style={row}>
+          <div style={field}>
+            <span style={label}>QMT 资金账户 ID</span>
+            <input style={input} value={qmtConfig.accountId ?? ""} onChange={(e) => setQmtConfig((c) => ({ ...c, accountId: e.target.value }))} placeholder="必填" />
+          </div>
+          <div style={{ ...field, flex: 1, minWidth: 310 }}>
+            <span style={label}>miniQMT userdata_mini 路径</span>
+            <input style={{ ...input, width: "100%" }} value={qmtConfig.qmtPath ?? ""} onChange={(e) => setQmtConfig((c) => ({ ...c, qmtPath: e.target.value }))} placeholder={"D:\\qmt\\userdata_mini"} />
+          </div>
+          <div style={field}>
+            <span style={label}>账户类型</span>
+            <select style={input} value={qmtConfig.accountType ?? "STOCK"} onChange={(e) => setQmtConfig((c) => ({ ...c, accountType: e.target.value as QmtProviderConfig["accountType"] }))}>
+              <option value="STOCK">STOCK · 普通证券</option>
+              <option value="CREDIT">CREDIT · 融资融券</option>
+              <option value="FUTURE">FUTURE · 期货</option>
+            </select>
+          </div>
+          <div style={field}>
+            <span style={label}>策略标识</span>
+            <input style={input} value={qmtConfig.strategyName ?? "qubit"} onChange={(e) => setQmtConfig((c) => ({ ...c, strategyName: e.target.value }))} />
+          </div>
+          <p style={{ ...lead, margin: 0, flexBasis: "100%" }}>
+            QMT 交易只在 Windows 本机、已登录并获券商授权的 miniQMT Sidecar 生效；QUBIT 不保存交易密码。
           </p>
         </div>
       ) : provider === "eastmoney_emt" ? (

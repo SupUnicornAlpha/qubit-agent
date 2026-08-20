@@ -11,6 +11,7 @@ import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 import { getDataDir } from "../agent/agent-pack-service";
 import { CapabilityRegistry } from "./capability-registry";
+import { builtinFinancialProfiles } from "./system-profiles";
 import type { CapabilityManifest, CapabilityProfile, CapabilityProfileParameter } from "./types";
 
 const PACKAGE_ID = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$/;
@@ -552,9 +553,7 @@ export async function refreshHarnessPackageRuntime(input?: {
     ...(input?.trustedKeys ? { trustedKeys: input.trustedKeys } : {}),
     dataDir,
   });
-  const available = new Set(
-    outcome.packages.flatMap((pkg) => pkg.profiles.map((profile) => profile.id))
-  );
+  const available = availableHarnessProfileIds(outcome.packages);
   const activation = await readHarnessProfileActivation(
     resolve(dataDir, "harness-packages", "activation.json")
   );
@@ -626,9 +625,7 @@ export async function setActiveHarnessPackageProfiles(input: {
     ...(input.trustedKeys ? { trustedKeys: input.trustedKeys } : {}),
     dataDir,
   });
-  const available = new Set(
-    state.packages.flatMap((pkg) => pkg.profiles.map((profile) => profile.id))
-  );
+  const available = availableHarnessProfileIds(state.packages);
   const profileIds = [
     ...new Set(input.profileIds.map((profileId) => profileId.trim()).filter(Boolean)),
   ].sort();
@@ -636,11 +633,11 @@ export async function setActiveHarnessPackageProfiles(input: {
   if (invalid.length > 0) {
     throw new HarnessPackageInstallError(
       "profile_unknown",
-      `Package profiles are not installed or trusted: ${invalid.join(", ")}`
+      `Harness Profiles are unavailable or not trusted: ${invalid.join(", ")}`
     );
   }
   const parameterOverrides = validateProfileParameterOverrides({
-    profiles: state.packages.flatMap((pkg) => pkg.profiles),
+    profiles: allHarnessProfiles(state.packages),
     profileIds,
     ...(input.parameterOverrides !== undefined
       ? { parameterOverrides: input.parameterOverrides }
@@ -663,6 +660,14 @@ export async function setActiveHarnessPackageProfiles(input: {
   });
   runtimeState = { ...state, activeProfileIds: profileIds, activation };
   return getHarnessPackageRuntimeState();
+}
+
+function allHarnessProfiles(packages: readonly DeclarativeHarnessPackage[]): CapabilityProfile[] {
+  return [...builtinFinancialProfiles, ...packages.flatMap((pkg) => pkg.profiles)];
+}
+
+function availableHarnessProfileIds(packages: readonly DeclarativeHarnessPackage[]): Set<string> {
+  return new Set(allHarnessProfiles(packages).map((profile) => profile.id));
 }
 
 export class HarnessPackageInstallError extends Error {

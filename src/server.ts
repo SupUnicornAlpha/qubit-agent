@@ -178,7 +178,7 @@ app.onError((err, c) => {
 interface WsData {
   id: string;
   topic?: string;
-  marketUnsubscribe?: () => void;
+  marketUnsubscribes?: Array<() => void>;
 }
 
 const wsClients = new Map<string, ServerWebSocket<WsData>>();
@@ -225,21 +225,27 @@ export function createServer() {
             subscribe?: string;
             action?: string;
             subscription?: MarketStreamSubscription;
+            subscriptions?: MarketStreamSubscription[];
           };
+          const unsubscribeMarket = () => {
+            for (const unsubscribe of ws.data.marketUnsubscribes ?? []) unsubscribe();
+            delete ws.data.marketUnsubscribes;
+          };
+          const subscribeMarket = (subscription: MarketStreamSubscription) =>
+            marketStreamGateway.subscribe(subscription, (event) => {
+              try {
+                ws.send(JSON.stringify({ topic: "market", payload: event }));
+              } catch {
+                unsubscribeMarket();
+              }
+            });
           if (msg.subscribe) {
             ws.data.topic = msg.subscribe;
           }
           if (msg.action === "subscribe_market" && msg.subscription) {
-            ws.data.marketUnsubscribe?.();
+            unsubscribeMarket();
             ws.data.topic = "market";
-            ws.data.marketUnsubscribe = marketStreamGateway.subscribe(msg.subscription, (event) => {
-              try {
-                ws.send(JSON.stringify({ topic: "market", payload: event }));
-              } catch {
-                ws.data.marketUnsubscribe?.();
-                delete ws.data.marketUnsubscribe;
-              }
-            });
+            ws.data.marketUnsubscribes = [subscribeMarket(msg.subscription)];
             ws.send(
               JSON.stringify({
                 topic: "market",
@@ -256,9 +262,34 @@ export function createServer() {
               })
             );
           }
+          if (msg.action === "subscribe_market_batch" && Array.isArray(msg.subscriptions)) {
+            unsubscribeMarket();
+            const subscriptions = msg.subscriptions
+              .filter(
+                (subscription) =>
+                  typeof subscription?.symbol === "string" && subscription.symbol.trim()
+              )
+              .slice(0, 30);
+            ws.data.topic = "market";
+            ws.data.marketUnsubscribes = subscriptions.map(subscribeMarket);
+            ws.send(
+              JSON.stringify({
+                topic: "market",
+                payload: {
+                  kind: "status",
+                  sequence: 0,
+                  data: { status: "subscribed", subscriptions: subscriptions.length },
+                  symbol: "",
+                  exchange: "",
+                  timeframe: "1m",
+                  source: "qubit_market_gateway",
+                  emittedAt: new Date().toISOString(),
+                },
+              })
+            );
+          }
           if (msg.action === "unsubscribe_market") {
-            ws.data.marketUnsubscribe?.();
-            delete ws.data.marketUnsubscribe;
+            unsubscribeMarket();
           }
           if (msg.action === "ping") {
             ws.send(JSON.stringify({ topic: "pong", payload: { ts: new Date().toISOString() } }));
@@ -268,7 +299,7 @@ export function createServer() {
         }
       },
       close(ws) {
-        ws.data.marketUnsubscribe?.();
+        for (const unsubscribe of ws.data.marketUnsubscribes ?? []) unsubscribe();
         wsClients.delete(ws.data.id);
       },
     },

@@ -16,6 +16,7 @@ export const BROKER_PROVIDERS = [
   "alpaca",
   "supermind",
   "eastmoney_emt",
+  "qmt",
 ] as const;
 
 export type BrokerProvider = (typeof BROKER_PROVIDERS)[number];
@@ -78,13 +79,27 @@ export type EastmoneyEmtProviderConfig = {
   market?: "CN";
 };
 
+/** Windows miniQMT / xtquant. QMT account login remains local to the sidecar. */
+export type QmtProviderConfig = {
+  accountId?: string;
+  qmtPath?: string;
+  accountType?: "STOCK" | "CREDIT" | "FUTURE";
+  sessionId?: number;
+  strategyName?: string;
+  marketPriceType?: number;
+  limitPriceType?: number;
+  marketProtectionPrice?: number;
+  market?: "CN";
+};
+
 export type BrokerProviderConfig =
   | FutuProviderConfig
   | IbProviderConfig
   | CcxtProviderConfig
   | AlpacaProviderConfig
   | SuperMindProviderConfig
-  | EastmoneyEmtProviderConfig;
+  | EastmoneyEmtProviderConfig
+  | QmtProviderConfig;
 
 export type BrokerAccountRow = {
   id: string;

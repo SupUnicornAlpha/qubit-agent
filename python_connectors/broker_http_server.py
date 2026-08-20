@@ -3,7 +3,7 @@
 HTTP bridge so the Bun runtime can call real brokers via `broker_account.base_url`.
 
 Endpoints:
-  GET  /health?provider=futu|ib|ccxt|alpaca|supermind|eastmoney_emt&providerConfig={json}
+  GET  /health?provider=futu|ib|ccxt|alpaca|supermind|eastmoney_emt|qmt&providerConfig={json}
   POST /orders
   GET  /orders?brokerOrderId=...
   GET  /orders/open

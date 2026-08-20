@@ -1,0 +1,25 @@
+/* 行情工作台在窄屏时优先保留自选与当前图表，而不是把两栏硬挤在同一行。 */
+@media (max-width: 760px) {
+  [data-qb-market-workspace] .qb-market-workspace__body {
+    flex-direction: column;
+    overflow: auto;
+  }
+
+  [data-qb-market-workspace] .qb-market-workspace__context {
+    width: 100% !important;
+    min-width: 0 !important;
+    height: min(42vh, 330px);
+    flex-shrink: 0;
+    border-right: 0 !important;
+    border-bottom: 1px solid var(--qb-kline-header-border, #27272a);
+  }
+
+  [data-qb-market-workspace] .qb-market-workspace__chart {
+    min-height: 360px;
+  }
+
+  [data-qb-market-workspace] .qb-market-workspace__chart-surface {
+    min-height: 360px;
+    flex: none !important;
+  }
+}
