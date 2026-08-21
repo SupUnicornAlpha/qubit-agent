@@ -43,20 +43,43 @@ import type { RuntimeAgentDefinition } from "../runtime/types";
 
 export const primeBridgeRouter = new Hono();
 
-/** M4+ grayscale allowlist — keep in sync with qubit-tool-host DEFAULT_BRIDGED_TOOLS */
-const BRIDGED_TOOLS = [
+/**
+ * Bun-side L2 tool surface for Rust Core.
+ *
+ * Keep this exported surface in lockstep with the Rust fallback list. The
+ * contract test deliberately checks the Prime requirements and the financial
+ * Harness declarations against both sides, so a prompt-facing tool cannot be
+ * silently omitted from Core execution again.
+ */
+export const BRIDGED_TOOLS = [
+  // User scope / market context
+  "market.ide_subscription.get",
+  "market.broker_quote.get",
   "market.resolve_symbol",
   "market.readiness",
   "market.data_sources",
   "market.snapshot.get",
+
+  // Prime workflow state and learning
   "memory.recall",
+  "memory.consolidate_longterm",
+  "memory.refresh_workspace",
   "skill.search",
+  "skill.use_record",
+  "skill.create",
+  "skill.patch",
+  "skill.archive",
   "workspace.memory.search",
+
+  // Research / strategy contracts
   "run_screener",
   "research.thesis.write",
   "research.forecast_book.get",
   "portfolio.construct",
   "recommendation.record",
+  "discovery.run",
+  "discovery.promote",
+  "rule.register",
   "strategy.create_version",
   "strategy.compose",
   "strategy.compile",
@@ -78,6 +101,9 @@ const BRIDGED_TOOLS = [
   // resolved by Core, so every tool a child is expected to call must also be
   // advertised by the legacy bridge (and mirrored in qubit-tool-host).
   "fetch_klines",
+  "fetch_quote",
+  "fetch_ticks",
+  "fetch_option_chain",
   "fetch_fundamentals",
   "fetch_news",
   "fetch_news_sentiment",

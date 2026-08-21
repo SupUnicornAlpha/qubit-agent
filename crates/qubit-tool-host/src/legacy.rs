@@ -12,18 +12,32 @@ use crate::error::ToolHostError;
 /// Default allowlisted builtins for M4+ grayscale (+ memory for Core RecallPort).
 /// Topology `call_team_*` are advertised dynamically via Bun `legacy.tools.list`.
 pub const DEFAULT_BRIDGED_TOOLS: &[&str] = &[
+    // User scope / market context
+    "market.ide_subscription.get",
+    "market.broker_quote.get",
     "market.resolve_symbol",
     "market.readiness",
     "market.data_sources",
     "market.snapshot.get",
+    // Prime workflow state and learning
     "memory.recall",
+    "memory.consolidate_longterm",
+    "memory.refresh_workspace",
     "skill.search",
+    "skill.use_record",
+    "skill.create",
+    "skill.patch",
+    "skill.archive",
     "workspace.memory.search",
+    // Research / strategy contracts
     "run_screener",
     "research.thesis.write",
     "research.forecast_book.get",
     "portfolio.construct",
     "recommendation.record",
+    "discovery.run",
+    "discovery.promote",
+    "rule.register",
     "strategy.create_version",
     "strategy.compose",
     "strategy.compile",
@@ -45,6 +59,9 @@ pub const DEFAULT_BRIDGED_TOOLS: &[&str] = &[
     // not resolve tools:// AgentSpec refs yet, so specialists need their
     // domain tools here even when legacy.tools.list is temporarily unavailable.
     "fetch_klines",
+    "fetch_quote",
+    "fetch_ticks",
+    "fetch_option_chain",
     "fetch_fundamentals",
     "fetch_news",
     "fetch_news_sentiment",
@@ -75,7 +92,12 @@ mod tests {
     #[test]
     fn fallback_surface_contains_specialist_domain_tools() {
         for name in [
+            "market.ide_subscription.get",
+            "market.broker_quote.get",
             "fetch_fundamentals",
+            "fetch_quote",
+            "fetch_ticks",
+            "fetch_option_chain",
             "compute_valuation",
             "fetch_klines",
             "compute_indicators",
