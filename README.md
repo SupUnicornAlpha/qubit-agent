@@ -15,7 +15,9 @@ QUBIT 面向量化研究与交易自动化场景，将 **自研 ReAct Agent Runt
 - 在对话中带入 K 线上下文，由编排 Agent 调度研究 / 回测 / 风控等角色
 - 在「研究团队」画布上勾选参与分析的 Agent，查看拓扑与 A2A 协作轨迹
 - 在量化工坊中查看 Agent 产出的因子 / 策略 / 脚本，编辑指标与 Python 信号并运行回测
-- 通过行情源控制面管理 Wind、Tushare、EastMoney、AKShare、yfinance、Yahoo 与 Binance
+- 在行情中心维护本机自选、读取已配置券商的持仓；自选可直接作为 Agent 研究上下文
+- 覆盖股票、期权、期货与加密资产的行情研究路径，并通过行情源控制面管理 Wind、Tushare、EastMoney、AKShare、yfinance、Yahoo 与 Binance
+- 将已选策略绑定到匹配的标的与 K 线周期，在图表上发起回测并回写信号 / 成交标记
 - 用内置 10 场景 benchmark 对 Agent 的终态、证据、工具治理、研究产物和执行能力持续评分
 - 通过配置中心接入 MCP（Anthropic Registry）、Skills（SkillsMP）与券商（Futu / IB）
 
@@ -30,6 +32,18 @@ QUBIT 面向量化研究与交易自动化场景，将 **自研 ReAct Agent Runt
 对话会话、Agent 看板与 K 线、回测坞同屏协作；支持将行情上下文带入对话分析。
 
 ![研究工作台：对话、K 线与回测](docs/screenshots/ide-workbench.png)
+
+### 行情中心 · 自选、持仓与盘口
+
+本机自选同时服务于行情查看和 Agent 研究；每个标的可展示当日迷你 K 线与日内涨跌。配置券商后，持仓会在相邻页签从券商桥读取；移除自选会先要求确认。
+
+![行情中心：自选、持仓入口与五档盘口](docs/screenshots/market-watchlist.png)
+
+### 期权链 · Greeks 与策略推演
+
+期权链与行情深度并列展示，支持按到期日、行权价、Call / Put 与方向构建策略，并展示报价、IV、OI、Greeks、盈亏平衡与到期情景。
+
+![AAPL 期权链：策略工具、Greeks 与到期情景](docs/screenshots/market-options-chain.png)
 
 ### 研究团队 · 多 Agent 拓扑
 
@@ -53,7 +67,11 @@ QUBIT 面向量化研究与交易自动化场景，将 **自研 ReAct Agent Runt
 | **工作模式** | Agent：直接回答 / 按需执行；Plan：只生成可验证计划并硬性禁用业务工具；Goal：自主规划、执行、验证并经完成门禁闭环 |
 | **研究团队** | Orchestrator 定向调度专家，A2A 结果回收、超时隔离、辩论 / 风控与信号融合 |
 | **行情治理** | 按市场 / 周期 / 凭证 / 健康度 / 优先级路由；成功率、P95、最近错误、熔断与 fallback 可观测 |
+| **自选与持仓** | 本机自选由 `market.ide_subscription.get` 统一读取；每行支持日内迷你 K 线、涨跌与删除确认。配置券商后可从券商桥读取持仓 |
+| **多资产行情** | 股票 / ETF、OPRA 美股期权链、期货连续合约与 Binance 现货在同一行情工作台呈现；具体可用市场取决于已配置的数据源 |
+| **期权链与策略推演** | Call / Put 链、报价、IV、OI、Greeks、策略组合、盈亏平衡与到期情景；研究级行情明确标识，不能直接用于交易决策 |
 | **量化工坊** | Agent 产出的因子 / 策略 / 脚本与 workflow 关联；支持编辑、评估、回测及产物跳转 |
+| **图表内回测** | 回测前校验策略的标的 / 标的池与 K 线周期维度；匹配后在当前图表运行，信号与成交标记回写 K 线 |
 | **新闻证据** | 当前分析默认 7 天 freshness window；过滤无日期、过期、无关及 synthetic / stub 内容 |
 | **对话工作台** | Session 管理、消息关联 workflow、Agent 看板与执行时间线 |
 | **运行监控** | Session / Workflow / Step / Tool / MCP / Sandbox 多层观测与失败归因 |
@@ -69,13 +87,20 @@ ReAct、Claude CLI 或 Codex CLI。Plan 的“只规划”由运行时工具权�
 `experience: native / coding_agent` 会分别兼容映射为 Agent / Goal，新接口统一使用
 `loopOptionsJson.agentMode`。
 
+### 自选、持仓与研究数据边界
+
+- **自选**由 IDE 本机维护，Agent 通过 `market.ide_subscription.get` 获取真实条目；接口为空或不可用时，Agent 不会用历史对话中的标的冒充自选清单。
+- **持仓**默认从已配置券商桥读取；未配置账户或桥不可用时，界面会显示空态而不会伪造仓位。
+- **行情与期权链**会携带数据源与可用性信息。研究级 / 降级数据仅供研究、回测与策略推演，不能作为交易决策依据。
+- **图表回测**只可在策略覆盖的标的（或明确指定的标的池成员）与匹配的 K 线周期上执行；篮子策略必须明确回测标的后才可运行。
+
 ---
 
 ## 技术栈
 
 | 层级 | 技术 |
 |------|------|
-| 后端 | Bun · TypeScript · Hono · Drizzle · SQLite · DuckDB |
+| 后端 | Bun · TypeScript · Hono · Drizzle · SQLite · DuckDB · Rust Prime Core |
 | 编排 | 自研 ReAct 状态机 · A2A 消息总线 · OpenAI SDK（多 Provider） |
 | 前端 | Vite · React · Zustand |
 | 桌面 | Tauri v2（Rust） |
