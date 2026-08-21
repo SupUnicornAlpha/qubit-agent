@@ -1,5 +1,7 @@
 # QUBIT Agent Platform
 
+[English](README.en.md)
+
 **量化研究多 Agent 平台** — 对话驱动研究、多分析师协作、真实行情治理、量化工坊、回测与实盘编排，一体化交付。
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
