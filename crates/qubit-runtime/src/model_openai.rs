@@ -148,6 +148,12 @@ fn tool_description(name: &str) -> String {
         "market.readiness" => "Check market data source readiness.".into(),
         "market.data_sources" => "List configured market data sources.".into(),
         "market.snapshot.get" => "Fetch an immutable market snapshot (returns snapshotId).".into(),
+        "factor.register" => "Register a factor before computing it. Required: name + expr; returns factor id.".into(),
+        "factor.compute" => "Compute values for an existing factor. Required: factor_id returned by factor.register + symbols[].".into(),
+        "factor.autoEvaluate" => "Evaluate a computed factor across at least three symbols; call factor.compute first.".into(),
+        "strategy.create_version" => "Create a strategy version before composing or backtesting; returns strategy_version_id.".into(),
+        "strategy.compose" => "Attach factors/rules to an existing strategy. Required: strategy_version_id; call before backtest.run.".into(),
+        "backtest.run" => "Run an event-driven backtest. Required: strategy_version_id and symbols[]; compose first or provide signals.".into(),
         n if n.starts_with("mcp:mathjs:") => {
             "Evaluate ONE math expression. Prefer a single call; do not spam.".into()
         }
@@ -242,6 +248,89 @@ fn tool_parameters_schema(name: &str) -> Value {
                 "interval": { "type": "string" },
                 "limit": { "type": "integer" }
             }
+        });
+    }
+    if bare == "factor.register" {
+        return json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string" },
+                "expr": { "type": "string", "description": "qlib expression" },
+                "expression": { "type": "string", "description": "alias of expr" },
+                "category": { "type": "string" },
+                "lang": { "type": "string" },
+                "universe": { "type": "string" },
+                "horizon": { "type": "integer" }
+            },
+            "required": ["name", "expr"],
+            "additionalProperties": true
+        });
+    }
+    if bare == "factor.compute" || bare == "factor.autoEvaluate" {
+        return json!({
+            "type": "object",
+            "properties": {
+                "factor_id": { "type": "string", "description": "ID returned by factor.register" },
+                "factorId": { "type": "string", "description": "alias of factor_id" },
+                "symbols": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+                "symbol": { "type": "string" },
+                "ticker": { "type": "string" },
+                "start_date": { "type": "string", "description": "YYYY-MM-DD" },
+                "end_date": { "type": "string", "description": "YYYY-MM-DD" },
+                "startDate": { "type": "string" },
+                "endDate": { "type": "string" }
+            },
+            "required": ["factor_id", "symbols"],
+            "additionalProperties": true
+        });
+    }
+    if bare == "strategy.create_version" {
+        return json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string" },
+                "style": { "type": "string" },
+                "description": { "type": "string" },
+                "universe": { "type": "string" }
+            },
+            "required": ["name"],
+            "additionalProperties": true
+        });
+    }
+    if bare == "strategy.compose" {
+        return json!({
+            "type": "object",
+            "properties": {
+                "strategy_version_id": { "type": "string" },
+                "strategyVersionId": { "type": "string", "description": "alias of strategy_version_id" },
+                "factor_ids": { "type": "array", "items": { "type": "string" } },
+                "rule_ids": { "type": "array", "items": { "type": "string" } },
+                "kind": { "type": "string" },
+                "weight_method": { "type": "string" },
+                "universe": { "type": "string" }
+            },
+            "required": ["strategy_version_id"],
+            "additionalProperties": true
+        });
+    }
+    if bare == "backtest.run" {
+        return json!({
+            "type": "object",
+            "properties": {
+                "strategy_version_id": { "type": "string" },
+                "strategyVersionId": { "type": "string", "description": "alias of strategy_version_id" },
+                "symbols": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+                "symbol": { "type": "string" },
+                "ticker": { "type": "string" },
+                "composition_id": { "type": "string" },
+                "signals": { "type": "object" },
+                "start_date": { "type": "string", "description": "YYYY-MM-DD" },
+                "end_date": { "type": "string", "description": "YYYY-MM-DD" },
+                "benchmark": { "type": "string" },
+                "capital": { "type": "number" }
+            },
+            "required": ["strategy_version_id", "symbols"],
+            "additionalProperties": true
         });
     }
     if bare.starts_with("mcp:investor-agent:") {
@@ -731,5 +820,22 @@ mod tests {
                 assert_eq!(decode_openai_tool_name(&e, &HashMap::new()), n);
             }
         }
+    }
+
+    #[test]
+    fn quant_tool_schemas_expose_required_contract_fields() {
+        let factor = tool_parameters_schema("factor.compute");
+        assert_eq!(factor["required"], json!(["factor_id", "symbols"]));
+        assert!(factor["properties"].get("start_date").is_some());
+
+        let backtest = tool_parameters_schema("backtest.run");
+        assert_eq!(
+            backtest["required"],
+            json!(["strategy_version_id", "symbols"])
+        );
+        assert!(backtest["properties"].get("composition_id").is_some());
+
+        let compose = tool_parameters_schema("strategy.compose");
+        assert_eq!(compose["required"], json!(["strategy_version_id"]));
     }
 }

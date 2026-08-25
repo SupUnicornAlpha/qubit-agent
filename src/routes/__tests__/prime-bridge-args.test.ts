@@ -49,6 +49,18 @@ describe("unwrapBridgeToolArgs", () => {
     expect(out.ticker).toBe("ASTS");
     expect(out.candidates).toEqual([{ symbol: "AAPL", weight: 0.5 }]);
   });
+
+  test("flattens params and args nesting used by OpenAI-compatible tool calls", () => {
+    expect(unwrapBridgeToolArgs({ params: { factor_id: "f-1", symbols: ["AAPL"] } })).toMatchObject(
+      {
+        factor_id: "f-1",
+        symbols: ["AAPL"],
+      }
+    );
+    expect(unwrapBridgeToolArgs({ args: { strategy_version_id: "sv-1" } })).toMatchObject({
+      strategy_version_id: "sv-1",
+    });
+  });
 });
 
 describe("isBridgedLegacyToolName", () => {
@@ -116,5 +128,14 @@ describe("normalizeBridgeToolArgs", () => {
     expect(normalizeBridgeToolArgs("web.fetch", { query: "https://example.com/a" })).toMatchObject({
       url: "https://example.com/a",
     });
+  });
+
+  test("canonicalizes compact date aliases for quant tools", () => {
+    expect(
+      normalizeBridgeToolArgs("factor.compute", {
+        start: "2024-01-01",
+        end: "2024-12-31",
+      })
+    ).toMatchObject({ start_date: "2024-01-01", end_date: "2024-12-31" });
   });
 });

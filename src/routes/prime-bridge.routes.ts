@@ -156,16 +156,17 @@ export function isBridgedLegacyToolName(name: string): boolean {
 }
 
 /**
- * Models often nest real params under `arguments`; top-level wins on conflict.
+ * Models often nest real params under `arguments` / `params` / `args`; top-level wins on conflict.
  * Also normalizes common aliases so handlers that only look at one key still work.
  */
 export function unwrapBridgeToolArgs(args: Record<string, unknown>): Record<string, unknown> {
-  const nested =
-    args.arguments && typeof args.arguments === "object" && !Array.isArray(args.arguments)
-      ? (args.arguments as Record<string, unknown>)
-      : null;
-  const out: Record<string, unknown> = nested ? { ...nested, ...args } : { ...args };
-  Reflect.deleteProperty(out, "arguments");
+  let out: Record<string, unknown> = { ...args };
+  for (const key of ["arguments", "params", "args"] as const) {
+    const nested = out[key];
+    if (!nested || typeof nested !== "object" || Array.isArray(nested)) continue;
+    out = { ...(nested as Record<string, unknown>), ...out };
+    Reflect.deleteProperty(out, key);
+  }
 
   if (out.projectId == null && typeof out.project_id === "string") {
     out.projectId = out.project_id;
@@ -225,6 +226,15 @@ export function normalizeBridgeToolArgs(
   args: Record<string, unknown>
 ): Record<string, unknown> {
   const next: Record<string, unknown> = { ...args };
+
+  // Quant tools historically accepted both camelCase and snake_case. Core
+  // models also commonly emit `start` / `end`; canonicalise them at the bridge
+  // boundary so a valid date range is never silently discarded by a builtin.
+  if (next.start_date == null) next.start_date = next.startDate ?? next.start ?? next.from;
+  if (next.end_date == null) next.end_date = next.endDate ?? next.end ?? next.to ?? next.asOf;
+  if (next.startDate == null && typeof next.start_date === "string")
+    next.startDate = next.start_date;
+  if (next.endDate == null && typeof next.end_date === "string") next.endDate = next.end_date;
 
   if (toolName === "web.fetch") {
     const query = typeof next.query === "string" ? next.query.trim() : "";

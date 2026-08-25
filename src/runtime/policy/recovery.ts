@@ -93,6 +93,16 @@ function inferMissingParams(toolName: string, params: Record<string, unknown>): 
     if (!params.expression) missing.push("expression");
     if (!params.name) missing.push("name");
   }
+  if (toolName === "strategy.compose") {
+    if (!params.strategy_version_id) missing.push("strategy_version_id");
+    if (!Array.isArray(params.factor_ids) || params.factor_ids.length === 0) {
+      missing.push("factor_ids");
+    }
+  }
+  if (toolName === "backtest.run") {
+    if (!params.strategy_version_id) missing.push("strategy_version_id");
+    if (!Array.isArray(params.symbols) || params.symbols.length === 0) missing.push("symbols");
+  }
   if (toolName === "recommendation.record") {
     if (!params.symbol) missing.push("symbol");
     if (!params.rationale) missing.push("rationale");

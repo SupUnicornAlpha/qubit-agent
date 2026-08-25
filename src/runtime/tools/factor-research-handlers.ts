@@ -37,10 +37,16 @@ function pickFactorId(params: Record<string, unknown>): string {
   return "";
 }
 
-/** start_date / startDate；end_date / endDate 等下划线/驼峰双兼容取值。 */
-function pickDateParam(params: Record<string, unknown>, snake: "start_date" | "end_date"): string {
-  const camel = snake === "start_date" ? "startDate" : "endDate";
-  const v = params[snake] ?? params[camel];
+/** Accept the date aliases exposed by the Core/bridge tool surface. */
+export function pickDateParam(
+  params: Record<string, unknown>,
+  snake: "start_date" | "end_date"
+): string {
+  const aliases =
+    snake === "start_date"
+      ? ["start_date", "startDate", "start", "from"]
+      : ["end_date", "endDate", "end", "to", "asOf"];
+  const v = aliases.map((key) => params[key]).find((value) => typeof value === "string");
   return typeof v === "string" ? v.trim() : "";
 }
 

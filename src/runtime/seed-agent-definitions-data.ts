@@ -66,7 +66,7 @@ function def(partial: SeedDefinition): RuntimeAgentDefinition {
 
 /**
  * 2026-08-04 精品工具面：
- * - 专家 Agent 默认 ≤10 个官方 tool，本职能力独占
+ * - 专家 Agent 默认 ≤10 个官方 tool；行情 Agent 可额外拥有 14 个行情/期权取证工具
  * - Orchestrator 不设上限：持有场景合同写工具 + 派单 + 记忆/skill
  * - 行情治理工具只留给 market_data（或 Orchestrator 做 readiness 探活）
  */

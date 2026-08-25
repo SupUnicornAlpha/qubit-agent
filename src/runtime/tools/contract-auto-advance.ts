@@ -137,9 +137,25 @@ export function resolveArtifactAutoAdvance(input: {
     if (table === "strategy_composition") {
       const toolName = "strategy.compose";
       if (!input.availableTools.includes(toolName)) return null;
+      const strategyVersionId = input.snapshot.strategyVersionId;
+      // `strategy.compose` is deliberately strict: suggesting it without a
+      // version just burns an agent turn on a guaranteed contract failure.
+      if (!strategyVersionId) {
+        if (!input.availableTools.includes("strategy.create_version")) return null;
+        return {
+          toolName: "strategy.create_version",
+          params: {
+            name: `recovery-strategy-${input.snapshot.workflowId.slice(0, 8)}`,
+            style: "low_freq",
+            description: "recovery strategy shell for the workflow's registered factors",
+            universe: "US",
+          },
+        };
+      }
       return {
         toolName,
         params: {
+          strategy_version_id: strategyVersionId,
           kind: "factor_weighted",
           weight_method: "equal",
           factor_ids: input.snapshot.activeFactorIds,
@@ -149,9 +165,23 @@ export function resolveArtifactAutoAdvance(input: {
     if (table === "quality:strategy_backtest_completed") {
       const toolName = input.availableTools.includes("backtest.run") ? "backtest.run" : null;
       if (!toolName) return null;
+      const strategyVersionId = input.snapshot.strategyVersionId;
+      if (!strategyVersionId) {
+        if (!input.availableTools.includes("strategy.create_version")) return null;
+        return {
+          toolName: "strategy.create_version",
+          params: {
+            name: `recovery-backtest-${input.snapshot.workflowId.slice(0, 8)}`,
+            style: "low_freq",
+            description: "strategy shell required before composing and backtesting",
+            universe: "US",
+          },
+        };
+      }
       return {
         toolName,
         params: {
+          strategy_version_id: strategyVersionId,
           symbols: ["AAPL", "MSFT", "NVDA"],
           start_date: "2023-01-01",
           end_date: "2024-12-31",

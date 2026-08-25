@@ -42,6 +42,13 @@ export const ORCHESTRATION_HANDLERS: Record<string, BuiltinToolHandler> = {
           .toLowerCase()
           .includes(query);
       })
+      // Discovery must not grant new permissions, but an agent's existing
+      // read-only tools are the most useful search results and should not be
+      // hidden by unrelated catalog entries when callers use a small limit.
+      .sort((left, right) => {
+        const configuredDelta = Number(configured.has(right.name)) - Number(configured.has(left.name));
+        return configuredDelta || left.name.localeCompare(right.name);
+      })
       .slice(0, limit)
       .map((tool) => ({
         name: tool.name,

@@ -103,6 +103,8 @@ const MARKET_CONTRACTS: ToolContract[] = [
         raw.factor_id ??
         raw.factorId ??
         (Array.isArray(raw.factor_ids) ? raw.factor_ids[0] : undefined),
+      start_date: raw.start_date ?? raw.startDate ?? raw.start ?? raw.from,
+      end_date: raw.end_date ?? raw.endDate ?? raw.end ?? raw.to ?? raw.asOf,
     }),
     errorCodes: {
       factor_not_found: "permanent",
@@ -144,6 +146,8 @@ const MARKET_CONTRACTS: ToolContract[] = [
         toolName: "backtest.run",
       }),
       strategy_version_id: raw.strategy_version_id ?? raw.strategyVersionId,
+      start_date: raw.start_date ?? raw.startDate ?? raw.start ?? raw.from,
+      end_date: raw.end_date ?? raw.endDate ?? raw.end ?? raw.to ?? raw.asOf,
     }),
     errorCodes: {
       factor_not_found: "permanent",

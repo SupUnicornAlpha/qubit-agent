@@ -29,6 +29,7 @@ import {
   projectCoreTurnResult,
   sanitizeCoreAnswerText,
 } from "./project-core-to-graph";
+import { reconcileCoreAnswerWithWorkflowArtifacts } from "./reconcile-core-answer";
 import type { InteractionMode, SessionSnapshot } from "./types";
 import { ORCHESTRATOR_TURN_CONTEXT } from "./types";
 
@@ -570,11 +571,19 @@ export async function runOrchestratorTaskViaCore(
       }
     }
 
-    const displayText =
+    const initialDisplayText =
       answer ||
       (failed
         ? `Prime Core turn 失败：state=${turn?.state ?? "?"} delivery=${deliveryStatus ?? "n/a"}`
         : "（Prime Core 已完成，无文本）");
+    // Core can retain an early tool failure in its prose after an automatic
+    // recovery succeeds.  Artifact rows are the source of truth for whether a
+    // quantitative run actually closed, so surface a clear correction before
+    // persisting the user-facing answer.
+    const displayText = reconcileCoreAnswerWithWorkflowArtifacts(
+      msg.workflowId,
+      initialDisplayText
+    );
 
     await persistDeliveryVerdictForCoreTurn({
       workflowId: msg.workflowId,
