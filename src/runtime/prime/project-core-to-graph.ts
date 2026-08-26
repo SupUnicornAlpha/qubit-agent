@@ -65,9 +65,13 @@ export async function projectCoreTurnResult(input: {
   const turn = input.snap.active_turn;
   const fromWire =
     typeof turn?.answer_text === "string" ? sanitizeCoreAnswerText(turn.answer_text) : "";
+  const fromFallback = sanitizeCoreAnswerText(input.fallbackText ?? "");
   const text =
+    // The caller may reconcile a Core answer with terminal evidence (for
+    // example failed child invocations).  That verdict must not be shadowed by
+    // the raw model prose stored on the turn.
+    fromFallback ||
     fromWire ||
-    sanitizeCoreAnswerText(input.fallbackText ?? "") ||
     (turn?.delivery?.status === "delivered"
       ? "（Prime Core 已完成 turn，无文本回传）"
       : `Prime Core turn ${turn?.state ?? "unknown"} / delivery=${turn?.delivery?.status ?? "n/a"}`);
@@ -192,7 +196,7 @@ export async function projectCoreInvocation(input: {
     });
   }
 
-  if (input.startOnly || (!isTerminal && state === "running")) {
+  if (input.startOnly || !isTerminal) {
     return;
   }
 
@@ -221,7 +225,12 @@ export async function projectCoreInvocation(input: {
     });
   }
 
-  const invokeOk = state !== "failed" && state !== "cancelled" && state !== "timed_out";
+  const invokeOk =
+    state === "completed" &&
+    input.deliveryStatus !== "failed" &&
+    input.deliveryStatus !== "cancelled" &&
+    input.deliveryStatus !== "partial" &&
+    input.deliveryStatus !== "delivered_with_gaps";
   const resultPreview = sanitizeCoreAnswerText(String(input.resultText ?? "").trim()).slice(0, 240);
   publishCoreToolCallEnd(activityCtx, {
     toolCallId: input.invocationId,
@@ -261,6 +270,7 @@ export type CoreInvocationWire = {
     invocation_id?: string;
     callee_spec_id?: string;
     goal?: string;
+    parent_turn_id?: string;
   };
   child_session_id?: string;
   child_turn_id?: string;
@@ -306,14 +316,14 @@ export async function projectCoreInvocationsFromSnapshot(input: {
       workflowRunId: input.workflowRunId,
       runId: input.runId,
       traceId: input.traceId,
-      callerRole: input.callerRole,
       calleeSpecId,
       goal: goal || `invoke ${calleeSpecId}`,
       invocationId,
-      childSessionId: inv.child_session_id,
-      childTurnId: inv.child_turn_id,
       state,
-      deliveryStatus: inv.delivery?.status,
+      ...(input.callerRole ? { callerRole: input.callerRole } : {}),
+      ...(inv.child_session_id ? { childSessionId: inv.child_session_id } : {}),
+      ...(inv.child_turn_id ? { childTurnId: inv.child_turn_id } : {}),
+      ...(inv.delivery?.status ? { deliveryStatus: inv.delivery.status } : {}),
       ...(narrative ? { resultText: narrative } : {}),
       ...(isRunning ? { startOnly: true } : alreadyStarted ? { endOnly: true } : {}),
     });

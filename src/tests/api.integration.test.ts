@@ -214,6 +214,39 @@ describe("api minimal integration", () => {
     ]);
   });
 
+  test("legacy workflow final projection replaces a duplicate terminal answer", async () => {
+    const db = await getDb();
+    const workflowId = crypto.randomUUID();
+    await db.insert(workflowRun).values({
+      id: workflowId,
+      projectId,
+      sessionId,
+      goal: "legacy core final projection",
+      mode: "research",
+      source: "manual",
+      status: "running",
+    });
+    await projectWorkflowUserMessage({ workflowRunId: workflowId, content: "研究自选" });
+    await completeWorkflowConversationAssistant({
+      workflowRunId: workflowId,
+      content: "旧的暂存答案",
+    });
+    await completeWorkflowConversationAssistant({
+      workflowRunId: workflowId,
+      content: "最终已校验答案",
+    });
+
+    const messages = await db
+      .select()
+      .from(chatMessage)
+      .where(eq(chatMessage.sessionId, sessionId));
+    const workflowAssistant = messages.filter(
+      (message) => message.role === "assistant" && message.content === "最终已校验答案"
+    );
+    expect(workflowAssistant).toHaveLength(1);
+    expect(messages.filter((message) => message.content === "旧的暂存答案")).toHaveLength(0);
+  });
+
   test("resume replaces the timed-out assistant placeholder instead of appending a final answer", async () => {
     const db = await getDb();
     const testWorkspaceId = workspaceId || crypto.randomUUID();

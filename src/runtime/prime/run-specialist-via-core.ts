@@ -68,6 +68,7 @@ export async function reasonSpecialistViaCore(input: {
   childSessionId?: string;
   childTurnId?: string;
   state?: string;
+  deliveryStatus?: string;
 }> {
   if (resolveCoreBackend() !== "rust") {
     throw new Error("reasonSpecialistViaCore requires QUBIT_CORE_BACKEND=rust");
@@ -176,17 +177,22 @@ export async function reasonSpecialistViaCore(input: {
     calleeLabel: input.role,
     goal,
     invocationId,
-    childSessionId,
-    childTurnId,
-    state,
-    deliveryStatus: delivery?.status,
     resultText: text,
+    ...(childSessionId ? { childSessionId } : {}),
+    ...(childTurnId ? { childTurnId } : {}),
+    ...(state ? { state } : {}),
+    ...(delivery?.status ? { deliveryStatus: delivery.status } : {}),
   });
 
   await finalizeCoreMonitorTurn({
     workflowId: input.workflowRunId,
     runId,
-    ok: state !== "failed" && state !== "cancelled",
+    ok:
+      state === "completed" &&
+      delivery?.status !== "failed" &&
+      delivery?.status !== "cancelled" &&
+      delivery?.status !== "partial" &&
+      delivery?.status !== "delivered_with_gaps",
     turn: childTurn,
   });
 
@@ -201,5 +207,6 @@ export async function reasonSpecialistViaCore(input: {
     ...(childSessionId ? { childSessionId } : {}),
     ...(childTurnId ? { childTurnId } : {}),
     ...(state ? { state } : {}),
+    ...(delivery?.status ? { deliveryStatus: delivery.status } : {}),
   };
 }

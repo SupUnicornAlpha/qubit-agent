@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { buildCoreUserText } from "../run-orchestrator-via-core";
+import {
+  buildCoreUserText,
+  inspectCoreChildInvocationIntegrity,
+} from "../run-orchestrator-via-core";
 import { readPrimeCoreBinding } from "../workflow-session-binding";
 
 describe("prime core adapter helpers", () => {
@@ -98,6 +101,41 @@ describe("prime core adapter helpers", () => {
     expect(text).toContain("[user]\n帮我选股");
     expect(text).not.toContain("session_chronicle");
     expect(text).not.toContain("big manual");
+  });
+
+  test("child invocation failures prevent a parent Core turn from claiming completion", () => {
+    expect(
+      inspectCoreChildInvocationIntegrity(
+        [
+          {
+            request: {
+              invocation_id: "inv_1",
+              callee_spec_id: "def-market-data",
+              parent_turn_id: "trn_1",
+            },
+            state: "failed",
+          },
+          {
+            request: {
+              invocation_id: "inv_2",
+              callee_spec_id: "def-news",
+              parent_turn_id: "trn_1",
+            },
+            state: "completed",
+            delivery: { status: "delivered_with_gaps" },
+          },
+          {
+            request: {
+              invocation_id: "inv_other",
+              callee_spec_id: "def-other",
+              parent_turn_id: "trn_0",
+            },
+            state: "failed",
+          },
+        ],
+        "trn_1"
+      )
+    ).toEqual({ failed: ["def-market-data"], incomplete: [], degraded: ["def-news"] });
   });
 
   test("resolveCalleeSpecId maps role and definitionId", async () => {

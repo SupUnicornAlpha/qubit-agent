@@ -63,6 +63,8 @@ const PERMANENT_PATTERNS: RegExp[] = [
   /factor_expression_batch_too_small/i,
   /invalid_qty/i,
   /mcp_validation_error/i,
+  /web\s*search.*no\s+parseable\s+results/i,
+  /duckduckgo\s+search\s+returned\s+no\s+parseable\s+results/i,
 ];
 
 const BLOCKED_PATTERNS: RegExp[] = [

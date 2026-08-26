@@ -18,39 +18,43 @@ export function extractKlinesSymbols(raw: Record<string, unknown>): string[] {
     "instrument",
     "instrumentId",
   ]);
-  if (scalar) return [scalar];
+  // A Core/tool-call model may put a whole watchlist in the singular alias
+  // (`symbol: "AAPL,NVDA"`).  Treat scalar and batch aliases identically;
+  // otherwise the resolver receives a fictional single ticker and marks the
+  // market UNKNOWN.
+  if (scalar) return tokenizeSymbols([scalar]);
   for (const key of ["symbols", "tickers", "codes", "instruments"]) {
     const value = raw[key];
     if (Array.isArray(value)) {
-      return [
-        ...new Set(
-          value
-            .filter(
-              (item): item is string | number =>
-                typeof item === "string" || typeof item === "number"
-            )
-            .map(String)
-            .map((item) => item.trim())
-            .filter(Boolean)
-        ),
-      ];
+      return tokenizeSymbols(
+        value
+          .filter(
+            (item): item is string | number => typeof item === "string" || typeof item === "number"
+          )
+          .map(String)
+      );
     }
     // 模型常误写 symbols:"AAPL" / symbols:"AAPL,MSFT"（字符串而非数组）
     if (typeof value === "string" && value.trim()) {
-      return [
-        ...new Set(
-          value
-            .split(/[,;\s]+/)
-            .map((item) => item.trim())
-            .filter(Boolean)
-        ),
-      ];
+      return tokenizeSymbols([value]);
     }
     if (typeof value === "number" && Number.isFinite(value)) {
       return [String(value)];
     }
   }
   return [];
+}
+
+/** Split watchlist-style comma/whitespace input without breaking BTC/USDT. */
+function tokenizeSymbols(values: string[]): string[] {
+  return [
+    ...new Set(
+      values
+        .flatMap((value) => value.split(/[,;，；\s]+/))
+        .map((item) => item.trim())
+        .filter(Boolean)
+    ),
+  ];
 }
 
 const TIMEFRAME_ALIASES: Record<string, string> = {

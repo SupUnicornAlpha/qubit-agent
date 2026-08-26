@@ -323,8 +323,20 @@ export async function runA2aReactTaskAssign(
         maxIterations: definition.maxIterations,
       });
 
-      const failed = out.state === "failed" || out.state === "cancelled";
-      const terminalStatus: "completed" | "partial" | "failed" = failed ? "failed" : "completed";
+      const failed =
+        out.state === "failed" || out.state === "cancelled" || out.state === "timed_out";
+      const partial =
+        !failed &&
+        (out.state !== "completed" ||
+          out.deliveryStatus === "partial" ||
+          out.deliveryStatus === "delivered_with_gaps" ||
+          out.deliveryStatus === "failed" ||
+          out.deliveryStatus === "cancelled");
+      const terminalStatus: "completed" | "partial" | "failed" = failed
+        ? "failed"
+        : partial
+          ? "partial"
+          : "completed";
       const finalResponse: Record<string, unknown> = {
         answerText: out.text,
         reasonText: out.text,
@@ -339,12 +351,13 @@ export async function runA2aReactTaskAssign(
         workflowId,
         traceId,
         role: ctx.definition.role,
-        type: failed ? "error" : "final",
+        type: terminalStatus === "failed" ? "error" : "final",
         stepIndex: 0,
         ts: Date.now(),
-        payload: failed
-          ? { error: out.text, backend: "rust" }
-          : { answerText: out.text, backend: "rust" },
+        payload:
+          terminalStatus === "failed"
+            ? { error: out.text, backend: "rust" }
+            : { answerText: out.text, backend: "rust" },
         loopKind: "native",
         source: "a2a",
       });
@@ -354,13 +367,14 @@ export async function runA2aReactTaskAssign(
         onWorkflowTerminal(workflowId, terminalStatus);
       }
 
-      const failure = failed
-        ? {
-            status: "failed" as const,
-            errorCode: "prime_core_invoke",
-            errorMessage: out.text.slice(0, 500),
-          }
-        : null;
+      const failure =
+        terminalStatus !== "completed"
+          ? {
+              status: terminalStatus,
+              errorCode: "prime_core_invoke",
+              errorMessage: out.text.slice(0, 500),
+            }
+          : null;
       const taskResultPayload = buildTaskResult(payload.taskId, ctx.definition.role, {
         status: failure?.status ?? "completed",
         success: terminalStatus === "completed",

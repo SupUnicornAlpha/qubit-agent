@@ -94,6 +94,7 @@ describe("classifyToolError", () => {
       "transient"
     );
     expect(classifyToolError("semantic_data_failure:items_empty")).toBe("permanent");
+    expect(classifyToolError("duckduckgo search returned no parseable results")).toBe("permanent");
   });
 });
 

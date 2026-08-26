@@ -67,6 +67,21 @@ describe("normalizeKlinesToolRequest", () => {
     ).toMatchObject({ symbol: "AAPL", exchange: "US", timeframe: "1d", limit: 300 });
   });
 
+  test("splits watchlists passed through a singular symbol alias", () => {
+    expect(extractKlinesSymbols({ symbol: "AAPL,BABA, ASTS；NVDA" })).toEqual([
+      "AAPL",
+      "BABA",
+      "ASTS",
+      "NVDA",
+    ]);
+    expect(extractKlinesSymbols({ symbols: ["AAPL,MSFT", "NVDA"] })).toEqual([
+      "AAPL",
+      "MSFT",
+      "NVDA",
+    ]);
+    expect(extractKlinesSymbols({ symbol: "BTC/USDT" })).toEqual(["BTC/USDT"]);
+  });
+
   test("accepts snake-case explicit date windows used by older agents", () => {
     const result = normalizeKlinesToolRequest({
       symbol: "^VIX",

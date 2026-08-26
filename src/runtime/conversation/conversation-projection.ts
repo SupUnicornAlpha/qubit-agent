@@ -240,6 +240,15 @@ export async function completeWorkflowConversationAssistant(input: {
     )
     .orderBy(desc(chatMessage.createdAt))
     .limit(1);
+  const latestLinked = input.conversationTurnId
+    ? []
+    : await db
+        .select({ message: chatMessage })
+        .from(chatMessageWorkflowLink)
+        .innerJoin(chatMessage, eq(chatMessage.id, chatMessageWorkflowLink.chatMessageId))
+        .where(eq(chatMessageWorkflowLink.workflowRunId, input.workflowRunId))
+        .orderBy(desc(chatMessage.createdAt))
+        .limit(1);
   const row = targeted[0]?.message ?? latest[0]?.message;
   const canReplace =
     row &&
@@ -247,6 +256,24 @@ export async function completeWorkflowConversationAssistant(input: {
       row.status === "queued" ||
       (input.replaceFailed === true && row.status === "failed"));
   if (canReplace) {
+    await db
+      .update(chatMessage)
+      .set({
+        content,
+        status: input.status ?? "completed",
+        errorMessage: input.errorMessage ?? null,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(chatMessage.id, row.id));
+    await touchSession(sessionId);
+    const updated = await db.select().from(chatMessage).where(eq(chatMessage.id, row.id)).limit(1);
+    return updated[0] ?? null;
+  }
+  // Legacy/Core workflows created before per-turn placeholders have no
+  // conversationTurnId.  Their terminal projection is a replacement of the
+  // workflow's canonical assistant message, not a new chat turn.  Appending
+  // here was the source of duplicate final answers after a resumed Core turn.
+  if (!input.conversationTurnId && row && latestLinked[0]?.message.id === row.id) {
     await db
       .update(chatMessage)
       .set({

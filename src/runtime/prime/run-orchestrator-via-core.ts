@@ -114,6 +114,62 @@ export function buildCoreUserText(input: {
   return parts.join("\n\n");
 }
 
+export type CoreChildInvocationIntegrity = {
+  failed: string[];
+  incomplete: string[];
+  degraded: string[];
+};
+
+/**
+ * A parent Core turn is not a completed research delivery while one of the
+ * child invocations it started has failed, timed out, or returned with gaps.
+ * Core's turn state alone intentionally does not encode this aggregate.
+ */
+export function inspectCoreChildInvocationIntegrity(
+  invocations: unknown,
+  parentTurnId?: string | null
+): CoreChildInvocationIntegrity {
+  const result: CoreChildInvocationIntegrity = { failed: [], incomplete: [], degraded: [] };
+  if (!Array.isArray(invocations) || !parentTurnId) return result;
+  for (const raw of invocations) {
+    if (!raw || typeof raw !== "object") continue;
+    const invocation = raw as {
+      request?: { invocation_id?: string; callee_spec_id?: string; parent_turn_id?: string };
+      state?: string;
+      delivery?: { status?: string };
+    };
+    if (invocation.request?.parent_turn_id !== parentTurnId) continue;
+    const label =
+      invocation.request.callee_spec_id?.trim() ||
+      invocation.request.invocation_id?.trim() ||
+      "subagent";
+    const state = invocation.state?.toLowerCase() ?? "unknown";
+    const delivery = invocation.delivery?.status?.toLowerCase() ?? "";
+    if (
+      ["failed", "cancelled", "timed_out"].includes(state) ||
+      ["failed", "cancelled"].includes(delivery)
+    ) {
+      result.failed.push(label);
+    } else if (["partial", "delivered_with_gaps"].includes(delivery)) {
+      result.degraded.push(label);
+    } else if (state !== "completed") {
+      result.incomplete.push(label);
+    }
+  }
+  return result;
+}
+
+function coreChildIntegrityWarning(integrity: CoreChildInvocationIntegrity): string {
+  const parts = [
+    integrity.failed.length ? `失败：${integrity.failed.join("、")}` : "",
+    integrity.incomplete.length ? `未闭环：${integrity.incomplete.join("、")}` : "",
+    integrity.degraded.length ? `交付缺口：${integrity.degraded.join("、")}` : "",
+  ].filter(Boolean);
+  return parts.length
+    ? `⚠️ 本次研究存在关键子任务${parts.join("；")}。以下内容仅为部分结果，不能视为“数据齐全”或已完成验证。`
+    : "";
+}
+
 function publishStreamFrames(input: {
   runId: string;
   workflowId: string;
@@ -281,11 +337,11 @@ export async function runOrchestratorTaskViaCore(
   if (coreInboxId && params.hitlApproval) {
     const approval = params.hitlApproval as { decision?: string };
     try {
+      const freeForm = typeof approval === "object" ? JSON.stringify(approval).slice(0, 2000) : "";
       await asRustCoreClient().hitlRespond({
         inbox_id: coreInboxId,
         approved: approval.decision !== "rejected",
-        free_form:
-          typeof approval === "object" ? JSON.stringify(approval).slice(0, 2000) : undefined,
+        ...(freeForm ? { free_form: freeForm } : {}),
       });
     } catch (err) {
       console.warn(
@@ -542,12 +598,18 @@ export async function runOrchestratorTaskViaCore(
       (typeof turn?.answer_text === "string" && turn.answer_text) || ""
     );
     const deliveryStatus = turn?.delivery?.status;
+    const childIntegrity = inspectCoreChildInvocationIntegrity(snap.invocations, started.turn_id);
     const failed =
       turn?.state === "failed" ||
       turn?.state === "cancelled" ||
       deliveryStatus === "failed" ||
       deliveryStatus === "cancelled";
-    const partial = deliveryStatus === "partial" || deliveryStatus === "delivered_with_gaps";
+    const partial =
+      deliveryStatus === "partial" ||
+      deliveryStatus === "delivered_with_gaps" ||
+      childIntegrity.failed.length > 0 ||
+      childIntegrity.incomplete.length > 0 ||
+      childIntegrity.degraded.length > 0;
     const terminalStatus: "completed" | "partial" | "failed" = failed
       ? "failed"
       : partial
@@ -580,10 +642,14 @@ export async function runOrchestratorTaskViaCore(
     // recovery succeeds.  Artifact rows are the source of truth for whether a
     // quantitative run actually closed, so surface a clear correction before
     // persisting the user-facing answer.
-    const displayText = reconcileCoreAnswerWithWorkflowArtifacts(
+    const reconciledText = reconcileCoreAnswerWithWorkflowArtifacts(
       msg.workflowId,
       initialDisplayText
     );
+    const integrityWarning = coreChildIntegrityWarning(childIntegrity);
+    const displayText = integrityWarning
+      ? `${integrityWarning}\n\n${reconciledText}`
+      : reconciledText;
 
     await persistDeliveryVerdictForCoreTurn({
       workflowId: msg.workflowId,
@@ -602,7 +668,7 @@ export async function runOrchestratorTaskViaCore(
       workflowId: msg.workflowId,
       runId,
       ok: !failed,
-      turn,
+      ...(turn ? { turn } : {}),
     });
 
     publishStreamFrames({

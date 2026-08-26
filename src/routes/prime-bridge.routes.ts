@@ -33,6 +33,10 @@ import {
 import { projectCoreBridgeToolCall } from "../runtime/prime/project-core-activity";
 import { getCoreMonitorHandle } from "../runtime/prime/project-core-monitor";
 import { classifyToolError } from "../runtime/react/nodes/tool-error-classifier";
+import {
+  evaluateToolGovernance,
+  recordWorkflowToolFailure,
+} from "../runtime/tools/tool-governance-policy";
 import { dispatchBuiltinTool, isBuiltinTool } from "../runtime/tools/builtin-tools";
 import { detectSemanticToolFailure } from "../runtime/tools/semantic-tool-result";
 import { applyToolContract } from "../runtime/tools/tool-contract";
@@ -414,6 +418,49 @@ async function invokeMcpViaBridge(input: {
     target.toolName,
     target.arguments
   );
+  const wireName = `mcp:${target.serverName}:${target.toolName}`;
+  const governance =
+    activity.workflowId === "prime-bridge"
+      ? { allowed: true as const }
+      : evaluateToolGovernance({
+          workflowId: activity.workflowId,
+          targetName: wireName,
+          params: normalizedArgs,
+        });
+  if (!governance.allowed) {
+    const observation = {
+      summary: governance.reason,
+      errorClass: "blocked",
+      retryable: false,
+    };
+    if (activity.workflowId !== "prime-bridge") {
+      await projectCoreBridgeToolCall({
+        ctx: activity,
+        toolCallId: callId,
+        toolName: name,
+        ok: false,
+        args: normalizedArgs,
+        observation,
+        mcp: {
+          serverName: target.serverName,
+          toolName: target.toolName,
+          arguments: normalizedArgs,
+        },
+      });
+    }
+    return Response.json({
+      jsonrpc: "2.0",
+      id: rpcId,
+      result: {
+        call_id: callId,
+        ok: false,
+        observation,
+        effects: [],
+        retryable: false,
+        error_code: governance.code,
+      },
+    });
+  }
 
   try {
     const result = await dispatchMcpToolCall({
@@ -421,7 +468,6 @@ async function invokeMcpViaBridge(input: {
       toolName: target.toolName,
       arguments: normalizedArgs,
     });
-    const wireName = `mcp:${target.serverName}:${target.toolName}`;
     const semanticFailure = detectSemanticToolFailure(wireName, {
       mcpResult: {
         accepted: result.accepted,
@@ -441,6 +487,17 @@ async function invokeMcpViaBridge(input: {
         : result.accepted
           ? null
           : "mcp_rejected";
+    if (!ok && activity.workflowId !== "prime-bridge") {
+      recordWorkflowToolFailure({
+        workflowId: activity.workflowId,
+        targetName: wireName,
+        params: normalizedArgs,
+        reason: semanticFailure
+          ? `semantic_data_failure:${semanticFailure}`
+          : (failureCode ?? "mcp_failed"),
+        cacheable: Boolean(semanticFailure) || !result.accepted,
+      });
+    }
     const observation = {
       summary: ok
         ? `mcp ${target.serverName}/${target.toolName} ok`
@@ -493,6 +550,15 @@ async function invokeMcpViaBridge(input: {
     const message = formatUnknownError(err);
     const errorClass = classifyToolError(message);
     const retryable = errorClass === "transient";
+    if (activity.workflowId !== "prime-bridge") {
+      recordWorkflowToolFailure({
+        workflowId: activity.workflowId,
+        targetName: wireName,
+        params: normalizedArgs,
+        reason: message,
+        cacheable: errorClass === "permanent" || errorClass === "blocked",
+      });
+    }
     if (activity.workflowId !== "prime-bridge") {
       await projectCoreBridgeToolCall({
         ctx: activity,
@@ -652,6 +718,44 @@ primeBridgeRouter.post("/rpc", async (c) => {
         });
       }
 
+      const governance =
+        activity.workflowId === "prime-bridge"
+          ? { allowed: true as const }
+          : evaluateToolGovernance({
+              workflowId: activity.workflowId,
+              targetName: name,
+              params: args,
+            });
+      if (!governance.allowed) {
+        const observation = {
+          summary: governance.reason,
+          errorClass: "blocked",
+          retryable: false,
+        };
+        if (activity.workflowId !== "prime-bridge") {
+          await projectCoreBridgeToolCall({
+            ctx: activity,
+            toolCallId: callId,
+            toolName: name,
+            ok: false,
+            args,
+            observation,
+          });
+        }
+        return c.json({
+          jsonrpc: "2.0",
+          id: body.id,
+          result: {
+            call_id: callId,
+            ok: false,
+            observation,
+            effects: [],
+            retryable: false,
+            error_code: governance.code,
+          },
+        });
+      }
+
       try {
         const contract = getToolContract(name);
         if (contract) args = applyToolContract(contract, args);
@@ -681,6 +785,17 @@ primeBridgeRouter.post("/rpc", async (c) => {
         const okFalseReason = observationOkFalse(observation);
         const failureReason = semanticFailure || okFalseReason;
         const ok = !failureReason;
+        if (!ok && activity.workflowId !== "prime-bridge") {
+          recordWorkflowToolFailure({
+            workflowId: activity.workflowId,
+            targetName: name,
+            params: args,
+            reason: semanticFailure
+              ? `semantic_data_failure:${semanticFailure}`
+              : (failureReason ?? "tool_failed"),
+            cacheable: Boolean(semanticFailure),
+          });
+        }
         const summary = ok
           ? `connector/tool ${name} ok`
           : `connector/tool ${name} failed (${failureReason})`;
@@ -726,6 +841,15 @@ primeBridgeRouter.post("/rpc", async (c) => {
         const message = formatUnknownError(err);
         const errorClass = classifyToolError(message);
         const retryable = errorClass === "transient";
+        if (activity.workflowId !== "prime-bridge") {
+          recordWorkflowToolFailure({
+            workflowId: activity.workflowId,
+            targetName: name,
+            params: args,
+            reason: message,
+            cacheable: errorClass === "permanent" || errorClass === "blocked",
+          });
+        }
         if (activity.workflowId !== "prime-bridge") {
           await projectCoreBridgeToolCall({
             ctx: activity,
