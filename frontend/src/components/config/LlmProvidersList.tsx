@@ -15,7 +15,7 @@ import type { CSSProperties, FC } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { httpGet, httpPost, httpPatch, httpDelete } from "../../api/client";
 
-type ProviderType = "openai" | "anthropic" | "ollama" | "custom";
+type ProviderType = "openai" | "anthropic" | "ollama" | "openai_compatible" | "custom";
 
 interface ProviderRow {
   id: string;
@@ -271,6 +271,10 @@ export const LlmProvidersList: FC = () => {
       setError("providerId 和 modelName 必填");
       return;
     }
+    if (newProviderType === "openai_compatible" && !newBaseUrl.trim()) {
+      setError("openai_compatible 必须填写兼容 API 的 baseUrl");
+      return;
+    }
     try {
       await httpPost("/api/v1/llm-providers", {
         providerId: newProviderId.trim(),
@@ -331,6 +335,10 @@ export const LlmProvidersList: FC = () => {
   const handleSaveEdit = async (row: ProviderRow) => {
     if (!editForm.modelName.trim()) {
       setError("modelName 不能为空");
+      return;
+    }
+    if (editForm.providerType === "openai_compatible" && !editForm.baseUrl.trim()) {
+      setError("openai_compatible 必须填写兼容 API 的 baseUrl");
       return;
     }
     const ctxNum = editForm.contextWindow.trim() ? Number(editForm.contextWindow.trim()) : NaN;
@@ -396,8 +404,7 @@ export const LlmProvidersList: FC = () => {
         {defaultInfo ? (
           <div style={{ ...styles.formRow, fontSize: 13, color: "var(--qb-body-fg)" }}>
             <span>
-              <strong>当前生效</strong>：
-              {defaultInfo.provider}:{defaultInfo.model}
+              <strong>当前生效</strong>：{defaultInfo.provider}:{defaultInfo.model}
             </span>
             <span style={defaultInfo.apiKeyConfigured ? styles.badgeOk : styles.badgeWarn}>
               {defaultInfo.apiKeyConfigured ? "已配 apiKey" : "未配 apiKey"}
@@ -413,9 +420,10 @@ export const LlmProvidersList: FC = () => {
       <div style={styles.card}>
         <h4 style={styles.cardTitle}>新增 LLM Provider</h4>
         <p style={styles.cardHint}>
-          providerId 是路由唯一键，建议格式 <code>&lt;provider&gt;:&lt;model&gt;</code>，
-          如 <code>openai:gpt-4o</code> / <code>anthropic:claude-sonnet-4</code> /{" "}
-          <code>deepseek:deepseek-chat</code>。Agent 编辑页通过这个 ID 选模型。
+          providerId 是路由唯一键，建议格式 <code>&lt;provider&gt;:&lt;model&gt;</code>， 如{" "}
+          <code>openai:gpt-4o</code> / <code>anthropic:claude-sonnet-4</code> /{" "}
+          <code>compat:llama-3.3-70b</code>。陌生厂商请选择 <code>openai_compatible</code>，并填写
+          OpenAI Chat Completions 兼容的 baseUrl。Agent 编辑页通过这个 ID 选模型。
         </p>
         <div style={styles.formRow}>
           <input
@@ -432,7 +440,10 @@ export const LlmProvidersList: FC = () => {
             <option value="openai">openai</option>
             <option value="anthropic">anthropic</option>
             <option value="ollama">ollama</option>
-            <option value="custom">custom（DeepSeek/Qwen/Zhipu）</option>
+            <option value="openai_compatible">
+              openai_compatible（OpenRouter / Groq / Mistral / xAI 等）
+            </option>
+            <option value="custom">custom（仅兼容旧配置）</option>
           </select>
           <input
             style={styles.input}
@@ -442,7 +453,9 @@ export const LlmProvidersList: FC = () => {
           />
           <input
             style={styles.input}
-            placeholder="baseUrl（可选）"
+            placeholder={
+              newProviderType === "openai_compatible" ? "baseUrl（必填）" : "baseUrl（可选）"
+            }
             value={newBaseUrl}
             onChange={(e) => setNewBaseUrl(e.target.value)}
           />
@@ -463,9 +476,7 @@ export const LlmProvidersList: FC = () => {
       {/* provider 列表 */}
       <div style={styles.card}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <h4 style={styles.cardTitle}>
-            已配置的 Provider（{sortedRows.length}）
-          </h4>
+          <h4 style={styles.cardTitle}>已配置的 Provider（{sortedRows.length}）</h4>
           <button className="qb-btn-secondary" onClick={() => void reload()} disabled={loading}>
             {loading ? "刷新中..." : "刷新"}
           </button>
@@ -570,7 +581,8 @@ export const LlmProvidersList: FC = () => {
                 {isEditing ? (
                   <div style={styles.editPanel}>
                     <p style={{ ...styles.cardHint, margin: 0 }}>
-                      编辑 <strong>{row.providerId}</strong> · 仅 apiKey 留空时表示「保持不变」；其它字段会覆盖。
+                      编辑 <strong>{row.providerId}</strong> · 仅 apiKey
+                      留空时表示「保持不变」；其它字段会覆盖。
                     </p>
                     <div style={styles.editGrid}>
                       <label style={styles.editLabel}>
@@ -579,13 +591,19 @@ export const LlmProvidersList: FC = () => {
                           style={styles.select}
                           value={editForm.providerType}
                           onChange={(e) =>
-                            setEditForm((f) => ({ ...f, providerType: e.target.value as ProviderType }))
+                            setEditForm((f) => ({
+                              ...f,
+                              providerType: e.target.value as ProviderType,
+                            }))
                           }
                         >
                           <option value="openai">openai</option>
                           <option value="anthropic">anthropic</option>
                           <option value="ollama">ollama</option>
-                          <option value="custom">custom（DeepSeek/Qwen/Zhipu）</option>
+                          <option value="openai_compatible">
+                            openai_compatible（OpenRouter / Groq / Mistral / xAI 等）
+                          </option>
+                          <option value="custom">custom（仅兼容旧配置）</option>
                         </select>
                       </label>
                       <label style={styles.editLabel}>
@@ -594,14 +612,20 @@ export const LlmProvidersList: FC = () => {
                           style={styles.input}
                           placeholder="如 gpt-4o"
                           value={editForm.modelName}
-                          onChange={(e) => setEditForm((f) => ({ ...f, modelName: e.target.value }))}
+                          onChange={(e) =>
+                            setEditForm((f) => ({ ...f, modelName: e.target.value }))
+                          }
                         />
                       </label>
                       <label style={styles.editLabel}>
                         baseUrl
                         <input
                           style={styles.input}
-                          placeholder="留空使用 provider 默认值"
+                          placeholder={
+                            editForm.providerType === "openai_compatible"
+                              ? "必填：兼容 API 的 baseUrl"
+                              : "留空使用 provider 默认值"
+                          }
                           value={editForm.baseUrl}
                           onChange={(e) => setEditForm((f) => ({ ...f, baseUrl: e.target.value }))}
                         />
@@ -613,7 +637,9 @@ export const LlmProvidersList: FC = () => {
                           type="password"
                           autoComplete="off"
                           autoFocus={focusApiKey}
-                          placeholder={row.apiKeyConfigured ? "已配置，输入新值覆盖" : "未配置，输入明文"}
+                          placeholder={
+                            row.apiKeyConfigured ? "已配置，输入新值覆盖" : "未配置，输入明文"
+                          }
                           value={editForm.apiKey}
                           onChange={(e) => setEditForm((f) => ({ ...f, apiKey: e.target.value }))}
                         />
@@ -625,15 +651,27 @@ export const LlmProvidersList: FC = () => {
                           inputMode="numeric"
                           placeholder="如 128000"
                           value={editForm.contextWindow}
-                          onChange={(e) => setEditForm((f) => ({ ...f, contextWindow: e.target.value }))}
+                          onChange={(e) =>
+                            setEditForm((f) => ({ ...f, contextWindow: e.target.value }))
+                          }
                         />
                       </label>
-                      <label style={{ ...styles.editLabel, flexDirection: "row", alignItems: "center", gap: 8 }}>
+                      <label
+                        style={{
+                          ...styles.editLabel,
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 8,
+                        }}
+                      >
                         <input
                           type="checkbox"
                           checked={editForm.supportsFunctionCalling}
                           onChange={(e) =>
-                            setEditForm((f) => ({ ...f, supportsFunctionCalling: e.target.checked }))
+                            setEditForm((f) => ({
+                              ...f,
+                              supportsFunctionCalling: e.target.checked,
+                            }))
                           }
                         />
                         supportsFunctionCalling

@@ -25,10 +25,25 @@ export const EmbeddingModelConfigSchema = z.object({
 
 export type EmbeddingModelConfig = z.infer<typeof EmbeddingModelConfigSchema>;
 
+/**
+ * Runtime provider names. `openai_compatible` is deliberately a protocol, not
+ * a vendor guess: it is for any endpoint which implements OpenAI Chat
+ * Completions (OpenRouter, Groq, Mistral, xAI, Together, proxies, etc.).
+ */
+export const RuntimeModelProviderSchema = z.enum([
+  "openai",
+  "anthropic",
+  "ollama",
+  "deepseek",
+  "qwen",
+  "zhipu",
+  "openai_compatible",
+  "mock",
+]);
+export type RuntimeModelProvider = z.infer<typeof RuntimeModelProviderSchema>;
+
 const ModelConfigSchema = z.object({
-  provider: z
-    .enum(["openai", "anthropic", "ollama", "deepseek", "qwen", "zhipu", "mock"])
-    .default("openai"),
+  provider: RuntimeModelProviderSchema.default("openai"),
   model: z.string().min(1).default("gpt-4o-mini"),
   apiKey: z.string().default(""),
   baseUrl: z.string().optional(),

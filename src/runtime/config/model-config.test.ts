@@ -20,6 +20,22 @@ function tempRoot(): string {
 }
 
 describe("model-config embedding", () => {
+  test("persists the explicit OpenAI-compatible runtime provider", async () => {
+    const root = tempRoot();
+    await saveModelConfig(
+      {
+        provider: "openai_compatible",
+        model: "vendor/quant-reasoner",
+        apiKey: "compat-key",
+        baseUrl: "https://gateway.example/v1",
+      },
+      root
+    );
+    const loaded = await loadModelConfig(root);
+    expect(loaded?.provider).toBe("openai_compatible");
+    expect(loaded?.baseUrl).toBe("https://gateway.example/v1");
+  });
+
   test("save/load embedding nested fields", async () => {
     const root = tempRoot();
     await saveModelConfig(

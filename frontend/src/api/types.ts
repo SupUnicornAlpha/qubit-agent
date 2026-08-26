@@ -93,14 +93,7 @@ export interface ChipDistributionPoint {
 }
 
 export interface MarketStreamEvent {
-  kind:
-    | "status"
-    | "heartbeat"
-    | "quote"
-    | "order_book"
-    | "trade"
-    | "bar"
-    | "backfill";
+  kind: "status" | "heartbeat" | "quote" | "order_book" | "trade" | "bar" | "backfill";
   sequence: number;
   symbol: string;
   exchange: string;
@@ -234,13 +227,38 @@ export interface MarketDataSourceRecord {
   circuitOpenedAt: string | null;
   priority: number;
   isFallback: boolean;
-  upstreamFamily: "wind" | "tushare" | "binance" | "eastmoney" | "tencent" | "yahoo" | "yfinance" | "futu" | "ib" | "alpaca" | "qmt" | "supermind";
+  upstreamFamily:
+    | "wind"
+    | "tushare"
+    | "binance"
+    | "eastmoney"
+    | "tencent"
+    | "yahoo"
+    | "yfinance"
+    | "futu"
+    | "ib"
+    | "alpaca"
+    | "qmt"
+    | "supermind";
   /** Prime D1 */
   feedClass?: MarketFeedClass;
   /** Prime D1 */
   licenseUse?: MarketLicenseUse;
-  failureKind: "credentials_missing" | "network_blocked" | "rate_limited" | "upstream_down" | "no_data" | "misconfigured" | "unknown" | null;
-  availabilityStatus: "ready" | "credentials_missing" | "backing_off" | "misconfigured" | "unavailable";
+  failureKind:
+    | "credentials_missing"
+    | "network_blocked"
+    | "rate_limited"
+    | "upstream_down"
+    | "no_data"
+    | "misconfigured"
+    | "unknown"
+    | null;
+  availabilityStatus:
+    | "ready"
+    | "credentials_missing"
+    | "backing_off"
+    | "misconfigured"
+    | "unavailable";
   retryAt: string | null;
   networkMode: "auto" | "direct" | "proxy";
   networkRoute: "direct" | "config" | "environment" | "system" | "invalid";
@@ -590,7 +608,15 @@ export interface EmbeddingModelConfig {
 }
 
 export interface ModelConfig {
-  provider: "openai" | "anthropic" | "ollama" | "deepseek" | "qwen" | "zhipu" | "mock";
+  provider:
+    | "openai"
+    | "anthropic"
+    | "ollama"
+    | "deepseek"
+    | "qwen"
+    | "zhipu"
+    | "openai_compatible"
+    | "mock";
   model: string;
   apiKey: string;
   apiKeyConfigured?: boolean;
@@ -829,6 +855,14 @@ export interface ChatMessage {
   createdAt: string;
   workflowRunIds?: string[];
   errorMessage?: string | null;
+  attachments?: ChatImageAttachment[];
+}
+
+export interface ChatImageAttachment {
+  kind: "image";
+  dataUrl: string;
+  mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif";
+  name?: string;
 }
 
 export interface ConversationTurnResult {

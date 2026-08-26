@@ -27,6 +27,7 @@ import {
   createWorkflowConversationTurnMessages,
   linkConversationMessageToWorkflow,
 } from "./conversation-projection";
+import { type ChatImageAttachment, toCoreImageAttachments } from "./image-attachments";
 import { registerTurnRunBinding } from "./turn-binding";
 import { type ConversationTurnMode, resolveTurnMode } from "./turn-mode";
 import {
@@ -57,6 +58,8 @@ export interface CreateConversationTurnInput {
   preserveGoal?: boolean;
   /** FS Workspace id：注入说明书/记忆/宇宙到 Orchestrator context */
   fsWorkspaceId?: string;
+  /** Browser-pasted images, validated by the chat route before persistence. */
+  attachments?: ChatImageAttachment[];
 }
 
 export interface ConversationTurnResult {
@@ -272,7 +275,7 @@ function finalizeTurnResult(input: {
 export async function createConversationTurn(
   input: CreateConversationTurnInput
 ): Promise<ConversationTurnResult> {
-  const message = input.message.trim();
+  const message = input.message.trim() || (input.attachments?.length ? "请分析附图。" : "");
   if (!message) throw new Error("message is required");
   const db = await getDb();
   const sessions = await db
@@ -298,6 +301,7 @@ export async function createConversationTurn(
     const turn = await createConversationTurnMessages({
       sessionId: input.sessionId,
       content: message,
+      attachments: input.attachments,
     });
     const turnId = turn.userMessage.id;
     try {
@@ -327,6 +331,9 @@ export async function createConversationTurn(
           (latestChatWorkflow[0]?.loopOptionsJson as Record<string, unknown> | null) ?? {},
           input
         ),
+        ...(input.attachments?.length
+          ? { params: { attachments: toCoreImageAttachments(input.attachments) } }
+          : {}),
       });
       await linkConversationMessageToWorkflow(turn.assistantMessage.id, created.data.id);
       // 每一轮用户发言都清 ReAct checkpoint，避免旧 final/observations 串台；
@@ -377,6 +384,7 @@ export async function createConversationTurn(
   const turn = await createWorkflowConversationTurnMessages({
     workflowRunId: workflow.id,
     content: message,
+    attachments: input.attachments,
   });
   const turnId = turn.userMessage.id;
   // 复用同一个 workflow 开启新一轮对话时，解除上一轮 Stop 留下的进程内取消信号。
@@ -499,6 +507,9 @@ export async function createConversationTurn(
           turnId,
           turnMode,
           sessionId: input.sessionId,
+          ...(input.attachments?.length
+            ? { attachments: toCoreImageAttachments(input.attachments) }
+            : {}),
         },
       },
     });

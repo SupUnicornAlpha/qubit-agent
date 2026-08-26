@@ -778,6 +778,13 @@
       "when": 1815523200000,
       "tag": "0111_repair_execution_task_event_fk",
       "breakpoints": true
+    },
+    {
+      "idx": 111,
+      "version": "7",
+      "when": 1815609600000,
+      "tag": "0112_chat_message_attachments",
+      "breakpoints": true
     }
   ]
 }

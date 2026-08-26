@@ -14,6 +14,7 @@ export type WorkflowArtifactKind =
   | "FactorInventory"
   | "Recommendation"
   | "ResearchThesis"
+  | "MathDerivation"
   | "DataGap";
 
 export type WorkflowArtifact = {
@@ -45,6 +46,7 @@ export function classifyWorkflowArtifactKind(toolName: string): WorkflowArtifact
   if (/factor\.list|list_factors/.test(tool)) return "FactorInventory";
   if (/recommendation\.record|record_recommendation/.test(tool)) return "Recommendation";
   if (/thesis\.write|research\.thesis/.test(tool)) return "ResearchThesis";
+  if (/math\.derivation\.verify/.test(tool)) return "MathDerivation";
   return null;
 }
 

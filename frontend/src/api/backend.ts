@@ -1130,6 +1130,7 @@ export async function createConversationTurn(input: {
   processConfig?: import("./types").WorkflowProcessConfig;
   preserveGoal?: boolean;
   fsWorkspaceId?: string;
+  attachments?: import("./types").ChatImageAttachment[];
 }): Promise<import("./types").ConversationTurnResult> {
   const { sessionId, ...body } = input;
   const res = await httpPost<{

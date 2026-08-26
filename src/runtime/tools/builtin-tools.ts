@@ -17,6 +17,7 @@ import { EXECUTION_HANDLERS } from "./execution-handlers";
 import { EXECUTION_OBSERVABILITY_HANDLERS } from "./execution-observability-handlers";
 import { FACTOR_RESEARCH_HANDLERS } from "./factor-research-handlers";
 import { MARKET_ANALYSIS_HANDLERS } from "./market-analysis-handlers";
+import { MATH_REASONING_HANDLER } from "./math-reasoning-handler";
 import { MEMORY_HANDLERS } from "./memory-handlers";
 import { PRIME_MEMORY_HANDLERS } from "./prime-memory-handlers";
 import { REPORTING_HANDLERS } from "./reporting-handlers";
@@ -41,6 +42,8 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
   ...REPORTING_HANDLERS,
   ...FACTOR_RESEARCH_HANDLERS,
   ...STRATEGY_EXECUTION_HANDLERS,
+
+  "math.derivation.verify": MATH_REASONING_HANDLER,
 
   "web.fetch": WEB_FETCH_HANDLER,
   "web.search": WEB_SEARCH_HANDLER,

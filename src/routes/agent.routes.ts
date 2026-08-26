@@ -1073,7 +1073,15 @@ agentRouter.get("/model-config", async (c) => {
 
 agentRouter.post("/model-config", async (c) => {
   const body = await c.req.json<{
-    provider?: "openai" | "anthropic" | "ollama" | "deepseek" | "qwen" | "zhipu" | "mock";
+    provider?:
+      | "openai"
+      | "anthropic"
+      | "ollama"
+      | "deepseek"
+      | "qwen"
+      | "zhipu"
+      | "openai_compatible"
+      | "mock";
     model?: string;
     apiKey?: string;
     baseUrl?: string;
@@ -1085,6 +1093,15 @@ agentRouter.post("/model-config", async (c) => {
       dimensions?: number | null;
     } | null;
   }>();
+  if (body.provider === "openai_compatible" && !body.baseUrl?.trim()) {
+    return c.json(
+      {
+        error:
+          "openai_compatible requires baseUrl (an OpenAI Chat Completions-compatible API root or endpoint)",
+      },
+      400
+    );
+  }
   const saved = await saveModelConfig({
     ...(body.provider ? { provider: body.provider } : {}),
     ...(body.model ? { model: body.model } : {}),

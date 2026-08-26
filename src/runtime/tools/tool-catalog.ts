@@ -744,6 +744,12 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
       "默认在受限 Python 中执行（numpy/pandas/scipy 等）；可注入 vars、指定 return_var。仅当 Agent 的 sandbox policy 显式配置 pythonSandbox.mode='container' 时，可传 dangerous=true 在网络关闭、只读根文件系统、无 Linux capabilities 且受 CPU/内存/PID 限制的容器中执行任意 Python/依赖。容器依赖从 policy 声明的 wheelhouse 离线安装，绝不在宿主机安装。",
     category: "research",
   },
+  "math.derivation.verify": {
+    description:
+      "Qubit Reasoning Harness 数学审计。传入 `contract`（严格 MathDerivationContract JSON）和可选 `math_mode=advisory|required`、`symbolic=true`。系统用固定 AST 数值验证器独立复算 numerical / boundaries / counterexamples / constraints / dimensions / sensitivity，并产出 MathDerivationRecord；不接受或输出隐藏思维链。仅应在已启用 math-audit profile 的数学推导任务中调用。",
+    category: "audit",
+    lifecycle: "experimental",
+  },
 
   // Exec 能力源：本地 CLI 工具 + 外部 agentic CLI
   // 详见 src/runtime/exec/types.ts 设计文档（2026 "CLI vs MCP" 争论后的 hybrid 方案）

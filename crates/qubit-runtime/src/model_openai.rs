@@ -359,7 +359,10 @@ fn tool_parameters_schema(name: &str) -> Value {
 fn resolve_provider_label(cfg: &OpenAiCompatibleConfig) -> String {
     if let Ok(p) = std::env::var("QUBIT_LLM_PROVIDER") {
         let t = p.trim().to_lowercase();
-        if !t.is_empty() && t != "openai_compatible" {
+        // Keep the explicit protocol label.  Inferring arbitrary compatible
+        // endpoints as OpenAI hides the selected gateway in traces/cost data
+        // and recreates ambiguity from the pre-unified provider-specific reasoning path.
+        if !t.is_empty() {
             return t;
         }
     }
@@ -474,6 +477,20 @@ struct ChatRequest<'a> {
     messages: Vec<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<Value>>,
+}
+
+/// OpenAI-compatible vision payload; models without vision support return their native 4xx.
+fn user_content_with_images(user: &str, image_urls: &[String]) -> Value {
+    if image_urls.is_empty() {
+        return Value::String(user.to_string());
+    }
+    let mut blocks = vec![json!({ "type": "text", "text": user })];
+    blocks.extend(
+        image_urls
+            .iter()
+            .map(|url| json!({ "type": "image_url", "image_url": { "url": url } })),
+    );
+    Value::Array(blocks)
 }
 
 /// Prefer string content; Anthropic-compat content arrays use text blocks for answer.
@@ -598,7 +615,7 @@ impl ModelClient for OpenAiCompatibleClient {
             messages: {
                 let mut msgs = vec![
                     json!({"role": "system", "content": req.system}),
-                    json!({"role": "user", "content": req.user}),
+                    json!({"role": "user", "content": user_content_with_images(&req.user, &req.image_urls)}),
                 ];
                 msgs.extend(req.history);
                 msgs
@@ -820,6 +837,22 @@ mod tests {
                 assert_eq!(decode_openai_tool_name(&e, &HashMap::new()), n);
             }
         }
+    }
+
+    #[test]
+    fn encodes_image_inputs_as_openai_content_blocks() {
+        let image = "data:image/png;base64,AA==".to_string();
+        assert_eq!(
+            user_content_with_images("analyse this", &[]),
+            Value::String("analyse this".into())
+        );
+        assert_eq!(
+            user_content_with_images("analyse this", &[image.clone()]),
+            json!([
+                { "type": "text", "text": "analyse this" },
+                { "type": "image_url", "image_url": { "url": image } }
+            ])
+        );
     }
 
     #[test]

@@ -11,6 +11,11 @@ import {
   workspace,
 } from "../db/sqlite/schema";
 import { createConversationTurn } from "../runtime/conversation/conversation-turn-service";
+import {
+  type ChatImageAttachment,
+  parseChatImageAttachments,
+  readChatImageAttachments,
+} from "../runtime/conversation/image-attachments";
 import { exportStrategyScriptToWorkflowDir } from "../runtime/strategy/strategy-script-files";
 import { hardDeleteChatSession } from "../runtime/workflow/hard-delete";
 import {
@@ -114,12 +119,25 @@ chatRouter.post("/sessions/:sessionId/turns", async (c) => {
     processConfig?: WorkflowProcessConfig;
     preserveGoal?: boolean;
     fsWorkspaceId?: string;
+    attachments?: unknown;
   };
   const body = await c.req.json<TurnBody>().catch(() => ({}) as TurnBody);
   const projectId = body.projectId?.trim() ?? "";
   const message = body.message?.trim() ?? "";
-  if (!projectId || !message) {
-    return c.json({ ok: false, error: "projectId and message are required" }, 400);
+  let attachments: ChatImageAttachment[];
+  try {
+    attachments = parseChatImageAttachments(body.attachments);
+  } catch (error) {
+    return c.json(
+      { ok: false, error: error instanceof Error ? error.message : String(error) },
+      400
+    );
+  }
+  if (!projectId || (!message && attachments.length === 0)) {
+    return c.json(
+      { ok: false, error: "projectId and message or image attachment is required" },
+      400
+    );
   }
   const loopKind = AgentLoopKindSchema.safeParse(body.loopKind);
   const roleReasoner = AgentLoopKindSchema.safeParse(body.roleReasoner);
@@ -159,6 +177,7 @@ chatRouter.post("/sessions/:sessionId/turns", async (c) => {
       ...(processConfig.success ? { processConfig: processConfig.data } : {}),
       ...(body.preserveGoal === true ? { preserveGoal: true } : {}),
       ...(body.fsWorkspaceId?.trim() ? { fsWorkspaceId: body.fsWorkspaceId.trim() } : {}),
+      ...(attachments.length ? { attachments } : {}),
     });
     return c.json({ ok: true, data }, 202);
   } catch (error) {
@@ -413,6 +432,7 @@ chatRouter.get("/sessions/:id/messages", async (c) => {
   return c.json({
     data: messages.map((item) => ({
       ...item,
+      attachments: readChatImageAttachments(item.attachmentsJson),
       workflowRunIds: linkByMessage.get(item.id) ?? [],
     })),
   });

@@ -338,6 +338,8 @@ export const chatMessage = sqliteTable("chat_message", {
     .notNull()
     .default("user"),
   content: text("content").notNull(),
+  /** User-provided multimodal inputs (currently image Data URLs), never mixed into text content. */
+  attachmentsJson: text("attachments_json", { mode: "json" }).notNull().default("[]"),
   status: text("status", {
     enum: ["queued", "running", "completed", "failed", "awaiting_approval"],
   })
@@ -400,7 +402,7 @@ export const llmProviderConfig = sqliteTable("llm_provider_config", {
   id: id(),
   providerId: text("provider_id").notNull(),
   providerType: text("provider_type", {
-    enum: ["openai", "anthropic", "ollama", "custom"],
+    enum: ["openai", "anthropic", "ollama", "openai_compatible", "custom"],
   }).notNull(),
   baseUrl: text("base_url"),
   modelName: text("model_name").notNull(),

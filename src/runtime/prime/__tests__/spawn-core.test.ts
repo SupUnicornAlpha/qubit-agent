@@ -62,6 +62,24 @@ describe("spawn-core helpers", () => {
     expect(env.QUBIT_LLM_API_KEY).toBe("sk-explicit-core");
   });
 
+  test("resolveCoreLlmEnv preserves the explicit generic-compatible provider", () => {
+    const root = mkdtempSync(join(tmpdir(), "core-llm-compatible-"));
+    mkdirSync(join(root, ".qubit"), { recursive: true });
+    writeFileSync(
+      join(root, ".qubit", "model.json"),
+      JSON.stringify({
+        provider: "openai_compatible",
+        model: "vendor/quant-reasoner",
+        apiKey: "sk-compatible",
+        baseUrl: "https://gateway.example/v1/chat/completions",
+      })
+    );
+
+    const env = resolveCoreLlmEnv({} as NodeJS.ProcessEnv, [root]);
+    expect(env.QUBIT_LLM_PROVIDER).toBe("openai_compatible");
+    expect(env.QUBIT_LLM_BASE_URL).toBe("https://gateway.example/v1");
+  });
+
   test("shouldRespawnCoreForLlm adopts matching external core (no restart storm)", () => {
     const decision = shouldRespawnCoreForLlm({
       health: {

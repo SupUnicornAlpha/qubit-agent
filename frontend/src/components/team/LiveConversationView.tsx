@@ -163,9 +163,7 @@ export const LiveConversationView: FC<LiveConversationViewProps> = ({
         {streamParts.map((part) => {
           switch (part.kind) {
             case "user":
-              return (
-                <UserStreamBlock key={part.ev.id} ev={part.ev} maxLen={contentMaxLength} />
-              );
+              return <UserStreamBlock key={part.ev.id} ev={part.ev} maxLen={contentMaxLength} />;
             case "assistant":
               return (
                 <AssistantStreamBlock
@@ -304,11 +302,7 @@ function isAssistantNarrative(
 ): boolean {
   if (ev.messageKind === "tool_call") return false;
   if (ev.toRole === TEAM_BROADCAST_ROLE) return false;
-  if (
-    collapseA2AFromRole &&
-    ev.fromRole === collapseA2AFromRole &&
-    ev.toRole !== "user"
-  ) {
+  if (collapseA2AFromRole && ev.fromRole === collapseA2AFromRole && ev.toRole !== "user") {
     return false;
   }
   if (ev.fromRole === "user") return false;
@@ -350,11 +344,7 @@ function buildStreamParts(
       parts.push({ kind: "tool", ev });
       continue;
     }
-    if (
-      collapseA2AFromRole &&
-      ev.fromRole === collapseA2AFromRole &&
-      ev.toRole !== "user"
-    ) {
+    if (collapseA2AFromRole && ev.fromRole === collapseA2AFromRole && ev.toRole !== "user") {
       flushAssistant();
       parts.push({ kind: "a2a", ev });
       continue;
@@ -399,10 +389,7 @@ function partTimestamp(part: StreamPart): string | null {
   }
 }
 
-function injectArtifactParts(
-  parts: StreamPart[],
-  artifacts: StreamInsertArtifact[]
-): StreamPart[] {
+function injectArtifactParts(parts: StreamPart[], artifacts: StreamInsertArtifact[]): StreamPart[] {
   if (artifacts.length === 0) return parts;
 
   const anchors: TimestampedStreamAnchor[] = parts.map((part, index) => {
@@ -427,9 +414,7 @@ function injectArtifactParts(
 
   if (parts.length === 0) {
     const head = grouped.get(-1) ?? [];
-    const rest = [...grouped.entries()]
-      .filter(([k]) => k !== -1)
-      .flatMap(([, list]) => list);
+    const rest = [...grouped.entries()].filter(([k]) => k !== -1).flatMap(([, list]) => list);
     const all = [...head, ...rest];
     if (all.length === 0) return parts;
     return [
@@ -469,30 +454,56 @@ const InlineArtifactCards: FC<{
   artifacts: StreamInsertArtifact[];
   onOpenArtifact?: (artifact: StreamInsertArtifact) => void;
 }> = ({ artifacts, onOpenArtifact }) => {
+  const groups = useMemo(() => groupArtifactsForBrowse(artifacts), [artifacts]);
   return (
-    <div data-qb-live-stream="artifact" style={inlineArtifactWrapStyle}>
-      <div style={streamMetaStyle}>产物</div>
-      <div style={inlineArtifactListStyle}>
-        {artifacts.map((a) => (
-          <button
-            key={`${a.kind}:${a.id}`}
-            type="button"
-            style={inlineArtifactCardStyle}
-            title={`打开${artifactKindLabel(a.kind)}：${a.title}`}
-            onClick={() => onOpenArtifact?.(a)}
-          >
-            <span style={inlineArtifactKindStyle}>
-              {artifactKindLabel(a.kind)}
-            </span>
-            <span style={inlineArtifactTitleStyle}>{a.title}</span>
-            {a.subtitle ? <span style={inlineArtifactSubStyle}>{a.subtitle}</span> : null}
-            <span style={inlineArtifactOpenStyle}>打开 ↗</span>
-          </button>
+    <details data-qb-live-stream="artifact" style={inlineArtifactWrapStyle}>
+      <summary style={inlineArtifactSummaryStyle}>
+        <span style={streamMetaStyle}>产物 · {artifacts.length}</span>
+        <span style={inlineArtifactSummaryHintStyle}>按类型展开浏览</span>
+        <span aria-hidden style={inlineArtifactChevronStyle}>
+          ⌄
+        </span>
+      </summary>
+      <div style={inlineArtifactGroupsStyle}>
+        {groups.map((group) => (
+          <details key={group.kind} style={inlineArtifactGroupStyle}>
+            <summary style={inlineArtifactGroupSummaryStyle}>
+              <span style={inlineArtifactKindStyle}>{artifactKindLabel(group.kind)}</span>
+              <span>{group.items.length} 项</span>
+              <span aria-hidden style={inlineArtifactGroupChevronStyle}>
+                ⌄
+              </span>
+            </summary>
+            <div style={inlineArtifactListStyle}>
+              {group.items.map((a) => (
+                <button
+                  key={`${a.kind}:${a.id}`}
+                  type="button"
+                  style={inlineArtifactCardStyle}
+                  title={`打开${artifactKindLabel(a.kind)}：${a.title}`}
+                  onClick={() => onOpenArtifact?.(a)}
+                >
+                  <span style={inlineArtifactTitleStyle}>{a.title}</span>
+                  {a.subtitle ? <span style={inlineArtifactSubStyle}>{a.subtitle}</span> : null}
+                  <span style={inlineArtifactOpenStyle}>打开 ↗</span>
+                </button>
+              ))}
+            </div>
+          </details>
         ))}
       </div>
-    </div>
+    </details>
   );
 };
+
+const ARTIFACT_KIND_ORDER = ["factor", "strategy", "backtest", "script"] as const;
+
+function groupArtifactsForBrowse(artifacts: StreamInsertArtifact[]) {
+  return ARTIFACT_KIND_ORDER.map((kind) => ({
+    kind,
+    items: artifacts.filter((artifact) => artifact.kind === kind),
+  })).filter((group) => group.items.length > 0);
+}
 
 function artifactKindLabel(kind: StreamInsertArtifact["kind"] | string): string {
   if (kind === "factor") return "因子";
@@ -512,12 +523,70 @@ const streamContainerStyle: CSSProperties = {
 
 const inlineArtifactWrapStyle: CSSProperties = {
   alignSelf: "stretch",
+  border: "1px solid rgba(96,165,250,0.32)",
+  borderRadius: 8,
+  background: "rgba(96,165,250,0.05)",
+  overflow: "hidden",
+};
+
+const inlineArtifactSummaryStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  padding: "8px 10px",
+  cursor: "pointer",
+  listStyle: "none",
+  userSelect: "none",
+};
+
+const inlineArtifactSummaryHintStyle: CSSProperties = {
+  marginLeft: "auto",
+  color: "var(--qb-team-meta, #71717a)",
+  fontSize: 11,
+};
+
+const inlineArtifactChevronStyle: CSSProperties = {
+  color: "#93c5fd",
+  fontSize: 16,
+  lineHeight: 1,
+};
+
+const inlineArtifactGroupsStyle: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 6,
+  padding: "0 8px 8px",
+};
+
+const inlineArtifactGroupStyle: CSSProperties = {
+  border: "1px solid rgba(255,255,255,0.08)",
+  borderRadius: 6,
+  overflow: "hidden",
+  background: "rgba(0,0,0,0.12)",
+};
+
+const inlineArtifactGroupSummaryStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 7,
+  padding: "6px 8px",
+  cursor: "pointer",
+  color: "var(--qb-team-meta, #a1a1aa)",
+  fontSize: 11,
+  listStyle: "none",
+  userSelect: "none",
+};
+
+const inlineArtifactGroupChevronStyle: CSSProperties = {
+  marginLeft: "auto",
+  color: "#71717a",
 };
 
 const inlineArtifactListStyle: CSSProperties = {
   display: "flex",
   flexDirection: "column",
   gap: 6,
+  padding: "0 6px 6px",
 };
 
 const inlineArtifactCardStyle: CSSProperties = {
@@ -700,8 +769,7 @@ const MessageRow: FC<{
   const accent = avatarColorFor(ev.fromRole).bg;
   // reasonText 是 ReAct 对用户可见的调用理由 / 阶段性说明；不要把 runtime 内部字段名
   // "reasoning" 直接暴露成「思维链」，以免和供应商不提供的隐藏推理混淆。
-  const messageKindLabel =
-    ev.messageKind === "reasoning_progress" ? "过程说明" : ev.messageKind;
+  const messageKindLabel = ev.messageKind === "reasoning_progress" ? "过程说明" : ev.messageKind;
   const tagText = `${formatRoleName(ev.fromRole)} → ${formatRoleName(ev.toRole)}${
     messageKindLabel ? ` · ${messageKindLabel}` : ""
   }${ev.toolName ? ` · ${ev.toolName}` : ""}`;
@@ -851,11 +919,19 @@ const HandoffBlock: FC<{
             {metrics.slice(0, 12).map((m, i) => (
               <tr key={`${String(m.name)}-${i}`}>
                 <td style={handoffStyles.td}>{String(m.name ?? "")}</td>
-                <td style={{ ...handoffStyles.td, color: "#e4e4e7", fontVariantNumeric: "tabular-nums" }}>
+                <td
+                  style={{
+                    ...handoffStyles.td,
+                    color: "#e4e4e7",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
                   {String(m.value ?? "")}
                   {m.unit ? ` ${String(m.unit)}` : ""}
                 </td>
-                <td style={{ ...handoffStyles.td, color: "#71717a" }}>{m.asof ? String(m.asof) : "—"}</td>
+                <td style={{ ...handoffStyles.td, color: "#71717a" }}>
+                  {m.asof ? String(m.asof) : "—"}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -880,7 +956,11 @@ const HandoffBlock: FC<{
                 {label} ↗
               </button>
             ) : (
-              <span key={`${kind}-${id}-${i}`} style={handoffStyles.chip} title={r.note ? String(r.note) : label}>
+              <span
+                key={`${kind}-${id}-${i}`}
+                style={handoffStyles.chip}
+                title={r.note ? String(r.note) : label}
+              >
                 {label}
               </span>
             );
@@ -1176,7 +1256,8 @@ const ToolCallCard: FC<{
   const fullBody = truncate(pretty, maxLen);
   const lines = fullBody.split("\n");
   const collapsable =
-    Boolean(pieces.body) && (collapsedByDefault || lines.length > COLLAPSED_BODY_LINES || truncated);
+    Boolean(pieces.body) &&
+    (collapsedByDefault || lines.length > COLLAPSED_BODY_LINES || truncated);
   const [expanded, setExpanded] = useState(false);
   const visibleBody =
     expanded || !collapsable ? fullBody : lines.slice(0, COLLAPSED_BODY_LINES).join("\n");
@@ -1325,7 +1406,9 @@ const ToolCallCard: FC<{
           }}
         >
           {truncated ? (
-            <span style={{ color: "var(--qb-team-meta, #71717a)", display: "block", marginBottom: 4 }}>
+            <span
+              style={{ color: "var(--qb-team-meta, #71717a)", display: "block", marginBottom: 4 }}
+            >
               （大结果已截断预览）
             </span>
           ) : null}

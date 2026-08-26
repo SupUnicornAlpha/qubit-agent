@@ -46,6 +46,14 @@ describe("CapabilityRegistry", () => {
     expect(composition.capabilityIds).toContain("document.pdf");
   });
 
+  test("keeps mathematical auditing as an independent opt-in profile", () => {
+    const registry = createBuiltinFinancialHarnessRegistry();
+    const math = registry.resolve("math-audit");
+    expect(math.capabilityIds).toEqual(["math.reasoning"]);
+    expect(math.tools.map((tool) => tool.name)).toEqual(["math.derivation.verify"]);
+    expect(registry.resolve("financial-research").capabilityIds).not.toContain("math.reasoning");
+  });
+
   test("rejects a disabled dependency before any capability activates", () => {
     const registry = new CapabilityRegistry()
       .register(plugin("market.core"))

@@ -204,11 +204,12 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
      * 3.6.1：补齐财务数据 fallback；真实估值字段优先 investor-agent MCP。
      * 禁止自拉 klines——行情由 market_data 提供。
      */
-    version: "3.6.1",
+    version: "3.7.0",
     systemPrompt: PROMPT_ANALYST_FUNDAMENTAL,
     tools: [
       "fetch_fundamentals",
       "compute_valuation",
+      "math.derivation.verify",
       "research.thesis.write",
       "code.run_python",
       "skill.search",
@@ -273,18 +274,18 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     role: "research",
     name: "策略研究",
     /**
-     * 4.5.0：因子→策略→回测主链 + 最小 skill（恰 10）。
+     * 4.6.0：因子→策略→回测主链 + 数学推导审计（恰 10）。
      * 官方联网由 resolveEffectiveTools 自动附加 INTERNET_SUPPORT_TOOLS。
      * discovery / 推荐落库 / 下单由 Orchestrator 主责。
      */
-    version: "4.5.0",
+    version: "4.6.0",
     systemPrompt: PROMPT_RESEARCH,
     tools: [
       "factor.register",
       "factor.compute",
-      "factor.evaluate",
-      "factor.list",
       "factor.autoEvaluate",
+      "factor.list",
+      "math.derivation.verify",
       "strategy.create_version",
       "strategy.compose",
       "backtest.run",
@@ -297,8 +298,8 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
   def({
     id: "def-backtest",
     role: "backtest",
-    /** 4.3.0：回测主路径 + 最小 skill；全套 skill 编辑仍在编排器。 */
-    version: "4.3.0",
+    /** 4.4.0：回测主路径 + 数学审计；全套 skill 编辑仍在编排器。 */
+    version: "4.4.0",
     name: "回测",
     systemPrompt: PROMPT_BACKTEST,
     tools: [
@@ -307,6 +308,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "factor.compute",
       "fetch_klines",
       "code.run_python",
+      "math.derivation.verify",
       "skill.search",
       "skill.use_record",
     ],
@@ -315,8 +317,8 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
   def({
     id: "def-risk",
     role: "risk",
-    /** 4.3.0：签核本职 + 最小 skill；不再挂行情/MCP。 */
-    version: "4.3.0",
+    /** 4.4.0：签核本职 + 数学审计；不再挂行情/MCP。 */
+    version: "4.4.0",
     name: "风控",
     systemPrompt: PROMPT_RISK,
     tools: [
@@ -327,6 +329,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "assess_liquidity",
       "rule.register",
       "rule.evaluate",
+      "math.derivation.verify",
       "skill.search",
       "skill.use_record",
     ],
@@ -337,7 +340,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     id: "def-walk-forward-validator",
     role: "backtest_engineer",
     name: "Walk-Forward 验证师",
-    version: "1.2.0",
+    version: "1.3.0",
     systemPrompt: PROMPT_WALK_FORWARD_VALIDATOR,
     tools: [
       "backtest.run",
@@ -345,6 +348,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "factor.autoEvaluate",
       "factor.evaluate.batch",
       "code.run_python",
+      "math.derivation.verify",
       "skill.search",
       "skill.use_record",
     ],
@@ -360,7 +364,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
      * 画布：Core 投影后以 strategy_coder 节点入图（idle 不展示）。
      * 勿用 call_team_research（会绑到 def-research）。
      */
-    version: "1.0.0",
+    version: "1.1.0",
     executionKind: "subagent",
     systemPrompt: PROMPT_STRATEGY_CODER,
     tools: [
@@ -371,7 +375,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "strategy.sim_deploy",
       "strategy.create_version",
       "code.run_python",
-      "fetch_klines",
+      "math.derivation.verify",
       "skill.search",
       "skill.use_record",
     ],

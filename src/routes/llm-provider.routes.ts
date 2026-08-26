@@ -23,7 +23,7 @@ import {
 
 export const llmProviderRouter = new Hono();
 
-type ProviderType = "openai" | "anthropic" | "ollama" | "custom";
+type ProviderType = "openai" | "anthropic" | "ollama" | "openai_compatible" | "custom";
 
 interface CreatePayload {
   providerId: string;
@@ -157,6 +157,9 @@ llmProviderRouter.post("/", async (c) => {
     if (!body.providerId?.trim())
       return c.json({ ok: false, error: "providerId is required" }, 400);
     if (!body.modelName?.trim()) return c.json({ ok: false, error: "modelName is required" }, 400);
+    if (body.providerType === "openai_compatible" && !body.baseUrl?.trim()) {
+      return c.json({ ok: false, error: "baseUrl is required for openai_compatible" }, 400);
+    }
     const db = await getDb();
     const existing = await db
       .select({ id: llmProviderConfig.id })
@@ -198,6 +201,12 @@ llmProviderRouter.patch("/:id", async (c) => {
       .where(eq(llmProviderConfig.id, id))
       .limit(1);
     if (!existing[0]) return c.json({ ok: false, error: "not_found" }, 404);
+
+    const nextProviderType = body.providerType ?? (existing[0].providerType as ProviderType);
+    const nextBaseUrl = body.baseUrl ?? existing[0].baseUrl;
+    if (nextProviderType === "openai_compatible" && !nextBaseUrl?.trim()) {
+      return c.json({ ok: false, error: "baseUrl is required for openai_compatible" }, 400);
+    }
 
     const next: Partial<typeof llmProviderConfig.$inferInsert> = {};
     if (body.providerType !== undefined) next.providerType = body.providerType;
@@ -261,7 +270,7 @@ llmProviderRouter.post("/:id/test", async (c) => {
   const provider =
     row.providerType === "custom"
       ? inferProviderFromModelName(row.modelName)
-      : (row.providerType as "openai" | "anthropic" | "ollama");
+      : (row.providerType as Exclude<ProviderType, "custom">);
   const envKey = providerEnvKey(provider);
   const keyOk = apiKeyConfigured(row);
 
@@ -271,6 +280,17 @@ llmProviderRouter.post("/:id/test", async (c) => {
       error: "api_key_not_configured",
       hint: `provider=${provider} 需要配置 apiKey，envKey=${envKey ?? "?"}`,
     });
+  }
+
+  if (provider === "openai_compatible" && !row.baseUrl?.trim()) {
+    return c.json(
+      {
+        ok: false,
+        error: "base_url_required",
+        hint: "openai_compatible 需要填写 OpenAI Chat Completions 兼容的 baseUrl。",
+      },
+      400
+    );
   }
 
   return c.json({

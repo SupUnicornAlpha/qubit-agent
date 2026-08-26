@@ -59,8 +59,9 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
     expectTools("def-research", [
       "factor.register",
       "factor.compute",
-      "factor.evaluate",
+      "factor.autoEvaluate",
       "factor.list",
+      "math.derivation.verify",
       "strategy.create_version",
       "strategy.compose",
       "backtest.run",
@@ -82,6 +83,7 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
       "strategy.paper_run",
       "strategy.create_version",
       "code.run_python",
+      "math.derivation.verify",
       "skill.search",
       "skill.use_record",
     ]);
@@ -106,11 +108,18 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
       "factor.list",
       "factor.compute",
       "code.run_python",
+      "math.derivation.verify",
     ]);
   });
 
   test("def-risk 签核本职，不挂行情/MCP/skill 编辑", () => {
-    expectTools("def-risk", ["rule.register", "rule.evaluate", "sign_intent", "evaluate_risk"]);
+    expectTools("def-risk", [
+      "rule.register",
+      "rule.evaluate",
+      "sign_intent",
+      "evaluate_risk",
+      "math.derivation.verify",
+    ]);
     const risk = BY_ID.get("def-risk")!;
     expect(risk.tools).not.toContain("fetch_klines");
     expect(risk.tools).not.toContain("call_mcp");
@@ -144,6 +153,31 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
     }
   });
 
+  test("数学审计只接入需要产生或签核定量结论的 Agent", () => {
+    const mathAuditors = [
+      "def-analyst-fundamental",
+      "def-research",
+      "def-strategy-coder",
+      "def-backtest",
+      "def-risk",
+      "def-walk-forward-validator",
+    ];
+    for (const id of mathAuditors) {
+      expect(BY_ID.get(id)?.tools).toContain("math.derivation.verify");
+    }
+
+    for (const id of [
+      "def-orchestrator",
+      "def-market-data",
+      "def-news-event",
+      "def-analyst-technical",
+      "def-analyst-sentiment",
+      "def-analyst-macro",
+    ]) {
+      expect(BY_ID.get(id)?.tools).not.toContain("math.derivation.verify");
+    }
+  });
+
   test("分析师不自带行情治理；基本面不含 klines", () => {
     const fundamental = BY_ID.get("def-analyst-fundamental")!;
     expect(fundamental.tools).not.toContain("fetch_klines");
@@ -152,6 +186,7 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
       "fetch_fundamentals",
       "compute_valuation",
       "research.thesis.write",
+      "math.derivation.verify",
     ]);
 
     expectTools("def-analyst-technical", [
@@ -228,6 +263,7 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
       "factor.autoEvaluate",
       "factor.evaluate.batch",
       "code.run_python",
+      "math.derivation.verify",
     ]);
   });
 

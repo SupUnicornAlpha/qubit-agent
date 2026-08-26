@@ -331,7 +331,7 @@ export async function runOrchestratorTaskViaCore(
         session_id: sessionId,
         input: {
           text,
-          attachments: [],
+          attachments: Array.isArray(params.attachments) ? params.attachments : [],
           client_meta: buildCoreHitlClientMeta({
             loopOptions,
             ...(skipToolGateOnce ? { skipToolGateOnce: true } : {}),

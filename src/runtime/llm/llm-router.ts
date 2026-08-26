@@ -10,15 +10,19 @@
  *
  * 关键设计：
  * - apiKey 来源优先级：DB(llm_provider_config) > env(`OPENAI_API_KEY` 等) > 空（→ 默认模型）
- * - DB providerType 用 "openai/anthropic/ollama/custom"，但 providerId 携带细分名（deepseek/qwen/zhipu）
- * - "custom" 在 runtime 通过 modelName 前缀推断 → deepseek/qwen/zhipu 走 OpenAI-compatible
+ * - DB providerType 为显式协议/厂商；`custom` 仅作为旧数据兼容别名
+ * - 新建的陌生厂商走 `openai_compatible`，不会再根据 modelName 猜成 OpenAI
  * - 全局 process.env fallback 保证用户不配 DB 也能跑（向后兼容）
  */
 
 import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { llmProviderConfig } from "../../db/sqlite/schema";
-import { type RuntimeModelConfig, loadModelConfig } from "../config/model-config";
+import {
+  type RuntimeModelConfig,
+  type RuntimeModelProvider,
+  loadModelConfig,
+} from "../config/model-config";
 import { type LlmGatewayInput, type LlmTokenUsage, runLlmGateway } from "./gateway";
 import {
   LlmGatewayError,
@@ -28,9 +32,7 @@ import {
   isRetryableLlmGatewayError,
 } from "./llm-gateway-error";
 
-export type LlmProvider = RuntimeModelConfig["provider"];
-
-const OPENAI_COMPATIBLE: LlmProvider[] = ["deepseek", "qwen", "zhipu"];
+export type LlmProvider = RuntimeModelProvider;
 
 const KNOWN_PROVIDER_ALIASES: Record<string, LlmProvider> = {
   openai: "openai",
@@ -41,10 +43,16 @@ const KNOWN_PROVIDER_ALIASES: Record<string, LlmProvider> = {
   qwen: "qwen",
   zhipu: "zhipu",
   glm: "zhipu",
+  "openai-compatible": "openai_compatible",
+  openai_compatible: "openai_compatible",
+  compat: "openai_compatible",
   mock: "mock",
 };
 
-/** 把 modelName 推断到 runtime provider（兜底，用于 DB.providerType=custom 时） */
+/**
+ * 旧 `custom` 配置的兼容推断。新配置绝不可调用它：未知模型名必须显式走
+ * `openai_compatible`，否则会把任意厂商误路由到 OpenAI。
+ */
 export function inferProviderFromModelName(modelName: string): LlmProvider {
   const m = modelName.toLowerCase();
   if (m.startsWith("gpt-") || m.startsWith("o1") || m.startsWith("o3")) return "openai";
@@ -53,7 +61,7 @@ export function inferProviderFromModelName(modelName: string): LlmProvider {
   if (m.startsWith("deepseek")) return "deepseek";
   if (m.startsWith("qwen")) return "qwen";
   if (m.startsWith("glm")) return "zhipu";
-  return "openai";
+  return "openai_compatible";
 }
 
 /** 解析 def.llmProvider 字符串："openai:gpt-4o" → { provider:'openai', model:'gpt-4o' } */
@@ -220,6 +228,8 @@ export function providerEnvKey(provider: LlmProvider): string | null {
       return "DASHSCOPE_API_KEY";
     case "zhipu":
       return "ZHIPU_API_KEY";
+    case "openai_compatible":
+      return "QUBIT_LLM_OPENAI_COMPATIBLE_API_KEY";
     case "ollama":
     case "mock":
       return null;
@@ -637,5 +647,3 @@ export async function invokeWithFallback(
     }
   }
 }
-
-OPENAI_COMPATIBLE; // keep tree-shake hint

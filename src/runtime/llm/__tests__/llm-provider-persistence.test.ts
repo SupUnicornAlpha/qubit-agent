@@ -44,6 +44,7 @@ beforeEach(async () => {
   delete process.env.OPENAI_API_KEY;
   delete process.env.DEEPSEEK_API_KEY;
   delete process.env.ANTHROPIC_API_KEY;
+  delete process.env.QUBIT_LLM_OPENAI_COMPATIBLE_API_KEY;
 });
 
 describe("LlmProvider 持久化 — 修复重启后缺 apiKey", () => {
@@ -99,6 +100,30 @@ describe("LlmProvider 持久化 — 修复重启后缺 apiKey", () => {
     const ours = list.data.find((r) => r.providerId === providerId);
     expect(ours).toBeDefined();
     expect(ours?.apiKeyConfigured).toBe(true);
+  });
+
+  test("unknown custom model is preserved as explicit OpenAI-compatible instead of guessed OpenAI", async () => {
+    const app = new Hono();
+    app.route("/api/v1/llm-providers", llmProviderRouter);
+    const providerId = `${TEST_PREFIX}compat-${Date.now()}`;
+    const res = await app.request("/api/v1/llm-providers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        providerId,
+        providerType: "openai_compatible",
+        modelName: "vendor/quant-reasoner",
+        baseUrl: "https://gateway.example/v1",
+        apiKey: "compat-secret",
+      }),
+    });
+    expect(res.status).toBe(200);
+
+    delete process.env.QUBIT_LLM_OPENAI_COMPATIBLE_API_KEY;
+    const cfg = await loadProviderFromDb(providerId);
+    expect(cfg?.provider).toBe("openai_compatible");
+    expect(cfg?.baseUrl).toBe("https://gateway.example/v1");
+    expect(cfg?.apiKey).toBe("compat-secret");
   });
 
   test("hydrateLlmProviderEnv 把 secret 还原到 process.env", async () => {

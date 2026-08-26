@@ -13,6 +13,7 @@ import {
   MigrationDriftError,
   readAppliedMigrationCount,
   readJournalEntryCount,
+  repairPartialGeneGenerationFitness,
   runMigrations,
 } from "../migrate";
 
@@ -116,6 +117,36 @@ describe("runMigrations sanity drift check", () => {
       expect(names.has("skill_curator_run")).toBe(true);
     } finally {
       sqlite.close();
+    }
+  });
+
+  test("修复已记录但缺失的 gene_generation.best_fitness 列", () => {
+    const tmpDir = process.env.QUBIT_DATA_DIR ?? config.dataDir;
+    const dbPath = join(tmpDir, "db", "__test_gene_generation_partial.sqlite");
+    require("node:fs").mkdirSync(join(tmpDir, "db"), { recursive: true });
+    const sqlite = new Database(dbPath);
+    try {
+      sqlite.exec(
+        "CREATE TABLE gene_generation (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, best_sharpe REAL)"
+      );
+    } finally {
+      sqlite.close();
+    }
+
+    repairPartialGeneGenerationFitness(dbPath);
+
+    const repaired = new Database(dbPath, { readonly: true });
+    try {
+      const columns = new Set(
+        repaired
+          .query<{ name: string }, []>("PRAGMA table_info(gene_generation)")
+          .all()
+          .map((row) => row.name)
+      );
+      expect(columns.has("best_fitness")).toBe(true);
+    } finally {
+      repaired.close();
+      require("node:fs").unlinkSync(dbPath);
     }
   });
 });

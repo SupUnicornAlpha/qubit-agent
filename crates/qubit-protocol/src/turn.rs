@@ -53,9 +53,20 @@ pub enum Lifecycle {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AttachmentRef {
-    File { r#ref: String },
-    KlineContext { r#ref: String },
-    ArtifactRef { r#ref: String },
+    File {
+        r#ref: String,
+    },
+    /// Browser-pasted image encoded as a validated data URL for OpenAI-compatible vision APIs.
+    ImageData {
+        data_url: String,
+        media_type: String,
+    },
+    KlineContext {
+        r#ref: String,
+    },
+    ArtifactRef {
+        r#ref: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]

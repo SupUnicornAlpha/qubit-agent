@@ -111,6 +111,7 @@ export async function runMigrations(): Promise<void> {
     throw new MigrationDriftError(expected, actual, dir, direction);
   }
   repairPartialOrderIntentLifecycle();
+  repairPartialGeneGenerationFitness();
   console.log(`[DB] SQLite migrations applied (${actual}/${expected}).`);
 }
 
@@ -154,6 +155,42 @@ export function repairPartialOrderIntentLifecycle(dbPath?: string): void {
   } catch (error) {
     console.warn(
       `[DB] order_intent lifecycle repair skipped: ${error instanceof Error ? error.message : String(error)}`
+    );
+  } finally {
+    sqlite.close();
+  }
+}
+
+/**
+ * Some legacy installs recorded 0108 as applied even though its first ALTER
+ * (`gene_generation.best_fitness`) did not reach disk.  The later statements
+ * can still exist, so journal parity alone cannot detect this partial state.
+ * Repairing a missing nullable column is additive and safe to run every start.
+ */
+export function repairPartialGeneGenerationFitness(dbPath?: string): void {
+  const path = dbPath ?? join(config.dataDir, "db", "core.sqlite");
+  if (!existsSync(path)) return;
+  const sqlite = new Database(path);
+  try {
+    const table = sqlite
+      .query<{ name: string }, []>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='gene_generation'"
+      )
+      .get();
+    if (!table) return;
+    const columns = new Set(
+      sqlite
+        .query<{ name: string }, []>("PRAGMA table_info(gene_generation)")
+        .all()
+        .map((row) => row.name)
+    );
+    if (!columns.has("best_fitness")) {
+      sqlite.exec("ALTER TABLE gene_generation ADD COLUMN best_fitness REAL");
+      console.log("[DB] repaired gene_generation.best_fitness");
+    }
+  } catch (error) {
+    console.warn(
+      `[DB] gene_generation fitness repair skipped: ${error instanceof Error ? error.message : String(error)}`
     );
   } finally {
     sqlite.close();

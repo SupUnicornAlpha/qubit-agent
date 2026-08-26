@@ -3,6 +3,7 @@ import {
   normalizeOpenAICompatibleBaseUrl,
   normalizeOpenAICompatibleModel,
   resolveOpenAICompatibleChatCompletionsUrl,
+  resolveOpenAICompatibleDefaults,
   runLlmGateway,
 } from "../gateway";
 
@@ -20,6 +21,12 @@ describe("OpenAI-compatible endpoint normalization", () => {
     expect(normalizeOpenAICompatibleModel("zhipu", "glm5.2")).toBe("glm-5.2");
     expect(normalizeOpenAICompatibleModel("zhipu", "glm-5.2")).toBe("glm-5.2");
     expect(normalizeOpenAICompatibleModel("qwen", "qwen-plus")).toBe("qwen-plus");
+  });
+
+  test("uses an explicit generic-compatible contract instead of guessing OpenAI", () => {
+    expect(resolveOpenAICompatibleDefaults("openai_compatible")).toEqual({
+      envKey: "QUBIT_LLM_OPENAI_COMPATIBLE_API_KEY",
+    });
   });
 });
 
@@ -152,6 +159,45 @@ describe("OpenAI-compatible streaming gateway", () => {
     expect(reasoning).toEqual(["先想", "一步"]);
     expect(tokens).toEqual(["结论"]);
     expect(result.answer).toBe("结论");
+  });
+
+  test("runs an arbitrary OpenAI-compatible endpoint without a vendor-specific model name", async () => {
+    const calls: string[] = [];
+    fetchSpy.mockImplementation((url: string | URL) => {
+      calls.push(String(url));
+      const encoder = new TextEncoder();
+      return Promise.resolve(
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({ choices: [{ delta: { content: "OK" }, finish_reason: "stop" }] })}\n\n`
+                )
+              );
+              controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+              controller.close();
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } }
+        )
+      );
+    });
+
+    const result = await runLlmGateway({
+      config: {
+        provider: "openai_compatible",
+        model: "arbitrary-provider/model-v1",
+        apiKey: "test-key",
+        baseUrl: "https://gateway.example/v1/chat/completions",
+      },
+      systemPrompt: "system",
+      userPrompt: "ping",
+      onToken: () => {},
+    });
+
+    expect(calls).toEqual(["https://gateway.example/v1/chat/completions"]);
+    expect(result.answer).toBe("OK");
   });
 
   test("explicit non-stream fallback remains available for legacy proxies", async () => {

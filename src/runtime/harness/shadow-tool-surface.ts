@@ -56,6 +56,7 @@ export function selectHarnessShadowProfiles(input: {
   if (hasAny(tools, ["market.broker_quote.get"])) profiles.push("broker-connected-research");
   if (hasAny(tools, ["fetch_option_chain"])) profiles.push("us-options-research");
   if (hasAny(tools, ["run_backtest", "backtest.run"])) profiles.push("paper-trading");
+  if (hasAny(tools, ["math.derivation.verify"])) profiles.push("math-audit");
   if (hasAny(tools, ["shell.exec", "cli_agent.run"])) profiles.push("developer-assist");
   return [...new Set([...profiles, ...getActiveHarnessPackageProfiles()])].sort();
 }

@@ -111,7 +111,7 @@ export const ConfigPanel: FC = () => {
   const [draftPromptTemplateRef, setDraftPromptTemplateRef] = useState("");
   const [draftLlmProvider, setDraftLlmProvider] = useState("");
   const [provider, setProvider] = useState<
-    "openai" | "anthropic" | "ollama" | "deepseek" | "qwen" | "zhipu" | "mock"
+    "openai" | "anthropic" | "ollama" | "deepseek" | "qwen" | "zhipu" | "openai_compatible" | "mock"
   >("mock");
   const [modelName, setModelName] = useState("gpt-4o-mini");
   const [modelApiKey, setModelApiKey] = useState("");
@@ -1159,6 +1159,7 @@ export const ConfigPanel: FC = () => {
                       | "deepseek"
                       | "qwen"
                       | "zhipu"
+                      | "openai_compatible"
                       | "mock"
                   )
                 }
@@ -1170,6 +1171,7 @@ export const ConfigPanel: FC = () => {
                 <option value="deepseek">deepseek</option>
                 <option value="qwen">qwen</option>
                 <option value="zhipu">zhipu</option>
+                <option value="openai_compatible">openai_compatible（兼容 API）</option>
               </select>
               <input
                 style={styles.input}
@@ -1192,6 +1194,10 @@ export const ConfigPanel: FC = () => {
               <button
                 className="qb-btn-primary-brand"
                 onClick={() => {
+                  if (provider === "openai_compatible" && !modelBaseUrl.trim()) {
+                    alert("openai_compatible 必须填写 OpenAI Chat Completions 兼容的 baseUrl。");
+                    return;
+                  }
                   void saveModelConfig({
                     provider,
                     model: modelName,

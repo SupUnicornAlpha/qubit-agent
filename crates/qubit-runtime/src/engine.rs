@@ -496,6 +496,14 @@ impl TurnEngine {
         } else {
             rendered.user
         };
+        let image_urls = input
+            .attachments
+            .iter()
+            .filter_map(|attachment| match attachment {
+                qubit_protocol::AttachmentRef::ImageData { data_url, .. } => Some(data_url.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
 
         let mut last_text = String::new();
         let mut iteration = 0u32;
@@ -557,6 +565,7 @@ impl TurnEngine {
                     SampleRequest {
                         system: system.clone(),
                         user: user.clone(),
+                        image_urls: image_urls.clone(),
                         tools: tool_names.clone(),
                         history: history.clone(),
                     },

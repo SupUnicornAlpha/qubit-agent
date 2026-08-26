@@ -42,4 +42,13 @@ describe("Harness tool surface shadow", () => {
     expect(shadow.profileIds).toEqual([]);
     expect(shadow.legacyOnlyTools).toEqual(["evaluate_risk"]);
   });
+
+  test("loads math auditing only when an agent explicitly declares its verifier tool", () => {
+    expect(
+      selectHarnessShadowProfiles({ role: "research", legacyTools: ["math.derivation.verify"] })
+    ).toContain("math-audit");
+    expect(
+      selectHarnessShadowProfiles({ role: "research", legacyTools: ["fetch_klines"] })
+    ).not.toContain("math-audit");
+  });
 });

@@ -1,12 +1,45 @@
-import type { FormEvent, MouseEvent as ReactMouseEvent } from "react";
+import type {
+  ClipboardEvent as ReactClipboardEvent,
+  FormEvent,
+  MouseEvent as ReactMouseEvent,
+} from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FC } from "react";
-import { PanelLeft, PanelTop, Plus } from "lucide-react";
-import { chatHealth, createChatSession, createConversationTurn, getOrCreateDefaultProject, getDefaultWorkspace, deleteChatSession, deleteWorkflow, listChatSessions, listProjects, listSessionMessages, patchSessionMessage, listPendingWorkflowHitl, resolveWorkflowHitl, subscribeSessionEvents, subscribeWorkflowStream } from "../api/backend";
-import type { ChatMessage, StepStreamEvent, AgentLoopKind } from "../api/types";
+import { ImagePlus, PanelLeft, PanelTop, Plus, X } from "lucide-react";
+import {
+  chatHealth,
+  createChatSession,
+  createConversationTurn,
+  getOrCreateDefaultProject,
+  getDefaultWorkspace,
+  deleteChatSession,
+  deleteWorkflow,
+  listChatSessions,
+  listProjects,
+  listSessionMessages,
+  patchSessionMessage,
+  listPendingWorkflowHitl,
+  resolveWorkflowHitl,
+  subscribeSessionEvents,
+  subscribeWorkflowStream,
+} from "../api/backend";
+import type {
+  AgentLoopKind,
+  ChatImageAttachment,
+  ChatMessage,
+  StepStreamEvent,
+} from "../api/types";
 import { useAppStore, type ChartContextPayload } from "../store";
 import { MarkdownBubble } from "../components/chat/MarkdownBubble";
 import { IconToolbarButton } from "../components/ui/IconToolbarButton";
-import { clearChatStreamBinding, hydrateStaleChatMessages, persistChatStreamBinding, reconnectActiveChatStreams, buildFinalAssistantText, messageStatusFromFinalPayload, stripToolCallSentinels } from "../lib/chatMessageHydration";
+import {
+  clearChatStreamBinding,
+  hydrateStaleChatMessages,
+  persistChatStreamBinding,
+  reconnectActiveChatStreams,
+  buildFinalAssistantText,
+  messageStatusFromFinalPayload,
+  stripToolCallSentinels,
+} from "../lib/chatMessageHydration";
 import { useTranslation } from "../i18n";
 import { ChatHitlPromptControls } from "../components/chat/ChatHitlPromptControls";
 import { ChatExecutionActivity } from "../components/chat/ChatExecutionActivity";
@@ -28,8 +61,44 @@ function formatChartContextBlock(ctx: ChartContextPayload): string {
 
 const CHAT_SIDEBAR_WIDTH_LS = "qubit:chatSidebarWidthPx";
 const CHAT_SESSION_LAYOUT_LS = "qubit:chatSessionLayout";
+const MAX_CHAT_IMAGES = 4;
+const MAX_CHAT_IMAGE_BYTES = 5 * 1024 * 1024;
 
 type ChatSessionLayout = "top" | "left";
+
+function imageAttachmentFromFile(file: File): Promise<ChatImageAttachment> {
+  return new Promise((resolve, reject) => {
+    if (!/^image\/(png|jpeg|webp|gif)$/i.test(file.type)) {
+      reject(new Error("仅支持 PNG、JPEG、WebP 或 GIF 图片"));
+      return;
+    }
+    if (file.size > MAX_CHAT_IMAGE_BYTES) {
+      reject(new Error("单张图片不能超过 5MB"));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("读取图片失败"));
+    reader.onload = () =>
+      resolve({
+        kind: "image",
+        dataUrl: String(reader.result),
+        mediaType: file.type.toLowerCase() as ChatImageAttachment["mediaType"],
+        ...(file.name ? { name: file.name.slice(0, 160) } : {}),
+      });
+    reader.readAsDataURL(file);
+  });
+}
+
+function clipboardImageFiles(clipboardData: DataTransfer): File[] {
+  const directFiles = Array.from(clipboardData.files).filter((file) =>
+    file.type.startsWith("image/")
+  );
+  if (directFiles.length > 0) return directFiles;
+  return Array.from(clipboardData.items)
+    .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => file !== null);
+}
 
 function readChatSidebarWidthPx(): number {
   if (typeof window === "undefined") return 220;
@@ -182,6 +251,8 @@ export const ChatPanel: FC<{
   const [workspaceId, setWorkspaceId] = useState("");
   const [projectId, setProjectId] = useState("");
   const [input, setInput] = useState("");
+  const [imageAttachments, setImageAttachments] = useState<ChatImageAttachment[]>([]);
+  const imagePickerRef = useRef<HTMLInputElement | null>(null);
   const chatDraftPrefill = useAppStore((s) => s.chatDraftPrefill);
   const setChatDraftPrefill = useAppStore((s) => s.setChatDraftPrefill);
   const [errorText, setErrorText] = useState("");
@@ -212,7 +283,9 @@ export const ChatPanel: FC<{
    * 按钮变 disabled + 文案改"处理中…"，直到 backend 返回（成功 → 真清状态；
    * idempotent → 静默清；失败 → 清锁并报错让用户重试）。
    */
-  const [hitlInflightRequestIds, setHitlInflightRequestIds] = useState<Set<string>>(() => new Set());
+  const [hitlInflightRequestIds, setHitlInflightRequestIds] = useState<Set<string>>(
+    () => new Set()
+  );
   // Tauri webview 屏蔽了 window.confirm/prompt（点击没反应），所以走 inline 2-click 兜底：
   // 第一下点击进入 pending（按钮变红+变文案），第二下才真正执行硬删除；3 秒后自动取消。
   const [pendingDeleteSessionId, setPendingDeleteSessionId] = useState<string | null>(null);
@@ -245,6 +318,36 @@ export const ChatPanel: FC<{
   const activeStreamMessageIdsRef = useRef<Set<string>>(new Set());
   const activeStreamClosersRef = useRef<Map<string, () => void>>(new Map());
   const [streamRunByMessageId, setStreamRunByMessageId] = useState<Record<string, string>>({});
+
+  const addImageFiles = useCallback(
+    async (files: Iterable<File>) => {
+      const images = Array.from(files).filter((file) => file.type.startsWith("image/"));
+      if (images.length === 0) return;
+      const remaining = MAX_CHAT_IMAGES - imageAttachments.length;
+      if (remaining <= 0) {
+        setErrorText(`最多可附加 ${MAX_CHAT_IMAGES} 张图片`);
+        return;
+      }
+      try {
+        const attachments = await Promise.all(
+          images.slice(0, remaining).map(imageAttachmentFromFile)
+        );
+        setImageAttachments((previous) => [...previous, ...attachments]);
+        if (images.length > remaining) setErrorText(`最多可附加 ${MAX_CHAT_IMAGES} 张图片`);
+        else setErrorText("");
+      } catch (error) {
+        setErrorText(error instanceof Error ? error.message : "读取图片失败");
+      }
+    },
+    [imageAttachments.length]
+  );
+
+  const onComposerPaste = (event: ReactClipboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const files = clipboardImageFiles(event.clipboardData);
+    if (files.length === 0) return;
+    event.preventDefault();
+    void addImageFiles(files);
+  };
 
   const chatGridTemplateColumns = useMemo(() => {
     const w = chatSidebarWidthPx;
@@ -543,7 +646,11 @@ export const ChatPanel: FC<{
             );
           }
         }
-        if (event.type === "observe" || event.type === "tool_call_start" || event.type === "tool_call_end") {
+        if (
+          event.type === "observe" ||
+          event.type === "tool_call_start" ||
+          event.type === "tool_call_end"
+        ) {
           // Show tool/observe steps as interim content if no token buffer yet
           if (!buffer) {
             const stepLabel =
@@ -564,9 +671,7 @@ export const ChatPanel: FC<{
                   : `👁 观测第 ${event.stepIndex} 步`;
             setChatMessages((prev) =>
               prev.map((m) =>
-                m.id === assistantMessageId
-                  ? { ...m, content: stepLabel, status: "running" }
-                  : m
+                m.id === assistantMessageId ? { ...m, content: stepLabel, status: "running" } : m
               )
             );
           }
@@ -643,7 +748,9 @@ export const ChatPanel: FC<{
           });
           setChatMessages((prev) =>
             prev.map((m) =>
-              m.id === assistantMessageId ? { ...m, content: cleanedBuffer, status: "completed" } : m
+              m.id === assistantMessageId
+                ? { ...m, content: cleanedBuffer, status: "completed" }
+                : m
             )
           );
           stopStream();
@@ -725,7 +832,11 @@ export const ChatPanel: FC<{
          * 避免一个工作流被订阅两次（看到双倍流式 token）。
          */
         if (!result.idempotent) {
-          await patchSessionMessage({ messageId, status: "running", content: "▶️ 已批准，继续执行…" });
+          await patchSessionMessage({
+            messageId,
+            status: "running",
+            content: "▶️ 已批准，继续执行…",
+          });
           setChatMessages((prev) =>
             prev.map((m) =>
               m.id === messageId ? { ...m, status: "running", content: "▶️ 已批准，继续执行…" } : m
@@ -779,9 +890,10 @@ export const ChatPanel: FC<{
 
   const onSend = async (event: FormEvent) => {
     event.preventDefault();
-    if (!selectedSessionId || !projectId || !input.trim()) return;
+    if (!selectedSessionId || !projectId || (!input.trim() && imageAttachments.length === 0))
+      return;
     try {
-      const trimmed = input.trim();
+      const trimmed = input.trim() || "请分析附图。";
       const block = chartContext ? formatChartContextBlock(chartContext) : "";
       const combinedGoal = block ? `${block}\n\n${trimmed}` : trimmed;
       const turn = await createConversationTurn({
@@ -794,6 +906,7 @@ export const ChatPanel: FC<{
         loopKind: chatLoopKind,
         hitlMode: chatHitlMode,
         agentMode: chatAgentMode,
+        ...(imageAttachments.length ? { attachments: imageAttachments } : {}),
         ...(workflowRunId ? { workflowRunId } : {}),
       });
       onWorkflowFocusChange?.(turn.runId);
@@ -803,12 +916,15 @@ export const ChatPanel: FC<{
       }
       await reloadSessionMessages(selectedSessionId);
       setInput("");
+      setImageAttachments([]);
       setChartContext(null);
       setErrorText("");
     } catch (err) {
       setErrorText(err instanceof Error ? err.message : "发送失败");
     }
   };
+
+  const canSend = Boolean(input.trim() || imageAttachments.length > 0);
 
   const visibleChatMessages =
     simpleMode && workflowRunId
@@ -833,8 +949,7 @@ export const ChatPanel: FC<{
     [...visibleChatMessages]
       .reverse()
       .find(
-        (message) =>
-          message.status === "awaiting_approval" && Boolean(message.workflowRunIds?.[0])
+        (message) => message.status === "awaiting_approval" && Boolean(message.workflowRunIds?.[0])
       ) ?? null;
 
   const handleStopGeneration = async () => {
@@ -842,9 +957,7 @@ export const ChatPanel: FC<{
     const workflowId = message?.workflowRunIds?.[0];
     if (!message || !workflowId) return;
     const partial = stripToolCallSentinels(message.content).trim();
-    const stoppedContent = partial
-      ? `${partial}\n\n_已停止生成_`
-      : "⏹️ 已停止生成";
+    const stoppedContent = partial ? `${partial}\n\n_已停止生成_` : "⏹️ 已停止生成";
     // 先收 UI/SSE，再请求后端取消；即使网络返回慢，按钮也应立即反馈。
     activeStreamClosersRef.current.get(message.id)?.();
     setChatMessages((prev) =>
@@ -888,7 +1001,8 @@ export const ChatPanel: FC<{
       <div style={styles.chatChrome}>
         {chartContext ? (
           <div style={styles.chartCtxBanner}>
-            已附带行情上下文（{chartContext.symbol} / {chartContext.timeframe}）。发送一条消息后会自动清除。
+            已附带行情上下文（{chartContext.symbol} / {chartContext.timeframe}
+            ）。发送一条消息后会自动清除。
           </div>
         ) : null}
         {errorText ? (
@@ -901,7 +1015,9 @@ export const ChatPanel: FC<{
         ref={chatLayoutRef}
         className={[
           simpleMode ? "qb-simple-chat-layout" : undefined,
-          showSessionChrome ? `qb-chat-layout--sessions-${sessionLayout}` : "qb-chat-layout--sessions-hidden",
+          showSessionChrome
+            ? `qb-chat-layout--sessions-${sessionLayout}`
+            : "qb-chat-layout--sessions-hidden",
         ]
           .filter(Boolean)
           .join(" ")}
@@ -1206,17 +1322,15 @@ export const ChatPanel: FC<{
                   .map((m) => m.content.trim())
                   .filter(Boolean)
                   .join("\n\n");
-                const running = msgs.some(
-                  (m) => m.status === "running" || m.status === "queued"
-                );
-              const streamMsg =
-                [...msgs].reverse().find((m) => streamRunByMessageId[m.id]) ?? last;
-              const streamRunId = streamRunByMessageId[streamMsg.id];
-              const workflowIds: string[] = [
-                ...new Set(msgs.flatMap((m) => m.workflowRunIds ?? [])),
-              ];
+                const running = msgs.some((m) => m.status === "running" || m.status === "queued");
+                const streamMsg =
+                  [...msgs].reverse().find((m) => streamRunByMessageId[m.id]) ?? last;
+                const streamRunId = streamRunByMessageId[streamMsg.id];
+                const workflowIds: string[] = [
+                  ...new Set(msgs.flatMap((m) => m.workflowRunIds ?? [])),
+                ];
 
-              return (
+                return (
                   <div
                     key={turn.key}
                     className="qb-chat-turn qb-chat-turn--assistant qb-chat-bubble qb-chat-bubble--agent"
@@ -1242,38 +1356,38 @@ export const ChatPanel: FC<{
                         </span>
                       )}
                     </div>
-                  {streamRunId ? (
-                    <ChatExecutionActivity
-                      events={streamEvents.filter((event) => event.runId === streamRunId)}
-                      running={running}
-                    />
-                  ) : null}
-                  {workflowIds.length ? (
-                    <div className="qb-chat-bubble__meta">
-                      {simpleMode
-                        ? workflowIds.map((id) => (
-                            <button
-                              key={id}
-                              type="button"
-                              className="qb-simple-chat-workflow-link"
-                              onClick={() => onWorkflowFocusChange?.(id)}
-                            >
-                              workflow {id.slice(0, 8)}
-                            </button>
-                          ))
-                        : workflowIds.map((id) => (
-                            <button
-                              key={id}
-                              type="button"
-                              className="qb-btn-ghost qb-btn--compact"
-                              onClick={() => openWorkflowTrace(id)}
-                              title={`在运行监控中查看 workflow ${id} 的完整 Trace`}
-                            >
-                              查看 Trace · {id.slice(0, 8)}
-                            </button>
-                          ))}
-                    </div>
-                  ) : null}
+                    {streamRunId ? (
+                      <ChatExecutionActivity
+                        events={streamEvents.filter((event) => event.runId === streamRunId)}
+                        running={running}
+                      />
+                    ) : null}
+                    {workflowIds.length ? (
+                      <div className="qb-chat-bubble__meta">
+                        {simpleMode
+                          ? workflowIds.map((id) => (
+                              <button
+                                key={id}
+                                type="button"
+                                className="qb-simple-chat-workflow-link"
+                                onClick={() => onWorkflowFocusChange?.(id)}
+                              >
+                                workflow {id.slice(0, 8)}
+                              </button>
+                            ))
+                          : workflowIds.map((id) => (
+                              <button
+                                key={id}
+                                type="button"
+                                className="qb-btn-ghost qb-btn--compact"
+                                onClick={() => openWorkflowTrace(id)}
+                                title={`在运行监控中查看 workflow ${id} 的完整 Trace`}
+                              >
+                                查看 Trace · {id.slice(0, 8)}
+                              </button>
+                            ))}
+                      </div>
+                    ) : null}
                   </div>
                 );
               }
@@ -1301,6 +1415,24 @@ export const ChatPanel: FC<{
                       </span>
                     )}
                   </div>
+                  {msg.attachments?.length ? (
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                      {msg.attachments.map((attachment, index) => (
+                        <img
+                          key={`${attachment.name ?? "image"}-${index}`}
+                          src={attachment.dataUrl}
+                          alt={attachment.name || "已附加图片"}
+                          style={{
+                            width: 156,
+                            maxHeight: 156,
+                            objectFit: "cover",
+                            borderRadius: 8,
+                            border: "1px solid var(--qb-border, #3f3f46)",
+                          }}
+                        />
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               );
             })}
@@ -1355,40 +1487,100 @@ export const ChatPanel: FC<{
                 : onSend
             }
           >
+            <input
+              ref={imagePickerRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              multiple
+              hidden
+              onChange={(event) => {
+                if (event.target.files) void addImageFiles(event.target.files);
+                event.target.value = "";
+              }}
+            />
+            {imageAttachments.length ? (
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", width: "100%" }}>
+                {imageAttachments.map((attachment, index) => (
+                  <div
+                    key={`${attachment.name ?? "image"}-${index}`}
+                    style={{ position: "relative" }}
+                  >
+                    <img
+                      src={attachment.dataUrl}
+                      alt={attachment.name || "待发送图片"}
+                      style={{
+                        width: 72,
+                        height: 72,
+                        objectFit: "cover",
+                        borderRadius: 8,
+                        border: "1px solid var(--qb-border, #3f3f46)",
+                      }}
+                    />
+                    <button
+                      type="button"
+                      aria-label="移除图片"
+                      onClick={() =>
+                        setImageAttachments((items) => items.filter((_, i) => i !== index))
+                      }
+                      style={{
+                        position: "absolute",
+                        top: -6,
+                        right: -6,
+                        width: 20,
+                        height: 20,
+                        padding: 2,
+                        borderRadius: 999,
+                        border: "1px solid #52525b",
+                        background: "#18181b",
+                        color: "#fff",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             {!simpleMode ? (
               <AgentModePicker value={chatAgentMode} onChange={setChatAgentMode} />
             ) : null}
-            {!simpleMode ? <label style={{ ...styles.chatMeta, display: "flex", alignItems: "center", gap: 6 }}>
-              {t("chat.form.loopLabel")}
-              <select
-                value={chatLoopKind}
-                onChange={(e) => setChatLoopKind(e.target.value as AgentLoopKind)}
-                style={{ ...styles.input, maxWidth: 160 }}
+            {!simpleMode ? (
+              <label style={{ ...styles.chatMeta, display: "flex", alignItems: "center", gap: 6 }}>
+                {t("chat.form.loopLabel")}
+                <select
+                  value={chatLoopKind}
+                  onChange={(e) => setChatLoopKind(e.target.value as AgentLoopKind)}
+                  style={{ ...styles.input, maxWidth: 160 }}
+                >
+                  <option value="native">{t("chat.form.loopOptions.native")}</option>
+                  <option value="claude_cli">{t("chat.form.loopOptions.claude")}</option>
+                  <option value="codex_cli">{t("chat.form.loopOptions.codex")}</option>
+                </select>
+              </label>
+            ) : null}
+            {!simpleMode ? (
+              <label
+                style={{ ...styles.chatMeta, display: "flex", alignItems: "center", gap: 6 }}
+                title={t("chat.form.hitlTitle")}
               >
-                <option value="native">{t("chat.form.loopOptions.native")}</option>
-                <option value="claude_cli">{t("chat.form.loopOptions.claude")}</option>
-                <option value="codex_cli">{t("chat.form.loopOptions.codex")}</option>
-              </select>
-            </label> : null}
-            {!simpleMode ? <label
-              style={{ ...styles.chatMeta, display: "flex", alignItems: "center", gap: 6 }}
-              title={t("chat.form.hitlTitle")}
-            >
-              {t("chat.form.hitlLabel")}
-              <select
-                value={chatHitlMode}
-                onChange={(e) => setChatHitlMode(e.target.value as "off" | "ai" | "always")}
-                style={{ ...styles.input, maxWidth: 110 }}
-              >
-                <option value="ai">{t("chat.form.hitlOptions.ai")}</option>
-                <option value="off">{t("chat.form.hitlOptions.off")}</option>
-                <option value="always">{t("chat.form.hitlOptions.always")}</option>
-              </select>
-            </label> : null}
+                {t("chat.form.hitlLabel")}
+                <select
+                  value={chatHitlMode}
+                  onChange={(e) => setChatHitlMode(e.target.value as "off" | "ai" | "always")}
+                  style={{ ...styles.input, maxWidth: 110 }}
+                >
+                  <option value="ai">{t("chat.form.hitlOptions.ai")}</option>
+                  <option value="off">{t("chat.form.hitlOptions.off")}</option>
+                  <option value="always">{t("chat.form.hitlOptions.always")}</option>
+                </select>
+              </label>
+            ) : null}
             {simpleMode ? (
               <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
+                onPaste={onComposerPaste}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
@@ -1403,11 +1595,20 @@ export const ChatPanel: FC<{
                 style={{ ...styles.input, flex: 1 }}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
+                onPaste={onComposerPaste}
                 placeholder={t("chat.form.placeholder")}
               />
             )}
             {simpleMode ? (
               <div className="qb-simple-composer__footer">
+                <button
+                  type="button"
+                  onClick={() => imagePickerRef.current?.click()}
+                  title="粘贴或选择图片"
+                  aria-label="选择图片"
+                >
+                  <ImagePlus size={16} />
+                </button>
                 <AgentModePicker
                   value={chatAgentMode}
                   onChange={setChatAgentMode}
@@ -1419,7 +1620,7 @@ export const ChatPanel: FC<{
                 <button
                   className="qb-simple-composer__send"
                   type={activeAssistantMessage ? "button" : "submit"}
-                  disabled={!activeAssistantMessage && !input.trim()}
+                  disabled={!activeAssistantMessage && !canSend}
                   onClick={activeAssistantMessage ? () => void handleStopGeneration() : undefined}
                   title={
                     activeAssistantMessage
@@ -1433,19 +1634,27 @@ export const ChatPanel: FC<{
               </div>
             ) : (
               <button
+                type="button"
+                className="qb-btn-ghost"
+                onClick={() => imagePickerRef.current?.click()}
+                title="粘贴或选择图片"
+              >
+                <ImagePlus size={16} />
+              </button>
+            )}
+            {!simpleMode ? (
+              <button
                 className={activeAssistantMessage ? "qb-btn-danger" : "qb-btn-primary-brand"}
                 type={activeAssistantMessage ? "button" : "submit"}
-                disabled={!activeAssistantMessage && !input.trim()}
+                disabled={!activeAssistantMessage && !canSend}
                 onClick={activeAssistantMessage ? () => void handleStopGeneration() : undefined}
               >
                 {activeAssistantMessage ? "停止" : t("common.action.send")}
               </button>
-            )}
+            ) : null}
           </form>
         </div>
-
       </div>
     </div>
   );
 };
-

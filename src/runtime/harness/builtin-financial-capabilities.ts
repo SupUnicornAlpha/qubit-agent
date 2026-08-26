@@ -142,6 +142,26 @@ export const builtinFinancialCapabilities: HarnessCapabilityPlugin[] = [
   },
   {
     manifest: {
+      id: "math.reasoning",
+      version: "1.0.0",
+      title: "数学推导审计",
+      kind: "data",
+      description:
+        "Qubit Reasoning Harness 的可选数学审计能力：以结构化推导契约驱动独立数值、边界、反例、量纲、约束与敏感性验证；不记录或展示模型隐藏思维链。",
+      permissions: ["math:verify", "artifact:write"],
+      tools: [{ name: "math.derivation.verify", mode: "read" }],
+      extensions: [
+        { kind: "exec-provider", id: "python-ast-verifier" },
+        { kind: "mcp", id: "mathjs", optional: true },
+        { kind: "exec-provider", id: "sympy", optional: true },
+      ],
+      sandbox: {
+        process: "allowlist",
+      },
+    },
+  },
+  {
+    manifest: {
       id: "browser.automation",
       version: "1.0.0",
       title: "受控浏览器",

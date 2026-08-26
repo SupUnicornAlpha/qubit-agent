@@ -19,31 +19,19 @@ import {
   useState,
 } from "react";
 import { type AgentControlMode, type StepStreamEvent } from "../../api/types";
-import {
-  listFsWorkspaceMemory,
-  type FsMemoryEntry,
-} from "../../api/backend";
+import { listFsWorkspaceMemory, type FsMemoryEntry } from "../../api/backend";
 import { AgentModePicker, getAgentModeOption } from "../chat/AgentModePicker";
-import {
-  buildChatExecutionActivity,
-  ChatExecutionActivity,
-} from "../chat/ChatExecutionActivity";
+import { buildChatExecutionActivity, ChatExecutionActivity } from "../chat/ChatExecutionActivity";
 import type { SubAgentRunSummary } from "../../lib/subAgentRuns";
 import { type LiveConversationEvent, LiveConversationView } from "./LiveConversationView";
-import {
-  type LiveReasoningState,
-  ThinkingGhostBox,
-} from "./ThinkingGhostBox";
+import { type LiveReasoningState, ThinkingGhostBox } from "./ThinkingGhostBox";
 import { OrchestratorLiveStatus } from "./OrchestratorLiveStatus";
 import { SubAgentRunsPanel } from "./SubAgentRunsPanel";
 import { AgentRunPanel } from "./AgentRunChatView";
 import { TeamHitlBanner } from "./TeamHitlBanner";
 import { WorkflowResumeBanner } from "./WorkflowResumeBanner";
 import { type OrchestratorPlan, PlanCard } from "./PlanCard";
-import {
-  splitEventsForPlanPlacement,
-  type PlanTimelineSegment,
-} from "./planSegments";
+import { splitEventsForPlanPlacement, type PlanTimelineSegment } from "./planSegments";
 
 export type OrchestratorHitlMode = "off" | "ai" | "always";
 
@@ -138,6 +126,22 @@ export interface OrchestratorChatPanelProps {
   runtimeSyncState?: "idle" | "connecting" | "live" | "degraded" | "unavailable";
   /** 服务端最后一次确认工作流状态的时间。 */
   runtimeObservedAt?: string | null;
+}
+
+const ORCHESTRATOR_ARTIFACT_KIND_ORDER = ["factor", "strategy", "backtest", "script"] as const;
+
+function orchestratorArtifactKindLabel(kind: OrchestratorArtifact["kind"]): string {
+  if (kind === "factor") return "因子";
+  if (kind === "strategy") return "策略";
+  if (kind === "backtest") return "回测";
+  return "脚本";
+}
+
+function groupOrchestratorArtifacts(artifacts: OrchestratorArtifact[]) {
+  return ORCHESTRATOR_ARTIFACT_KIND_ORDER.map((kind) => ({
+    kind,
+    items: artifacts.filter((artifact) => artifact.kind === kind),
+  })).filter((group) => group.items.length > 0);
 }
 
 const MODE_OPTIONS: ReadonlyArray<{ id: OrchestratorHitlMode; label: string; hint: string }> = [
@@ -242,8 +246,14 @@ export function OrchestratorChatPanel({
     const atBottom = distanceFromBottom < 24;
     setChatAtBottom(atBottom);
     if (atBottom) {
-      if (!chatAutoFollowRef.current) setChatAutoFollow(true);
-    } else if (distanceFromBottom > 64 && chatAutoFollowRef.current) {
+      if (!chatAutoFollowRef.current) {
+        chatAutoFollowRef.current = true;
+        setChatAutoFollow(true);
+      }
+    } else if (chatAutoFollowRef.current) {
+      // 同步更新 ref：ResizeObserver/轮询刷新可能紧跟在 scroll event 后触发，
+      // 不能等 useEffect 才关闭自动跟随，否则会把用户刚上翻的位置拉走。
+      chatAutoFollowRef.current = false;
       setChatAutoFollow(false);
     }
   }, []);
@@ -279,7 +289,7 @@ export function OrchestratorChatPanel({
   useEffect(() => {
     if (injectHint !== "已停止当前 Agent 运行") return;
     const timer = window.setTimeout(() => {
-      setInjectHint((current) => current === "已停止当前 Agent 运行" ? null : current);
+      setInjectHint((current) => (current === "已停止当前 Agent 运行" ? null : current));
     }, 4_000);
     return () => window.clearTimeout(timer);
   }, [injectHint]);
@@ -287,6 +297,7 @@ export function OrchestratorChatPanel({
     () => subAgentRuns.find((run) => run.role === focusedSubAgentRole) ?? null,
     [subAgentRuns, focusedSubAgentRole]
   );
+  const artifactGroups = useMemo(() => groupOrchestratorArtifacts(artifacts), [artifacts]);
 
   const toggleStatusRailPinned = () => {
     setStatusRailPinned((prev) => {
@@ -324,9 +335,7 @@ export function OrchestratorChatPanel({
    * 进度更新不新开段，只刷新对应 PlanCard。
    */
   const planTimelineSections = useMemo(() => {
-    const sorted = [...visibleEvents].sort((a, b) =>
-      a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0
-    );
+    const sorted = [...visibleEvents].sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
     type Section = {
       key: string;
       plan: OrchestratorPlan | null;
@@ -579,11 +588,13 @@ export function OrchestratorChatPanel({
         </div>
         <div style={styles.scopeRow}>
           <span style={styles.scopeHint}>
-            显示 Orchestrator 对你的输出、工具调用，以及已派发专家的实时进度。点击专家可跳转到独立子对话查看完整轨迹。
+            显示 Orchestrator
+            对你的输出、工具调用，以及已派发专家的实时进度。点击专家可跳转到独立子对话查看完整轨迹。
           </span>
           {runtimeObservedAt ? (
             <span style={styles.runtimeSource} title={`服务端确认时间：${runtimeObservedAt}`}>
-              {runtimeSyncState === "live" ? "服务端已确认" : "最近服务端快照"} · {new Date(runtimeObservedAt).toLocaleTimeString()}
+              {runtimeSyncState === "live" ? "服务端已确认" : "最近服务端快照"} ·{" "}
+              {new Date(runtimeObservedAt).toLocaleTimeString()}
             </span>
           ) : null}
         </div>
@@ -616,178 +627,198 @@ export function OrchestratorChatPanel({
           data-qb-orchestrator-chat
           onScroll={handleChatScroll}
         >
-        <div ref={chatContentRef} style={styles.bodyContent}>
-        {!statusRailPinned ? (
-          <div style={styles.statusRailInScroll} data-qb-orch-status-rail="scroll">
-            <StatusRailToolbar pinned={false} onToggle={toggleStatusRailPinned} />
-            <StatusRailContent
-              running={running && !stopAcknowledged}
-              chatInFlight={chatInFlight && !stopAcknowledged}
-              pendingHitlRequestId={pendingHitlRequestId}
-              activity={activity}
-              streamEvents={streamEvents}
-              subAgentRuns={displayedSubAgentRuns}
-              thinkingText={thinkingText}
-              showActive={showActive}
-              focusedSubAgentRole={focusedSubAgentRole}
-              onSelectRun={(run) => setFocusedSubAgentRole(run.role)}
-            />
-          </div>
-        ) : null}
-        {focusedSubAgent ? (
-          <section ref={subConversationRef} style={styles.subConversation} aria-label="专家子对话上下文">
-            <div style={styles.subConversationHeader}>
-              <div style={{ minWidth: 0 }}>
-                <div style={styles.subConversationTitle}>专家子对话 · {focusedSubAgent.role}</div>
-                <div style={styles.subConversationMeta}>
-                  可向下滚动查看该专家的派单、推理、工具调用与回传；主对话不会被覆盖。
-                </div>
-              </div>
-              <button
-                type="button"
-                style={styles.closeSubConversation}
-                onClick={() => setFocusedSubAgentRole(null)}
-              >
-                返回主对话
-              </button>
-            </div>
-            <div style={styles.subConversationBody}>
-              <AgentRunPanel
-                data={{
-                  role: focusedSubAgent.role,
-                  inbound: focusedSubAgent.inbound,
-                  outbound: focusedSubAgent.outbound,
-                  steps: focusedSubAgent.steps,
-                  tools: focusedSubAgent.tools,
-                  mcps: focusedSubAgent.mcps,
-                }}
-                defaultMode="chat"
-              />
-            </div>
-          </section>
-        ) : null}
-        {artifacts.length > 0 || artifactsLoading || artifactsError ? (
-          <div style={styles.artifactBox}>
-            <button
-              type="button"
-              style={styles.artifactHeader}
-              onClick={() => setArtifactsOpen((v) => !v)}
-              aria-expanded={artifactsOpen}
-            >
-              <span aria-hidden style={{ fontSize: 10 }}>
-                {artifactsOpen ? "▾" : "▸"}
-              </span>
-              📦 本轮产物（{artifacts.length}）
-              <span style={styles.artifactHint}>汇总 · 卡片已按产出位置插入对话</span>
-            </button>
-            {artifactsOpen ? (
-              <div style={styles.artifactList}>
-                {artifactsLoading ? (
-                  <div role="status" style={styles.artifactState}>正在同步本轮产物…</div>
-                ) : null}
-                {artifactsError ? (
-                  <div role="alert" style={{ ...styles.artifactState, color: "var(--qb-warning, #f59e0b)" }}>
-                    {artifactsError}
-                  </div>
-                ) : null}
-                {artifacts.map((a) => (
-                  <button
-                    key={`${a.kind}:${a.id}`}
-                    type="button"
-                    style={styles.artifactCard}
-                    title={`打开${a.kind === "factor" ? "因子" : a.kind === "strategy" ? "策略" : a.kind === "backtest" ? "回测" : "脚本"}：${a.title}`}
-                    onClick={() => onOpenArtifact(a)}
-                  >
-                    <span style={styles.artifactKind}>
-                      {a.kind === "factor" ? "因子" : a.kind === "strategy" ? "策略" : a.kind === "backtest" ? "回测" : "脚本"}
-                    </span>
-                    <span style={styles.artifactTitle}>{a.title}</span>
-                    {a.subtitle ? <span style={styles.artifactSub}>{a.subtitle}</span> : null}
-                    <span style={styles.artifactOpen}>打开 ↗</span>
-                  </button>
-                ))}
+          <div ref={chatContentRef} style={styles.bodyContent}>
+            {!statusRailPinned ? (
+              <div style={styles.statusRailInScroll} data-qb-orch-status-rail="scroll">
+                <StatusRailToolbar pinned={false} onToggle={toggleStatusRailPinned} />
+                <StatusRailContent
+                  running={running && !stopAcknowledged}
+                  chatInFlight={chatInFlight && !stopAcknowledged}
+                  pendingHitlRequestId={pendingHitlRequestId}
+                  activity={activity}
+                  streamEvents={streamEvents}
+                  subAgentRuns={displayedSubAgentRuns}
+                  thinkingText={thinkingText}
+                  showActive={showActive}
+                  focusedSubAgentRole={focusedSubAgentRole}
+                  onSelectRun={(run) => setFocusedSubAgentRole(run.role)}
+                />
               </div>
             ) : null}
-          </div>
-        ) : null}
-        {planTimelineSections.map((section, sectionIdx) => {
-          const showEmpty =
-            sectionIdx === 0 &&
-            planTimelineSections.every((s) => s.events.length === 0) &&
-            !section.plan;
-          const { leading, trailing } = section.plan
-            ? splitEventsForPlanPlacement(section.events, section.planStartedAt)
-            : { leading: section.events, trailing: [] as typeof section.events };
-          const planCard = section.plan ? (
-            <PlanCard
-              plan={section.plan}
-              segmentLabel={
-                section.segmentIndex != null
-                  ? `任务 ${section.segmentIndex + 1}`
-                  : undefined
-              }
-              defaultOpen={section.isLatest}
-              onExecute={section.isLatest ? onExecutePlan : undefined}
-              onGoalAction={section.isLatest ? onGoalAction : undefined}
-              executeDisabled={
-                !section.isLatest || running || chatInFlight || expertsActive
-              }
-            />
-          ) : null;
-          const renderConv = (
-            events: typeof section.events,
-            opts?: { empty?: boolean; withArtifacts?: boolean }
-          ) =>
-            events.length > 0 || opts?.empty ? (
-              <LiveConversationView
-                events={events}
-                selfRole="orchestrator"
-                contentMaxLength={12000}
-                collapseA2AFromRole="orchestrator"
-                collapseToolCalls
-                layout="stream"
-                artifacts={opts?.withArtifacts ? artifacts : []}
-                onOpenArtifact={onOpenArtifact}
-                onOpenRef={(ref) => {
-                  const kind =
-                    ref.kind === "factor"
-                      ? "factor"
-                      : ref.kind === "strategy_version"
-                        ? "strategy"
-                        : null;
-                  if (kind) {
-                    onOpenArtifact({
-                      id: ref.id,
-                      kind,
-                      title: ref.id,
-                      workflowRunId,
-                    });
-                  }
-                }}
-                emptyText={
-                  opts?.empty
-                    ? !wfId
-                      ? "请先在左侧选择或新建工作流，再与 Orchestrator 对话。"
-                      : running
-                        ? "Orchestrator 已启动，正在规划与按需派发专家…"
-                        : "输入研究指令并发送。Orchestrator 会直接回答，或按需召唤专家；派发后可在上方「专家进度」查看运行状态。"
-                    : undefined
-                }
-              />
-            ) : null;
-          return (
-            <div
-              key={section.key}
-              style={styles.planSection}
-              data-qb-plan-section={section.key}
-            >
-              {sectionIdx > 0 ? (
-                <div style={styles.planSectionDivider} role="separator">
-                  新任务段落
+            {focusedSubAgent ? (
+              <section
+                ref={subConversationRef}
+                style={styles.subConversation}
+                aria-label="专家子对话上下文"
+              >
+                <div style={styles.subConversationHeader}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={styles.subConversationTitle}>
+                      专家子对话 · {focusedSubAgent.role}
+                    </div>
+                    <div style={styles.subConversationMeta}>
+                      可向下滚动查看该专家的派单、推理、工具调用与回传；主对话不会被覆盖。
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    style={styles.closeSubConversation}
+                    onClick={() => setFocusedSubAgentRole(null)}
+                  >
+                    返回主对话
+                  </button>
                 </div>
-              ) : null}
-              {section.plan
-                ? (
+                <div style={styles.subConversationBody}>
+                  <AgentRunPanel
+                    data={{
+                      role: focusedSubAgent.role,
+                      inbound: focusedSubAgent.inbound,
+                      outbound: focusedSubAgent.outbound,
+                      steps: focusedSubAgent.steps,
+                      tools: focusedSubAgent.tools,
+                      mcps: focusedSubAgent.mcps,
+                    }}
+                    defaultMode="chat"
+                  />
+                </div>
+              </section>
+            ) : null}
+            {artifacts.length > 0 || artifactsLoading || artifactsError ? (
+              <div style={styles.artifactBox}>
+                <button
+                  type="button"
+                  style={styles.artifactHeader}
+                  onClick={() => setArtifactsOpen((v) => !v)}
+                  aria-expanded={artifactsOpen}
+                >
+                  <span aria-hidden style={{ fontSize: 10 }}>
+                    {artifactsOpen ? "▾" : "▸"}
+                  </span>
+                  📦 本轮产物（{artifacts.length}）
+                  <span style={styles.artifactHint}>汇总 · 卡片已按产出位置插入对话</span>
+                </button>
+                {artifactsOpen ? (
+                  <div style={styles.artifactList}>
+                    {artifactsLoading ? (
+                      <div role="status" style={styles.artifactState}>
+                        正在同步本轮产物…
+                      </div>
+                    ) : null}
+                    {artifactsError ? (
+                      <div
+                        role="alert"
+                        style={{ ...styles.artifactState, color: "var(--qb-warning, #f59e0b)" }}
+                      >
+                        {artifactsError}
+                      </div>
+                    ) : null}
+                    {artifactGroups.map((group) => (
+                      <details key={group.kind} style={styles.artifactGroup}>
+                        <summary style={styles.artifactGroupSummary}>
+                          <span style={styles.artifactKind}>
+                            {orchestratorArtifactKindLabel(group.kind)}
+                          </span>
+                          <span>{group.items.length} 项</span>
+                          <span aria-hidden style={styles.artifactGroupChevron}>
+                            ⌄
+                          </span>
+                        </summary>
+                        <div style={styles.artifactGroupList}>
+                          {group.items.map((a) => (
+                            <button
+                              key={`${a.kind}:${a.id}`}
+                              type="button"
+                              style={styles.artifactCard}
+                              title={`打开${orchestratorArtifactKindLabel(a.kind)}：${a.title}`}
+                              onClick={() => onOpenArtifact(a)}
+                            >
+                              <span style={styles.artifactTitle}>{a.title}</span>
+                              {a.subtitle ? (
+                                <span style={styles.artifactSub}>{a.subtitle}</span>
+                              ) : null}
+                              <span style={styles.artifactOpen}>打开 ↗</span>
+                            </button>
+                          ))}
+                        </div>
+                      </details>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            {planTimelineSections.map((section, sectionIdx) => {
+              const showEmpty =
+                sectionIdx === 0 &&
+                planTimelineSections.every((s) => s.events.length === 0) &&
+                !section.plan;
+              const { leading, trailing } = section.plan
+                ? splitEventsForPlanPlacement(section.events, section.planStartedAt)
+                : { leading: section.events, trailing: [] as typeof section.events };
+              const planCard = section.plan ? (
+                <PlanCard
+                  plan={section.plan}
+                  segmentLabel={
+                    section.segmentIndex != null ? `任务 ${section.segmentIndex + 1}` : undefined
+                  }
+                  defaultOpen={section.isLatest}
+                  onExecute={section.isLatest ? onExecutePlan : undefined}
+                  onGoalAction={section.isLatest ? onGoalAction : undefined}
+                  executeDisabled={!section.isLatest || running || chatInFlight || expertsActive}
+                />
+              ) : null;
+              const renderConv = (
+                events: typeof section.events,
+                opts?: { empty?: boolean; withArtifacts?: boolean }
+              ) =>
+                events.length > 0 || opts?.empty ? (
+                  <LiveConversationView
+                    events={events}
+                    selfRole="orchestrator"
+                    contentMaxLength={12000}
+                    collapseA2AFromRole="orchestrator"
+                    collapseToolCalls
+                    layout="stream"
+                    artifacts={opts?.withArtifacts ? artifacts : []}
+                    onOpenArtifact={onOpenArtifact}
+                    onOpenRef={(ref) => {
+                      const kind =
+                        ref.kind === "factor"
+                          ? "factor"
+                          : ref.kind === "strategy_version"
+                            ? "strategy"
+                            : null;
+                      if (kind) {
+                        onOpenArtifact({
+                          id: ref.id,
+                          kind,
+                          title: ref.id,
+                          workflowRunId,
+                        });
+                      }
+                    }}
+                    emptyText={
+                      opts?.empty
+                        ? !wfId
+                          ? "请先在左侧选择或新建工作流，再与 Orchestrator 对话。"
+                          : running
+                            ? "Orchestrator 已启动，正在规划与按需派发专家…"
+                            : "输入研究指令并发送。Orchestrator 会直接回答，或按需召唤专家；派发后可在上方「专家进度」查看运行状态。"
+                        : undefined
+                    }
+                  />
+                ) : null;
+              return (
+                <div
+                  key={section.key}
+                  style={styles.planSection}
+                  data-qb-plan-section={section.key}
+                >
+                  {sectionIdx > 0 ? (
+                    <div style={styles.planSectionDivider} role="separator">
+                      新任务段落
+                    </div>
+                  ) : null}
+                  {section.plan ? (
                     <>
                       {renderConv(leading)}
                       {planCard}
@@ -796,16 +827,17 @@ export function OrchestratorChatPanel({
                         withArtifacts: section.isLatest,
                       })}
                     </>
-                  )
-                : renderConv(section.events, {
-                    empty: showEmpty,
-                    withArtifacts: section.isLatest,
-                  })}
-            </div>
-          );
-        })}
-        <ThinkingGhostBox reasoning={liveReasoning} />
-        </div>
+                  ) : (
+                    renderConv(section.events, {
+                      empty: showEmpty,
+                      withArtifacts: section.isLatest,
+                    })
+                  )}
+                </div>
+              );
+            })}
+            <ThinkingGhostBox reasoning={liveReasoning} />
+          </div>
         </div>
         {!chatAtBottom ? (
           <button
@@ -886,7 +918,11 @@ export function OrchestratorChatPanel({
           <div style={styles.memoryPicker} data-qb-orch-memory-picker>
             <div style={styles.memoryPickerHead}>
               <span>选择要引用的长期记忆</span>
-              <button type="button" style={styles.runStripLink} onClick={() => setMemoryPickerOpen(false)}>
+              <button
+                type="button"
+                style={styles.runStripLink}
+                onClick={() => setMemoryPickerOpen(false)}
+              >
                 关闭
               </button>
             </div>
@@ -942,11 +978,7 @@ export function OrchestratorChatPanel({
             >
               @记忆
             </button>
-            <AgentModePicker
-              value={agentMode}
-              onChange={onAgentModeChange}
-              disabled={showActive}
-            />
+            <AgentModePicker value={agentMode} onChange={onAgentModeChange} disabled={showActive} />
             <label style={styles.hitlSelectLabel} title="选择本次对话的人工确认策略">
               <span>HITL</span>
               <select
@@ -994,11 +1026,7 @@ export function OrchestratorChatPanel({
               }
               onClick={() => void doSend()}
             >
-              {injecting
-                ? "发送中…"
-                : composerMode === "inject"
-                  ? "追加"
-                  : "发送"}
+              {injecting ? "发送中…" : composerMode === "inject" ? "追加" : "发送"}
             </button>
           )}
         </div>
@@ -1370,6 +1398,30 @@ const styles: Record<string, CSSProperties> = {
     flexDirection: "column",
     gap: 6,
     padding: "0 8px 8px",
+  },
+  artifactGroup: {
+    border: "1px solid rgba(255,255,255,0.08)",
+    borderRadius: 6,
+    overflow: "hidden",
+    background: "rgba(0,0,0,0.12)",
+  },
+  artifactGroupSummary: {
+    display: "flex",
+    alignItems: "center",
+    gap: 7,
+    padding: "6px 8px",
+    cursor: "pointer",
+    listStyle: "none",
+    userSelect: "none",
+    color: "#a1a1aa",
+    fontSize: 11,
+  },
+  artifactGroupChevron: { marginLeft: "auto", color: "#71717a" },
+  artifactGroupList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    padding: "0 6px 6px",
   },
   artifactState: {
     padding: "7px 9px",

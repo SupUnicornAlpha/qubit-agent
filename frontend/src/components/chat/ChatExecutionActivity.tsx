@@ -1,4 +1,4 @@
-import { Check, LoaderCircle, Network, Wrench, X } from "lucide-react";
+import { Check, ChevronDown, CircleAlert, LoaderCircle, Network, Wrench, X } from "lucide-react";
 import { type FC, useEffect, useMemo, useRef, useState } from "react";
 import type { StepStreamEvent } from "../../api/types";
 import { formatLargeJsonPreview } from "../../lib/formatLargeJsonPreview";
@@ -11,6 +11,8 @@ type ToolActivity = {
   detail: Record<string, unknown>;
 };
 
+type ToolActivityGroup = ToolActivity & { count: number };
+
 export type ChatExecutionActivityModel = {
   tools: ToolActivity[];
   a2a: { role: string; status: "running" | "completed" } | null;
@@ -18,6 +20,51 @@ export type ChatExecutionActivityModel = {
 
 /** Collapsed rows shown without scrolling (~matches CSS max-height). */
 export const CHAT_EXECUTION_VISIBLE_ROWS = 10;
+
+function statusCopy(status: ToolActivity["status"]): string {
+  switch (status) {
+    case "running":
+      return "运行中";
+    case "success":
+      return "完成";
+    case "timeout":
+      return "超时";
+    case "blocked":
+      return "已阻止";
+    default:
+      return "失败";
+  }
+}
+
+function roleCopy(role: string): string {
+  const normalized = role.trim().toLowerCase();
+  const labels: Record<string, string> = {
+    orchestrator: "编排器",
+    market_data: "行情",
+    news_event: "新闻",
+    research: "研究",
+    strategy_coder: "策略",
+    backtest: "回测",
+    risk: "风控",
+  };
+  return labels[normalized] ?? role.replace(/[_-]+/g, " ");
+}
+
+/** Collapse adjacent retries/polling calls without discarding chronological context. */
+export function groupChatExecutionActivities(tools: ToolActivity[]): ToolActivityGroup[] {
+  const groups: ToolActivityGroup[] = [];
+  for (const tool of tools) {
+    const last = groups.at(-1);
+    if (last && last.name === tool.name && last.role === tool.role && last.status === tool.status) {
+      last.count += 1;
+      last.detail = tool.detail;
+      last.id = tool.id;
+    } else {
+      groups.push({ ...tool, count: 1 });
+    }
+  }
+  return groups;
+}
 
 function toolStatus(value: unknown): ToolActivity["status"] {
   const status = String(value ?? "success");
@@ -80,10 +127,11 @@ export const ChatExecutionActivity: FC<{
   }, [open, running, tools.length, a2a?.status]);
 
   if (!a2a && tools.length === 0) return null;
+  const groups = groupChatExecutionActivities(tools);
   const activeCount = tools.filter((tool) => tool.status === "running").length;
-  const rowCount = tools.length + (a2a ? 1 : 0);
-  const scrollable = rowCount > CHAT_EXECUTION_VISIBLE_ROWS;
-
+  const failedCount = tools.filter(
+    (tool) => tool.status === "failed" || tool.status === "blocked" || tool.status === "timeout"
+  ).length;
   return (
     <section className="qb-chat-execution" aria-label="Agent 调用过程" aria-live="polite">
       <button
@@ -92,14 +140,31 @@ export const ChatExecutionActivity: FC<{
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
       >
-        <span>{open ? "▾" : "▸"}</span>
-        <span>调用过程</span>
-        <span className="qb-chat-execution__summary">
-          {activeCount > 0
-            ? `${activeCount} 项运行中`
-            : scrollable
-              ? `${tools.length} 次工具调用 · 可滚动`
-              : `${tools.length} 次工具调用`}
+        <ChevronDown
+          className={`qb-chat-execution__chevron${open ? "" : " qb-chat-execution__chevron--closed"}`}
+          size={15}
+          aria-hidden
+        />
+        <span className="qb-chat-execution__title">执行轨迹</span>
+        <span className="qb-chat-execution__count">{tools.length} 次调用</span>
+        <span className="qb-chat-execution__summary" aria-label="调用状态">
+          {activeCount > 0 ? (
+            <span className="qb-chat-execution__metric qb-chat-execution__metric--running">
+              <LoaderCircle className="qb-chat-call-card__spin" size={12} aria-hidden />
+              {activeCount} 运行中
+            </span>
+          ) : null}
+          {failedCount > 0 ? (
+            <span className="qb-chat-execution__metric qb-chat-execution__metric--failed">
+              <CircleAlert size={12} aria-hidden />
+              {failedCount} 异常
+            </span>
+          ) : (
+            <span className="qb-chat-execution__metric qb-chat-execution__metric--success">
+              <Check size={12} aria-hidden />
+              已完成
+            </span>
+          )}
         </span>
       </button>
       {open ? (
@@ -108,9 +173,9 @@ export const ChatExecutionActivity: FC<{
             <div className="qb-chat-call-card qb-chat-call-card--a2a">
               <Network size={15} aria-hidden />
               <div>
-                <strong>A2A Agent 调用</strong>
+                <strong>专家协作</strong>
                 <span>
-                  {a2a.role} · {a2a.status === "running" ? "执行中" : "已结束"}
+                  {roleCopy(a2a.role)} · {a2a.status === "running" ? "执行中" : "已结束"}
                 </span>
               </div>
               {a2a.status === "running" ? (
@@ -120,7 +185,7 @@ export const ChatExecutionActivity: FC<{
               )}
             </div>
           ) : null}
-          {tools.map((tool) => {
+          {groups.map((tool) => {
             const failed = tool.status === "failed" || tool.status === "blocked";
             const detailPreview = formatLargeJsonPreview(tool.detail, {
               maxChars: 4_000,
@@ -133,30 +198,29 @@ export const ChatExecutionActivity: FC<{
                 key={tool.id}
               >
                 <summary>
-                  <Wrench size={14} aria-hidden />
-                  <span className="qb-chat-call-card__body">
-                    <strong>{tool.name}</strong>
-                    <span>
-                      {tool.role} ·{" "}
-                      {tool.status === "running"
-                        ? "调用中"
-                        : tool.status === "success"
-                          ? "已完成"
-                          : tool.status === "timeout"
-                            ? "超时"
-                            : tool.status === "blocked"
-                              ? "已阻止"
-                              : "失败"}
-                      {detailPreview.truncated ? " · 结果已截断预览" : ""}
-                    </span>
+                  <span
+                    className={`qb-chat-call-card__status qb-chat-call-card__status--${tool.status}`}
+                  >
+                    {tool.status === "running" ? (
+                      <LoaderCircle className="qb-chat-call-card__spin" size={14} aria-hidden />
+                    ) : failed ? (
+                      <X size={14} aria-hidden />
+                    ) : (
+                      <Check size={14} aria-hidden />
+                    )}
                   </span>
-                  {tool.status === "running" ? (
-                    <LoaderCircle className="qb-chat-call-card__spin" size={14} aria-hidden />
-                  ) : failed ? (
-                    <X size={14} aria-hidden />
-                  ) : (
-                    <Check size={14} aria-hidden />
-                  )}
+                  <Wrench className="qb-chat-call-card__tool-icon" size={14} aria-hidden />
+                  <code className="qb-chat-call-card__name" title={tool.name}>
+                    {tool.name}
+                  </code>
+                  <span className="qb-chat-call-card__role" title={tool.role}>
+                    {roleCopy(tool.role)}
+                  </span>
+                  <span className="qb-chat-call-card__result">
+                    {statusCopy(tool.status)}
+                    {tool.count > 1 ? ` ×${tool.count}` : ""}
+                    {detailPreview.truncated ? " · 已截断" : ""}
+                  </span>
                 </summary>
                 <pre>{detailPreview.text}</pre>
               </details>

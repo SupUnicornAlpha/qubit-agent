@@ -813,9 +813,16 @@ export function normalizeOpenAICompatibleModel(provider: string, model: string):
   return normalized;
 }
 
-async function runOpenAICompatible(input: LlmGatewayInput): Promise<LlmGatewayResult> {
-  const provider = input.config.provider;
-  const defaults: Record<string, { envKey: string; baseUrl: string; model: string }> = {
+type OpenAICompatibleDefaults = { envKey: string; baseUrl?: string; model?: string };
+
+/**
+ * All providers using OpenAI Chat Completions share the same normalization,
+ * streaming, tool-call and reasoning-delta path.  DeepSeek remains an explicit
+ * convenience preset; generic compatible providers must provide a base URL so
+ * an arbitrary model can never silently be sent to api.openai.com.
+ */
+export function resolveOpenAICompatibleDefaults(provider: string): OpenAICompatibleDefaults {
+  const defaults: Record<string, Required<OpenAICompatibleDefaults>> = {
     deepseek: {
       envKey: "DEEPSEEK_API_KEY",
       baseUrl: "https://api.deepseek.com",
@@ -832,12 +839,22 @@ async function runOpenAICompatible(input: LlmGatewayInput): Promise<LlmGatewayRe
       model: "glm-4-flash",
     },
   };
-  const def = defaults[provider] ?? defaults.deepseek!;
+  return defaults[provider] ?? { envKey: "QUBIT_LLM_OPENAI_COMPATIBLE_API_KEY" };
+}
+
+async function runOpenAICompatible(input: LlmGatewayInput): Promise<LlmGatewayResult> {
+  const provider = input.config.provider;
+  const def = resolveOpenAICompatibleDefaults(provider);
   const apiKey = input.config.apiKey || process.env[def.envKey];
   if (!apiKey) {
     throw new Error(`${def.envKey} is required for ${provider} provider`);
   }
   const configuredBaseUrl = input.config.baseUrl ?? def.baseUrl;
+  if (!configuredBaseUrl) {
+    throw new Error(
+      `${provider} requires baseUrl (an OpenAI Chat Completions-compatible API root or endpoint)`
+    );
+  }
   const normalizedBaseUrl = normalizeOpenAICompatibleBaseUrl(configuredBaseUrl);
   const client = new OpenAI({
     apiKey,
@@ -845,7 +862,11 @@ async function runOpenAICompatible(input: LlmGatewayInput): Promise<LlmGatewayRe
     fetch: globalThis.fetch,
   });
   const startedAt = Date.now();
-  const resolvedModel = normalizeOpenAICompatibleModel(provider, input.config.model || def.model);
+  const resolvedModel = normalizeOpenAICompatibleModel(
+    provider,
+    input.config.model || def.model || ""
+  );
+  if (!resolvedModel) throw new Error(`${provider} requires model`);
   const sampling = input.sampling ?? {};
   const temperature = sampling.temperature ?? 0.1;
   /**
@@ -1536,7 +1557,12 @@ export async function runLlmGateway(input: LlmGatewayInput): Promise<LlmGatewayR
         if (provider === "openai") return runOpenAI(input);
         if (provider === "anthropic") return runAnthropic(input);
         if (provider === "ollama") return runOllama(input);
-        if (provider === "deepseek" || provider === "qwen" || provider === "zhipu") {
+        if (
+          provider === "deepseek" ||
+          provider === "qwen" ||
+          provider === "zhipu" ||
+          provider === "openai_compatible"
+        ) {
           return runOpenAICompatible(input);
         }
         return runMock(input);

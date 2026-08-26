@@ -83,8 +83,8 @@ describe("LlmRouter — modelName 推断 runtime provider", () => {
   test("llama3.1 → ollama", () => {
     expect(inferProviderFromModelName("llama3.1")).toBe("ollama");
   });
-  test("无法识别 → 默认 openai 兜底", () => {
-    expect(inferProviderFromModelName("unknown-model-foo")).toBe("openai");
+  test("无法识别 → 默认 OpenAI-compatible 网关", () => {
+    expect(inferProviderFromModelName("unknown-model-foo")).toBe("openai_compatible");
   });
 });
 

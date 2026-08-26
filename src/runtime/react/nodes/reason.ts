@@ -39,6 +39,7 @@ import {
   renderRecallBlockForPrompt,
 } from "../../experience";
 import { enrichSystemPromptWithFsi } from "../../fsi/fsi-prompt-enricher";
+import { renderMathDerivationContractInstruction } from "../../harness/math-reasoning";
 import { agentLlmConfigToSampling } from "../../llm/agent-llm-config";
 import type { LlmTokenUsage } from "../../llm/gateway";
 import { LlmGatewayError, type LlmGatewayErrorJson } from "../../llm/llm-gateway-error";
@@ -543,6 +544,12 @@ export async function reasonNode(
   // Reserve a final LLM turn for a user-facing conclusion instead of allowing
   // a delegated specialist to spend all iterations on equivalent data calls.
   const tools = topologySynthesisRequired ? [] : capabilityManifest.tools;
+  const mathHarnessInstruction =
+    !topologySynthesisRequired &&
+    effective.harnessShadow.profileIds.includes("math-audit") &&
+    tools.includes("math.derivation.verify")
+      ? renderMathDerivationContractInstruction()
+      : "";
   const mcpServers = [...capabilitySurface.mcpServers];
   const hasTools = tools.length > 0 || mcpServers.length > 0;
   const taskQuery = [
@@ -804,6 +811,7 @@ export async function reasonNode(
     recalledFinanceBlock || recalledExperienceBlock,
     recalledGeneralBlock,
     pnlAwareSkillBlock,
+    mathHarnessInstruction,
     capabilityManifestBlock,
     workflowArtifactBlock,
     sessionContext.join("\n"),
@@ -907,6 +915,7 @@ export async function reasonNode(
     !recalledFinanceBlock && recalledExperienceBlock ? `\n${recalledExperienceBlock}` : "",
     recalledGeneralBlock && recalledFinanceBlock ? `\n${recalledGeneralBlock}` : "",
     pnlAwareSkillBlock ? `\n${pnlAwareSkillBlock}` : "",
+    mathHarnessInstruction ? `\n${mathHarnessInstruction}` : "",
     capabilityManifestBlock ? `\n${capabilityManifestBlock}` : "",
     workflowArtifactBlock ? `\n${workflowArtifactBlock}` : "",
     sessionContext.length

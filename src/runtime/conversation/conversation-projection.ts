@@ -8,6 +8,7 @@ import {
   project,
   workflowRun,
 } from "../../db/sqlite/schema";
+import type { ChatImageAttachment } from "./image-attachments";
 
 export type ConversationMessageStatus =
   | "queued"
@@ -101,6 +102,7 @@ async function nextMessageTimestamp(sessionId: string): Promise<string> {
 export async function createWorkflowConversationTurnMessages(input: {
   workflowRunId: string;
   content: string;
+  attachments?: ChatImageAttachment[];
 }): Promise<{
   sessionId: string;
   userMessage: typeof chatMessage.$inferSelect;
@@ -110,6 +112,7 @@ export async function createWorkflowConversationTurnMessages(input: {
   const created = await createConversationTurnMessages({
     sessionId,
     content: input.content,
+    attachments: input.attachments,
   });
   await linkConversationMessageToWorkflow(created.userMessage.id, input.workflowRunId);
   await linkConversationMessageToWorkflow(created.assistantMessage.id, input.workflowRunId);
@@ -119,6 +122,7 @@ export async function createWorkflowConversationTurnMessages(input: {
 export async function createConversationTurnMessages(input: {
   sessionId: string;
   content: string;
+  attachments?: ChatImageAttachment[];
 }): Promise<{
   userMessage: typeof chatMessage.$inferSelect;
   assistantMessage: typeof chatMessage.$inferSelect;
@@ -135,6 +139,7 @@ export async function createConversationTurnMessages(input: {
       role: "user",
       sender: "user",
       content: input.content,
+      attachmentsJson: input.attachments ?? [],
       status: "completed",
       createdAt: userCreatedAt,
       updatedAt: userCreatedAt,

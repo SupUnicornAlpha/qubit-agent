@@ -8,6 +8,17 @@
     "session_id"
   ],
   "properties": {
+    "context": {
+      "description": "Host-owned context / recall policy for this turn (optional).",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/TurnContextOpts"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "idempotency_key": {
       "type": "string"
     },
@@ -35,6 +46,29 @@
               ]
             },
             "ref": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "Browser-pasted image encoded as a validated data URL for OpenAI-compatible vision APIs.",
+          "type": "object",
+          "required": [
+            "data_url",
+            "kind",
+            "media_type"
+          ],
+          "properties": {
+            "data_url": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "image_data"
+              ]
+            },
+            "media_type": {
               "type": "string"
             }
           }
@@ -76,6 +110,88 @@
           }
         }
       ]
+    },
+    "TurnContextOpts": {
+      "description": "Per-turn context / recall policy — supplied by host on `turn.start`.\n\nCore applies these knobs mechanically; hosts own product heuristics (e.g. when to disable finance recall after a topic switch).\n\nAuthority (P3): `prioritize_current_goal` + user `goal` text are authoritative; `session_chronicle` only fills the `session` slot as optional background. Display / UI copy must never be sent here.",
+      "type": "object",
+      "properties": {
+        "auto_recall": {
+          "description": "When `false`, skip auto `memory.recall` during assemble. Default: `true`.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "include_finance_recall": {
+          "description": "Include finance-bucket hits. Default: `true`.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "include_general_recall": {
+          "description": "Include general/FS hits. Default: `true`.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "include_skill_recall": {
+          "description": "Include skill/procedural hits. Default: `true`.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "prioritize_current_goal": {
+          "description": "Mark current user text as authoritative and recall as optional background.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "recall_top_k": {
+          "description": "Max hits kept per recall bucket after assembly.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "session_chronicle": {
+          "description": "Host-compressed session chronicle for the `session` slot (never authoritative).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "strip_bootstrap_memory_tools": {
+          "description": "After assembly, remove bootstrap memory/workspace tools from the model surface.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "tool_observation_max_chars": {
+          "description": "Max chars for a single tool observation body in turn history. Default: 6000.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "tool_observation_protect_chars": {
+          "description": "Protect newest tool observation chars; older ones stubbed. Default: 40000. `0` = off.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      }
     },
     "UserInput": {
       "type": "object",

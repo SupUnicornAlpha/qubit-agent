@@ -8,6 +8,8 @@ use crate::error::RuntimeError;
 pub struct SampleRequest {
     pub system: String,
     pub user: String,
+    /// Validated image data URLs sent as OpenAI-compatible `image_url` content blocks.
+    pub image_urls: Vec<String>,
     pub tools: Vec<String>,
     /// Prior assistant/tool turns after the initial system+user (OpenAI chat format).
     pub history: Vec<Value>,
@@ -18,6 +20,7 @@ impl SampleRequest {
         Self {
             system: system.into(),
             user: user.into(),
+            image_urls: vec![],
             tools,
             history: vec![],
         }
