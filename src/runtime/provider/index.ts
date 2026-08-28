@@ -1,7 +1,15 @@
 export * from "./types";
+export * from "./model-factor-contract";
 export { providerRegistry } from "./registry";
 export { providerResolver } from "./resolver";
 export { bootstrapProviders } from "./bootstrap";
+export {
+  registerModelFactorAdapter,
+  unregisterModelFactorAdapter,
+  getModelFactorAdapter,
+  listModelFactorAdapters,
+  listModelFactorAdapterKeys,
+} from "./impls/factor/model-factor-adapter-registry";
 
 /**
  * 公共表达式引擎 —— provider 抽象的"工具子模块"。

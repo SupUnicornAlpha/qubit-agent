@@ -6,9 +6,9 @@
     "factor": "factor"
   },
   "role_tool_allowlist": {
-    "orchestrator": ["update_plan", "topology.dispatch", "factor.register", "factor.list", "factor.mine.llm", "strategy.create_version", "strategy.compose", "backtest.run"],
-    "factor": ["factor.register", "factor.compute", "factor.evaluate", "factor.autoEvaluate", "factor.list", "factor.mine.llm", "factor.promote_backtest", "backtest.run"],
-    "research": ["factor.register", "factor.compute", "factor.autoEvaluate", "factor.list", "factor.mine.llm", "strategy.create_version", "strategy.compose", "backtest.run"],
+    "orchestrator": ["update_plan", "topology.dispatch", "factor.register", "model.publish_as_factor", "factor.list", "factor.mine.llm", "strategy.create_version", "strategy.compose", "backtest.run"],
+    "factor": ["factor.register", "model.publish_as_factor", "factor.compute", "factor.evaluate", "factor.autoEvaluate", "factor.list", "factor.mine.llm", "factor.promote_backtest", "backtest.run"],
+    "research": ["factor.register", "model.publish_as_factor", "factor.compute", "factor.autoEvaluate", "factor.list", "factor.mine.llm", "strategy.create_version", "strategy.compose", "backtest.run"],
     "backtest": ["backtest.run", "backtest.walk_forward"]
   },
   "stall_budget": {

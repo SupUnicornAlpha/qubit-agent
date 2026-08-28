@@ -66,8 +66,14 @@ export function normalizeFactorExpression(expr: string): {
   return { expr: next, rewrites, unsupported };
 }
 
-export function inferFactorLang(expr: string, explicit?: string | null): "qlib_expr" | "python" {
-  if (explicit === "python" || explicit === "qlib_expr") return explicit;
+export function inferFactorLang(
+  expr: string,
+  explicit?: string | null
+): "qlib_expr" | "python" | "ml_score" {
+  if (explicit === "python" || explicit === "qlib_expr" || explicit === "ml_score") {
+    return explicit;
+  }
+  if (/^\s*model:\/\//i.test(expr)) return "ml_score";
   // Agent default: qlib_expr. Only force python when clearly a script body.
   if (/^\s*(import|from|def|class)\b/m.test(expr) || /\bfactor_values\s*=/.test(expr)) {
     return "python";

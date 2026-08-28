@@ -44,6 +44,8 @@ docs/*
 !docs/qubit-prime/**
 # Quant Research Integrity 是持续执行的工程规格，不属于本地设计稿。
 !docs/QUANT_RESEARCH_INTEGRITY_PLAN.md
+# Model-factor Provider P0 是外部训练/推理对接契约，需入库协作。
+!docs/MODEL_FACTOR_PROVIDER_P0.zh-CN.md
 
 # Private interview / job-search material (local only)
 interview/

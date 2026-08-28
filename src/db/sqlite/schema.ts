@@ -1423,10 +1423,10 @@ export const factorDefinition = sqliteTable("factor_definition", {
     enum: ["value", "momentum", "volatility", "news", "quality", "macro"],
   }).notNull(),
   definitionJson: text("definition_json", { mode: "json" }).notNull(),
-  /** 因子表达式（与 lang 配合）：qlib_expr / python / sql / jsonlogic */
+  /** 因子表达式（与 lang 配合）：qlib_expr / python / sql / jsonlogic / ml_score */
   expr: text("expr").notNull().default(""),
   lang: text("lang", {
-    enum: ["qlib_expr", "python", "sql", "jsonlogic"],
+    enum: ["qlib_expr", "python", "sql", "jsonlogic", "ml_score"],
   })
     .notNull()
     .default("python"),

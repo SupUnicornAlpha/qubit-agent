@@ -572,7 +572,12 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   // M2：因子/规则/策略 三段式工具（详见 FACTOR_RULE_STRATEGY_DESIGN.md §6.1-6.3）
   "factor.register": {
     description:
-      "注册因子并返回 `factor_id`（落 factor_definition）。必填：`name`、`category`、`expr`（兼容 `expression`/`factor_expression`）、`lang:'qlib_expr'|'python'`；可选 `universe`/`horizon`/`dry_run:false`。参数平铺在顶层，不要包在 `arguments` 里。优先技术/量价示例：`EMA(close,12)-EMA(close,26)`、`(close-Min(low,9))/(Max(high,9)-Min(low,9)+1e-8)`、`volume/Mean(volume,20)`。后续 factor.compute 必须用返回的 factor_id。",
+      "注册因子并返回 `factor_id`（落 factor_definition）。必填：`name`、`category`；表达式因子传 `expr` + `lang:'qlib_expr'|'python'`；模型因子传 `lang:'ml_score'` + `model_factor`/{adapterKey,modelId,modelVersion}（或用 model.publish_as_factor）。可选 `universe`/`horizon`/`dry_run:false`。后续 factor.compute 必须用返回的 factor_id。",
+    category: "research",
+  },
+  "model.publish_as_factor": {
+    description:
+      "把外部已训模型或实时打分服务发布为 ml_score 因子（不训练）。必填 adapter_key/model_id/model_version；HTTP 桥接时 adapter_key='http' 且 adapter_config.endpoint 指向外部 JSON 推理服务。返回 factor_id，后续走 factor.compute / factor.autoEvaluate。",
     category: "research",
   },
   "factor.compute": {

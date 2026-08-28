@@ -49,6 +49,53 @@ factorRouter.get("/", async (c) => {
   }
 });
 
+/**
+ * POST /api/v1/factors/publish-model
+ * 外部训练平台对接入口：登记 modelFactor 绑定为 ml_score 因子（不训练）。
+ * 必须注册在 `/:id` 之前，避免被动态段误伤（虽方法不同，保持路由可读性）。
+ */
+factorRouter.post("/publish-model", async (c) => {
+  try {
+    const body = await c.req.json<{
+      projectId: string;
+      name?: string;
+      category?: FactorCategory;
+      universe?: string;
+      horizon?: number;
+      status?: FactorStatus;
+      workflowRunId?: string;
+      createdBy?: string;
+      dryRun?: boolean;
+      modelFactor: Record<string, unknown>;
+    }>();
+    const { parseModelFactorBinding, buildModelFactorExpr } = await import(
+      "../runtime/provider/model-factor-contract"
+    );
+    const binding = parseModelFactorBinding(body.modelFactor);
+    const name =
+      body.name?.trim() ||
+      `${binding.modelId}_${binding.modelVersion}`.replace(/[^a-zA-Z0-9_.-]+/g, "_");
+    const data = await factorService.register({
+      projectId: body.projectId,
+      name,
+      category: body.category ?? "momentum",
+      expr: buildModelFactorExpr(binding),
+      lang: "ml_score",
+      providerKey: "external_ml",
+      definition: { modelFactor: binding },
+      ...(body.universe ? { universe: body.universe } : {}),
+      ...(body.horizon !== undefined ? { horizon: body.horizon } : {}),
+      ...(body.status ? { status: body.status } : {}),
+      ...(body.workflowRunId ? { workflowRunId: body.workflowRunId } : {}),
+      ...(body.createdBy ? { createdBy: body.createdBy } : {}),
+      ...(body.dryRun !== undefined ? { dryRun: body.dryRun } : {}),
+    });
+    return c.json({ ok: true, data });
+  } catch (e) {
+    return c.json(asError(e), 400);
+  }
+});
+
 /** GET /api/v1/factors/:id */
 factorRouter.get("/:id", async (c) => {
   try {

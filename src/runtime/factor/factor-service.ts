@@ -28,6 +28,12 @@ import {
 } from "../backtest/dataset-snapshot-binding";
 import { type PriceSeries, evalQlibExpr, parseQlibExpr } from "../provider";
 import { providerResolver } from "../provider/resolver";
+import {
+  buildModelFactorExpr,
+  extractModelFactorBinding,
+  parseModelFactorBinding,
+  ModelFactorContractError,
+} from "../provider/model-factor-contract";
 import type {
   FactorComputeProvider,
   FactorComputeResult,
@@ -41,7 +47,7 @@ import { factorValueStore } from "./factor-value-store";
 // ─── 类型 ───────────────────────────────────────────────────────────────────
 
 export type FactorCategory = "value" | "momentum" | "volatility" | "news" | "quality" | "macro";
-export type FactorLang = "qlib_expr" | "python" | "sql" | "jsonlogic";
+export type FactorLang = "qlib_expr" | "python" | "sql" | "jsonlogic" | "ml_score";
 export type FactorStatus = "draft" | "active" | "archived";
 
 export interface FactorRegisterInput {
@@ -236,11 +242,35 @@ export class FactorService {
     if (!input.name?.trim()) {
       throw new FactorServiceError("validation_failed", "name_required");
     }
-    if (!input.expr?.trim()) {
+
+    const lang: FactorLang = input.lang ?? "python";
+    let expr = input.expr?.trim() ?? "";
+    let definition = { ...(input.definition ?? {}) };
+
+    if (lang === "ml_score") {
+      try {
+        const rawBinding = definition.modelFactor ?? definition.model_factor;
+        if (rawBinding === undefined || rawBinding === null) {
+          throw new ModelFactorContractError(
+            "invalid_binding",
+            "ml_score requires definition.modelFactor { adapterKey, modelId, modelVersion }"
+          );
+        }
+        const binding = parseModelFactorBinding(rawBinding);
+        definition = { ...definition, modelFactor: binding };
+        delete definition.model_factor;
+        if (!expr) expr = buildModelFactorExpr(binding);
+      } catch (e) {
+        const msg =
+          e instanceof ModelFactorContractError
+            ? e.message
+            : `invalid_model_factor_binding: ${(e as Error).message}`;
+        throw new FactorServiceError("validation_failed", msg);
+      }
+    } else if (!expr) {
       throw new FactorServiceError("validation_failed", "expr_required");
     }
 
-    const lang: FactorLang = input.lang ?? "python";
     const providerKey = input.providerKey ?? this.defaultProviderKeyForLang(lang);
 
     // 同 project 内名字不可重复
@@ -264,7 +294,7 @@ export class FactorService {
       const isAgentPath = input.createdBy === "agent" || Boolean(input.workflowRunId);
       const requestedUniverse = input.universe ?? "CN-A";
       const sameDefinition =
-        dupRow.expr === input.expr &&
+        dupRow.expr === expr &&
         dupRow.category === input.category &&
         dupRow.lang === lang &&
         dupRow.universe === requestedUniverse;
@@ -282,7 +312,7 @@ export class FactorService {
         {},
         { providerKey }
       );
-      providerHint = await provider.validateExpr(input.expr, lang);
+      providerHint = await provider.validateExpr(expr, lang);
     } catch {
       // Provider 不可达不阻塞注册：保留 draft 让 UI 提示
     }
@@ -294,12 +324,12 @@ export class FactorService {
         typeof input.dryRun === "object"
           ? input.dryRun
           : ({} as { minRows?: number; minVariance?: number });
-      const dryRunResult = await this.runRegistrationDryRun(input.expr, lang, opts);
+      const dryRunResult = await this.runRegistrationDryRun(expr, lang, opts, definition);
       if (!dryRunResult.ok) {
         throw new FactorServiceError(
           "validation_failed",
           `dry_run_failed: ${dryRunResult.reason}`,
-          { expr: input.expr, lang, ...dryRunResult.detail }
+          { expr, lang, ...dryRunResult.detail }
         );
       }
       dryRunMeta = {
@@ -324,11 +354,11 @@ export class FactorService {
       name: factorName,
       category: input.category,
       definitionJson: {
-        ...(input.definition ?? {}),
+        ...definition,
         ...(providerHint.error ? { providerValidationWarning: providerHint.error } : {}),
         ...(dryRunMeta ?? {}),
       },
-      expr: input.expr,
+      expr,
       lang,
       universe: input.universe ?? "CN-A",
       horizon: input.horizon ?? 5,
@@ -391,6 +421,7 @@ export class FactorService {
    *   - `qlib_expr`：内置 parser+evaluator 真跑（同步，零依赖）
    *   - `python`   ：spawn `code_sandbox_runner.py` 跑用户代码，contract 要求
    *                  用户代码设置全局变量 `factor_values: list[float | None]`
+   *   - `ml_score` ：校验 definition.modelFactor + adapter 已注册（不跑真实推理）
    *   - 其他 lang（sql / jsonlogic）：暂仍跳过（在 detail 里写 lang_unsupported）
    *
    * 检查项（按顺序短路，所有 lang 共用）：
@@ -402,7 +433,8 @@ export class FactorService {
   private async runRegistrationDryRun(
     expr: string,
     lang: FactorLang,
-    opts: { minRows?: number; minVariance?: number }
+    opts: { minRows?: number; minVariance?: number },
+    definition?: Record<string, unknown>
   ): Promise<
     | { ok: true; detail: Record<string, unknown> }
     | { ok: false; reason: string; detail?: Record<string, unknown> }
@@ -415,6 +447,38 @@ export class FactorService {
     }
     if (lang === "python") {
       return runPythonExprDryRun(expr, minRows, minVariance);
+    }
+    if (lang === "ml_score") {
+      try {
+        const binding = extractModelFactorBinding(definition ?? {});
+        if (!binding) {
+          return {
+            ok: false,
+            reason: "model_factor_binding_missing",
+            detail: { lang },
+          };
+        }
+        const { getModelFactorAdapter } = await import(
+          "../provider/impls/factor/model-factor-adapter-registry"
+        );
+        getModelFactorAdapter(binding.adapterKey);
+        return {
+          ok: true,
+          detail: {
+            skippedInference: true,
+            adapterKey: binding.adapterKey,
+            modelId: binding.modelId,
+            modelVersion: binding.modelVersion,
+            expr: buildModelFactorExpr(binding),
+          },
+        };
+      } catch (e) {
+        return {
+          ok: false,
+          reason: (e as Error).message,
+          detail: { lang },
+        };
+      }
     }
 
     return {
@@ -498,10 +562,14 @@ export class FactorService {
     const symbols = normalizeFactorComputeSymbols(input.symbols, f.universe);
     let dataset;
     if (input.datasetSnapshotId) {
-      if (provider.meta.key !== "qlib_expr" || f.lang !== "qlib_expr") {
+      const snapshotOk =
+        (provider.meta.key === "qlib_expr" && f.lang === "qlib_expr") ||
+        (provider.meta.key === "external_ml" && f.lang === "ml_score") ||
+        Boolean(provider.meta.capability.features?.includes("snapshot_bound"));
+      if (!snapshotOk) {
         throw new FactorServiceError(
           "validation_failed",
-          `dataset_snapshot_provider_unsupported: ${provider.meta.key}/${f.lang}; snapshot-bound factor computation currently requires qlib_expr`,
+          `dataset_snapshot_provider_unsupported: ${provider.meta.key}/${f.lang}; snapshot-bound factor computation requires qlib_expr or snapshot_bound providers (e.g. external_ml/ml_score)`,
           { factorId: f.id, providerKey: provider.meta.key, datasetSnapshotId: input.datasetSnapshotId }
         );
       }
@@ -535,6 +603,7 @@ export class FactorService {
         endDate: input.endDate,
         ...(symbols.length > 0 ? { symbols } : {}),
         ...(dataset ? { dataset } : {}),
+        ...(f.definition ? { definition: f.definition } : {}),
       });
     } catch (e) {
       throw new FactorServiceError(
@@ -902,6 +971,7 @@ export class FactorService {
 
   private defaultProviderKeyForLang(lang: FactorLang): string {
     if (lang === "qlib_expr") return "qlib_expr"; // M3 内置纯 TS 实现
+    if (lang === "ml_score") return "external_ml";
     return "python_inline";
   }
 

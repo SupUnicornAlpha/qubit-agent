@@ -326,10 +326,15 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
     const projectId = String(params.project_id ?? ctx.projectId ?? "").trim();
     if (!projectId) throw new Error("factor.register: project_id is required");
     const definitionRaw = params.definition;
-    const definition =
+    const definition: Record<string, unknown> =
       definitionRaw && typeof definitionRaw === "object" && !Array.isArray(definitionRaw)
-        ? (definitionRaw as Record<string, unknown>)
-        : undefined;
+        ? { ...(definitionRaw as Record<string, unknown>) }
+        : {};
+    const modelFactorRaw =
+      params.model_factor ?? params.modelFactor ?? definition.modelFactor ?? definition.model_factor;
+    if (modelFactorRaw && typeof modelFactorRaw === "object" && !Array.isArray(modelFactorRaw)) {
+      definition.modelFactor = modelFactorRaw as Record<string, unknown>;
+    }
     /**
      * P0-2: Agent 触发的因子注册默认启用 dry-run 闸门（详见 AGENT_STABILITY_REVIEW.md §四-P0-2）。
      * - LLM 显式传 dry_run=false / 0 / "off" 时可关闭（仅供 IDE / 调试场景；不建议生产路径关）
@@ -356,6 +361,29 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
     const exprRaw = String(
       params.expr ?? params.expression ?? params.factor_expression ?? params.factorExpression ?? ""
     ).trim();
+    const explicitLang = params.lang ? String(params.lang) : null;
+    const isModelFactor =
+      explicitLang === "ml_score" || Boolean(definition.modelFactor) || /^model:\/\//i.test(exprRaw);
+
+    if (isModelFactor) {
+      return factorService.register({
+        projectId,
+        name: String(params.name ?? "").trim(),
+        category: String(params.category ?? "momentum") as FactorCategory,
+        expr: exprRaw,
+        lang: "ml_score",
+        providerKey: String(params.provider_key ?? params.providerKey ?? "external_ml"),
+        ...(params.universe ? { universe: String(params.universe) } : {}),
+        ...(params.horizon !== undefined ? { horizon: Number(params.horizon) } : {}),
+        ...(params.status ? { status: String(params.status) as FactorStatus } : {}),
+        definition,
+        ...(ctx.workflowId ? { workflowRunId: ctx.workflowId } : {}),
+        createdBy: "agent",
+        ...(ctx.agentInstanceId ? { agentInstanceId: ctx.agentInstanceId } : {}),
+        dryRun,
+      });
+    }
+
     const { normalizeFactorExpression, inferFactorLang, formatUnsupportedExpressionError } =
       await import("../policy/factor-expression-contract");
     const normalized = normalizeFactorExpression(exprRaw);
@@ -368,7 +396,7 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
         })
       );
     }
-    const lang = inferFactorLang(normalized.expr, params.lang ? String(params.lang) : null);
+    const lang = inferFactorLang(normalized.expr, explicitLang);
     const expr = normalized.expr;
     return factorService.register({
       projectId,
@@ -380,11 +408,100 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
       ...(params.horizon !== undefined ? { horizon: Number(params.horizon) } : {}),
       ...(params.status ? { status: String(params.status) as FactorStatus } : {}),
       ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
-      ...(definition ? { definition } : {}),
+      ...(Object.keys(definition).length > 0 ? { definition } : {}),
       // ctx.workflowId 在 react act 节点保证非空；落库后用于研究产出严格过滤
       ...(ctx.workflowId ? { workflowRunId: ctx.workflowId } : {}),
       // lineage（migration 0080）：所有 builtin tool 路径默认归为 'agent'，
       // 让前端 LineageBadge 能与 IDE / REST 直接调用的 'user' 路径区分。
+      createdBy: "agent",
+      ...(ctx.agentInstanceId ? { agentInstanceId: ctx.agentInstanceId } : {}),
+      dryRun,
+    });
+  },
+
+  /**
+   * 把外部已训好的模型 / 实时打分服务发布为可评估的 ml_score 因子。
+   * 不训练；只写 factor_definition + modelFactor 绑定。
+   */
+  "model.publish_as_factor": async (ctx, params) => {
+    const projectId = String(params.project_id ?? ctx.projectId ?? "").trim();
+    if (!projectId) throw new Error("model.publish_as_factor: project_id is required");
+    const modelFactorRaw = params.model_factor ?? params.modelFactor ?? params;
+    const {
+      parseModelFactorBinding,
+      buildModelFactorExpr,
+    } = await import("../provider/model-factor-contract");
+    const binding = parseModelFactorBinding({
+      adapterKey: (modelFactorRaw as Record<string, unknown>).adapterKey ??
+        (modelFactorRaw as Record<string, unknown>).adapter_key ??
+        params.adapter_key ??
+        params.adapterKey,
+      modelId:
+        (modelFactorRaw as Record<string, unknown>).modelId ??
+        (modelFactorRaw as Record<string, unknown>).model_id ??
+        params.model_id ??
+        params.modelId,
+      modelVersion:
+        (modelFactorRaw as Record<string, unknown>).modelVersion ??
+        (modelFactorRaw as Record<string, unknown>).model_version ??
+        params.model_version ??
+        params.modelVersion,
+      artifactUri:
+        (modelFactorRaw as Record<string, unknown>).artifactUri ??
+        (modelFactorRaw as Record<string, unknown>).artifact_uri ??
+        params.artifact_uri ??
+        params.artifactUri,
+      contentHash:
+        (modelFactorRaw as Record<string, unknown>).contentHash ??
+        (modelFactorRaw as Record<string, unknown>).content_hash ??
+        params.content_hash ??
+        params.contentHash,
+      framework:
+        (modelFactorRaw as Record<string, unknown>).framework ?? params.framework,
+      featureSpecId:
+        (modelFactorRaw as Record<string, unknown>).featureSpecId ??
+        (modelFactorRaw as Record<string, unknown>).feature_spec_id ??
+        params.feature_spec_id ??
+        params.featureSpecId,
+      trainEndAsOf:
+        (modelFactorRaw as Record<string, unknown>).trainEndAsOf ??
+        (modelFactorRaw as Record<string, unknown>).train_end_as_of ??
+        params.train_end_as_of ??
+        params.trainEndAsOf,
+      scoreTransform:
+        (modelFactorRaw as Record<string, unknown>).scoreTransform ??
+        (modelFactorRaw as Record<string, unknown>).score_transform ??
+        params.score_transform ??
+        params.scoreTransform,
+      adapterConfig:
+        (modelFactorRaw as Record<string, unknown>).adapterConfig ??
+        (modelFactorRaw as Record<string, unknown>).adapter_config ??
+        params.adapter_config ??
+        params.adapterConfig,
+    });
+    const name =
+      String(params.name ?? "").trim() ||
+      `${binding.modelId}_${binding.modelVersion}`.replace(/[^a-zA-Z0-9_.-]+/g, "_");
+    const dryRunParam = params.dry_run ?? params.dryRun;
+    const dryRun =
+      dryRunParam === false ||
+      dryRunParam === "false" ||
+      dryRunParam === 0 ||
+      dryRunParam === "off"
+        ? false
+        : true;
+    return factorService.register({
+      projectId,
+      name,
+      category: String(params.category ?? "momentum") as FactorCategory,
+      expr: buildModelFactorExpr(binding),
+      lang: "ml_score",
+      providerKey: "external_ml",
+      ...(params.universe ? { universe: String(params.universe) } : {}),
+      ...(params.horizon !== undefined ? { horizon: Number(params.horizon) } : {}),
+      ...(params.status ? { status: String(params.status) as FactorStatus } : {}),
+      definition: { modelFactor: binding },
+      ...(ctx.workflowId ? { workflowRunId: ctx.workflowId } : {}),
       createdBy: "agent",
       ...(ctx.agentInstanceId ? { agentInstanceId: ctx.agentInstanceId } : {}),
       dryRun,

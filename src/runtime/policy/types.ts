@@ -102,6 +102,7 @@ export const EVALUATOR_VERSION = "2026-08-02.1";
 /** Business write tools that must never be silently dispatched by Recovery. */
 export const BUSINESS_WRITE_TOOLS: ReadonlySet<string> = new Set([
   "factor.register",
+  "model.publish_as_factor",
   "factor.compute",
   "factor.autoEvaluate",
   "recommendation.record",

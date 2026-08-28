@@ -71,13 +71,18 @@ export interface BaseProvider {
 export interface FactorComputeRequest {
   factorId?: string;
   expr: string;
-  lang: "qlib_expr" | "python" | "sql" | "jsonlogic";
+  lang: "qlib_expr" | "python" | "sql" | "jsonlogic" | "ml_score";
   universe: string;
   symbols?: string[];
   startDate: string;
   endDate: string;
   /** 提供后 Provider 只能使用这份不可变快照数据，禁止重新拉行情。 */
   dataset?: BacktestDataset;
+  /**
+   * factor_definition.definition_json 透传。
+   * `lang=ml_score` 时必须含 `modelFactor` 绑定（见 model-factor-contract）。
+   */
+  definition?: Record<string, unknown>;
 }
 
 export interface FactorComputeRow {
@@ -98,6 +103,11 @@ export interface FactorComputeResult {
     /** Fundamental fields use the first bar strictly after observation.availableAt. */
     fundamentalAvailabilityPolicy?: "first_bar_strictly_after_available_at";
     fundamentalFields?: string[];
+    /** Provider 侧错误（空结果时）；不抛错以便上层选择 fallback / 留痕。 */
+    error?: string;
+    /** ml_score / external_ml 血缘摘要。 */
+    modelFactor?: Record<string, unknown>;
+    [key: string]: unknown;
   };
 }
 

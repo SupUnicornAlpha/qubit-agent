@@ -98,6 +98,7 @@ export const BRIDGED_TOOLS = [
   "factor.autoEvaluate",
   "factor.mine.llm",
   "factor.promote_backtest",
+  "model.publish_as_factor",
   "backtest.run",
   "backtest.walk_forward",
   "workspace.context.snapshot",

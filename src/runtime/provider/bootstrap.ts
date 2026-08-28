@@ -13,6 +13,7 @@
 import { EventDrivenBacktestProvider } from "./impls/backtest/event-driven-backtest-provider";
 import { SmaLegacyBacktestProvider } from "./impls/backtest/sma-legacy-backtest-provider";
 import { BuiltinFactorEvalProvider } from "./impls/factor/builtin-factor-eval-provider";
+import { ExternalMlFactorProvider } from "./impls/factor/external-ml-factor-provider";
 import { PythonInlineFactorProvider } from "./impls/factor/python-inline-factor-provider";
 import { QlibExprFactorProvider } from "./impls/factor/qlib-expr-factor-provider";
 import { QlibPythonFactorProvider } from "./impls/factor/qlib-python-factor-provider";
@@ -32,6 +33,7 @@ export function bootstrapProviders(): Promise<void> {
     providerRegistry.register(new PythonInlineFactorProvider());
     providerRegistry.register(new QlibExprFactorProvider());
     providerRegistry.register(new QlibPythonFactorProvider());
+    providerRegistry.register(new ExternalMlFactorProvider());
     providerRegistry.register(new BuiltinFactorEvalProvider());
     providerRegistry.register(new JsonLogicRuleProvider());
     providerRegistry.register(new SmaLegacyBacktestProvider());
@@ -43,7 +45,7 @@ export function bootstrapProviders(): Promise<void> {
     // 3. 反向回读 DB 上的 status/priority（用户在 UI 改过的）
     await providerRegistry.reload();
 
-    console.log("[Provider] bootstrap done: 7 builtin providers registered");
+    console.log("[Provider] bootstrap done: 8 builtin providers registered");
   })();
   return bootstrapPromise;
 }
