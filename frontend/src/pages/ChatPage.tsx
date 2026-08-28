@@ -9,6 +9,7 @@ import {
   chatHealth,
   createChatSession,
   createConversationTurn,
+  getChatSessionWorkflow,
   getOrCreateDefaultProject,
   getDefaultWorkspace,
   deleteChatSession,
@@ -43,6 +44,7 @@ import {
 import { useTranslation } from "../i18n";
 import { ChatHitlPromptControls } from "../components/chat/ChatHitlPromptControls";
 import { ChatExecutionActivity } from "../components/chat/ChatExecutionActivity";
+import { ChatMessageFeedbackBar } from "../components/chat/ChatMessageFeedbackBar";
 import { AgentModePicker, getAgentModeOption } from "../components/chat/AgentModePicker";
 
 import { styles } from "./_shared/legacyMainStyles";
@@ -219,13 +221,13 @@ export const ChatPanel: FC<{
   displayMode?: "standard" | "simple";
   /** 专业壳：会话列表在左侧 Explorer，Agent 栏内隐藏会话侧栏 */
   hideSessionSidebar?: boolean;
+  /** @deprecated 1 session = 1 workflow；保留 prop 仅为兼容旧调用方，不再用于 API 传参 */
   workflowRunId?: string | null;
   onWorkflowFocusChange?: (workflowRunId: string | null) => void;
 }> = ({
   ideEmbedded,
   displayMode = "standard",
   hideSessionSidebar = false,
-  workflowRunId = null,
   onWorkflowFocusChange,
 }) => {
   const simpleMode = displayMode === "simple";
@@ -256,6 +258,8 @@ export const ChatPanel: FC<{
   const chatDraftPrefill = useAppStore((s) => s.chatDraftPrefill);
   const setChatDraftPrefill = useAppStore((s) => s.setChatDraftPrefill);
   const [errorText, setErrorText] = useState("");
+  /** 当前 session 的 canonical chat workflow（1 session = 1 workflow） */
+  const [sessionWorkflowRunId, setSessionWorkflowRunId] = useState<string | null>(null);
   const [chatLoopKind, setChatLoopKind] = useState<AgentLoopKind>("native");
   /**
    * 对话 HITL 三档触发策略，与后端 LoopOptionsJson.hitlChatMode 对齐：
@@ -482,6 +486,27 @@ export const ChatPanel: FC<{
     };
     void boot().catch((err) => setErrorText(err instanceof Error ? err.message : "初始化失败"));
   }, [setChatSessions, setSelectedSessionId]);
+
+  useEffect(() => {
+    if (!selectedSessionId || !projectId) {
+      setSessionWorkflowRunId(null);
+      return;
+    }
+    let disposed = false;
+    void getChatSessionWorkflow(selectedSessionId, projectId)
+      .then((row) => {
+        if (disposed) return;
+        const id = String(row.id ?? "").trim();
+        setSessionWorkflowRunId(id || null);
+        if (id) onWorkflowFocusChange?.(id);
+      })
+      .catch(() => {
+        if (!disposed) setSessionWorkflowRunId(null);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [selectedSessionId, projectId, onWorkflowFocusChange]);
 
   useEffect(() => {
     if (!selectedSessionId) return;
@@ -901,14 +926,13 @@ export const ChatPanel: FC<{
         projectId,
         message: combinedGoal,
         workflowMode: "research",
-        turnMode: workflowRunId ? "continue_goal" : "continue_goal",
-        reuseSessionWorkflow: true,
+        turnMode: "continue_goal",
         loopKind: chatLoopKind,
         hitlMode: chatHitlMode,
         agentMode: chatAgentMode,
         ...(imageAttachments.length ? { attachments: imageAttachments } : {}),
-        ...(workflowRunId ? { workflowRunId } : {}),
       });
+      setSessionWorkflowRunId(turn.runId);
       onWorkflowFocusChange?.(turn.runId);
       const streamRunId = turn.agentRunId ?? turn.runId;
       if (streamRunId) {
@@ -926,10 +950,7 @@ export const ChatPanel: FC<{
 
   const canSend = Boolean(input.trim() || imageAttachments.length > 0);
 
-  const visibleChatMessages =
-    simpleMode && workflowRunId
-      ? chatMessages.filter((message) => message.workflowRunIds?.includes(workflowRunId))
-      : chatMessages;
+  const visibleChatMessages = chatMessages;
 
   const chatTurns = useMemo(
     () => groupChatMessagesIntoStreamTurns(visibleChatMessages),
@@ -1288,10 +1309,10 @@ export const ChatPanel: FC<{
               <button type="button" onClick={() => void onCreateSession()}>
                 {t("simpleMode.newChat")}
               </button>
-              {workflowRunId ? (
-                <button type="button" onClick={() => onWorkflowFocusChange?.(null)}>
-                  {t("simpleMode.workflowScope.showConversation")}
-                </button>
+              {sessionWorkflowRunId ? (
+                <span className="qb-simple-session-workflow-hint" title={sessionWorkflowRunId}>
+                  workflow {sessionWorkflowRunId.slice(0, 8)}…
+                </span>
               ) : null}
             </div>
           ) : null}
@@ -1364,29 +1385,23 @@ export const ChatPanel: FC<{
                     ) : null}
                     {workflowIds.length ? (
                       <div className="qb-chat-bubble__meta">
-                        {simpleMode
-                          ? workflowIds.map((id) => (
-                              <button
-                                key={id}
-                                type="button"
-                                className="qb-simple-chat-workflow-link"
-                                onClick={() => onWorkflowFocusChange?.(id)}
-                              >
-                                workflow {id.slice(0, 8)}
-                              </button>
-                            ))
-                          : workflowIds.map((id) => (
-                              <button
-                                key={id}
-                                type="button"
-                                className="qb-btn-ghost qb-btn--compact"
-                                onClick={() => openWorkflowTrace(id)}
-                                title={`在运行监控中查看 workflow ${id} 的完整 Trace`}
-                              >
-                                查看 Trace · {id.slice(0, 8)}
-                              </button>
-                            ))}
+                        {workflowIds.map((id) => (
+                          <button
+                            key={id}
+                            type="button"
+                            className={
+                              simpleMode ? "qb-simple-chat-workflow-link" : "qb-btn-ghost qb-btn--compact"
+                            }
+                            onClick={() => openWorkflowTrace(id)}
+                            title={`在运行监控中查看 workflow ${id} 的完整 Trace`}
+                          >
+                            {simpleMode ? `workflow ${id.slice(0, 8)}` : `查看 Trace · ${id.slice(0, 8)}`}
+                          </button>
+                        ))}
                       </div>
+                    ) : null}
+                    {!running && last.status === "completed" && (last.workflowRunIds?.length ?? workflowIds.length) ? (
+                      <ChatMessageFeedbackBar chatMessageId={last.id} />
                     ) : null}
                   </div>
                 );

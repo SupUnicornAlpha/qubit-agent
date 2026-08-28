@@ -9,6 +9,10 @@ import { getDb } from "../../db/sqlite/client";
 import { workflowRun } from "../../db/sqlite/schema";
 import { FinanceRecall } from "../context/finance-recall";
 import { isDeliveryNarrative } from "../conversation/turn-packet";
+import {
+  parseContextIsolation,
+  shouldSuppressWorkflowPlayRecall,
+} from "../conversation/goal-scope";
 import { getExperienceBus, getExperienceStore } from "../experience";
 import { ExperienceRecall } from "../experience/pipes/recall";
 import {
@@ -51,6 +55,23 @@ async function resolveProjectId(
   return row?.projectId ?? "";
 }
 
+async function loadWorkflowContextIsolation(
+  workflowId?: string
+): Promise<ReturnType<typeof parseContextIsolation>> {
+  if (!workflowId || workflowId === "prime-bridge") return null;
+  const db = await getDb();
+  const row = (
+    await db
+      .select({ loopOptionsJson: workflowRun.loopOptionsJson })
+      .from(workflowRun)
+      .where(eq(workflowRun.id, workflowId))
+      .limit(1)
+  )[0];
+  const raw = row?.loopOptionsJson;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  return parseContextIsolation((raw as Record<string, unknown>).contextIsolation);
+}
+
 function truncate(s: string, n: number): string {
   if (!s) return "";
   return s.length > n ? `${s.slice(0, n - 1)}…` : s;
@@ -68,6 +89,7 @@ export const PRIME_MEMORY_HANDLERS: Record<string, BuiltinToolHandler> = {
     if (!projectId) {
       throw new Error("memory.recall: project_id required (or workflow must bind a project)");
     }
+    const contextIsolation = await loadWorkflowContextIsolation(ctx.workflowId);
 
     const fsWorkspaceId = await resolveActiveFsWorkspaceId({
       params,
@@ -198,9 +220,19 @@ export const PRIME_MEMORY_HANDLERS: Record<string, BuiltinToolHandler> = {
       if (!isDeliveryNarrative(blob) && !/人肉说明书|操盘说明书/.test(blob)) return h;
       return { ...h, score: h.score * 0.12, sub_kind: h.sub_kind ?? "delivered_artifact" };
     });
-    demoted.sort((a, b) => b.score - a.score);
+    const filtered = demoted.filter(
+      (h) =>
+        !shouldSuppressWorkflowPlayRecall({
+          query,
+          hitTitle: h.title,
+          hitSummary: h.summary,
+          hitSubKind: h.sub_kind,
+          contextIsolation,
+        })
+    );
+    filtered.sort((a, b) => b.score - a.score);
     return {
-      hits: demoted.slice(0, bundle ? topK * 3 : topK * 2),
+      hits: filtered.slice(0, bundle ? topK * 3 : topK * 2),
       ...(bundle ? { mode: "bundle" } : {}),
       ...(fsWorkspaceId ? { fs_workspace_id: fsWorkspaceId } : {}),
     };

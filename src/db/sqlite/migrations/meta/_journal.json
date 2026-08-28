@@ -785,6 +785,27 @@
       "when": 1815609600000,
       "tag": "0112_chat_message_attachments",
       "breakpoints": true
+    },
+    {
+      "idx": 112,
+      "version": "7",
+      "when": 1815696000000,
+      "tag": "0113_factor_evaluation_snapshot_lineage",
+      "breakpoints": true
+    },
+    {
+      "idx": 113,
+      "version": "7",
+      "when": 1815782400000,
+      "tag": "0114_agent_eval_platform",
+      "breakpoints": true
+    },
+    {
+      "idx": 114,
+      "version": "7",
+      "when": 1815868800000,
+      "tag": "0115_experience_visibility_workspace_shared",
+      "breakpoints": true
     }
   ]
 }

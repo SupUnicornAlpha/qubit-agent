@@ -37,6 +37,7 @@
         "@monaco-editor/react": "^4.7.0",
         "@tauri-apps/api": "^2.8.0",
         "@tauri-apps/plugin-shell": "^2.2.0",
+        "flexlayout-react": "^0.10.6",
         "lightweight-charts": "^4.2.0",
         "lucide-react": "0.468.0",
         "monaco-editor": "^0.56.0",
@@ -566,6 +567,8 @@
     "find-replace": ["find-replace@3.0.0", "http://mirrors.cloud.tencent.com/npm/find-replace/-/find-replace-3.0.0.tgz", { "dependencies": { "array-back": "^3.0.1" } }, "sha512-6Tb2myMioCAgv5kfvP5/PkZZ/ntTpVK39fHY7WkWBgvbeE+VHd/tZuZ4mrC+bxh4cfOZeYKVPaJIZtZXV7GNCQ=="],
 
     "flatbuffers": ["flatbuffers@24.12.23", "http://mirrors.cloud.tencent.com/npm/flatbuffers/-/flatbuffers-24.12.23.tgz", {}, "sha512-dLVCAISd5mhls514keQzmEG6QHmUUsNuWsb4tFafIUwvvgDjXhtfAYSKOzt5SWOy+qByV5pbsDZ+Vb7HUOBEdA=="],
+
+    "flexlayout-react": ["flexlayout-react@0.10.6", "https://mirrors.cloud.tencent.com/npm/flexlayout-react/-/flexlayout-react-0.10.6.tgz", { "peerDependencies": { "react": "^18.0.0 || ^19.0.0", "react-dom": "^18.0.0 || ^19.0.0" } }, "sha512-9ZYobpF0GEj4ltP66vDCI9Rf1QjYWD1KXch87FUipb9zrZy8PwQkVIl7lI4KEDPoG5nGliu3C4f5YQni8fu1ag=="],
 
     "fontverter": ["fontverter@2.0.0", "https://mirrors.cloud.tencent.com/npm/fontverter/-/fontverter-2.0.0.tgz", { "dependencies": { "wawoff2": "^2.0.0", "woff2sfnt-sfnt2woff": "^1.0.0" } }, "sha512-DFVX5hvXuhi1Jven1tbpebYTCT9XYnvx6/Z+HFUPb7ZRMCW+pj2clU9VMhoTPgWKPhAs7JJDSk3CW1jNUvKCZQ=="],
 

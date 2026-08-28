@@ -17,10 +17,14 @@ import {
   type DataQualityVerdict,
   MARKET_EVENT_SCHEMA_VERSION,
   type MarketAssetClass,
+  type MarketCalendarSessionsByVenue,
+  type MarketCorporateActionLedger,
   type MarketEventSource,
   type MarketFeedClass,
+  type MarketFundamentalLedger,
   type MarketLicenseUse,
   type MarketSnapshot,
+  type MarketUniverseHistory,
   MarketSnapshotSchema,
   evaluateTradability,
   hashPayload,
@@ -37,6 +41,16 @@ export type MarketSnapshotGetParams = {
   limit?: number;
   adjustMethod?: string;
   timezone?: string;
+  /** Versioned exchange calendar release used to interpret session dates. */
+  calendarVersion?: string;
+  /** Explicit daily session states, keyed by venue then YYYY-MM-DD. */
+  calendarSessionsByVenue?: MarketCalendarSessionsByVenue;
+  /** Versioned membership intervals for the historical universe. */
+  universeHistory?: MarketUniverseHistory;
+  /** Versioned point-in-time corporate-action ledger. */
+  corporateActionLedger?: MarketCorporateActionLedger;
+  /** Versioned point-in-time financial-statement / estimate revisions. */
+  fundamentalLedger?: MarketFundamentalLedger;
   /** Retrieve an existing immutable snapshot without refetching. */
   snapshotId?: string;
 };
@@ -49,6 +63,16 @@ export type SnapshotBar = {
   volume: number;
   turnover: number;
   timestamp: string;
+  /** 数据源提供时保留官方结算价，供期权/期货到期生命周期使用。 */
+  settlementPrice?: number;
+  /** 永续合约该周期资金费率（bps）。 */
+  fundingRateBps?: number;
+  impliedVolatility?: number;
+  riskFreeRateAnnual?: number;
+  tradable?: boolean;
+  suspended?: boolean;
+  priceLimitUp?: number;
+  priceLimitDown?: number;
 };
 
 export type MarketSnapshotRecord = {
@@ -66,6 +90,8 @@ export type MarketSnapshotRecord = {
 export type MarketSnapshotToolResult = {
   ok: true;
   snapshotId: string;
+  /** Alias for backtest.run / factor.promote_backtest contract compatibility. */
+  dataset_snapshot_id: string;
   dataRef: string;
   asOf: string;
   qualityVerdict: DataQualityVerdict;
@@ -142,6 +168,102 @@ function digestBars(bars: SnapshotBar[]): string {
   return hashPayload(bars);
 }
 
+/** Stable JSON shape for calendar sessions so fingerprint order does not churn. */
+export function canonicalCalendarSessions(
+  sessions?: unknown
+): MarketCalendarSessionsByVenue | null {
+  if (!sessions || typeof sessions !== "object" || Array.isArray(sessions)) return null;
+  const out: MarketCalendarSessionsByVenue = {};
+  for (const venue of Object.keys(sessions).sort()) {
+    const days = (sessions as Record<string, unknown>)[venue];
+    if (!days || typeof days !== "object") continue;
+    const sortedDays: Record<string, "open" | "closed"> = {};
+    for (const day of Object.keys(days).sort()) {
+      const state = (days as Record<string, unknown>)[day];
+      if (state === "open" || state === "closed") sortedDays[day] = state;
+    }
+    if (Object.keys(sortedDays).length > 0) out[venue] = sortedDays;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+/** Stable, sorted shape for historical membership evidence in the snapshot fingerprint. */
+export function canonicalUniverseHistory(
+  history?: MarketUniverseHistory
+): MarketUniverseHistory | undefined {
+  if (!history) return undefined;
+  return {
+    universeId: history.universeId.trim(),
+    version: history.version.trim(),
+    source: history.source.trim(),
+    asOf: history.asOf,
+    membershipIntervals: [...history.membershipIntervals]
+      .map((interval) => ({
+        symbol: interval.symbol.trim().toUpperCase(),
+        startDate: interval.startDate,
+        ...(interval.endDate ? { endDate: interval.endDate } : {}),
+      }))
+      .sort(
+        (left, right) =>
+          left.symbol.localeCompare(right.symbol) ||
+          left.startDate.localeCompare(right.startDate) ||
+          (left.endDate ?? "").localeCompare(right.endDate ?? "")
+      ),
+  };
+}
+
+/** Stable, sorted shape for corporate-action evidence in the snapshot fingerprint. */
+export function canonicalCorporateActionLedger(
+  ledger?: MarketCorporateActionLedger
+): MarketCorporateActionLedger | undefined {
+  if (!ledger) return undefined;
+  return {
+    version: ledger.version.trim(),
+    source: ledger.source.trim(),
+    asOf: ledger.asOf,
+    adjustmentMethod: ledger.adjustmentMethod.trim(),
+    actionsBySymbol: Object.fromEntries(
+      Object.entries(ledger.actionsBySymbol)
+        .map(([symbol, actions]) => [
+          symbol.trim().toUpperCase(),
+          [...actions].sort(
+            (left, right) =>
+              left.effectiveDate.localeCompare(right.effectiveDate) ||
+              left.knownAt.localeCompare(right.knownAt) ||
+              left.kind.localeCompare(right.kind)
+          ),
+        ])
+        .sort(([left], [right]) => left.localeCompare(right))
+    ),
+  };
+}
+
+/** Stable, sorted shape for point-in-time fundamental revisions in the snapshot fingerprint. */
+export function canonicalFundamentalLedger(
+  ledger?: MarketFundamentalLedger
+): MarketFundamentalLedger | undefined {
+  if (!ledger) return undefined;
+  return {
+    version: ledger.version.trim(),
+    source: ledger.source.trim(),
+    asOf: ledger.asOf,
+    observationsBySymbol: Object.fromEntries(
+      Object.entries(ledger.observationsBySymbol)
+        .map(([symbol, observations]) => [
+          symbol.trim().toUpperCase(),
+          [...observations].sort(
+            (left, right) =>
+              left.availableAt.localeCompare(right.availableAt) ||
+              left.fiscalPeriodEnd.localeCompare(right.fiscalPeriodEnd) ||
+              left.metric.localeCompare(right.metric) ||
+              (left.revisionId ?? "").localeCompare(right.revisionId ?? "")
+          ),
+        ])
+        .sort(([left], [right]) => left.localeCompare(right))
+    ),
+  };
+}
+
 function canonicalFingerprint(input: {
   asOf: string;
   purpose: SnapshotPurpose;
@@ -152,6 +274,10 @@ function canonicalFingerprint(input: {
   adjustMethod: string;
   timezone: string;
   calendarVersion?: string;
+  calendarSessionsByVenue?: MarketCalendarSessionsByVenue;
+  universeHistory?: MarketUniverseHistory;
+  corporateActionLedger?: MarketCorporateActionLedger;
+  fundamentalLedger?: MarketFundamentalLedger;
   barDigests: Record<string, string>;
   timeframe: string;
   limit: number;
@@ -166,6 +292,10 @@ function canonicalFingerprint(input: {
     adjustMethod: input.adjustMethod,
     timezone: input.timezone,
     calendarVersion: input.calendarVersion ?? null,
+    calendarSessionsByVenue: canonicalCalendarSessions(input.calendarSessionsByVenue),
+    universeHistory: canonicalUniverseHistory(input.universeHistory) ?? null,
+    corporateActionLedger: canonicalCorporateActionLedger(input.corporateActionLedger) ?? null,
+    fundamentalLedger: canonicalFundamentalLedger(input.fundamentalLedger) ?? null,
     barDigests: Object.fromEntries(
       Object.entries(input.barDigests).sort(([a], [b]) => a.localeCompare(b))
     ),
@@ -275,6 +405,10 @@ export function buildMarketSnapshotRecord(input: {
   adjustMethod?: string;
   timezone?: string;
   calendarVersion?: string;
+  calendarSessionsByVenue?: MarketCalendarSessionsByVenue;
+  universeHistory?: MarketUniverseHistory;
+  corporateActionLedger?: MarketCorporateActionLedger;
+  fundamentalLedger?: MarketFundamentalLedger;
   createdAt?: string;
   peerCloses?: Array<{ upstreamFamily: string; price: number }>;
 }): MarketSnapshotRecord {
@@ -285,6 +419,11 @@ export function buildMarketSnapshotRecord(input: {
   const sourceRevisions = Object.fromEntries(input.sources.map((s) => [s.provider, 0]));
   const adjustMethod = input.adjustMethod ?? "none";
   const timezone = input.timezone ?? "UTC";
+  const calendarSessionsByVenue =
+    canonicalCalendarSessions(input.calendarSessionsByVenue) ?? undefined;
+  const universeHistory = canonicalUniverseHistory(input.universeHistory);
+  const corporateActionLedger = canonicalCorporateActionLedger(input.corporateActionLedger);
+  const fundamentalLedger = canonicalFundamentalLedger(input.fundamentalLedger);
   const canonical = canonicalFingerprint({
     asOf: input.asOf,
     purpose: input.purpose,
@@ -295,6 +434,10 @@ export function buildMarketSnapshotRecord(input: {
     adjustMethod,
     timezone,
     calendarVersion: input.calendarVersion,
+    calendarSessionsByVenue,
+    universeHistory,
+    corporateActionLedger,
+    fundamentalLedger,
     barDigests,
     timeframe: input.timeframe,
     limit: input.limit,
@@ -322,8 +465,12 @@ export function buildMarketSnapshotRecord(input: {
     sourceRevisions,
     qualityVerdict,
     adjustMethod,
+    universeHistory,
+    corporateActionLedger,
+    fundamentalLedger,
     timezone,
     calendarVersion: input.calendarVersion,
+    calendarSessionsByVenue,
     eventRefs: [],
     createdAt: input.createdAt ?? new Date().toISOString(),
     schemaVersion: MARKET_EVENT_SCHEMA_VERSION,
@@ -410,6 +557,14 @@ export async function getOrCreateMarketSnapshot(
     const resolved = resolveTickerMarket(symbol, {
       hintExchange: params.exchange,
     });
+    if (
+      purpose === "backtest" &&
+      resolved.market === "UNKNOWN" &&
+      resolved.confidence === "fallback"
+    ) {
+      errors.push(`${symbol}:missing_market_resolution`);
+      continue;
+    }
     const venue = resolved.exchange || params.exchange || resolved.market || "UNKNOWN";
     const instrument = {
       symbol: resolved.symbol || symbol,
@@ -444,6 +599,9 @@ export async function getOrCreateMarketSnapshot(
   ) {
     throw new Error(`market_snapshot_empty:${errors.join(";") || "no bars returned for universe"}`);
   }
+  if (purpose === "backtest" && instruments.length === 0) {
+    throw new Error(`missing_market_resolution:${errors.join(";") || "no resolvable symbols"}`);
+  }
 
   const sources = [...sourcesByProvider.values()];
   if (sources.length === 0) {
@@ -461,6 +619,11 @@ export async function getOrCreateMarketSnapshot(
     limit,
     adjustMethod: params.adjustMethod ?? "none",
     timezone: params.timezone ?? "UTC",
+    calendarVersion: params.calendarVersion,
+    calendarSessionsByVenue: params.calendarSessionsByVenue,
+    universeHistory: params.universeHistory,
+    corporateActionLedger: params.corporateActionLedger,
+    fundamentalLedger: params.fundamentalLedger,
   });
 
   const existing = await getMarketSnapshotById(record.snapshot.snapshotId, options?.dataDir);
@@ -501,6 +664,7 @@ function toToolResult(record: MarketSnapshotRecord, reused: boolean): MarketSnap
   return {
     ok: true,
     snapshotId: record.snapshot.snapshotId,
+    dataset_snapshot_id: record.snapshot.snapshotId,
     dataRef: record.dataRef,
     asOf: record.snapshot.asOf,
     qualityVerdict: quality,

@@ -116,7 +116,7 @@ factorRouter.patch("/:id", async (c) => {
   }
 });
 
-/** POST /api/v1/factors/:id/compute  { startDate, endDate, symbols?, providerKey? } */
+/** POST /api/v1/factors/:id/compute  { startDate, endDate, symbols?, datasetSnapshotId?, providerKey? } */
 factorRouter.post("/:id/compute", async (c) => {
   const id = c.req.param("id");
   try {
@@ -124,6 +124,7 @@ factorRouter.post("/:id/compute", async (c) => {
       startDate: string;
       endDate: string;
       symbols?: string[];
+      datasetSnapshotId?: string;
       providerKey?: string;
     }>();
     const data = await factorService.compute({
@@ -131,6 +132,7 @@ factorRouter.post("/:id/compute", async (c) => {
       startDate: body.startDate,
       endDate: body.endDate,
       ...(body.symbols && body.symbols.length > 0 ? { symbols: body.symbols } : {}),
+      ...(body.datasetSnapshotId ? { datasetSnapshotId: body.datasetSnapshotId } : {}),
       ...(body.providerKey ? { providerKey: body.providerKey } : {}),
     });
     return c.json({ ok: true, data });
@@ -165,7 +167,8 @@ factorRouter.post("/:id/evaluate", async (c) => {
 /**
  * POST /api/v1/factors/:id/auto-evaluate
  * {
- *   startDate, endDate, symbols?, horizonDays?, decayHorizons?, groupCount?, providerKey?
+ *   startDate, endDate, symbols?, horizonDays?, decayHorizons?, groupCount?,
+ *   datasetSnapshotId?, providerKey?
  * }
  * 自动从 DuckDB 拉因子值 + 拉行情算未来收益，得到 IC/IR/decay/group。
  */
@@ -179,6 +182,7 @@ factorRouter.post("/:id/auto-evaluate", async (c) => {
       horizonDays?: number;
       decayHorizons?: number[];
       groupCount?: number;
+      datasetSnapshotId?: string;
       providerKey?: string;
     }>();
     const data = await factorService.autoEvaluate({
@@ -189,6 +193,7 @@ factorRouter.post("/:id/auto-evaluate", async (c) => {
       ...(typeof body.horizonDays === "number" ? { horizonDays: body.horizonDays } : {}),
       ...(body.decayHorizons ? { decayHorizons: body.decayHorizons } : {}),
       ...(typeof body.groupCount === "number" ? { groupCount: body.groupCount } : {}),
+      ...(body.datasetSnapshotId ? { datasetSnapshotId: body.datasetSnapshotId } : {}),
       ...(body.providerKey ? { providerKey: body.providerKey } : {}),
     });
     return c.json({ ok: true, data });
@@ -197,7 +202,7 @@ factorRouter.post("/:id/auto-evaluate", async (c) => {
   }
 });
 
-/** GET /api/v1/factors/:id/values?symbols=...&startDate=...&endDate=...&latestN=... */
+/** GET /api/v1/factors/:id/values?datasetSnapshotId=...&symbols=...&startDate=... */
 factorRouter.get("/:id/values", async (c) => {
   const id = c.req.param("id");
   try {
@@ -205,8 +210,10 @@ factorRouter.get("/:id/values", async (c) => {
     const latestNQ = c.req.query("latestN");
     const startDate = c.req.query("startDate");
     const endDate = c.req.query("endDate");
+    const datasetSnapshotId = c.req.query("datasetSnapshotId");
     const data = await factorService.loadValues({
       factorId: id,
+      ...(datasetSnapshotId ? { datasetSnapshotId } : {}),
       ...(symbolsQ
         ? {
             symbols: symbolsQ
@@ -229,7 +236,7 @@ factorRouter.get("/:id/values", async (c) => {
 factorRouter.get("/:id/values/stats", async (c) => {
   const id = c.req.param("id");
   try {
-    const data = await factorService.valuesStats(id);
+    const data = await factorService.valuesStats(id, c.req.query("datasetSnapshotId"));
     return c.json({ ok: true, data });
   } catch (e) {
     return c.json(asError(e), 500);

@@ -70,6 +70,8 @@ import {
   wrap,
   type MonitorScope,
   type WorkflowRow,
+  type WorkflowSessionGroup,
+  flattenMonitorWorkflowList,
 } from "./monitor-shared";
 import { OverviewTab, type StrategyRuntime } from "./OverviewTab";
 import { WorkflowTab } from "./WorkflowTab";
@@ -112,6 +114,8 @@ export const MonitorDashboard: FC = () => {
   const [sessionFilter, setSessionFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [workflowList, setWorkflowList] = useState<WorkflowRow[]>([]);
+  const [workflowGroups, setWorkflowGroups] = useState<WorkflowSessionGroup[]>([]);
+  const [unboundWorkflows, setUnboundWorkflows] = useState<WorkflowRow[]>([]);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
   const [drawerDetail, setDrawerDetail] = useState("");
   const [workflowObservability, setWorkflowObservability] = useState<WorkflowObservability | null>(null);
@@ -289,8 +293,26 @@ export const MonitorDashboard: FC = () => {
       projectId: projectId || undefined,
       sessionId: sessionFilter || undefined,
       status: statusFilter || undefined,
+      groupBySession: true,
     });
-    setWorkflowList(asWorkflowRows(rows as unknown[]));
+    if (Array.isArray(rows)) {
+      const flat = asWorkflowRows(rows);
+      setWorkflowGroups([]);
+      setUnboundWorkflows([]);
+      setWorkflowList(flat);
+    } else {
+      const groups: WorkflowSessionGroup[] = rows.groups.map((group) => ({
+        sessionId: String(group.sessionId ?? ""),
+        sessionTitle: group.sessionTitle != null ? String(group.sessionTitle) : null,
+        workflows: asWorkflowRows((group.workflows as unknown[]) ?? []),
+      }));
+      const unbound = asWorkflowRows(rows.unbound ?? []);
+      setWorkflowGroups(groups);
+      setUnboundWorkflows(unbound);
+      setWorkflowList(
+        flattenMonitorWorkflowList({ mode: "grouped", groups, unbound })
+      );
+    }
     await refreshSummary();
     try {
       setStrategyRuntimes(
@@ -688,6 +710,8 @@ export const MonitorDashboard: FC = () => {
       {scope === "workflow" ? (
         <WorkflowTab
           workflowList={workflowList}
+          workflowGroups={workflowGroups}
+          unboundWorkflows={unboundWorkflows}
           selectedWorkflowId={selectedWorkflowId}
           drawerDetail={drawerDetail}
           workflowObservability={workflowObservability}
@@ -767,6 +791,7 @@ export const MonitorDashboard: FC = () => {
           onRunEval={onRunEval}
           onOpenEvalRun={onOpenEvalRun}
           onAlertFilterChange={onAlertFilterChange}
+          projectId={projectId}
         />
       ) : null}
     </div>

@@ -34,6 +34,11 @@
  */
 
 import type { Experience, ExperienceContent, ExperienceScope } from "../../../types/entities";
+import type { WorkingMemory } from "../../context/types";
+import {
+  defaultVisibilityForWriteScope,
+  resolveExperienceWriteScope,
+} from "../experience-scope";
 import type { ExperienceBus, Unsubscribe } from "../experience-bus";
 import type { ExperienceStore } from "../experience-store";
 
@@ -57,6 +62,8 @@ export interface ExtractorWorkflowSummary {
     toolChain: string[]; // 折叠相邻重复后的有序工具链
     finalAnswer: string;
     stepCount: number;
+    /** 最新 checkpoint 中的 WorkingMemory（若有） */
+    workingMemory?: WorkingMemory | null;
   }>;
   /** 已由 Writer 落下的 episodic（用于建立 derive_from 链；可空） */
   episodicIds: string[];
@@ -67,9 +74,15 @@ function writeScope(summary: ExtractorWorkflowSummary): {
   scope: ExperienceScope;
   scopeId: string;
 } {
-  const ws = summary.fsWorkspaceId?.trim();
-  if (ws) return { scope: "workspace", scopeId: ws };
-  return { scope: "project", scopeId: summary.projectId };
+  return resolveExperienceWriteScope({
+    projectId: summary.projectId,
+    fsWorkspaceId: summary.fsWorkspaceId,
+  });
+}
+
+function writeVisibility(summary: ExtractorWorkflowSummary) {
+  const { scope } = writeScope(summary);
+  return defaultVisibilityForWriteScope(scope);
 }
 
 export interface ExtractorLoader {
@@ -213,7 +226,7 @@ defineRule("R1_factor_archive", async (ctx) => {
     subKind: "factor_archive",
     ...scope,
     definitionId: null, // semantic 默认共享 ← 用户决策 4
-    visibility: "project_shared",
+    visibility: writeVisibility(ctx.summary),
     contentJson: {
       summary: summaryLine,
       body: ctx.participant.finalAnswer,
@@ -265,7 +278,7 @@ defineRule("R2_workflow_play", async (ctx) => {
     subKind: "workflow_play",
     ...scope,
     definitionId: ctx.participant.definitionId, // 起始归属是产生者；project_shared 让别人也能用
-    visibility: "project_shared",
+    visibility: writeVisibility(ctx.summary),
     contentJson: {
       summary: `auto-play(${ctx.participant.role}): ${ctx.participant.toolChain
         .slice(0, 6)
@@ -298,7 +311,7 @@ defineRule("R3_iteration_summary", async (ctx) => {
     subKind: "iteration_summary",
     ...writeScope(ctx.summary),
     definitionId: null,
-    visibility: "project_shared",
+    visibility: writeVisibility(ctx.summary),
     contentJson: {
       summary,
       body: ctx.participant.finalAnswer,
@@ -332,7 +345,7 @@ defineRule("R4_regime", async (ctx) => {
     subKind: "regime",
     ...writeScope(ctx.summary),
     definitionId: null,
-    visibility: "project_shared",
+    visibility: writeVisibility(ctx.summary),
     contentJson: {
       summary: `[regime] ${label} · ${truncate(answer, 200)}`,
       body: answer,
@@ -387,7 +400,7 @@ defineRule("R5_research_conclusion", async (ctx) => {
     subKind: "research_conclusion",
     ...writeScope(ctx.summary),
     definitionId: null,
-    visibility: "project_shared",
+    visibility: writeVisibility(ctx.summary),
     contentJson: {
       summary: `[conclusion/${stance}] ${symbols.slice(0, 3).join(",")} · ${truncate(answer, 160)}`,
       body: answer,
@@ -399,6 +412,72 @@ defineRule("R5_research_conclusion", async (ctx) => {
       ...symbols.slice(0, 5).map((s) => `symbol:${s}`),
     ],
     metadataJson: validated.data,
+    validFrom: ctx.summary.endedAt ?? new Date().toISOString(),
+    sourceRunId: ctx.summary.workflowRunId,
+    qualityScore: 0.55,
+  });
+});
+
+// ── R6: WorkingMemory snapshot → semantic.research_state ─────────────────────
+
+defineRule("R6_research_state", async (ctx) => {
+  const wm = ctx.participant.workingMemory;
+  if (!wm) return null;
+
+  const hasContent =
+    wm.hypotheses.length > 0 || wm.decisions.length > 0 || wm.open_questions.length > 0;
+  if (!hasContent) return null;
+
+  const scope = writeScope(ctx.summary);
+  const recent = await ctx.store.query({
+    kind: "semantic",
+    subKind: "research_state",
+    scope: scope.scope,
+    scopeId: scope.scopeId,
+    archivalMode: "exclude_archived",
+    orderBy: "created_desc",
+    limit: 10,
+  });
+  const dup = recent.find(
+    (e) => e.sourceRunId === ctx.summary.workflowRunId && e.definitionId === ctx.participant.definitionId
+  );
+  if (dup) return null;
+
+  const summaryParts: string[] = [];
+  if (wm.decisions.length > 0) summaryParts.push(`decisions: ${wm.decisions.slice(0, 3).join("; ")}`);
+  if (wm.hypotheses.length > 0) {
+    summaryParts.push(`hypotheses: ${wm.hypotheses.map((h) => h.text).slice(0, 3).join("; ")}`);
+  }
+  if (wm.open_questions.length > 0) {
+    summaryParts.push(`open: ${wm.open_questions.slice(0, 3).join("; ")}`);
+  }
+
+  const symbolTags = wm.finance_refs.symbols
+    .slice(0, 5)
+    .map((s) => `symbol:${s.toUpperCase()}`);
+
+  return ctx.store.insert({
+    kind: "semantic",
+    subKind: "research_state",
+    ...scope,
+    definitionId: ctx.participant.definitionId,
+    visibility: writeVisibility(ctx.summary),
+    contentJson: {
+      summary: `[research_state/${ctx.participant.role}] ${truncate(summaryParts.join(" · "), 200)}`,
+      body: renderWorkingMemoryBody(wm),
+      workflowRunId: ctx.summary.workflowRunId,
+    },
+    tagsJson: [
+      "rule:R6",
+      `role:${ctx.participant.role}`,
+      "tier:intermediate",
+      ...symbolTags,
+    ],
+    metadataJson: {
+      memoryTier: "intermediate",
+      financeRefs: wm.finance_refs,
+      role: ctx.participant.role,
+    },
     validFrom: ctx.summary.endedAt ?? new Date().toISOString(),
     sourceRunId: ctx.summary.workflowRunId,
     qualityScore: 0.55,
@@ -428,6 +507,28 @@ function extractSymbolsFromText(text: string): string[] {
 function truncate(s: string, n: number): string {
   if (!s) return "";
   return s.length > n ? `${s.slice(0, n - 1)}…` : s;
+}
+
+function renderWorkingMemoryBody(wm: WorkingMemory): string {
+  const lines: string[] = ["# WorkingMemory snapshot"];
+  if (wm.hypotheses.length > 0) {
+    lines.push("", "## Hypotheses");
+    for (const h of wm.hypotheses.slice(0, 8)) {
+      lines.push(`- ${h.text}${h.stance ? ` (${h.stance})` : ""}`);
+    }
+  }
+  if (wm.open_questions.length > 0) {
+    lines.push("", "## Open questions");
+    for (const q of wm.open_questions.slice(0, 8)) lines.push(`- ${q}`);
+  }
+  if (wm.decisions.length > 0) {
+    lines.push("", "## Decisions");
+    for (const d of wm.decisions.slice(0, 8)) lines.push(`- ${d}`);
+  }
+  if (wm.finance_refs.symbols.length > 0) {
+    lines.push("", "## Symbols", wm.finance_refs.symbols.join(", "));
+  }
+  return lines.join("\n");
 }
 
 function renderProceduralBody(input: {

@@ -103,29 +103,43 @@ export const WorkspaceFilePane: FC<{
     }
   };
 
+  const pathSegments = path.split("/").filter(Boolean);
+  const fileName = pathSegments[pathSegments.length - 1] || path;
+  const dirSegments = pathSegments.slice(0, -1);
+
   return (
     <div style={styles.root} data-qb-workspace-file-pane data-surface={surface}>
       <div style={styles.head}>
         <div style={styles.titleBlock}>
-          <strong style={styles.title}>{path.split("/").pop()}</strong>
-          <span style={styles.path}>{path}</span>
+          <div style={styles.breadcrumbs}>
+            <span style={styles.crumbWs}>ws:{workspaceId.slice(0, 6)}</span>
+            {dirSegments.map((d, i) => (
+              <span key={i} style={styles.crumbSegment}>
+                <span style={styles.crumbSep}>/</span>
+                {d}
+              </span>
+            ))}
+            <span style={styles.crumbSep}>/</span>
+            <strong style={styles.crumbFile}>{fileName}</strong>
+          </div>
           {surface === "diff" ? (
             <span style={styles.diffHint}>左：已保存基线 · 右：当前缓冲</span>
           ) : null}
         </div>
         <div style={styles.actions}>
-          {dirty ? <span style={styles.dirty}>未保存</span> : null}
+          {dirty ? <span style={styles.dirty}>● 未保存</span> : <span style={styles.saved}>已保存</span>}
           <button
             type="button"
             className="qb-btn-primary-brand"
             style={styles.btn}
             disabled={loading || saving || !dirty}
+            title="快捷键: ⌘S / Ctrl+S"
             onClick={() => void save()}
           >
-            {saving ? "保存中…" : "保存"}
+            {saving ? "保存中…" : "保存 (⌘S)"}
           </button>
           {onClose ? (
-            <button type="button" style={styles.link} onClick={onClose}>
+            <button type="button" style={styles.link} onClick={onClose} title="关闭文件">
               关闭
             </button>
           ) : null}
@@ -155,13 +169,19 @@ export const WorkspaceFilePane: FC<{
               renderSideBySide: true,
               minimap: { enabled: false },
               fontSize: 13,
+              fontFamily: "'JetBrains Mono', Consolas, monospace",
               automaticLayout: true,
               scrollBeyondLastLine: false,
             }}
           />
         </div>
       ) : (
-        <WorkspaceCodeEditor value={content} onChange={setContent} path={path} />
+        <WorkspaceCodeEditor
+          value={content}
+          onChange={setContent}
+          path={path}
+          onSave={() => void save()}
+        />
       )}
     </div>
   );
@@ -174,8 +194,8 @@ const styles: Record<string, CSSProperties> = {
     height: "100%",
     display: "flex",
     flexDirection: "column",
-    gap: 8,
-    padding: 10,
+    gap: 6,
+    padding: "8px 10px",
     border: "1px solid var(--qb-team-live-feed-border, #2a2a30)",
     borderRadius: 8,
     background: "var(--qb-team-live-feed-bg, #08080a)",
@@ -185,22 +205,45 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     justifyContent: "space-between",
     gap: 12,
-    alignItems: "flex-start",
+    alignItems: "center",
     flexShrink: 0,
+    paddingBottom: 4,
+    borderBottom: "1px solid var(--qb-hairline, rgba(255,255,255,0.06))",
   },
   titleBlock: { display: "flex", flexDirection: "column", gap: 2, minWidth: 0 },
-  title: { color: "#e4e4e7", fontSize: 13 },
-  path: { color: "#71717a", fontSize: 11, wordBreak: "break-all" },
+  breadcrumbs: {
+    display: "flex",
+    alignItems: "center",
+    gap: 4,
+    fontSize: 12,
+    color: "#a1a1aa",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  crumbWs: {
+    color: "var(--qb-blue, #3b82f6)",
+    fontWeight: 500,
+    fontSize: 11,
+    padding: "1px 4px",
+    background: "var(--qb-tint, rgba(59,130,246,0.1))",
+    borderRadius: 4,
+  },
+  crumbSegment: { color: "#71717a", fontSize: 12 },
+  crumbSep: { color: "#52525b", margin: "0 1px" },
+  crumbFile: { color: "#f4f4f5", fontWeight: 600 },
   diffHint: { color: "#71717a", fontSize: 10 },
-  actions: { display: "flex", gap: 10, alignItems: "center", flexShrink: 0 },
-  dirty: { color: "#fbbf24", fontSize: 11 },
-  btn: { fontSize: 12, padding: "5px 10px" },
+  actions: { display: "flex", gap: 8, alignItems: "center", flexShrink: 0 },
+  dirty: { color: "#fbbf24", fontSize: 11, fontWeight: 500 },
+  saved: { color: "#71717a", fontSize: 11 },
+  btn: { fontSize: 11, padding: "4px 8px" },
   link: {
     border: "none",
     background: "transparent",
-    color: "#38bdf8",
+    color: "#a1a1aa",
     fontSize: 11,
     cursor: "pointer",
+    padding: "4px",
   },
   error: { color: "#fca5a5", fontSize: 12 },
   meta: { color: "#a1a1aa", fontSize: 12, padding: 12 },
@@ -209,7 +252,7 @@ const styles: Record<string, CSSProperties> = {
     minHeight: 360,
     borderRadius: 6,
     overflow: "hidden",
-    border: "1px solid #2a2a30",
+    border: "1px solid var(--qb-sidebar-border, #2a2a30)",
     background: "#1e1e1e",
   },
 };

@@ -163,4 +163,29 @@ describe("createAndDispatchWorkflow.reuseSessionWorkflow source 隔离", () => {
     expect(traderRow[0]?.source).toBe("api");
     expect(traderRow[0]?.goal).toBe("QUBIT 实时交易 Agent 执行上下文");
   });
+
+  test("chat 复用：reuseSessionWorkflow=false 仍绑定 canonical（1 session = 1 workflow）", async () => {
+    const sessionId = "sess-reuse-ignore-false";
+    const chatId = "wf-chat-canonical";
+    await seedWorkflowRow({
+      id: chatId,
+      sessionId,
+      source: "chat",
+      goal: "first-turn",
+      startedAt: "2024-01-01T00:00:00.000Z",
+    });
+
+    const created = await createAndDispatchWorkflow({
+      projectId: PROJECT_ID,
+      sessionId,
+      goal: "second-turn",
+      mode: "research",
+      source: "chat",
+      reuseSessionWorkflow: false,
+      skipDispatch: true,
+    });
+
+    expect(created.data.id).toBe(chatId);
+    expect(created.data.goal).toBe("second-turn");
+  });
 });

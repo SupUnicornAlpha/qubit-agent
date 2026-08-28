@@ -105,6 +105,7 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
   test("def-backtest 可调用事件驱动 backtest.run + factor 计算", () => {
     expectTools("def-backtest", [
       "backtest.run",
+      "backtest.walk_forward",
       "factor.list",
       "factor.compute",
       "code.run_python",
@@ -259,6 +260,7 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
     expect(def?.role).toBe("backtest_engineer");
     expectTools("def-walk-forward-validator", [
       "backtest.run",
+      "backtest.walk_forward",
       "factor.list",
       "factor.autoEvaluate",
       "factor.evaluate.batch",

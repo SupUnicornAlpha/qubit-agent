@@ -18,6 +18,8 @@ export interface DeliveryVerdict {
   reasons: string[];
 }
 
+import type { ProtocolWorkingMemory } from "../context/working-memory-protocol";
+
 /** Host-owned per-turn recall / context policy (`turn.start.context`). */
 export interface TurnContextOpts {
   /** When false, skip auto memory.recall during assemble. Default true. */
@@ -40,6 +42,12 @@ export interface TurnContextOpts {
   tool_observation_max_chars?: number;
   /** Protect newest tool observation chars; older stubbed. Default 40000; 0 = off. */
   tool_observation_protect_chars?: number;
+  /** Latest WorkingMemory snapshot (protocol snake_case wire shape). */
+  working_memory?: ProtocolWorkingMemory;
+  /** Workspace focus symbols for Core slot assembly. */
+  focus_symbols?: string[];
+  /** Open file paths for Core workspace context slice. */
+  open_files?: string[];
 }
 
 /** Defaults for Orchestrator chat turns — keep prior memory from dominating a new prompt. */

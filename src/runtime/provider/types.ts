@@ -76,6 +76,8 @@ export interface FactorComputeRequest {
   symbols?: string[];
   startDate: string;
   endDate: string;
+  /** 提供后 Provider 只能使用这份不可变快照数据，禁止重新拉行情。 */
+  dataset?: BacktestDataset;
 }
 
 export interface FactorComputeRow {
@@ -90,6 +92,12 @@ export interface FactorComputeResult {
     factorId?: string;
     rowCount: number;
     latencyMs: number;
+    /** 因子计算数据谱系；未绑定快照的传统调用为空。 */
+    datasetSnapshotId?: string;
+    sourceIds?: string[];
+    /** Fundamental fields use the first bar strictly after observation.availableAt. */
+    fundamentalAvailabilityPolicy?: "first_bar_strictly_after_available_at";
+    fundamentalFields?: string[];
   };
 }
 
@@ -180,6 +188,16 @@ export type BacktestSignalSpec =
       reverse?: boolean;
     }
   | {
+      /** 多因子组合：每个因子先做当日截面排名标准化，再按权重合成分数。 */
+      kind: "factor_composite";
+      factors: Array<{
+        factorId: string;
+        expr: string;
+        lang: "qlib_expr";
+        weight: number;
+      }>;
+    }
+  | {
       kind: "rule";
       rule: RuleSpec;
     }
@@ -195,13 +213,150 @@ export interface BacktestCosts {
   slippageBps: number;
   /** 每笔最低手续费 */
   minCommission?: number;
+  /** 高级滑点/市场冲击模型 */
+  slippageModel?: "fixed_bps" | "square_root" | "volatility_adjusted";
+  /** 平方根冲击系数 gamma（默认 0.1） */
+  impactCoefficient?: number;
+  /** 最大单笔成交量参与率（如 0.10 表示不超过当根 Bar 10%） */
+  maxVolumeParticipation?: number;
+  /** 做空借券年化利率基点（如 200bps = 2%/年） */
+  borrowRateAnnualBps?: number;
+  /** 不可做空标的列表 */
+  restrictedShortSymbols?: string[];
+  /** 冻结成本模型的版本；缺失时结果不得作为验证级交易成本证据。 */
+  costModelVersion?: string;
+  /** 成本模型来源，例如交易所/券商费率表或经批准的研究假设。 */
+  costModelSource?: string;
+  /** 成本模型生效或抓取时点（ISO-8601）；与版本一起构成可审计证据。 */
+  costModelAsOf?: string;
+}
+
+/**
+ * 不可变市场快照绑定。回测 Provider 必须只读取此数据集，不能在运行过程中再次拉取
+ * "今天" 的行情；这使同一配置可以在未来复算得到同一输入。
+ */
+export interface BacktestDatasetBar {
+  timestamp: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  turnover: number;
+  /** 衍生品官方结算价；缺省时只能退化为 close。 */
+  settlementPrice?: number;
+  /** 永续合约本期资金费率（bps，正数表示多头支付空头）。 */
+  fundingRateBps?: number;
+  /** 期权快照的年化隐含波动率（小数），用于逐期 Greeks 审计。 */
+  impliedVolatility?: number;
+  /** 同期无风险年化利率（小数）；未给出时不计算 Greeks。 */
+  riskFreeRateAnnual?: number;
+  /** 数据源显式标记该 Bar 是否可成交；false 表示停牌或交易中断。 */
+  tradable?: boolean;
+  /** 停牌语义别名，优先级高于 tradable。 */
+  suspended?: boolean;
+  /** 该交易日价格上限；买入触及上限时无法按 open 成交。 */
+  priceLimitUp?: number;
+  /** 该交易日价格下限；卖出触及下限时无法按 open 成交。 */
+  priceLimitDown?: number;
+}
+
+export type BacktestAssetClass = "stock" | "future" | "option" | "crypto";
+
+/**
+ * 回测所需的 point-in-time 合约元数据。衍生品不得仅凭 symbol 猜测这些字段；
+ * 请求必须把当时可知的合约定义与行情快照一起冻结。
+ */
+export interface BacktestInstrumentSpec {
+  assetClass: BacktestAssetClass;
+  /** crypto 可区分现货与永续；其余资产由 assetClass 决定。 */
+  contractKind?: "spot" | "perpetual";
+  /** 每份合约对应的标的数量。股票/币现货缺省为 1。 */
+  contractMultiplier?: number;
+  /** 最小成交数量；缺省保持现有的可分数成交行为。 */
+  lotSize?: number;
+  /** 期货初始保证金率，例如 0.12 表示名义金额的 12%。 */
+  initialMarginRate?: number;
+  /** 期货维持保证金率，必须不高于初始保证金率。 */
+  maintenanceMarginRate?: number;
+  /** 用于把策略权重转换为期货名义敞口的目标杠杆；缺省为 1 倍。 */
+  targetLeverage?: number;
+  /** 期权/期货最后交易日（YYYY-MM-DD）。 */
+  expiryDate?: string;
+  settlementMode?: "cash" | "physical";
+  underlyingSymbol?: string;
+  strike?: number;
+  optionRight?: "call" | "put";
+  exerciseStyle?: "european" | "american";
+  /** 当前仅支持可审计的 Black–Scholes 欧式风险近似。 */
+  pricingModel?: "black_scholes";
+  /**
+   * 显式期货换月指令。仅支持在 rollDate 开盘平旧仓、开新仓；不得从连续合约名称猜测。
+   */
+  futureRoll?: {
+    rollDate: string;
+    successorSymbol: string;
+  };
+}
+
+export interface BacktestDataset {
+  snapshotId: string;
+  dataRef: string;
+  asOf: string;
+  timeframe: string;
+  sourceIds: string[];
+  /** 日历本身也是市场快照的一部分；不能从缺失 Bar 反推节假日或开市状态。 */
+  tradingCalendar?: {
+    version?: string;
+    timezone?: string;
+    /** symbol → YYYY-MM-DD → explicit exchange session state from the frozen snapshot. */
+    sessionsBySymbol?: Record<string, Record<string, "open" | "closed">>;
+  };
+  /** Corporate actions projected from the frozen ledger for PIT audit. */
+  corporateActionEvents?: Array<{
+    symbol: string;
+    effectiveDate: string;
+    knownAt: string;
+    kind: string;
+    cashAmount?: number;
+  }>;
+  /** Fundamental revisions projected from the frozen ledger for PIT audit. */
+  fundamentalObservations?: Array<{
+    symbol: string;
+    metric: string;
+    fiscalPeriodEnd: string;
+    availableAt: string;
+    value: number;
+    revisionId?: string;
+  }>;
+  /** key 是请求时的 symbol；已在提交时按请求区间裁剪。 */
+  barsBySymbol: Record<string, BacktestDatasetBar[]>;
+  /**
+   * 数据资格不等于策略表现：缺历史成分或企业行为版本时，结果只能用于研究，
+   * 不能被后续执行/晋级流程误认为已通过 production-grade 验证。
+   */
+  qualification: {
+    useClass: "research_only" | "strategy_validation";
+    universeHistory: "verified" | "not_verified";
+    corporateActions: "verified" | "raw_unadjusted" | "not_verified";
+    pointInTime: "verified" | "not_verified";
+    limitations: string[];
+    /** References to the frozen historical source tables when validation evidence is supplied. */
+    universeHistoryRef?: { universeId: string; version: string; source: string; asOf: string };
+    corporateActionLedgerRef?: { version: string; source: string; asOf: string };
+    fundamentalLedgerRef?: { version: string; source: string; asOf: string };
+  };
 }
 
 export interface BacktestRequest {
   strategyVersionId?: string;
+  /** 非空且已校验存在的不可变行情快照。 */
+  dataset: BacktestDataset;
   signals: BacktestSignalSpec;
   universe: string;
   symbols: string[];
+  /** symbol → 冻结的合约定义；未提供的 symbol 仅按普通股票兼容处理。 */
+  instruments?: Record<string, BacktestInstrumentSpec>;
   startDate: string;
   endDate: string;
   capital: number;
@@ -213,6 +368,13 @@ export interface BacktestRequest {
   longShort?: boolean;
   /** 基准 symbol（如 "000300.SH"），用于 alpha/相对收益 */
   benchmark?: string;
+  /** Explicit experiment provenance; omission stays unknown in integrity reports. */
+  experiment?: {
+    parameterSelection: "fixed_before_run" | "full_sample_optimized" | "unknown";
+    preRegistrationId?: string;
+    /** Number of candidate specifications inspected in the same hypothesis family. */
+    candidateTrials?: number;
+  };
 }
 
 export interface BacktestEquityPoint {
@@ -277,6 +439,17 @@ export interface BacktestResult {
     barCount: number;
     /** 因子值缺失的天数（横截面无可用 symbol） */
     skippedDays: number;
+    datasetQualification?: BacktestDataset["qualification"];
+    antiLeakageReport?: import("../backtest/anti-leakage-report").BacktestIntegrityReport;
+    pitReport?: import("../backtest/pit-verifier").PitAuditReport;
+    /** Point-in-time fundamental inputs used by an expression-driven backtest. */
+    fundamentalAvailabilityPolicy?: "first_bar_strictly_after_available_at";
+    fundamentalFields?: string[];
+    statisticalValidationReport?: import(
+      "../backtest/statistical-validation-report"
+    ).BacktestStatisticalValidationReport;
+    assetLifecycleReport?: import("../backtest/asset-lifecycle-model").AssetLifecycleReport;
+    assetLifecycleEvents?: import("../backtest/asset-lifecycle-model").AssetLifecycleEvent[];
   };
   error?: string;
 }

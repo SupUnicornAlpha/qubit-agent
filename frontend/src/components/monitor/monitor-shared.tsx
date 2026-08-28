@@ -28,10 +28,22 @@ export type WorkflowRow = {
   status: string;
   mode: string;
   loopKind?: string;
+  source?: string | null;
   sessionId?: string | null;
+  sessionTitle?: string | null;
   startedAt?: string | null;
   goal?: string | null;
 };
+
+export type WorkflowSessionGroup = {
+  sessionId: string;
+  sessionTitle: string | null;
+  workflows: WorkflowRow[];
+};
+
+export type MonitorWorkflowListResult =
+  | { mode: "flat"; rows: WorkflowRow[] }
+  | { mode: "grouped"; groups: WorkflowSessionGroup[]; unbound: WorkflowRow[] };
 
 export type AgentCardView = AgentSummary & {
   metrics?: AgentRuntimeMetricRecord;
@@ -71,11 +83,18 @@ export function asWorkflowRows(rows: unknown[]): WorkflowRow[] {
       status: String(o.status ?? ""),
       mode: String(o.mode ?? ""),
       loopKind: o.loopKind != null ? String(o.loopKind) : "native",
+      source: o.source != null ? String(o.source) : null,
       sessionId: o.sessionId != null ? String(o.sessionId) : null,
+      sessionTitle: o.sessionTitle != null ? String(o.sessionTitle) : null,
       startedAt: o.startedAt != null ? String(o.startedAt) : null,
       goal: o.goal != null ? String(o.goal) : null,
     };
   });
+}
+
+export function flattenMonitorWorkflowList(result: MonitorWorkflowListResult): WorkflowRow[] {
+  if (result.mode === "flat") return result.rows;
+  return [...result.groups.flatMap((g) => g.workflows), ...result.unbound];
 }
 
 export function shortId(id: string, head = 8, tail = 4): string {

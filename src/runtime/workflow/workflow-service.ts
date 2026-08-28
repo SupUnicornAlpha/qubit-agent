@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { config } from "../../config";
 import { getDb } from "../../db/sqlite/client";
 import { chatMessageWorkflowLink, workflowRun } from "../../db/sqlite/schema";
@@ -10,6 +10,12 @@ import { dispatchTaskToRole } from "../agent-pool";
 import { clearWorkflowCheckpointForNewTurn } from "./checkpoint-turn";
 import { clearWorkflowCancellation } from "./workflow-cancellation";
 import { setWorkflowState } from "./workflow-state-machine";
+import {
+  buildContextIsolationState,
+  detectGoalTopicShift,
+} from "../conversation/goal-scope";
+import { consolidateChatWorkflowsForSession } from "../conversation/session-workflow";
+import { emptyRollingChronicle } from "../conversation/turn-packet";
 
 export interface CreateAndDispatchWorkflowInput {
   projectId: string;
@@ -45,10 +51,11 @@ export async function createAndDispatchWorkflow(
     process.env.QUBIT_ACTIVE_FS_WORKSPACE_ID = parsedOpts.fsWorkspaceId.trim();
   }
 
+  const reuseSource = input.source ?? "chat";
+  /** chat session 固定 1:1 workflow；忽略 reuseSessionWorkflow=false 的「新建第二 workflow」语义。 */
   const shouldReuse =
     Boolean(input.sessionId) &&
-    (input.reuseSessionWorkflow === true ||
-      (input.reuseSessionWorkflow !== false && input.source === "chat"));
+    (reuseSource === "chat" || input.reuseSessionWorkflow === true);
   /**
    * 复用候选 source 白名单：
    *
@@ -68,8 +75,13 @@ export async function createAndDispatchWorkflow(
    * / scheduler / trader 等）保留各自的"按需新建/单独管理"语义，永远不会被
    * chat 抢走。
    */
-  const reuseSource = input.source ?? "chat";
   if (shouldReuse && input.sessionId) {
+    if (reuseSource === "chat") {
+      await consolidateChatWorkflowsForSession(db, {
+        projectId: input.projectId,
+        sessionId: input.sessionId,
+      });
+    }
     const latest = await db
       .select()
       .from(workflowRun)
@@ -80,10 +92,21 @@ export async function createAndDispatchWorkflow(
           eq(workflowRun.source, reuseSource)
         )
       )
-      .orderBy(desc(workflowRun.startedAt))
+      .orderBy(asc(workflowRun.startedAt))
       .limit(1);
     if (latest[0]) {
       id = latest[0].id;
+      const topicShift = detectGoalTopicShift(latest[0].goal, input.goal);
+      const effectiveLoopOpts = topicShift.shifted
+        ? {
+            ...loopOpts,
+            sessionChronicle: emptyRollingChronicle(),
+            contextIsolation: buildContextIsolationState({
+              reason: topicShift.reason ?? "goal_topic_shift",
+              priorGoal: latest[0].goal,
+            }),
+          }
+        : loopOpts;
       /**
        * P1-A：reuse 路径要"把已完结/取消的 chat workflow 重置回 pending"。直接 update
        * 多字段（goal/mode/loopKind/...）保留为直写；status 单独走 setWorkflowState
@@ -99,7 +122,7 @@ export async function createAndDispatchWorkflow(
           startedAt: new Date().toISOString(),
           loopKind,
           executionPath,
-          loopOptionsJson: loopOpts,
+          loopOptionsJson: effectiveLoopOpts,
           researchScenarioId: input.researchScenarioId,
         })
         .where(eq(workflowRun.id, id));

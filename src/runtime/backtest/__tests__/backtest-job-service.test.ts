@@ -1,6 +1,9 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { eq } from "drizzle-orm";
+import { defaultDataDir } from "../../app-paths";
 import { getDb } from "../../../db/sqlite/client";
 import { runMigrations } from "../../../db/sqlite/migrate";
 import * as schema from "../../../db/sqlite/schema";
@@ -19,6 +22,7 @@ import type {
 } from "../../provider/types";
 import { strategyComposer } from "../../strategy/strategy-composer";
 import { backtestJobService } from "../backtest-job-service";
+import { buildMarketSnapshotRecord } from "../../market/contracts/market-snapshot-service";
 
 class StubBacktestProvider implements BacktestProvider {
   readonly meta: ProviderMeta = {
@@ -34,7 +38,8 @@ class StubBacktestProvider implements BacktestProvider {
     return { ok: true };
   }
   async run(req: BacktestRequest): Promise<BacktestResult> {
-    // 简单回测：return 5% for any input
+    // 简单回测；topN=2 在训练窗上更优，供 train-only selection 回归测试。
+    const sharpe = req.topN === 2 ? 0.9 : 0.5;
     return {
       equityCurve: [
         { date: req.startDate, equity: req.capital },
@@ -45,7 +50,7 @@ class StubBacktestProvider implements BacktestProvider {
         totalReturn: 0.05,
         annualReturn: 0.05,
         annualVol: 0.1,
-        sharpe: 0.5,
+        sharpe,
         maxDrawdown: 0.02,
         winRate: 0.55,
         tradeCount: 0,
@@ -58,6 +63,49 @@ class StubBacktestProvider implements BacktestProvider {
 
 let projectId = "";
 let strategyVersionId = "";
+let datasetSnapshotId = "";
+
+async function seedDatasetSnapshot(symbols: string[]): Promise<string> {
+  const barsByInstrument = Object.fromEntries(
+    symbols.map((symbol, offset) => [
+      `US:${symbol}`,
+      [
+        {
+          timestamp: "2026-01-02T00:00:00.000Z",
+          open: 100 + offset,
+          high: 102 + offset,
+          low: 99 + offset,
+          close: 101 + offset,
+          volume: 1000,
+          turnover: 101000,
+        },
+        {
+          timestamp: "2026-01-30T00:00:00.000Z",
+          open: 101 + offset,
+          high: 103 + offset,
+          low: 100 + offset,
+          close: 102 + offset,
+          volume: 1100,
+          turnover: 112200,
+        },
+      ],
+    ])
+  );
+  const record = buildMarketSnapshotRecord({
+    asOf: "2026-01-31T00:00:00.000Z",
+    purpose: "backtest",
+    instruments: symbols.map((symbol) => ({ symbol, venue: "US", assetClass: "equity" as const })),
+    window: { start: "2026-01-01", end: "2026-01-31" },
+    sources: [{ provider: "test_dataset", feed: "fixture", upstreamFamily: "fixture" }],
+    barsByInstrument,
+    timeframe: "1d",
+    limit: 2,
+  });
+  const root = join(defaultDataDir(), "market-snapshots");
+  await mkdir(root, { recursive: true });
+  await writeFile(join(root, `${record.snapshot.snapshotId}.json`), JSON.stringify(record), "utf8");
+  return record.snapshot.snapshotId;
+}
 
 beforeAll(async () => {
   await runMigrations();
@@ -93,6 +141,7 @@ beforeAll(async () => {
     logicHash: "abc",
     paramSchemaJson: {},
   });
+  datasetSnapshotId = await seedDatasetSnapshot(["AAA", "BBB"]);
 });
 
 describe("BacktestJobService", () => {
@@ -101,6 +150,7 @@ describe("BacktestJobService", () => {
       strategyVersionId,
       signals: { kind: "factor_score", expr: "close", lang: "qlib_expr" },
       symbols: ["AAA", "BBB"],
+      datasetSnapshotId,
       startDate: "2026-01-01",
       endDate: "2026-01-31",
       capital: 1_000_000,
@@ -108,6 +158,13 @@ describe("BacktestJobService", () => {
     });
     expect(job.status).toBe("pending");
     expect(job.engineKey).toBe("stub_bt");
+    expect(job.config.experiment).toEqual({ parameterSelection: "unknown" });
+    expect(job.config.costs).toMatchObject({
+      commissionBps: 5,
+      slippageBps: 5,
+      costModelVersion: "builtin-default-v1",
+      costModelSource: "unverified_default_assumption",
+    });
 
     const ran = await backtestJobService.run(job.id);
     expect(ran.status).toBe("completed");
@@ -115,7 +172,13 @@ describe("BacktestJobService", () => {
     expect(ran.providerId).toBe("stub_bt");
     expect(ran.endedAt).not.toBeNull();
     expect(ran.evaluation).not.toBeNull();
-    expect(ran.evaluation?.checks).toHaveLength(9);
+    expect(ran.evaluation?.checks).toHaveLength(11);
+    expect(ran.evaluation?.checks.find((check) => check.key === "research_integrity")?.pass).toBe(
+      false
+    );
+    expect(
+      ran.evaluation?.checks.find((check) => check.key === "statistical_confidence")?.pass
+    ).toBe(false);
     expect(ran.evaluation?.checks.find((check) => check.key === "net_sharpe")?.pass).toBe(true);
     expect(ran.evaluation?.checks.find((check) => check.key === "cvar95")?.pass).toBe(false);
     expect(ran.evaluation?.pass).toBe(false);
@@ -133,7 +196,39 @@ describe("BacktestJobService", () => {
     });
     expect(walkForward.folds).toHaveLength(3);
     expect(walkForward.aggregate.compoundedOosReturn).toBeCloseTo(0.157625, 6);
-    expect(walkForward.pass).toBe(true);
+    expect(walkForward.performancePass).toBe(true);
+    expect(walkForward.integrityReport.status).toBe("research_only");
+    expect(
+      walkForward.integrityReport.checks.find((check) => check.key === "embargo_isolation")?.state
+    ).toBe("pass");
+    expect(
+      walkForward.integrityReport.checks.find((check) => check.key === "parameter_selection")?.state
+    ).toBe("unknown");
+    expect(walkForward.statisticalValidationReport.status).toBe("research_only");
+    expect(walkForward.pass).toBe(false);
+    const tuned = await walkForwardEvaluationService.run(job.id, {
+      folds: 3,
+      purgeDays: 2,
+      selection: {
+        objective: "sharpe",
+        candidates: [
+          { topN: 1, rebalance: "daily" },
+          { topN: 2, rebalance: "daily" },
+        ],
+      },
+    });
+    expect(tuned.folds.every((fold) => fold.selection?.selected.topN === 2)).toBe(true);
+    expect(tuned.folds.every((fold) => fold.selection?.candidateCount === 2)).toBe(true);
+    expect(
+      tuned.folds.every((fold) => fold.selection?.falseDiscoveryRate.hypothesisCount === 2)
+    ).toBe(true);
+    expect(tuned.folds.every((fold) => fold.selection?.realityCheck.candidateCount === 2)).toBe(
+      true
+    );
+    expect(tuned.selectionIntegrityPass).toBe(false);
+    expect(
+      tuned.integrityReport.checks.find((check) => check.key === "parameter_selection")?.state
+    ).toBe("pass");
     await walkForwardEvaluationService.run(job.id, { folds: 3, purgeDays: 2 });
     const walkForwardRows = await db
       .select()
@@ -143,7 +238,7 @@ describe("BacktestJobService", () => {
   });
 
   test("walk-forward windows use expanding train period and purge gap", () => {
-    const windows = createWalkForwardWindows("2026-01-01", "2026-04-30", 3, 5);
+    const windows = createWalkForwardWindows("2026-01-01", "2026-04-30", 3, 5, 4);
     expect(windows).toHaveLength(3);
     expect(windows[0]?.trainStart).toBe("2026-01-01");
     expect(Date.parse(windows[1]?.trainEnd ?? "")).toBeGreaterThan(
@@ -151,6 +246,14 @@ describe("BacktestJobService", () => {
     );
     expect(Date.parse(windows[0]?.testStart ?? "")).toBeGreaterThan(
       Date.parse(windows[0]?.trainEnd ?? "")
+    );
+    expect(
+      (Date.parse(windows[0]?.testStart ?? "") - Date.parse(windows[0]?.trainEnd ?? "")) /
+        86_400_000
+    ).toBe(10);
+    expect(windows[0]?.purgeStart).not.toBeNull();
+    expect(windows[0]?.embargoEnd).toBe(
+      new Date(Date.parse(windows[0]?.testStart ?? "") - 86_400_000).toISOString().slice(0, 10)
     );
   });
 
@@ -163,6 +266,46 @@ describe("BacktestJobService", () => {
         endDate: "2026-01-31",
       })
     ).rejects.toThrow(/either_signals_or_composition_id_required/);
+  });
+
+  test("缺 datasetSnapshotId → 拒绝回测，不能在运行中临时取行情", async () => {
+    await expect(
+      backtestJobService.submit({
+        strategyVersionId,
+        signals: { kind: "factor_score", expr: "close", lang: "qlib_expr" },
+        symbols: ["AAA"],
+        startDate: "2026-01-01",
+        endDate: "2026-01-31",
+      })
+    ).rejects.toThrow(/dataset_snapshot_required/);
+  });
+
+  test("非法 parameterSelection 在服务边界被拒绝", async () => {
+    await expect(
+      backtestJobService.submit({
+        strategyVersionId,
+        signals: { kind: "factor_score", expr: "close", lang: "qlib_expr" },
+        symbols: ["AAA"],
+        datasetSnapshotId,
+        startDate: "2026-01-01",
+        endDate: "2026-01-31",
+        experiment: { parameterSelection: "optimized_somehow" } as never,
+      })
+    ).rejects.toThrow(/invalid_parameter_selection/);
+  });
+
+  test("非法 candidateTrials 在服务边界被拒绝", async () => {
+    await expect(
+      backtestJobService.submit({
+        strategyVersionId,
+        signals: { kind: "factor_score", expr: "close", lang: "qlib_expr" },
+        symbols: ["AAA"],
+        datasetSnapshotId,
+        startDate: "2026-01-01",
+        endDate: "2026-01-31",
+        experiment: { parameterSelection: "fixed_before_run", candidateTrials: 0 },
+      })
+    ).rejects.toThrow(/invalid_candidate_trials/);
   });
 
   test("compositionId 解析：自动取 composition 第一个 factor 作为 signal", async () => {
@@ -185,6 +328,7 @@ describe("BacktestJobService", () => {
       strategyVersionId,
       compositionId: comp.id,
       symbols: ["AAA"],
+      datasetSnapshotId,
       startDate: "2026-01-01",
       endDate: "2026-01-31",
       providerKey: "stub_bt",
@@ -194,6 +338,43 @@ describe("BacktestJobService", () => {
     if (job.config.signals.kind === "factor_score") {
       expect(job.config.signals.factorId).toBe(factor.id);
       expect(job.config.signals.expr).toBe("close / Ref(close, 5) - 1");
+    }
+  });
+
+  test("多因子 composition 会保留全部因子与权重，不再静默丢弃到第一个", async () => {
+    const factors = await Promise.all(
+      ["close", "volume"].map((expr, index) =>
+        factorService.register({
+          projectId,
+          name: `bt_multi_${index}_${randomUUID().slice(0, 6)}`,
+          category: "momentum",
+          expr,
+          lang: "qlib_expr",
+        })
+      )
+    );
+    const comp = await strategyComposer.define({
+      strategyVersionId,
+      kind: "factor_score",
+      factorIds: factors.map((factor) => factor.id),
+      weightMethod: "equal",
+    });
+    const job = await backtestJobService.submit({
+      strategyVersionId,
+      compositionId: comp.id,
+      symbols: ["AAA", "BBB"],
+      datasetSnapshotId,
+      startDate: "2026-01-01",
+      endDate: "2026-01-31",
+      providerKey: "stub_bt",
+    });
+    expect(job.config.signals.kind).toBe("factor_composite");
+    if (job.config.signals.kind === "factor_composite") {
+      expect(job.config.signals.factors).toHaveLength(2);
+      expect(job.config.signals.factors.map((factor) => factor.factorId).sort()).toEqual(
+        factors.map((factor) => factor.id).sort()
+      );
+      expect(job.config.signals.factors.every((factor) => factor.weight === 0.5)).toBe(true);
     }
   });
 

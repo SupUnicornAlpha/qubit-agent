@@ -19,10 +19,7 @@ import {
   cloneStrategyComposition,
   createStrategyComposition,
   createStrategyVersion,
-  listFactors,
-  listRules,
   listStrategyCompositions,
-  listStrategyVersions,
   type FactorRecord,
   type RuleRecord,
   type StrategyCompositionRecord,
@@ -31,6 +28,11 @@ import {
   type WeightMethod,
 } from "../../api/backend";
 import { useDefaultProject } from "./useDefaultProject";
+import {
+  fetchQuantFactors,
+  fetchQuantRules,
+  fetchQuantStrategyVersions,
+} from "../../lib/quantListScope";
 import { LineageBadge, LineageTrail } from "./LineageBadge";
 import { useAppStore } from "../../store";
 
@@ -52,7 +54,16 @@ const WEIGHT_OPTIONS: { id: WeightMethod; label: string }[] = [
 const FREQ_OPTIONS = ["daily", "weekly", "monthly"] as const;
 
 export const ComposerTab: FC = () => {
-  const { projectId, loading: projectLoading, error: projectError } = useDefaultProject();
+  const {
+    projectId,
+    listProjectFilter,
+    lineageFilter,
+    listScopeKey,
+    scopeAllProjects,
+    scopeProjectId,
+    loading: projectLoading,
+    error: projectError,
+  } = useDefaultProject();
 
   const [versions, setVersions] = useState<StrategyVersionFlatRecord[]>([]);
   const [versionId, setVersionId] = useState<string>("");
@@ -130,14 +141,14 @@ export const ComposerTab: FC = () => {
   );
 
   const reloadVersions = useCallback(async () => {
-    if (!projectId) return;
+    if (projectLoading) return;
     setBusy(true);
     setError(null);
     try {
       const [vs, fs, rs] = await Promise.all([
-        listStrategyVersions(projectId),
-        listFactors({ projectId }),
-        listRules({ projectId }),
+        fetchQuantStrategyVersions(listProjectFilter, lineageFilter),
+        fetchQuantFactors(listProjectFilter, lineageFilter),
+        fetchQuantRules(listProjectFilter, lineageFilter),
       ]);
       setVersions(vs);
       setFactors(fs);
@@ -148,7 +159,7 @@ export const ComposerTab: FC = () => {
     } finally {
       setBusy(false);
     }
-  }, [projectId, versionId]);
+  }, [projectLoading, listScopeKey, versionId]);
 
   useEffect(() => {
     void reloadVersions();
@@ -374,13 +385,13 @@ export const ComposerTab: FC = () => {
   );
 
   if (projectLoading) {
-    return <div style={styles.empty}>加载默认 project…</div>;
+    return <div style={styles.empty}>加载 project…</div>;
   }
   if (projectError) {
     return <div style={styles.errorPanel}>项目加载失败：{projectError}</div>;
   }
-  if (!projectId) {
-    return <div style={styles.empty}>未找到默认 project，请先初始化。</div>;
+  if (!scopeAllProjects && !scopeProjectId) {
+    return <div style={styles.empty}>未找到所选 project，请切换数据范围。</div>;
   }
 
   return (

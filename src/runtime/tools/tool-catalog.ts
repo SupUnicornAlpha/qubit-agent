@@ -217,7 +217,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     description:
       "D2/D3：生成或复用不可变市场快照，返回 snapshotId / dataRef / qualityVerdict / asOf / warnings。" +
       "研究、回测应引用 snapshotId；下单前须保证 qualityVerdict.tradable=true（仅 L3 + trading_allowed + 质量门通过）。" +
-      "支持 symbols[] 或 symbol；可传 asOf/purpose/timeframe/limit；也可只传 snapshotId 回放。" +
+      "支持 symbols[] 或 symbol；可传 asOf/purpose/timeframe/limit/timezone/calendar_version/calendar_sessions_by_venue；也可只传 snapshotId 回放。会话表格式为 `{US:{'2026-01-01':'closed','2026-01-02':'open'}}`，会规范化后进入快照身份。回测若要获得验证级历史证据，还必须冻结 `universe_history:{universeId,version,source,asOf,membershipIntervals[]}` 与 `corporate_action_ledger:{version,source,asOf,adjustmentMethod,actionsBySymbol}`；成员区间必须覆盖每个实际回测 Bar，企业行为账本须为每个标的显式提供数组（可为空）且调整方法一致。涉及财报、估值或预期的因子还必须冻结 `fundamental_ledger:{version,source,asOf,observationsBySymbol}`；每条 observation 有 fiscalPeriodEnd 与 availableAt，不能用今天的修订值替换历史可得值。缺少日历、历史标的池或企业行为证据时只能用于研究；不得从缺失 K 线推断节假日、成分股或除权除息。" +
       "质量不足时仍返回快照但带 warnings（研究 fail transparent）；订单入口会 fail closed。",
     category: "market",
   },
@@ -583,7 +583,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
      * 现在显式标注 schema + 数据依赖（先 register 拿 id），让 LLM 一看就知道前置步骤。
      */
     description:
-      "计算因子值并写入 factor_value。**必填 `factor_id` (UUID)**（来自 factor.register 或 factor.list 返回），可选 `symbols[]` / `start_date` / `end_date`。若 factor.register 已设置 `universe`，通常不要传指数代码（如 000300.SH）当 symbols；省略 symbols 时会按 universe 展开最小横截面样本。**不要传 `symbol`/`ticker`/`factor_expression`** —— 那些是 factor.autoEvaluate / factor.register 的参数。",
+      "计算因子值并写入 factor_value。**必填 `factor_id` (UUID)**（来自 factor.register 或 factor.list 返回），可选 `symbols[]` / `start_date` / `end_date`。需要可审计复算时，先调用 market.snapshot.get，再传 `dataset_snapshot_id`；此时因子只消费该不可变 OHLCV 快照。若 factor.register 已设置 `universe`，通常不要传指数代码（如 000300.SH）当 symbols；省略 symbols 时会按 universe 展开最小横截面样本。**不要传 `symbol`/`ticker`/`factor_expression`** —— 那些是 factor.autoEvaluate / factor.register 的参数。",
     category: "research",
   },
   "factor.evaluate": {
@@ -696,6 +696,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     description:
       "一步式评估因子（IC/RankIC/IR/衰减/分组收益）。**必填 `factor_id`**（或一步式 `factor_expression`+`name`）。" +
       "`start_date`/`end_date`（YYYY-MM-DD）强烈建议显式传；缺省则用近 365 天。" +
+      "需要可审计结果时传 `dataset_snapshot_id`；快照必须额外覆盖最长 horizon 的未来收益窗口，否则会明确拒绝，绝不临时拉行情补齐。" +
       "IC 是横截面指标：symbols 建议 ≥3（更好 ≥10）；单标的请换 factor.compute。" +
       "已有 universe 时勿把指数代码当唯一 symbols。",
     category: "research",
@@ -707,7 +708,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   },
   "factor.promote_backtest": {
     description:
-      "P0 一键闭环：把已有 factor_ids 自动提升为 strategy_version + strategy_composition，并立即运行事件驱动回测（落 backtest_run + strategy_eval_run）。**必填**：factor_ids[] + start_date + end_date。可选 symbols[]；不传时按因子 universe 使用默认样本。优先在 factor.autoEvaluate 成功后调用，用于让量化工坊直接观察「因子→策略→回测」完整链路。",
+      "P0 一键闭环：把已有 factor_ids 自动提升为 strategy_version + strategy_composition，并立即运行事件驱动回测（落 backtest_run + strategy_eval_run）。**必填**：factor_ids[] + start_date + end_date + dataset_snapshot_id（先用 market.snapshot.get 冻结同窗口数据）。必须声明 parameter_selection：fixed_before_run / full_sample_optimized / unknown，并用 candidate_trials 声明同一研究族实际查看过的候选总数；缺失证据时结果仅供研究。full_sample_optimized 会被反泄漏闸门拒绝。可选 symbols[]；不传时按因子 universe 使用默认样本。回测只消费该不可变快照，用于可审计复算。",
     category: "research",
   },
   "discovery.run": {
@@ -731,10 +732,18 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
      * 2026-08：缺 dates 默认近 1 年；缺 composition_id 时自动取该 version 最新 compose。
      */
     description:
-      "事件驱动回测并落 backtest_run。**必填**：`strategy_version_id` + `symbols[]`（或单标 symbol/ticker）。" +
+      "事件驱动回测并落 backtest_run。**必填**：`strategy_version_id` + `symbols[]`（或单标 symbol/ticker）+ `dataset_snapshot_id`（先用 market.snapshot.get 冻结数据）。" +
       "`start_date`/`end_date` 建议显式；缺省近 365 天。" +
-      "`composition_id` 与 `signals` 二选一；刚 compose 过可不传 composition_id（自动取该 version 最新组合）。" +
+      "`composition_id` 与 `signals` 二选一；刚 compose 过可不传 composition_id（自动取该 version 最新组合）。多因子 composition 会先逐日截面排名标准化，再按已配置权重合成；目前快照回测仅支持 qlib_expr 因子。" +
+      "必须声明 `parameter_selection`：fixed_before_run / full_sample_optimized / unknown，并用 `candidate_trials`（1–10000）记录同一假设族查看过的候选总数；缺失时保持 research-only，full_sample_optimized 会被反泄漏闸门拒绝。可选 `pre_registration_id` 记录预注册。" +
+      "期权、期货、永续合约必须传 `instruments`（按 symbol 索引），冻结 asset_class、contract_multiplier、expiry_date、settlement_mode 等合约字段；期权还需 underlying_symbol/strike/option_right/exercise_style。期货还要求 initial_margin_rate 与 maintenance_margin_rate，并可声明 target_leverage；系统逐日盯市、追保，现金不足时按结算价强平。显式换月使用 `future_roll:{roll_date,successor_symbol}`：换月日按快照 open 平旧、以合约乘数换算新仓，next contract 必须同样在 instruments 中冻结；禁止从连续代码推断。快照可提供逐 Bar 的 tradable/suspended/price_limit_up/price_limit_down：引擎会阻止停牌、不可交易、涨停买入与跌停卖出，并审计未成交；字段完全缺失时保持 research-only。缺字段 fail-closed。当前 event_driven 只接受日线快照（`1d`）；盘中快照会直接拒绝，绝不会把同日多个 Bar 合并成伪日线结果。首版支持现金结算欧式期权、现金结算期货与由快照 Bar 提供资金费率的币永续；交易所参数曲线仍未建模。" +
+      "`costs` 会冻结佣金、滑点、最小佣金、冲击、参与率、借券和禁空约束；若用于验证级结论，必须同时提供 `cost_model_version`、`cost_model_source` 和 ISO `cost_model_as_of`。缺失成本血缘或采用内置默认 5bp 时，交易成本证据保持 unknown。" +
       "顺序：create_version → compose → backtest.run。",
+    category: "research",
+  },
+  "backtest.walk_forward": {
+    description:
+      "对一个已完成的 `backtest_run_id` 做扩展窗口 Walk-Forward 验证。默认 `purge_days=5`、`embargo_days=5`，在训练与 OOS 间形成可审计隔离带。传 `selection.candidates`（或 `selection_candidates`，2–20 个）时，每折只在训练窗比较 `top_n` / `rebalance` / `long_short`，按 sharpe / calmar / annual_return 选出胜者后冻结，再首次运行测试窗；候选族同时执行 Benjamini-Hochberg FDR 与同步区块重采样 White Reality Check，最终拼接 OOS 执行 block-bootstrap、Bonferroni 和 Deflated Sharpe。候选 Sharpe 分布缺失时 fail-closed。严禁把测试折用于选参。",
     category: "research",
   },
 

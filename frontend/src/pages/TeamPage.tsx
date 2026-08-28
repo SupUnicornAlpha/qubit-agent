@@ -1,7 +1,7 @@
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FC } from "react";
 import { createPortal } from "react-dom";
-import { createConversationTurn, getOrCreateDefaultProject, createWorkflow, putFsWorkspaceRun, getDefaultWorkspace, getDefaultProjectSession, getAnalystTeamGraph, deleteWorkflow, listMonitorWorkflows, listProjects, patchWorkflow, updateWorkflowGoal, injectWorkflowMessage, interruptWorkflow, listFactors, listStrategyVersions, listStrategyScripts, listBacktestJobs, subscribeWorkflowEvents } from "../api/backend";
+import { createConversationTurn, getOrCreateDefaultProject, createChatSession, getChatSessionWorkflow, putFsWorkspaceRun, getDefaultWorkspace, getDefaultProjectSession, getAnalystTeamGraph, deleteWorkflow, listMonitorWorkflows, listProjects, patchWorkflow, updateWorkflowGoal, injectWorkflowMessage, interruptWorkflow, listFactors, listStrategyVersions, listStrategyScripts, listBacktestJobs, subscribeWorkflowEvents } from "../api/backend";
 import type { AnalystTeamGraphPayload, AnalystTeamGraphInteraction, AnalystTeamGraphAgentStep, AnalystTeamGraphToolCall, AnalystTeamGraphMcpCall, StepStreamEvent, AgentControlMode, AgentLoopKind } from "../api/types";
 import { useAppStore } from "../store";
 import { stripToolCallSentinels } from "../lib/chatMessageHydration";
@@ -40,6 +40,7 @@ import { TeamResearchSettingsPanel } from "../components/team/TeamResearchSettin
 import { buildSubAgentRunSummaries } from "../lib/subAgentRuns";
 import { classifyWorkflow, groupWorkflowOptions, WORKFLOW_KIND_LABEL, type WorkflowKind } from "../lib/workflowKind";
 import { quantNavigationForArtifact } from "../lib/quantArtifactNavigation";
+import { pickPreferredProject } from "../components/quant/useDefaultProject";
 import { useAgentDockOptional } from "../shell/pro/AgentDockContext";
 
 
@@ -304,7 +305,7 @@ export const TeamDashboardPanel: FC = () => {
     }
   });
   const [creatingTeamWorkflow, setCreatingTeamWorkflow] = useState(false);
-  /** 新建工作流二次确认（Tauri 下不用 window.confirm） */
+  /** 新建研究会话二次确认（1 session = 1 workflow；Tauri 下不用 window.confirm） */
   const [pendingCreateWorkflow, setPendingCreateWorkflow] = useState(false);
 
   useEffect(() => {
@@ -1766,7 +1767,9 @@ export const TeamDashboardPanel: FC = () => {
         const dft = await getDefaultWorkspace();
         const wsId = dft.id;
         const projects = await listProjects(wsId);
-        let pid = projects[0]?.id;
+        // 与量化工坊 useDefaultProject 同一策略，避免 Agent 写入 Default Project
+        // 而团队页锁在 projects[0]（seed fixture）导致产出/列表错 project。
+        let pid = pickPreferredProject(projects);
         if (!pid) {
           // 只读 get-or-create：后端写死稳定 ID 幂等，不再前端 createProject 兜底。
           const pr = await getOrCreateDefaultProject();
@@ -1970,37 +1973,32 @@ export const TeamDashboardPanel: FC = () => {
   handleOrchestratorChatRef.current = handleOrchestratorChat;
 
   const handleCreateTeamWorkflow = async () => {
-    if (!teamResearchProjectId || !teamResearchSessionId) {
-      setError("尚未解析到默认项目/会话，无法创建工作流。请检查工作区是否可用。");
+    if (!teamResearchProjectId) {
+      setError("尚未解析到默认项目，无法创建研究会话。请检查工作区是否可用。");
       setPendingCreateWorkflow(false);
       return;
     }
     setError(null);
     setCreatingTeamWorkflow(true);
     try {
-      const created = await createWorkflow({
+      const dft = await getDefaultWorkspace();
+      const title = `研究团队 · ${scopeModeLabel(scopeMode)} · ${ticker.trim() || sectorName || "标的"} · ${new Date().toLocaleString()}`;
+      const session = await createChatSession({
+        workspaceId: dft.id,
         projectId: teamResearchProjectId,
-        goal: `研究团队 · ${scopeModeLabel(scopeMode)} · ${ticker.trim() || sectorName || "标的"} · ${new Date().toLocaleString()}`,
-        mode: "research",
-        sessionId: teamResearchSessionId,
-        source: "manual",
-        reuseSessionWorkflow: false,
-        skipDispatch: true,
-        loopOptionsJson: {
-          agentMode: teamAgentMode,
-          hitlMode: teamHitlMode,
-          roleReasoner,
-        },
+        title,
       });
+      const workflow = await getChatSessionWorkflow(session.id, teamResearchProjectId);
+      setTeamResearchSessionId(session.id);
       await refreshWorkflowOptions();
-      setWorkflowRunId(String(created.data.id));
-      setSelectedConversationSessionId(teamResearchSessionId);
+      setWorkflowRunId(String(workflow.id));
+      setSelectedConversationSessionId(session.id);
       if (activeFsWorkspaceId) {
-        void putFsWorkspaceRun(activeFsWorkspaceId, String(created.data.id), {
-          title: `研究团队 · ${scopeModeLabel(scopeMode)} · ${ticker.trim() || sectorName || "标的"}`,
+        void putFsWorkspaceRun(activeFsWorkspaceId, String(workflow.id), {
+          title,
           status: "queued",
-          workflowId: String(created.data.id),
-          sessionId: teamResearchSessionId,
+          workflowId: String(workflow.id),
+          sessionId: session.id,
           focus: fsWorkspaceCreateDefaults.focus,
         }).catch(() => undefined);
       }
@@ -2274,7 +2272,7 @@ export const TeamDashboardPanel: FC = () => {
             工作流列表
           </div>
           <p style={{ fontSize: 11, color: "#71717a", marginBottom: 10, lineHeight: 1.45 }}>
-            在此配置研究范围 / 标的 / 提示，再选择或新建工作流；右侧 Orchestrator 仅负责对话与执行。
+            在此配置研究范围 / 标的 / 提示，再选择或新建研究会话；右侧 Orchestrator 仅负责对话与执行。
           </p>
           </div>
           {/**
@@ -2349,7 +2347,7 @@ export const TeamDashboardPanel: FC = () => {
                     }
                     title="确认后将创建一条新的研究工作流（等同新研究回合）"
                   >
-                    {creatingTeamWorkflow ? "创建中…" : "确认新建工作流"}
+                    {creatingTeamWorkflow ? "创建中…" : "确认新建会话"}
                   </button>
                   <button
                     type="button"
@@ -2361,7 +2359,7 @@ export const TeamDashboardPanel: FC = () => {
                     取消
                   </button>
                   <span style={{ fontSize: 11, color: "#fbbf24", alignSelf: "center" }}>
-                    新建工作流 = 新研究回合，确认后才会创建
+                    新建会话 = 新研究回合（自动绑定唯一 workflow），确认后才会创建
                   </span>
                 </>
               ) : (
@@ -2377,7 +2375,7 @@ export const TeamDashboardPanel: FC = () => {
                       : "创建仅用于研究团队的工作流（不触发总控编排）"
                   }
                 >
-                  新建工作流
+                  新建会话
                 </button>
               )}
               {workflowRunId.trim() && !workflowSessionId && teamResearchSessionId ? (
@@ -2400,7 +2398,7 @@ export const TeamDashboardPanel: FC = () => {
               {filteredGroupedWorkflowList.length === 0 ? (
                 <div style={workflowListStyles.empty}>
                   {workflowOptions.length === 0
-                    ? "暂无工作流。点击上方「新建工作流」开始一次研究团队任务。"
+                    ? "暂无工作流。点击上方「新建会话」开始一次研究团队任务。"
                     : "没有匹配的工作流。试试清空搜索 / 切换筛选条件。"}
                 </div>
               ) : (
@@ -2580,16 +2578,16 @@ export const TeamDashboardPanel: FC = () => {
           </div>
 
           {/** 左栏只保留工作流选择与拓扑只读视图。 */}
-          <div style={{ marginTop: 14, borderTop: "1px solid #27272a", paddingTop: 12 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "#cbd5e1", marginBottom: 6 }}>工作流对话拓扑（只读）</div>
-            <p style={{ fontSize: 11, color: "#71717a", marginBottom: 8 }}>
+          <div style={{ marginTop: 14, borderTop: "1px solid var(--qb-team-shell-border, #27272a)", paddingTop: 12 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--qb-body-fg, #cbd5e1)", marginBottom: 6 }}>工作流对话拓扑（只读）</div>
+            <p style={{ fontSize: 11, color: "var(--qb-body-muted, #71717a)", marginBottom: 8 }}>
               运行期轨迹：含 LLM 交互、Tool/MCP 及 Agent <strong>通信拓扑</strong>产生的 handoff。
               无数据时请在「研究画布」刷新。
             </p>
             {!teamGraph?.edges?.length ? (
-              <div style={{ fontSize: 11, color: "#52525b" }}>暂无边记录</div>
+              <div style={{ fontSize: 11, color: "var(--qb-body-muted, #52525b)" }}>暂无边记录</div>
             ) : (
-              <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11, color: "#d4d4d8" }}>
+              <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11, color: "var(--qb-body-fg, #d4d4d8)" }}>
                 {teamGraph.edges.slice(0, 24).map((ed) => (
                   <li key={ed.key} style={{ marginBottom: 4 }}>
                     {ed.a} ↔ {ed.b} · 消息 {ed.messageCount} · 工具 {ed.toolCount}
@@ -3178,14 +3176,14 @@ export const TeamDashboardPanel: FC = () => {
                             gap: 5,
                             padding: "5px 11px",
                             borderRadius: 999,
-                            border: "1px solid rgba(59,130,246,0.55)",
-                            background: "rgba(15,23,42,0.85)",
-                            color: "#bfdbfe",
+                            border: "1px solid var(--qb-blue, #007acc)",
+                            background: "var(--qb-team-panel-bg, #252526)",
+                            color: "var(--qb-body-fg, #cccccc)",
                             fontSize: 11,
                             fontWeight: 600,
                             cursor: "pointer",
-                            boxShadow: "0 6px 18px rgba(0,0,0,0.35)",
-                            backdropFilter: "blur(4px)",
+                            boxShadow: "none",
+                            backdropFilter: "none",
                           }}
                         >
                           <span aria-hidden style={{ fontSize: 12, lineHeight: 1 }}>
@@ -3277,14 +3275,14 @@ export const TeamDashboardPanel: FC = () => {
           >
             <summary style={teamStyles.runControlsSummary}>
               <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: "#93c5fd" }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--qb-blue, #93c5fd)" }}>
                   📦 研究产出 · 因子 / 策略 / 脚本 / 草稿
                 </span>
               </span>
-              <span style={{ fontSize: 11, color: "#a1a1aa" }}>点击折叠/展开</span>
+              <span style={{ fontSize: 11, color: "var(--qb-body-muted, #a1a1aa)" }}>点击折叠/展开</span>
             </summary>
             <div style={{ padding: "10px 16px 14px" }}>
-              <p style={{ fontSize: 11, color: "#71717a", marginTop: 0, marginBottom: 10, lineHeight: 1.45 }}>
+              <p style={{ fontSize: 11, color: "var(--qb-body-muted, #71717a)", marginTop: 0, marginBottom: 10, lineHeight: 1.45 }}>
                 展示当前工作流下 Agent 生成的<strong>推荐 / 草稿 / 因子 / 策略 / 回测 / 脚本</strong>。
                 因子可进因子工坊或回测工坊试跑；策略组合可一键进回测工坊看 equity；回测结果可直接打开可视化。
               </p>
@@ -3636,11 +3634,11 @@ const teamStyles: Record<string, CSSProperties> = {
     minHeight: 0,
     display: "flex",
     flexDirection: "column",
-    border: "1px solid var(--qb-team-shell-border, #3f3f46)",
-    borderRadius: 10,
+    border: "1px solid var(--qb-team-shell-border, #2d2d2d)",
+    borderRadius: 0,
     overflow: "hidden",
-    background: "var(--qb-team-shell-bg, #070708)",
-    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04), 0 12px 40px rgba(0,0,0,0.45)",
+    background: "var(--qb-team-shell-bg, #1e1e1e)",
+    boxShadow: "none",
   },
   paneToggleBar: {
     flexShrink: 0,
@@ -3648,12 +3646,12 @@ const teamStyles: Record<string, CSSProperties> = {
     alignItems: "center",
     gap: 6,
     padding: "6px 10px",
-    borderBottom: "1px solid var(--qb-team-shell-border, #2d2d32)",
-    background: "rgba(255, 255, 255, 0.015)",
+    borderBottom: "1px solid var(--qb-team-shell-border, #2d2d2d)",
+    background: "var(--qb-team-titlebar-bg, #252526)",
     fontSize: 11,
   },
   paneToggleHint: {
-    color: "#71717a",
+    color: "var(--qb-team-meta, #71717a)",
     fontSize: 10.5,
     marginRight: 4,
     flexShrink: 0,
@@ -3667,20 +3665,20 @@ const teamStyles: Record<string, CSSProperties> = {
     borderRadius: 12,
     borderWidth: 1,
     borderStyle: "solid",
-    borderColor: "#3f3f46",
+    borderColor: "var(--qb-team-input-border, #3f3f46)",
     cursor: "pointer",
     transition: "background 0.12s ease, color 0.12s ease, border-color 0.12s ease",
     fontFamily: "inherit",
   },
   paneToggleBtnActive: {
-    background: "rgba(96, 165, 250, 0.16)",
-    color: "#93c5fd",
-    borderColor: "rgba(96, 165, 250, 0.5)",
+    background: "var(--qb-tint, rgba(96, 165, 250, 0.16))",
+    color: "var(--qb-blue, #93c5fd)",
+    borderColor: "var(--qb-blue, rgba(96, 165, 250, 0.5))",
   },
   paneToggleBtnHidden: {
     background: "transparent",
-    color: "#71717a",
-    borderColor: "#3f3f46",
+    color: "var(--qb-team-meta, #71717a)",
+    borderColor: "var(--qb-team-input-border, #3f3f46)",
   },
   paneToggleBtnDisabled: {
     cursor: "not-allowed",
@@ -3705,8 +3703,8 @@ const teamStyles: Record<string, CSSProperties> = {
     alignSelf: "stretch",
   },
   leftRail: {
-    background: "var(--qb-team-left-bg, #0c0c0f)",
-    borderRight: "1px solid var(--qb-team-shell-border, #2d2d32)",
+    background: "var(--qb-team-left-bg, #252526)",
+    borderRight: "1px solid var(--qb-team-shell-border, #2d2d2d)",
     borderRadius: 0,
     padding: 14,
     /**
@@ -3755,7 +3753,7 @@ const teamStyles: Record<string, CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     overflow: "hidden",
-    background: "var(--qb-team-center-bg, #0e0e12)",
+    background: "var(--qb-team-center-bg, #1e1e1e)",
     borderLeft: "none",
     borderRight: "none",
   },
@@ -3785,7 +3783,7 @@ const teamStyles: Record<string, CSSProperties> = {
     justifyContent: "space-between",
     gap: 12,
     fontSize: 12,
-    color: "#cbd5e1",
+    color: "var(--qb-body-fg, #cbd5e1)",
     userSelect: "none",
     position: "sticky",
     top: 0,
@@ -3818,9 +3816,9 @@ const teamStyles: Record<string, CSSProperties> = {
     color: "var(--qb-team-act-btn-fg, #a1a1aa)",
   },
   teamActBtnActive: {
-    background: "var(--qb-team-act-btn-active-bg, #2d2d36)",
-    borderColor: "var(--qb-team-act-btn-active-border, #7c3aed)",
-    color: "var(--qb-team-act-btn-active-fg, #f4f4f5)",
+    background: "var(--qb-team-act-btn-active-bg, #37373d)",
+    borderColor: "var(--qb-team-act-btn-active-border, var(--qb-blue, #007acc))",
+    color: "var(--qb-team-act-btn-active-fg, #ffffff)",
   },
   teamMainStage: {
     flex: 1,
@@ -3828,7 +3826,7 @@ const teamStyles: Record<string, CSSProperties> = {
     minHeight: 0,
     display: "flex",
     flexDirection: "column",
-    background: "var(--qb-team-stage-bg, #101014)",
+    background: "var(--qb-team-stage-bg, #1e1e1e)",
   },
   teamEditorTitleBar: {
     height: 38,
@@ -3837,10 +3835,10 @@ const teamStyles: Record<string, CSSProperties> = {
     alignItems: "center",
     justifyContent: "space-between",
     padding: "0 14px",
-    borderBottom: "1px solid var(--qb-team-shell-border, #2d2d32)",
+    borderBottom: "1px solid var(--qb-team-shell-border, #2d2d2d)",
     fontSize: 12,
-    color: "var(--qb-team-titlebar-fg, #d4d4d8)",
-    background: "var(--qb-team-titlebar-bg, #141418)",
+    color: "var(--qb-team-titlebar-fg, #cccccc)",
+    background: "var(--qb-team-titlebar-bg, #252526)",
   },
   teamEditorBody: {
     flex: 1,
@@ -3849,8 +3847,8 @@ const teamStyles: Record<string, CSSProperties> = {
     padding: 14,
   },
   rightRail: {
-    background: "var(--qb-team-right-bg, #0c0c0f)",
-    borderLeft: "1px solid var(--qb-team-shell-border, #2d2d32)",
+    background: "var(--qb-team-right-bg, #252526)",
+    borderLeft: "1px solid var(--qb-team-shell-border, #2d2d2d)",
     borderRadius: 0,
     padding: 14,
     display: "flex",
@@ -3879,14 +3877,14 @@ const teamStyles: Record<string, CSSProperties> = {
     fontSize: 13,
   },
   tabActive: {
-    background: "var(--qb-team-tab-active-bg, #27272a)",
-    color: "var(--qb-team-tab-active-fg, #e4e4e7)",
-    borderColor: "var(--qb-team-tab-active-border, #7c3aed)",
+    background: "var(--qb-team-tab-active-bg, #1e1e1e)",
+    color: "var(--qb-team-tab-active-fg, #ffffff)",
+    borderColor: "var(--qb-team-tab-active-border, var(--qb-blue, #007acc))",
   },
   panel: {
-    background: "var(--qb-team-panel-bg, #121216)",
-    border: "1px solid var(--qb-team-panel-border, #2a2a30)",
-    borderRadius: 10,
+    background: "var(--qb-team-panel-bg, #252526)",
+    border: "1px solid var(--qb-team-panel-border, #2d2d2d)",
+    borderRadius: 4,
     padding: 16,
   },
   textarea: {

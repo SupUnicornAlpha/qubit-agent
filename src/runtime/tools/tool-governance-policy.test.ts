@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import {
   evaluateToolGovernance,
   inferMarketScope,
+  isCacheableWorkflowToolFailure,
   recordWorkflowToolFailure,
   resetToolGovernanceCacheForTest,
 } from "./tool-governance-policy";
@@ -76,6 +77,26 @@ describe("tool governance", () => {
         workflowId: "wf",
         targetName: "qubit-data/fetch_klines",
         params: { symbol: "002384.SZ" },
+      }).allowed
+    ).toBe(true);
+  });
+
+  test("does not cache missing_symbol as workflow-wide market failure", () => {
+    expect(isCacheableWorkflowToolFailure("missing_symbol: factor.compute requires symbols")).toBe(
+      false
+    );
+    recordWorkflowToolFailure({
+      workflowId: "wf-missing",
+      targetName: "factor.compute",
+      params: {},
+      reason: "missing_symbol: factor.compute: symbol/ticker or symbols/tickers is required",
+      cacheable: true,
+    });
+    expect(
+      evaluateToolGovernance({
+        workflowId: "wf-missing",
+        targetName: "factor.compute",
+        params: { symbols: ["AAPL"] },
       }).allowed
     ).toBe(true);
   });

@@ -3,11 +3,21 @@ import { getDb } from "../../db/sqlite/client";
 import { backtestJobService } from "../backtest/backtest-job-service";
 import { discoveryService } from "../discovery/discovery-service";
 import type { DiscoveryKind } from "../discovery/discovery-service";
+import {
+  walkForwardEvaluationService,
+  type WalkForwardParameterCandidate,
+  type WalkForwardRunOptions,
+} from "../effect-validation/walk-forward-evaluation-service";
 import { factorService } from "../factor/factor-service";
 import type { FactorCategory, FactorLang, FactorStatus } from "../factor/factor-service";
 import { isLikelyProjectIdFormat } from "./context-params";
 export { resolveDelegatedParentTaskId } from "../orchestration/team-dispatch-adapter";
-import type { FactorComputeRow, RuleEvalContext } from "../provider/types";
+import type {
+  BacktestCosts,
+  BacktestInstrumentSpec,
+  FactorComputeRow,
+  RuleEvalContext,
+} from "../provider/types";
 import { factorBacktestPromotionService } from "../quant/factor-backtest-promotion-service";
 import { ruleService } from "../rule/rule-service";
 import type { RuleAppliesTo, RuleLang, RuleStatus } from "../rule/rule-service";
@@ -63,6 +73,247 @@ function resolveDateWindow(params: Record<string, unknown>): {
   if (!startDate) startDate = d.start_date;
   if (!endDate) endDate = d.end_date;
   return { startDate, endDate, defaulted: true };
+}
+
+function resolveBacktestExperiment(params: Record<string, unknown>): {
+  parameterSelection: "fixed_before_run" | "full_sample_optimized" | "unknown";
+  preRegistrationId?: string;
+  candidateTrials?: number;
+} {
+  const raw = params.parameter_selection ?? params.parameterSelection ?? "unknown";
+  if (raw !== "fixed_before_run" && raw !== "full_sample_optimized" && raw !== "unknown") {
+    throw new Error(
+      `parameter_selection must be fixed_before_run, full_sample_optimized, or unknown; got ${String(raw)}`
+    );
+  }
+  const preRegistrationId = String(
+    params.pre_registration_id ?? params.preRegistrationId ?? ""
+  ).trim();
+  const candidateTrialsRaw = params.candidate_trials ?? params.candidateTrials;
+  const candidateTrials = candidateTrialsRaw === undefined ? undefined : Number(candidateTrialsRaw);
+  if (
+    candidateTrials !== undefined &&
+    (!Number.isInteger(candidateTrials) || candidateTrials < 1 || candidateTrials > 10_000)
+  ) {
+    throw new Error(
+      `candidate_trials must be an integer from 1 to 10000; got ${String(candidateTrialsRaw)}`
+    );
+  }
+  return {
+    parameterSelection: raw,
+    ...(preRegistrationId ? { preRegistrationId } : {}),
+    ...(candidateTrials !== undefined ? { candidateTrials } : {}),
+  };
+}
+
+/** Preserve the full frozen execution-cost contract instead of silently dropping fields. */
+function resolveBacktestCosts(params: Record<string, unknown>): BacktestCosts | undefined {
+  const raw = params.costs;
+  if (raw === undefined) return undefined;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("costs must be an object");
+  }
+  const costs = raw as Record<string, unknown>;
+  const optionalNumber = (camel: string, snake: string): number | undefined => {
+    const value = costs[camel] ?? costs[snake];
+    return value === undefined ? undefined : Number(value);
+  };
+  const optionalText = (camel: string, snake: string): string | undefined => {
+    const value = costs[camel] ?? costs[snake];
+    if (value === undefined) return undefined;
+    const text = String(value).trim();
+    return text || undefined;
+  };
+  const restricted = costs.restrictedShortSymbols ?? costs.restricted_short_symbols;
+  return {
+    commissionBps: Number(costs.commissionBps ?? costs.commission_bps ?? 5),
+    slippageBps: Number(costs.slippageBps ?? costs.slippage_bps ?? 5),
+    ...(optionalNumber("minCommission", "min_commission") !== undefined
+      ? { minCommission: optionalNumber("minCommission", "min_commission") }
+      : {}),
+    ...(costs.slippageModel !== undefined || costs.slippage_model !== undefined
+      ? {
+          slippageModel: String(
+            costs.slippageModel ?? costs.slippage_model
+          ) as BacktestCosts["slippageModel"],
+        }
+      : {}),
+    ...(optionalNumber("impactCoefficient", "impact_coefficient") !== undefined
+      ? { impactCoefficient: optionalNumber("impactCoefficient", "impact_coefficient") }
+      : {}),
+    ...(optionalNumber("maxVolumeParticipation", "max_volume_participation") !== undefined
+      ? {
+          maxVolumeParticipation: optionalNumber(
+            "maxVolumeParticipation",
+            "max_volume_participation"
+          ),
+        }
+      : {}),
+    ...(optionalNumber("borrowRateAnnualBps", "borrow_rate_annual_bps") !== undefined
+      ? { borrowRateAnnualBps: optionalNumber("borrowRateAnnualBps", "borrow_rate_annual_bps") }
+      : {}),
+    ...(Array.isArray(restricted) ? { restrictedShortSymbols: restricted.map(String) } : {}),
+    ...(optionalText("costModelVersion", "cost_model_version")
+      ? { costModelVersion: optionalText("costModelVersion", "cost_model_version") }
+      : {}),
+    ...(optionalText("costModelSource", "cost_model_source")
+      ? { costModelSource: optionalText("costModelSource", "cost_model_source") }
+      : {}),
+    ...(optionalText("costModelAsOf", "cost_model_as_of")
+      ? { costModelAsOf: optionalText("costModelAsOf", "cost_model_as_of") }
+      : {}),
+  };
+}
+
+function resolveBacktestInstruments(
+  params: Record<string, unknown>
+): Record<string, BacktestInstrumentSpec> | undefined {
+  const raw = params.instruments ?? params.instrument_specs ?? params.instrumentSpecs;
+  if (raw === undefined) return undefined;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("instruments must be an object keyed by symbol");
+  }
+  const result: Record<string, BacktestInstrumentSpec> = {};
+  for (const [symbol, value] of Object.entries(raw)) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error(`instruments.${symbol} must be an object`);
+    }
+    const item = value as Record<string, unknown>;
+    result[symbol] = {
+      assetClass: String(
+        item.asset_class ?? item.assetClass ?? "stock"
+      ) as BacktestInstrumentSpec["assetClass"],
+      ...(item.contract_kind !== undefined || item.contractKind !== undefined
+        ? {
+            contractKind: String(
+              item.contract_kind ?? item.contractKind
+            ) as BacktestInstrumentSpec["contractKind"],
+          }
+        : {}),
+      ...(item.contract_multiplier !== undefined || item.contractMultiplier !== undefined
+        ? { contractMultiplier: Number(item.contract_multiplier ?? item.contractMultiplier) }
+        : {}),
+      ...(item.lot_size !== undefined || item.lotSize !== undefined
+        ? { lotSize: Number(item.lot_size ?? item.lotSize) }
+        : {}),
+      ...(item.initial_margin_rate !== undefined || item.initialMarginRate !== undefined
+        ? { initialMarginRate: Number(item.initial_margin_rate ?? item.initialMarginRate) }
+        : {}),
+      ...(item.maintenance_margin_rate !== undefined || item.maintenanceMarginRate !== undefined
+        ? {
+            maintenanceMarginRate: Number(
+              item.maintenance_margin_rate ?? item.maintenanceMarginRate
+            ),
+          }
+        : {}),
+      ...(item.target_leverage !== undefined || item.targetLeverage !== undefined
+        ? { targetLeverage: Number(item.target_leverage ?? item.targetLeverage) }
+        : {}),
+      ...(item.expiry_date !== undefined || item.expiryDate !== undefined
+        ? { expiryDate: String(item.expiry_date ?? item.expiryDate) }
+        : {}),
+      ...(item.settlement_mode !== undefined || item.settlementMode !== undefined
+        ? {
+            settlementMode: String(
+              item.settlement_mode ?? item.settlementMode
+            ) as BacktestInstrumentSpec["settlementMode"],
+          }
+        : {}),
+      ...(item.underlying_symbol !== undefined || item.underlyingSymbol !== undefined
+        ? { underlyingSymbol: String(item.underlying_symbol ?? item.underlyingSymbol) }
+        : {}),
+      ...(item.strike !== undefined ? { strike: Number(item.strike) } : {}),
+      ...(item.option_right !== undefined || item.optionRight !== undefined
+        ? {
+            optionRight: String(
+              item.option_right ?? item.optionRight
+            ) as BacktestInstrumentSpec["optionRight"],
+          }
+        : {}),
+      ...(item.exercise_style !== undefined || item.exerciseStyle !== undefined
+        ? {
+            exerciseStyle: String(
+              item.exercise_style ?? item.exerciseStyle
+            ) as BacktestInstrumentSpec["exerciseStyle"],
+          }
+        : {}),
+      ...(item.pricing_model !== undefined || item.pricingModel !== undefined
+        ? {
+            pricingModel: String(
+              item.pricing_model ?? item.pricingModel
+            ) as BacktestInstrumentSpec["pricingModel"],
+          }
+        : {}),
+      ...(item.future_roll !== undefined || item.futureRoll !== undefined
+        ? { futureRoll: resolveFutureRoll(item.future_roll ?? item.futureRoll, symbol) }
+        : {}),
+    };
+  }
+  return result;
+}
+
+function resolveFutureRoll(
+  raw: unknown,
+  symbol: string
+): NonNullable<BacktestInstrumentSpec["futureRoll"]> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(`instruments.${symbol}.future_roll must be an object`);
+  }
+  const item = raw as Record<string, unknown>;
+  return {
+    rollDate: String(item.roll_date ?? item.rollDate ?? ""),
+    successorSymbol: String(item.successor_symbol ?? item.successorSymbol ?? ""),
+  };
+}
+
+function resolveWalkForwardOptions(params: Record<string, unknown>): WalkForwardRunOptions {
+  const foldsRaw = params.folds ?? params.fold_count ?? params.foldCount;
+  const purgeDaysRaw = params.purge_days ?? params.purgeDays;
+  const embargoDaysRaw = params.embargo_days ?? params.embargoDays;
+  const selectionRaw = params.selection;
+  const selectionObject =
+    selectionRaw && typeof selectionRaw === "object" && !Array.isArray(selectionRaw)
+      ? (selectionRaw as Record<string, unknown>)
+      : undefined;
+  const candidatesRaw =
+    selectionObject?.candidates ??
+    params.selection_candidates ??
+    params.selectionCandidates ??
+    params.candidates;
+  const candidates = Array.isArray(candidatesRaw)
+    ? candidatesRaw.map((raw): WalkForwardParameterCandidate => {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+        const candidate = raw as Record<string, unknown>;
+        const topNRaw = candidate.top_n ?? candidate.topN;
+        const rebalanceRaw = candidate.rebalance;
+        const longShortRaw = candidate.long_short ?? candidate.longShort;
+        return {
+          ...(topNRaw !== undefined ? { topN: Number(topNRaw) } : {}),
+          ...(rebalanceRaw !== undefined
+            ? {
+                rebalance: String(rebalanceRaw) as "daily" | "weekly" | "monthly",
+              }
+            : {}),
+          ...(longShortRaw !== undefined
+            ? { longShort: longShortRaw === true || longShortRaw === "true" }
+            : {}),
+        };
+      })
+    : undefined;
+  const objectiveRaw = selectionObject?.objective ?? params.selection_objective ?? params.objective;
+  return {
+    ...(foldsRaw !== undefined ? { folds: Number(foldsRaw) } : {}),
+    ...(purgeDaysRaw !== undefined ? { purgeDays: Number(purgeDaysRaw) } : {}),
+    ...(embargoDaysRaw !== undefined ? { embargoDays: Number(embargoDaysRaw) } : {}),
+    ...(candidates
+      ? {
+          selection: {
+            objective: String(objectiveRaw ?? "sharpe") as "sharpe" | "calmar" | "annual_return",
+            candidates,
+          },
+        }
+      : {}),
+  };
 }
 
 /** Factor, rule, discovery and backtest handlers. */
@@ -165,6 +416,19 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
       startDate: pickDateParam(params, "start_date"),
       endDate: pickDateParam(params, "end_date"),
       ...(symbols && symbols.length > 0 ? { symbols } : {}),
+      ...((params.dataset_snapshot_id ??
+      params.datasetSnapshotId ??
+      params.snapshot_id ??
+      params.snapshotId)
+        ? {
+            datasetSnapshotId: String(
+              params.dataset_snapshot_id ??
+                params.datasetSnapshotId ??
+                params.snapshot_id ??
+                params.snapshotId
+            ),
+          }
+        : {}),
       ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
     });
     if (result.meta.rowCount === 0) {
@@ -261,6 +525,13 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
     const isOneShot = exprRaw.trim().length > 0 && !factorId;
 
     const { startDate, endDate } = resolveDateWindow(params);
+    const datasetSnapshotId = String(
+      params.dataset_snapshot_id ??
+        params.datasetSnapshotId ??
+        params.snapshot_id ??
+        params.snapshotId ??
+        ""
+    ).trim();
 
     if (!factorId && exprRaw.trim().length > 0) {
       /**
@@ -345,6 +616,7 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
           startDate,
           endDate,
           ...(computeSymbols && computeSymbols.length > 0 ? { symbols: computeSymbols } : {}),
+          ...(datasetSnapshotId ? { datasetSnapshotId } : {}),
           ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
         });
         if (computeResult.meta.rowCount === 0) {
@@ -408,6 +680,7 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
       ...(decayHorizons && decayHorizons.length > 0 ? { decayHorizons } : {}),
       ...(params.group_count !== undefined ? { groupCount: Number(params.group_count) } : {}),
       ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
+      ...(datasetSnapshotId ? { datasetSnapshotId } : {}),
     };
     try {
       return await factorService.autoEvaluate(evaluateInput);
@@ -426,6 +699,7 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
         startDate,
         endDate,
         ...(symbols && symbols.length > 0 ? { symbols } : {}),
+        ...(datasetSnapshotId ? { datasetSnapshotId } : {}),
         ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
       });
       if (computeResult.meta.rowCount === 0) {
@@ -776,6 +1050,13 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
     }
 
     const rawSignal = params.signals;
+    const datasetSnapshotId = String(
+      params.dataset_snapshot_id ??
+        params.datasetSnapshotId ??
+        params.snapshot_id ??
+        params.snapshotId ??
+        ""
+    ).trim();
     const signals =
       !compositionId && rawSignal && typeof rawSignal === "object" && !Array.isArray(rawSignal)
         ? (rawSignal as Record<string, unknown>)
@@ -790,21 +1071,22 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
         "backtest.run: symbols is required（可传 symbols[] 或单标 symbol/ticker；勿只传指数代码当唯一标的）"
       );
     }
+    if (!datasetSnapshotId) {
+      throw new Error(
+        "backtest.run: dataset_snapshot_id is required（先调用 market.snapshot.get 冻结覆盖同一 symbols 和日期区间的数据）"
+      );
+    }
 
-    const costsRaw = params.costs;
-    const costs =
-      costsRaw && typeof costsRaw === "object" && !Array.isArray(costsRaw)
-        ? {
-            commissionBps: Number((costsRaw as Record<string, unknown>).commissionBps ?? 5),
-            slippageBps: Number((costsRaw as Record<string, unknown>).slippageBps ?? 5),
-          }
-        : undefined;
+    const instruments = resolveBacktestInstruments(params);
+    const costs = resolveBacktestCosts(params);
 
     return backtestJobService.submitAndRun({
       strategyVersionId,
       symbols,
       startDate,
       endDate,
+      datasetSnapshotId,
+      ...(instruments ? { instruments } : {}),
       ...(compositionId ? { compositionId } : {}),
       ...(signals
         ? {
@@ -825,11 +1107,23 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
       ...(params.top_n !== undefined ? { topN: Number(params.top_n) } : {}),
       ...(params.benchmark ? { benchmark: String(params.benchmark) } : {}),
       ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
+      experiment: resolveBacktestExperiment(params),
       // lineage（migration 0080）：tool 路径标 agent
       createdBy: "agent",
       ...(ctx.workflowId ? { workflowRunId: ctx.workflowId } : {}),
       ...(ctx.agentInstanceId ? { agentInstanceId: ctx.agentInstanceId } : {}),
     });
+  },
+
+  "backtest.walk_forward": async (_ctx, paramsIn) => {
+    const params = unwrapToolArgs(paramsIn);
+    const backtestRunId = String(
+      params.backtest_run_id ?? params.backtestRunId ?? params.job_id ?? params.jobId ?? ""
+    ).trim();
+    if (!backtestRunId) {
+      throw new Error("backtest.walk_forward: backtest_run_id is required");
+    }
+    return walkForwardEvaluationService.run(backtestRunId, resolveWalkForwardOptions(params));
   },
 
   "factor.promote_backtest": async (ctx, params) => {
@@ -853,20 +1147,26 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
           (value): value is string => typeof value === "string" && value.trim().length > 0
         )
       : undefined;
-    const costsRaw = params.costs;
-    const costs =
-      costsRaw && typeof costsRaw === "object" && !Array.isArray(costsRaw)
-        ? {
-            commissionBps: Number((costsRaw as Record<string, unknown>).commissionBps ?? 5),
-            slippageBps: Number((costsRaw as Record<string, unknown>).slippageBps ?? 5),
-          }
-        : undefined;
+    const costs = resolveBacktestCosts(params);
     const projectId = String(params.project_id ?? ctx.projectId ?? "").trim();
+    const datasetSnapshotId = String(
+      params.dataset_snapshot_id ??
+        params.datasetSnapshotId ??
+        params.snapshot_id ??
+        params.snapshotId ??
+        ""
+    ).trim();
+    if (!datasetSnapshotId) {
+      throw new Error(
+        "factor.promote_backtest: dataset_snapshot_id is required（先调用 market.snapshot.get 冻结回测数据）"
+      );
+    }
     return factorBacktestPromotionService.promoteAndBacktest({
       ...(projectId ? { projectId } : {}),
       factorIds,
       startDate,
       endDate,
+      datasetSnapshotId,
       ...(symbols && symbols.length > 0 ? { symbols } : {}),
       ...(params.universe ? { universe: String(params.universe) } : {}),
       ...(params.strategy_name ? { strategyName: String(params.strategy_name) } : {}),
@@ -881,6 +1181,7 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
       ...(params.top_n !== undefined ? { topN: Number(params.top_n) } : {}),
       ...(params.benchmark ? { benchmark: String(params.benchmark) } : {}),
       ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
+      experiment: resolveBacktestExperiment(params),
       createdBy: "agent",
       ...(ctx.workflowId ? { workflowRunId: ctx.workflowId } : {}),
       ...(ctx.agentInstanceId ? { agentInstanceId: ctx.agentInstanceId } : {}),

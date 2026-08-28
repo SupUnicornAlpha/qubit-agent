@@ -424,6 +424,7 @@ bun run scripts/agent-readiness-runner.ts \
 - [平台架构说明](docs/ARCHITECTURE.md)
 - [Loop 驱动说明](docs/LOOP_DRIVERS.md)
 - [Agent Benchmark v2](docs/AGENT_BENCHMARK_V2.md)
+- [Quant Research Integrity 项目规格](docs/QUANT_RESEARCH_INTEGRITY_PLAN.md)
 
 ---
 

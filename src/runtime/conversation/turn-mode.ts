@@ -12,9 +12,9 @@ export function normalizeTurnMode(raw: unknown): ConversationTurnMode | undefine
 /**
  * 兼容旧字段 → turnMode。
  * - 显式 turnMode 优先
- * - reuseSessionWorkflow=false → new_goal
+ * - reuseSessionWorkflow=false → new_goal（同一 workflow 内重置目标/上下文，不再新建 workflow）
  * - preserveGoal=true → continue_goal
- * - 默认：有 workflowRunId 时 continue_goal，否则看 reuse（缺省 true → continue_goal）
+ * - 默认 continue_goal
  */
 export function resolveTurnMode(input: {
   turnMode?: unknown;

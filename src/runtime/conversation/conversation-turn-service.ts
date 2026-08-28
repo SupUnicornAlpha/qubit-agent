@@ -14,7 +14,6 @@ import { dispatchTaskToRole } from "../agent-pool";
 import { logResearchTeamInteraction } from "../research-team/interaction-log";
 import { clearWorkflowCheckpointForNewTurn } from "../workflow/checkpoint-turn";
 import { clearWorkflowCancellation } from "../workflow/workflow-cancellation";
-import { createAndDispatchWorkflow } from "../workflow/workflow-service";
 import {
   isResearchTeamPlaceholderTitle,
   summarizeResearchQuestionTitle,
@@ -23,16 +22,23 @@ import { buildWorkspaceBootstrapPack, openWorkspaceById, writeRunRecord } from "
 import { publishTurnStarted } from "./client-event-bus";
 import {
   completeWorkflowConversationAssistant,
-  createConversationTurnMessages,
   createWorkflowConversationTurnMessages,
-  linkConversationMessageToWorkflow,
 } from "./conversation-projection";
+import { ensureChatSessionWorkflow } from "./session-workflow";
 import { type ChatImageAttachment, toCoreImageAttachments } from "./image-attachments";
 import { registerTurnRunBinding } from "./turn-binding";
 import { type ConversationTurnMode, resolveTurnMode } from "./turn-mode";
 import {
+  buildContextIsolationState,
+  buildGoalTopicResetNotice,
+  buildKnowledgeIntentGuard,
+  detectGoalTopicShift,
+  parseContextIsolation,
+} from "./goal-scope";
+import {
   type RecentToolLine,
   buildSessionChronicle,
+  emptyRollingChronicle,
   inferToolStatus,
   mergeWorkspaceBackground,
   parseRollingChronicle,
@@ -150,7 +156,14 @@ export async function buildWorkflowConversationContext(
     maxEntries: 8,
   });
   const recentTools = await loadRecentToolLines(workflowRunId);
-  const context = buildSessionChronicle({
+  const isolation = parseContextIsolation(loopOptions.contextIsolation);
+  const sections: string[] = [];
+  if (isolation) {
+    sections.push(buildGoalTopicResetNotice(isolation));
+  }
+  const knowledgeGuard = buildKnowledgeIntentGuard(currentUserText);
+  if (knowledgeGuard) sections.push(knowledgeGuard);
+  const chronicle = buildSessionChronicle({
     messages,
     currentUserMessageId,
     currentUserText,
@@ -158,7 +171,23 @@ export async function buildWorkflowConversationContext(
     maxMessages: 8,
     priorCompactedSummary: rolled.priorCompactedSummary,
   });
-  return { context, rollingChronicle: rolled.state };
+  sections.push(chronicle);
+  return { context: sections.filter(Boolean).join("\n\n"), rollingChronicle: rolled.state };
+}
+
+function buildFreshLoopOptionsForTopicShift(input: {
+  priorGoal: string;
+  reason: string;
+  merge: Record<string, unknown>;
+}): Record<string, unknown> {
+  return {
+    ...input.merge,
+    sessionChronicle: emptyRollingChronicle(),
+    contextIsolation: buildContextIsolationState({
+      reason: input.reason,
+      priorGoal: input.priorGoal,
+    }),
+  };
 }
 
 /** Resume handoff: last user chat + compressed chronicle (not workflow.goal alone). */
@@ -297,78 +326,27 @@ export async function createConversationTurn(
   });
   activateFsWorkspaceEnv(input.fsWorkspaceId);
 
-  if (!input.workflowRunId) {
-    const turn = await createConversationTurnMessages({
-      sessionId: input.sessionId,
-      content: message,
-      attachments: input.attachments,
-    });
-    const turnId = turn.userMessage.id;
-    try {
-      const latestChatWorkflow = await db
-        .select({ loopOptionsJson: workflowRun.loopOptionsJson })
-        .from(workflowRun)
-        .where(
-          and(
-            eq(workflowRun.projectId, input.projectId),
-            eq(workflowRun.sessionId, input.sessionId),
-            eq(workflowRun.source, "chat")
-          )
-        )
-        .orderBy(desc(workflowRun.startedAt))
-        .limit(1);
-      const reuseSessionWorkflow = turnMode === "continue_goal";
-      const created = await createAndDispatchWorkflow({
-        projectId: input.projectId,
-        goal: message,
-        mode: input.workflowMode ?? "research",
-        sessionId: input.sessionId,
-        source: "chat",
-        messageId: turn.userMessage.id,
-        reuseSessionWorkflow,
-        loopKind: input.loopKind,
-        loopOptionsJson: mergeLoopOptions(
-          (latestChatWorkflow[0]?.loopOptionsJson as Record<string, unknown> | null) ?? {},
-          input
-        ),
-        ...(input.attachments?.length
-          ? { params: { attachments: toCoreImageAttachments(input.attachments) } }
-          : {}),
-      });
-      await linkConversationMessageToWorkflow(turn.assistantMessage.id, created.data.id);
-      // 每一轮用户发言都清 ReAct checkpoint，避免旧 final/observations 串台；
-      // turnMode 只决定是否复用 primary Run / 是否保留 Goal plan。
-      await clearWorkflowCheckpointForNewTurn(created.data.id);
-      return finalizeTurnResult({
-        sessionId: input.sessionId,
-        turnId,
-        workflowRunId: created.data.id,
-        turnMode,
-        ...(created.runId ? { agentRunId: created.runId } : {}),
-        userMessage: turn.userMessage,
-        assistantMessage: turn.assistantMessage,
-      });
-    } catch (error) {
-      await db
-        .update(chatMessage)
-        .set({
-          content: `执行启动失败：${error instanceof Error ? error.message : String(error)}`,
-          status: "failed",
-          errorMessage: error instanceof Error ? error.message : String(error),
-          updatedAt: new Date().toISOString(),
-        })
-        .where(eq(chatMessage.id, turn.assistantMessage.id));
-      throw error;
-    }
+  const { workflowRunId: canonicalWorkflowId } = await ensureChatSessionWorkflow({
+    projectId: input.projectId,
+    sessionId: input.sessionId,
+    goal: message.slice(0, 120),
+    mode: input.workflowMode ?? "research",
+    loopOptionsJson: mergeLoopOptions({}, input),
+  });
+
+  if (input.workflowRunId && input.workflowRunId !== canonicalWorkflowId) {
+    console.warn(
+      `[conversation-turn] Ignoring workflowRunId=${input.workflowRunId}; session canonical=${canonicalWorkflowId}`
+    );
   }
 
   const workflows = await db
     .select()
     .from(workflowRun)
-    .where(eq(workflowRun.id, input.workflowRunId))
+    .where(eq(workflowRun.id, canonicalWorkflowId))
     .limit(1);
   const workflow = workflows[0];
-  if (!workflow) throw new Error(`workflow not found: ${input.workflowRunId}`);
+  if (!workflow) throw new Error(`workflow not found: ${canonicalWorkflowId}`);
   if (workflow.projectId !== input.projectId)
     throw new Error("workflow does not belong to project");
   if (workflow.sessionId && workflow.sessionId !== input.sessionId) {
@@ -387,13 +365,22 @@ export async function createConversationTurn(
     attachments: input.attachments,
   });
   const turnId = turn.userMessage.id;
-  // 复用同一个 workflow 开启新一轮对话时，解除上一轮 Stop 留下的进程内取消信号。
-  // 这与 workflow-service 的新建/复用路径保持一致，避免新 turn 一启动就被旧 Stop 取消。
   clearWorkflowCancellation(workflow.id);
   let loopOptionsJson = mergeLoopOptions(
     (workflow.loopOptionsJson as Record<string, unknown> | null) ?? {},
     input
   );
+  const explicitNewGoal = turnMode === "new_goal";
+  const inlineShift = detectGoalTopicShift(workflow.goal, message);
+  if (explicitNewGoal || inlineShift.shifted) {
+    loopOptionsJson = buildFreshLoopOptionsForTopicShift({
+      priorGoal: workflow.goal,
+      reason: inlineShift.shifted
+        ? (inlineShift.reason ?? "goal_topic_shift")
+        : "turn_mode_new_goal",
+      merge: loopOptionsJson,
+    });
+  }
   const built = await buildWorkflowConversationContext(
     workflow.id,
     turn.userMessage.id,
@@ -469,9 +456,11 @@ export async function createConversationTurn(
   if (fsWorkspaceId) {
     try {
       // Keep workspace pack short — long AGENTS.md must not drown CURRENT_USER_TASK.
+      const isolated = Boolean(parseContextIsolation(loopOptionsJson.contextIsolation));
       const pack = await buildWorkspaceBootstrapPack(fsWorkspaceId, {
         maxInstructionChars: 1600,
-        maxMemoryChars: 800,
+        maxMemoryChars: isolated ? 240 : 800,
+        omitExecutionMemory: isolated,
       });
       context = mergeWorkspaceBackground(context, pack.contextBlock, 2200);
       const { fs, manifest } = await openWorkspaceById(fsWorkspaceId);

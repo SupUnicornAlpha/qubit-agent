@@ -1,0 +1,309 @@
+/**
+ * 专业 IDE 主题（VSCode Dark+/Light+、JetBrains Darcula）全站一致性补丁。
+ * 补齐 chat / team / config / markdown / 研究产出 Tab 等 token，消除黑紫默认色与硬编码回退混用。
+ */
+
+/* ─── VSCode Dark+ 完整语义 token ─── */
+html[data-qb-style="vscode-dark"] {
+  --qb-bg-surface: #252526;
+  --qb-main-card-bg: #252526;
+  --qb-main-card-border: #2d2d2d;
+  --qb-main-panel-bg: #1e1e1e;
+  --qb-stream-box-bg: #252526;
+  --qb-stream-box-fg: #cccccc;
+  --qb-stream-box-border: #2d2d2d;
+  --qb-mcp-details-bg: #252526;
+  --qb-mcp-details-border: #2d2d2d;
+  --qb-mcp-details-nested-bg: #1e1e1e;
+  --qb-mcp-market-card-bg: #252526;
+  --qb-mcp-market-card-border: #2d2d2d;
+  --qb-mcp-market-meta: #858585;
+  --qb-mcp-market-desc: #cccccc;
+  --qb-mcp-market-chip-bg: #2d2d2d;
+  --qb-mcp-market-chip-fg: #cccccc;
+  --qb-mcp-market-chip-border: #3c3c3c;
+  --qb-mcp-market-cmd-bg: #1e1e1e;
+  --qb-mcp-market-cmd-fg: #858585;
+  --qb-mcp-market-cmd-border: #2d2d2d;
+  --qb-mcp-json-bg: #1e1e1e;
+  --qb-mcp-json-fg: #cccccc;
+  --qb-mcp-json-border: #2d2d2d;
+  --qb-modal-bg: #252526;
+  --qb-modal-border: #3c3c3c;
+  --qb-modal-sep: #2d2d2d;
+
+  --qb-chat-page-bg: #1e1e1e;
+  --qb-chat-bubble-user-bg: #264f78;
+  --qb-chat-bubble-user-fg: #ffffff;
+  --qb-chat-bubble-agent-bg: #252526;
+  --qb-chat-bubble-agent-fg: #cccccc;
+  --qb-chat-bubble-border: #2d2d2d;
+  --qb-chat-session-item-bg: #252526;
+  --qb-chat-session-item-fg: #cccccc;
+  --qb-chat-session-active-border: #007acc;
+  --qb-chat-session-active-bg: rgba(0, 122, 204, 0.18);
+  --qb-chat-meta-fg: #858585;
+  --qb-chat-resizer-bg: #2d2d2d;
+  --qb-chat-chart-banner-bg: rgba(0, 122, 204, 0.14);
+  --qb-chat-chart-banner-fg: #cccccc;
+  --qb-chat-chart-banner-border: #2d2d2d;
+  --qb-board-col-bg: #1e1e1e;
+  --qb-board-card-bg: #252526;
+
+  --qb-md-prose-fg: #cccccc;
+  --qb-md-prose-muted: #858585;
+  --qb-md-code-block-bg: #1e1e1e;
+  --qb-md-code-block-border: #2d2d2d;
+  --qb-md-code-inline-bg: #2d2d2d;
+  --qb-md-th-bg: #2d2d2d;
+  --qb-md-table-border: #3c3c3c;
+  --qb-md-blockquote-border: #3c3c3c;
+  --qb-md-blockquote-fg: #858585;
+  --qb-md-hr: #2d2d2d;
+  --qb-md-em-fg: #cccccc;
+  --qb-md-link: #3794ff;
+  --qb-md-pre-fg: #cccccc;
+
+  --qb-news-wrap-bg: #1e1e1e;
+  --qb-news-col-title-bg: #252526;
+  --qb-news-col-title-fg: #cccccc;
+  --qb-news-item-bg: #252526;
+  --qb-news-expand-bg: #1e1e1e;
+
+  --qb-team-activity-bg: #333333;
+  --qb-team-live-feed-bg: #1e1e1e;
+  --qb-team-live-feed-border: #2d2d2d;
+  --qb-team-live-feed-fg: #cccccc;
+  --qb-team-live-feed-row-border: #2d2d2d;
+  --qb-team-run-footer-bg: #1e1e1e;
+  --qb-team-run-footer-summary-bg: #252526;
+  --qb-team-debate-bg: rgba(0, 122, 204, 0.1);
+  --qb-team-debate-border: rgba(0, 122, 204, 0.35);
+  --qb-team-debate-fg: #cccccc;
+  --qb-team-debate-accent: #007acc;
+  --qb-team-member-tag-bg: rgba(0, 122, 204, 0.18);
+  --qb-team-member-tag-fg: #cccccc;
+
+  --qb-warn: #cca700;
+  --qb-warning: #cca700;
+  --qb-success: #89d185;
+  --qb-error: #f48771;
+  --qb-info: #007acc;
+  --qb-accent-tab: #007acc;
+}
+
+/* ─── VSCode Light+ ─── */
+html[data-qb-style="vscode-light"] {
+  --qb-bg-surface: #f3f3f3;
+  --qb-main-card-bg: #ffffff;
+  --qb-main-card-border: #e5e5e5;
+  --qb-main-panel-bg: #ffffff;
+  --qb-stream-box-bg: #f8f9fa;
+  --qb-stream-box-fg: #333333;
+  --qb-stream-box-border: #e5e5e5;
+  --qb-mcp-details-bg: #f8f9fa;
+  --qb-mcp-details-border: #e5e5e5;
+  --qb-mcp-details-nested-bg: #ffffff;
+  --qb-mcp-market-card-bg: #ffffff;
+  --qb-mcp-market-card-border: #e5e5e5;
+  --qb-mcp-market-meta: #6e6e6e;
+  --qb-mcp-market-desc: #333333;
+  --qb-mcp-market-chip-bg: #f3f3f3;
+  --qb-mcp-market-chip-fg: #333333;
+  --qb-mcp-market-chip-border: #d0d0d0;
+  --qb-mcp-market-cmd-bg: #ffffff;
+  --qb-mcp-market-cmd-fg: #6e6e6e;
+  --qb-mcp-market-cmd-border: #e5e5e5;
+  --qb-mcp-json-bg: #ffffff;
+  --qb-mcp-json-fg: #333333;
+  --qb-mcp-json-border: #e5e5e5;
+  --qb-modal-bg: #ffffff;
+  --qb-modal-border: #d0d0d0;
+  --qb-modal-sep: #e5e5e5;
+
+  --qb-chat-page-bg: #ffffff;
+  --qb-chat-bubble-user-bg: #005fb8;
+  --qb-chat-bubble-user-fg: #ffffff;
+  --qb-chat-bubble-agent-bg: #f8f9fa;
+  --qb-chat-bubble-agent-fg: #333333;
+  --qb-chat-bubble-border: #e5e5e5;
+  --qb-chat-session-item-bg: #ffffff;
+  --qb-chat-session-item-fg: #333333;
+  --qb-chat-session-active-border: #005fb8;
+  --qb-chat-session-active-bg: rgba(0, 95, 184, 0.08);
+  --qb-chat-meta-fg: #6e6e6e;
+  --qb-chat-resizer-bg: #e5e5e5;
+
+  --qb-md-code-block-bg: #f8f9fa;
+  --qb-md-code-block-border: #e5e5e5;
+  --qb-md-code-inline-bg: #f3f3f3;
+  --qb-md-th-bg: #f3f3f3;
+  --qb-md-table-border: #d0d0d0;
+  --qb-md-link: #005fb8;
+
+  --qb-team-activity-bg: #f3f3f3;
+  --qb-team-live-feed-bg: #ffffff;
+  --qb-team-live-feed-border: #e5e5e5;
+  --qb-team-live-feed-fg: #333333;
+  --qb-team-live-feed-row-border: #e5e5e5;
+  --qb-team-run-footer-bg: #ffffff;
+  --qb-team-run-footer-summary-bg: #f3f3f3;
+  --qb-team-debate-bg: rgba(0, 95, 184, 0.06);
+  --qb-team-debate-border: rgba(0, 95, 184, 0.25);
+  --qb-team-debate-fg: #333333;
+  --qb-team-debate-accent: #005fb8;
+  --qb-accent-tab: #005fb8;
+}
+
+/* ─── JetBrains Darcula ─── */
+html[data-qb-style="jetbrains-darcula"] {
+  --qb-bg-surface: #313335;
+  --qb-main-card-bg: #313335;
+  --qb-main-card-border: #323232;
+  --qb-main-panel-bg: #2b2b2b;
+  --qb-stream-box-bg: #313335;
+  --qb-stream-box-fg: #a9b7c6;
+  --qb-stream-box-border: #323232;
+  --qb-mcp-details-bg: #313335;
+  --qb-mcp-details-border: #323232;
+  --qb-mcp-details-nested-bg: #2b2b2b;
+  --qb-mcp-market-card-bg: #313335;
+  --qb-mcp-market-card-border: #323232;
+  --qb-mcp-market-meta: #808080;
+  --qb-mcp-market-desc: #a9b7c6;
+  --qb-mcp-json-bg: #2b2b2b;
+  --qb-mcp-json-fg: #a9b7c6;
+  --qb-mcp-json-border: #323232;
+  --qb-modal-bg: #313335;
+  --qb-modal-border: #4e5254;
+  --qb-modal-sep: #323232;
+
+  --qb-chat-page-bg: #2b2b2b;
+  --qb-chat-bubble-user-bg: #214283;
+  --qb-chat-bubble-user-fg: #ffffff;
+  --qb-chat-bubble-agent-bg: #313335;
+  --qb-chat-bubble-agent-fg: #a9b7c6;
+  --qb-chat-bubble-border: #323232;
+  --qb-chat-session-active-border: #4a88c7;
+  --qb-chat-session-active-bg: rgba(74, 136, 199, 0.18);
+  --qb-chat-meta-fg: #808080;
+
+  --qb-md-code-block-bg: #2b2b2b;
+  --qb-md-code-block-border: #323232;
+  --qb-md-code-inline-bg: #3c3f41;
+  --qb-md-th-bg: #3c3f41;
+  --qb-md-link: #589df6;
+
+  --qb-team-activity-bg: #3c3f41;
+  --qb-team-live-feed-bg: #2b2b2b;
+  --qb-team-live-feed-border: #323232;
+  --qb-team-live-feed-fg: #a9b7c6;
+  --qb-team-live-feed-row-border: #323232;
+  --qb-team-run-footer-bg: #2b2b2b;
+  --qb-team-run-footer-summary-bg: #3c3f41;
+  --qb-team-debate-bg: rgba(74, 136, 199, 0.12);
+  --qb-team-debate-border: rgba(74, 136, 199, 0.35);
+  --qb-team-debate-fg: #a9b7c6;
+  --qb-team-debate-accent: #4a88c7;
+  --qb-accent-tab: #4a88c7;
+}
+
+/* ─── 三套专业 IDE 主题：结构扁平化，禁止漫画/装饰阴影 ─── */
+html[data-qb-style="vscode-dark"] [data-qb-team-shell],
+html[data-qb-style="vscode-light"] [data-qb-team-shell],
+html[data-qb-style="jetbrains-darcula"] [data-qb-team-shell] {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+html[data-qb-style="vscode-dark"] .qb-pro-agent-panel,
+html[data-qb-style="vscode-light"] .qb-pro-agent-panel,
+html[data-qb-style="jetbrains-darcula"] .qb-pro-agent-panel {
+  background: var(--qb-team-right-bg, var(--qb-bg-surface)) !important;
+  border-color: var(--qb-team-shell-border, var(--qb-separator)) !important;
+}
+
+html[data-qb-style="vscode-dark"] [data-qb-team-research-panel],
+html[data-qb-style="vscode-light"] [data-qb-team-research-panel],
+html[data-qb-style="jetbrains-darcula"] [data-qb-team-research-panel] {
+  background: var(--qb-team-panel-bg) !important;
+  border-color: var(--qb-team-panel-border) !important;
+  border-radius: 4px !important;
+  box-shadow: none !important;
+}
+
+html[data-qb-style="vscode-dark"] .qb-team-main-stage,
+html[data-qb-style="vscode-light"] .qb-team-main-stage,
+html[data-qb-style="jetbrains-darcula"] .qb-team-main-stage {
+  background: var(--qb-team-stage-bg) !important;
+}
+
+html[data-qb-style="vscode-dark"] .qb-team-editor-titlebar,
+html[data-qb-style="vscode-light"] .qb-team-editor-titlebar,
+html[data-qb-style="jetbrains-darcula"] .qb-team-editor-titlebar {
+  background: var(--qb-team-titlebar-bg) !important;
+  border-bottom-color: var(--qb-team-shell-border) !important;
+}
+
+/* 研究画布 Tab：统一 IDE 蓝，不用彩虹/漫画黄 */
+html[data-qb-style="vscode-dark"] .qb-team-graph-view-toggle,
+html[data-qb-style="vscode-light"] .qb-team-graph-view-toggle,
+html[data-qb-style="jetbrains-darcula"] .qb-team-graph-view-toggle {
+  border: 1px solid var(--qb-team-panel-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+html[data-qb-style="vscode-dark"] .qb-team-graph-view-toggle button.is-active,
+html[data-qb-style="vscode-light"] .qb-team-graph-view-toggle button.is-active,
+html[data-qb-style="jetbrains-darcula"] .qb-team-graph-view-toggle button.is-active {
+  background: var(--qb-tint) !important;
+  color: var(--qb-blue) !important;
+  border: none;
+  box-shadow: inset 0 -2px 0 0 var(--qb-blue);
+}
+
+html[data-qb-style="vscode-dark"] .qb-team-graph-view-toggle button,
+html[data-qb-style="vscode-light"] .qb-team-graph-view-toggle button,
+html[data-qb-style="jetbrains-darcula"] .qb-team-graph-view-toggle button {
+  color: var(--qb-team-meta);
+  background: transparent;
+}
+
+html[data-qb-style="vscode-dark"] .qb-research-output-tab--active,
+html[data-qb-style="vscode-light"] .qb-research-output-tab--active,
+html[data-qb-style="jetbrains-darcula"] .qb-research-output-tab--active {
+  border-color: var(--qb-accent-tab) !important;
+  color: var(--qb-accent-tab) !important;
+  background: var(--qb-tint) !important;
+}
+
+html[data-qb-style="vscode-dark"] .qb-research-output-tab--active .qb-research-output-badge,
+html[data-qb-style="vscode-light"] .qb-research-output-tab--active .qb-research-output-badge,
+html[data-qb-style="jetbrains-darcula"] .qb-research-output-tab--active .qb-research-output-badge {
+  background: var(--qb-tint-strong) !important;
+  color: var(--qb-accent-tab) !important;
+}
+
+/* 对话执行块：去掉海军蓝混色 */
+html[data-qb-style="vscode-dark"] [data-qb-chat-panel] .qb-chat-execution,
+html[data-qb-style="vscode-dark"] [data-qb-orchestrator-chat] .qb-chat-execution,
+html[data-qb-style="vscode-light"] [data-qb-chat-panel] .qb-chat-execution,
+html[data-qb-style="vscode-light"] [data-qb-orchestrator-chat] .qb-chat-execution,
+html[data-qb-style="jetbrains-darcula"] [data-qb-chat-panel] .qb-chat-execution,
+html[data-qb-style="jetbrains-darcula"] [data-qb-orchestrator-chat] .qb-chat-execution {
+  background: var(--qb-team-panel-bg, var(--qb-bg-surface)) !important;
+  border-color: var(--qb-team-panel-border, var(--qb-separator)) !important;
+}
+
+/* 研究产出 Tab：全风格统一语义色（非彩虹/漫画黄） */
+.qb-research-output-tab--active {
+  border-color: var(--qb-accent-tab, var(--qb-blue, #007acc)) !important;
+  color: var(--qb-accent-tab, var(--qb-blue, #007acc)) !important;
+  background: var(--qb-tint, rgba(0, 122, 204, 0.12)) !important;
+}
+
+.qb-research-output-tab--active .qb-research-output-badge {
+  background: var(--qb-tint-strong, rgba(0, 122, 204, 0.2)) !important;
+  color: var(--qb-accent-tab, var(--qb-blue, #007acc)) !important;
+}

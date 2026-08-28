@@ -28,6 +28,8 @@
     "init:agent-packs": "bun run src/scripts/init-quant-agent-pack-prompts.ts",
     "benchmark": "bun run scripts/run-qubit-benchmark.ts",
     "benchmark:smoke": "bun run scripts/run-tool-synthetic-smoke.ts",
+    "eval:experiment": "bun run scripts/run-experiment.ts",
+    "eval:import-benchmark-cases": "bun run scripts/import-benchmark-cases.ts",
     "mcp-bridge": "bun run src/runtime/loop/mcp-bridge-server.ts",
     "lint": "biome lint src",
     "format": "biome format --write src",

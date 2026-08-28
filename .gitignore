@@ -42,6 +42,8 @@ docs/*
 !docs/screenshots/**
 !docs/qubit-prime/
 !docs/qubit-prime/**
+# Quant Research Integrity 是持续执行的工程规格，不属于本地设计稿。
+!docs/QUANT_RESEARCH_INTEGRITY_PLAN.md
 
 # Private interview / job-search material (local only)
 interview/

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildMarketSnapshotRecord,
+  canonicalCalendarSessions,
   clearMarketSnapshotCatalogForTests,
   getMarketSnapshotById,
   getOrCreateMarketSnapshot,
@@ -99,6 +100,172 @@ describe("market snapshot service (D2)", () => {
     const a = buildMarketSnapshotRecord({ ...base, asOf: "2026-08-01T00:00:00.000Z" });
     const b = buildMarketSnapshotRecord({ ...base, asOf: "2026-08-02T00:00:00.000Z" });
     expect(a.snapshot.snapshotId).not.toBe(b.snapshot.snapshotId);
+  });
+
+  test("calendar provenance is frozen and contributes to the snapshot identity", () => {
+    const base = {
+      asOf: "2026-08-04T00:00:00.000Z",
+      purpose: "backtest" as const,
+      instruments: [{ symbol: "AAPL", venue: "US", assetClass: "equity" as const }],
+      window: {},
+      sources: [
+        {
+          provider: "fixture",
+          feed: "public_aggregate" as const,
+          upstreamFamily: "fixture",
+          feedClass: "L0_research_fallback" as const,
+          licenseUse: "research_only" as const,
+        },
+      ],
+      barsByInstrument: {
+        "US:AAPL": [
+          {
+            open: 1,
+            high: 1,
+            low: 1,
+            close: 1,
+            volume: 1,
+            turnover: 1,
+            timestamp: "2026-08-01T00:00:00.000Z",
+          },
+        ],
+      },
+      timeframe: "1d",
+      limit: 30,
+      timezone: "America/New_York",
+    };
+    const oldCalendar = buildMarketSnapshotRecord({
+      ...base,
+      calendarVersion: "NYSE-2026.1",
+      calendarSessionsByVenue: { US: { "2026-08-01": "open" } },
+    });
+    const newCalendar = buildMarketSnapshotRecord({
+      ...base,
+      calendarVersion: "NYSE-2026.2",
+      calendarSessionsByVenue: { US: { "2026-08-01": "open" } },
+    });
+    const closedSession = buildMarketSnapshotRecord({
+      ...base,
+      calendarVersion: "NYSE-2026.1",
+      calendarSessionsByVenue: { US: { "2026-08-01": "closed" } },
+    });
+
+    expect(oldCalendar.snapshot.calendarVersion).toBe("NYSE-2026.1");
+    expect(oldCalendar.snapshot.timezone).toBe("America/New_York");
+    expect(oldCalendar.snapshot.snapshotId).not.toBe(newCalendar.snapshot.snapshotId);
+    expect(oldCalendar.snapshot.snapshotId).not.toBe(closedSession.snapshot.snapshotId);
+  });
+
+  test("historical universe and corporate-action ledgers are frozen into snapshot identity", () => {
+    const base = {
+      asOf: "2026-08-04T00:00:00.000Z",
+      purpose: "backtest" as const,
+      instruments: [{ symbol: "AAPL", venue: "US", assetClass: "equity" as const }],
+      window: { start: "2026-08-01T00:00:00.000Z", end: "2026-08-04T00:00:00.000Z" },
+      sources: [
+        {
+          provider: "fixture",
+          feed: "licensed_history",
+          upstreamFamily: "fixture",
+          feedClass: "L1_strategy_validation" as const,
+          licenseUse: "research_only" as const,
+        },
+      ],
+      barsByInstrument: {
+        "US:AAPL": [
+          {
+            open: 1,
+            high: 1,
+            low: 1,
+            close: 1,
+            volume: 1,
+            turnover: 1,
+            timestamp: "2026-08-01T00:00:00.000Z",
+          },
+        ],
+      },
+      timeframe: "1d",
+      limit: 30,
+      adjustMethod: "none",
+    };
+    const first = buildMarketSnapshotRecord({
+      ...base,
+      universeHistory: {
+        universeId: "sp500",
+        version: "2026.01",
+        source: "fixture_universe",
+        asOf: "2026-08-04T00:00:00.000Z",
+        membershipIntervals: [{ symbol: "AAPL", startDate: "2020-01-01" }],
+      },
+      corporateActionLedger: {
+        version: "2026.01",
+        source: "fixture_actions",
+        asOf: "2026-08-04T00:00:00.000Z",
+        adjustmentMethod: "none",
+        actionsBySymbol: { AAPL: [] },
+      },
+    });
+    const changedHistory = buildMarketSnapshotRecord({
+      ...base,
+      universeHistory: {
+        universeId: "sp500",
+        version: "2026.02",
+        source: "fixture_universe",
+        asOf: "2026-08-04T00:00:00.000Z",
+        membershipIntervals: [{ symbol: "AAPL", startDate: "2020-01-01" }],
+      },
+      corporateActionLedger: {
+        version: "2026.01",
+        source: "fixture_actions",
+        asOf: "2026-08-04T00:00:00.000Z",
+        adjustmentMethod: "none",
+        actionsBySymbol: { AAPL: [] },
+      },
+    });
+    const changedFundamentals = buildMarketSnapshotRecord({
+      ...base,
+      universeHistory: first.snapshot.universeHistory,
+      corporateActionLedger: first.snapshot.corporateActionLedger,
+      fundamentalLedger: {
+        version: "fundamentals-2026.02",
+        source: "fixture_filings",
+        asOf: "2026-08-04T00:00:00.000Z",
+        observationsBySymbol: {
+          AAPL: [
+            {
+              metric: "revenue_ttm",
+              fiscalPeriodEnd: "2026-06-30",
+              availableAt: "2026-07-31T20:00:00.000Z",
+              value: 100,
+              revisionId: "filing-r2",
+            },
+          ],
+        },
+      },
+    });
+
+    expect(first.snapshot.snapshotId).not.toBe(changedHistory.snapshot.snapshotId);
+    expect(first.snapshot.snapshotId).not.toBe(changedFundamentals.snapshot.snapshotId);
+    expect(first.snapshot.universeHistory?.version).toBe("2026.01");
+    expect(first.snapshot.corporateActionLedger?.version).toBe("2026.01");
+    expect(changedFundamentals.snapshot.fundamentalLedger?.version).toBe("fundamentals-2026.02");
+  });
+
+  test("canonicalCalendarSessions sorts venues/days for stable fingerprints", () => {
+    expect(canonicalCalendarSessions(undefined)).toBeNull();
+    expect(
+      JSON.stringify(
+        canonicalCalendarSessions({
+          SZ: { "2026-08-02": "closed", "2026-08-01": "open" },
+          SH: { "2026-08-01": "open" },
+        })
+      )
+    ).toBe(
+      JSON.stringify({
+        SH: { "2026-08-01": "open" },
+        SZ: { "2026-08-01": "open", "2026-08-02": "closed" },
+      })
+    );
   });
 
   test("persists and reuses snapshot by id", async () => {

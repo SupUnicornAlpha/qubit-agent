@@ -3,6 +3,7 @@
  * 纯机械拆分。
  */
 import type { FC } from "react";
+import { Fragment } from "react";
 import {
   CartesianGrid,
   Legend,
@@ -25,12 +26,17 @@ import {
   monitorTooltipStyle,
   styles,
   type WorkflowRow,
+  type WorkflowSessionGroup,
 } from "./monitor-shared";
 import { groupStreamEventsByRun } from "../../lib/groupStreamEventsByRun";
 import { StreamTimelineGroupCard } from "../chat/StreamTimelineGroupCard";
+import { WorkflowEvalPanel } from "./WorkflowEvalPanel";
+import { SessionEvalRollupPanel } from "./SessionEvalRollupPanel";
 
 export type WorkflowTabProps = {
   workflowList: WorkflowRow[];
+  workflowGroups: WorkflowSessionGroup[];
+  unboundWorkflows: WorkflowRow[];
   selectedWorkflowId: string | null;
   drawerDetail: string;
   workflowObservability: WorkflowObservability | null;
@@ -49,6 +55,8 @@ export type WorkflowTabProps = {
 
 export const WorkflowTab: FC<WorkflowTabProps> = ({
   workflowList,
+  workflowGroups,
+  unboundWorkflows,
   selectedWorkflowId,
   drawerDetail,
   workflowObservability,
@@ -63,6 +71,46 @@ export const WorkflowTab: FC<WorkflowTabProps> = ({
   onSelectWorkflow,
   onCreateQuality,
 }) => {
+  const groupedView = workflowGroups.length > 0 || unboundWorkflows.length > 0;
+
+  const renderWorkflowRow = (row: WorkflowRow) => (
+    <tr
+      key={row.id}
+      style={{
+        ...styles.tr,
+        ...(selectedWorkflowId === row.id ? styles.trSelected : {}),
+      }}
+      onClick={() => void onSelectWorkflow(row.id)}
+    >
+      <td style={styles.td}>{row.status}</td>
+      <td style={styles.td}>{row.mode}</td>
+      <td style={styles.td}>{row.source ?? "—"}</td>
+      <td style={styles.td}>{row.loopKind ?? "native"}</td>
+      <td style={styles.td} title={row.goal ?? undefined}>
+        {(row.goal ?? "—").slice(0, 48)}
+        {(row.goal?.length ?? 0) > 48 ? "…" : ""}
+      </td>
+      <td style={styles.td}>
+        {row.startedAt ? new Date(row.startedAt).toLocaleString() : "—"}
+      </td>
+      <td style={{ ...styles.td, fontFamily: "monospace", fontSize: 11 }} title={row.id}>
+        {row.id.slice(0, 10)}…
+      </td>
+      <td style={styles.td}>
+        <button
+          type="button"
+          className="qb-btn-mini"
+          onClick={(e) => {
+            e.stopPropagation();
+            void onCreateQuality(row.id);
+          }}
+        >
+          快照+告警
+        </button>
+      </td>
+    </tr>
+  );
+
   const traceItems = workflowTimeline
     ? [
         ...workflowTimeline.conversationMessages.map((message) => ({
@@ -97,7 +145,7 @@ export const WorkflowTab: FC<WorkflowTabProps> = ({
   return (
     <>
       <h3 className="qb-monitor__section" style={styles.subTitle}>
-        工作流 · 筛选与列表
+        工作流 · 筛选与列表（按会话分组）
       </h3>
       <div style={styles.form}>
         <input
@@ -117,6 +165,11 @@ export const WorkflowTab: FC<WorkflowTabProps> = ({
         </button>
       </div>
 
+      <SessionEvalRollupPanel
+        sessionId={sessionFilter}
+        onSelectWorkflow={(id) => void onSelectWorkflow(id)}
+      />
+
       <div style={styles.split}>
         <section style={styles.col}>
           <div style={styles.tableWrap}>
@@ -125,43 +178,43 @@ export const WorkflowTab: FC<WorkflowTabProps> = ({
                 <tr>
                   <th style={styles.th}>状态</th>
                   <th style={styles.th}>模式</th>
+                  <th style={styles.th}>来源</th>
                   <th style={styles.th}>Loop</th>
+                  <th style={styles.th}>目标</th>
                   <th style={styles.th}>开始时间</th>
                   <th style={styles.th}>ID</th>
                   <th style={styles.th}>操作</th>
                 </tr>
               </thead>
               <tbody>
-                {workflowList.map((row) => (
-                  <tr
-                    key={row.id}
-                    style={{
-                      ...styles.tr,
-                      ...(selectedWorkflowId === row.id ? styles.trSelected : {}),
-                    }}
-                    onClick={() => void onSelectWorkflow(row.id)}
-                  >
-                    <td style={styles.td}>{row.status}</td>
-                    <td style={styles.td}>{row.mode}</td>
-                    <td style={styles.td}>{row.loopKind ?? "native"}</td>
-                    <td style={styles.td}>{row.startedAt ? new Date(row.startedAt).toLocaleString() : "—"}</td>
-                    <td style={{ ...styles.td, fontFamily: "monospace", fontSize: 11 }} title={row.id}>
-                      {row.id.slice(0, 10)}…
-                    </td>
-                    <td style={styles.td}>
-                      <button
-                        type="button"
-                        className="qb-btn-mini"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void onCreateQuality(row.id);
-                        }}
-                      >
-                        快照+告警
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {groupedView
+                  ? workflowGroups.map((group) => (
+                      <Fragment key={`session-${group.sessionId}`}>
+                        <tr style={styles.tr}>
+                          <td colSpan={8} style={{ ...styles.td, fontWeight: 600, background: "var(--qb-panel-muted, rgba(255,255,255,0.03))" }}>
+                            会话 · {group.sessionTitle ?? group.sessionId.slice(0, 12) + "…"}
+                            <span style={{ marginLeft: 8, fontWeight: 400, color: "var(--qb-main-meta, #71717a)" }}>
+                              {group.workflows.length} workflow · {group.sessionId.slice(0, 8)}…
+                            </span>
+                          </td>
+                        </tr>
+                        {group.workflows.map((row) => renderWorkflowRow(row))}
+                      </Fragment>
+                    ))
+                  : workflowList.map((row) => renderWorkflowRow(row))}
+                {groupedView && unboundWorkflows.length > 0 ? (
+                  <>
+                    <tr key="session-unbound" style={styles.tr}>
+                      <td colSpan={8} style={{ ...styles.td, fontWeight: 600, background: "var(--qb-panel-muted, rgba(255,255,255,0.03))" }}>
+                        未绑定会话
+                        <span style={{ marginLeft: 8, fontWeight: 400, color: "var(--qb-main-meta, #71717a)" }}>
+                          {unboundWorkflows.length} workflow
+                        </span>
+                      </td>
+                    </tr>
+                    {unboundWorkflows.map((row) => renderWorkflowRow(row))}
+                  </>
+                ) : null}
               </tbody>
             </table>
             {workflowList.length === 0 ? (
@@ -282,6 +335,10 @@ export const WorkflowTab: FC<WorkflowTabProps> = ({
               ) : null}
             </>
           )}
+          <h3 className="qb-monitor__section" style={styles.subTitle}>
+            工作流 · Eval 平台（Score / 标注 / Golden）
+          </h3>
+          <WorkflowEvalPanel workflowRunId={selectedWorkflowId} />
           <h3 className="qb-monitor__section" style={styles.subTitle}>
             工作流 · 详情（JSON）
           </h3>

@@ -49,6 +49,31 @@ describe("FactorValueStore (DuckDB)", () => {
     expect(latest2.map((r) => r.date).sort()).toEqual(["2026-01-03", "2026-01-04"]);
   });
 
+  test("同一因子/日期按 dataset snapshot 隔离，不互相覆盖", async () => {
+    const factorId = `f_${randomUUID().slice(0, 6)}`;
+    const common = { symbol: "A", date: "2026-02-01" };
+    await factorValueStore.upsert({
+      factorId,
+      datasetSnapshotId: "snapshot-v1",
+      rows: [{ ...common, value: 1 }],
+    });
+    await factorValueStore.upsert({
+      factorId,
+      datasetSnapshotId: "snapshot-v2",
+      rows: [{ ...common, value: 2 }],
+    });
+
+    const v1 = await factorValueStore.query({ factorId, datasetSnapshotId: "snapshot-v1" });
+    const v2 = await factorValueStore.query({ factorId, datasetSnapshotId: "snapshot-v2" });
+    const legacy = await factorValueStore.query({ factorId });
+    expect(v1).toHaveLength(1);
+    expect(v1[0]?.value).toBe(1);
+    expect(v1[0]?.datasetSnapshotId).toBe("snapshot-v1");
+    expect(v2[0]?.value).toBe(2);
+    expect(v2[0]?.datasetSnapshotId).toBe("snapshot-v2");
+    expect(legacy).toHaveLength(0);
+  });
+
   test("queryAt 横截面 + stats", async () => {
     const factorId = `f_${randomUUID().slice(0, 6)}`;
     await factorValueStore.upsert({

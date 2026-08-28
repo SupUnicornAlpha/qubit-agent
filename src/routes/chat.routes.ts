@@ -11,6 +11,7 @@ import {
   workspace,
 } from "../db/sqlite/schema";
 import { createConversationTurn } from "../runtime/conversation/conversation-turn-service";
+import { ensureChatSessionWorkflow } from "../runtime/conversation/session-workflow";
 import {
   type ChatImageAttachment,
   parseChatImageAttachments,
@@ -94,14 +95,47 @@ chatRouter.post("/sessions", async (c) => {
     title: body.title?.trim() || "新会话",
     createdBy: body.createdBy ?? "user",
   });
+  if (body.projectId) {
+    await ensureChatSessionWorkflow({
+      projectId: body.projectId,
+      sessionId: id,
+      goal: body.title?.trim() || "新会话",
+      mode: "research",
+    });
+  }
   const created = await db.select().from(chatSession).where(eq(chatSession.id, id)).limit(1);
   return c.json({ data: created[0] }, 201);
 });
 
+/** Session 唯一 chat workflow（1 session = 1 workflow）。不存在则创建占位。 */
+chatRouter.get("/sessions/:sessionId/workflow", async (c) => {
+  const sessionId = c.req.param("sessionId");
+  const projectId = c.req.query("projectId")?.trim() ?? "";
+  if (!projectId) return c.json({ error: "projectId is required" }, 400);
+  const db = await getDb();
+  const sessions = await db
+    .select()
+    .from(chatSession)
+    .where(eq(chatSession.id, sessionId))
+    .limit(1);
+  if (!sessions[0]) return c.json({ error: "session not found" }, 404);
+  if (sessions[0].projectId && sessions[0].projectId !== projectId) {
+    return c.json({ error: "session does not belong to project" }, 400);
+  }
+  const { workflowRunId } = await ensureChatSessionWorkflow({
+    projectId,
+    sessionId,
+    goal: sessions[0].title,
+    mode: "research",
+  });
+  const rows = await db.select().from(workflowRun).where(eq(workflowRun.id, workflowRunId)).limit(1);
+  if (!rows[0]) return c.json({ error: "workflow not found" }, 404);
+  return c.json({ data: rows[0] });
+});
+
 /**
  * 统一会话 turn：普通对话与 Workflow 对话共用。
- * - 不传 workflowRunId：为当前会话创建/复用执行 workflow。
- * - 传 workflowRunId：在同一会话中继续该流程，沿用模板/SOP/门控配置。
+ * 1 session = 1 chat workflow；workflowRunId 可选且须与会话 canonical workflow 一致（不一致时服务端忽略并绑定 canonical）。
  */
 chatRouter.post("/sessions/:sessionId/turns", async (c) => {
   const sessionId = c.req.param("sessionId");
@@ -613,6 +647,12 @@ chatRouter.get("/projects/:id/sessions/default", async (c) => {
     projectId,
     title: "默认会话",
     createdBy: "system",
+  });
+  await ensureChatSessionWorkflow({
+    projectId,
+    sessionId: id,
+    goal: "默认会话",
+    mode: "research",
   });
   const created = await db.select().from(chatSession).where(eq(chatSession.id, id)).limit(1);
   return c.json({ data: created[0] }, 201);

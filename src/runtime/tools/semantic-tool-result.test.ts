@@ -204,4 +204,19 @@ describe("detectSemanticToolFailure", () => {
       })
     ).toBe("mcp_validation_error");
   });
+
+  test("does not treat compile/web failures as semantic data failure", () => {
+    expect(
+      detectSemanticToolFailure("strategy.compile", {
+        ok: false,
+        error: "syntax error near line 12",
+      })
+    ).toBeNull();
+    expect(
+      detectSemanticToolFailure("web.search", {
+        ok: false,
+        error: "duckduckgo HTTP 403",
+      })
+    ).toBeNull();
+  });
 });

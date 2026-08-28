@@ -1,6 +1,9 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { eq } from "drizzle-orm";
+import { defaultDataDir } from "../app-paths";
 import { getDb } from "../../db/sqlite/client";
 import { runMigrations } from "../../db/sqlite/migrate";
 import * as schema from "../../db/sqlite/schema";
@@ -14,6 +17,7 @@ import type {
   ProviderMeta,
 } from "../provider/types";
 import { factorBacktestPromotionService } from "./factor-backtest-promotion-service";
+import { buildMarketSnapshotRecord } from "../market/contracts/market-snapshot-service";
 
 class PromotionStubBacktestProvider implements BacktestProvider {
   readonly meta: ProviderMeta = {
@@ -54,6 +58,7 @@ class PromotionStubBacktestProvider implements BacktestProvider {
 
 let projectId = "";
 let workflowRunId = "";
+let datasetSnapshotId = "";
 
 beforeAll(async () => {
   await runMigrations();
@@ -84,6 +89,32 @@ beforeAll(async () => {
     source: "api",
     status: "completed",
   });
+  const record = buildMarketSnapshotRecord({
+    asOf: "2026-01-31T00:00:00.000Z",
+    purpose: "backtest",
+    instruments: ["AAPL", "MSFT"].map((symbol) => ({
+      symbol,
+      venue: "US",
+      assetClass: "equity" as const,
+    })),
+    window: { start: "2026-01-01", end: "2026-01-31" },
+    sources: [{ provider: "test_dataset", feed: "fixture", upstreamFamily: "fixture" }],
+    barsByInstrument: Object.fromEntries(
+      ["AAPL", "MSFT"].map((symbol, index) => [
+        `US:${symbol}`,
+        [
+          { timestamp: "2026-01-02T00:00:00.000Z", open: 100 + index, high: 102 + index, low: 99 + index, close: 101 + index, volume: 1000, turnover: 101000 },
+          { timestamp: "2026-01-30T00:00:00.000Z", open: 101 + index, high: 103 + index, low: 100 + index, close: 102 + index, volume: 1100, turnover: 112200 },
+        ],
+      ])
+    ),
+    timeframe: "1d",
+    limit: 2,
+  });
+  const root = join(defaultDataDir(), "market-snapshots");
+  await mkdir(root, { recursive: true });
+  await writeFile(join(root, `${record.snapshot.snapshotId}.json`), JSON.stringify(record), "utf8");
+  datasetSnapshotId = record.snapshot.snapshotId;
 });
 
 describe("FactorBacktestPromotionService", () => {
@@ -106,6 +137,7 @@ describe("FactorBacktestPromotionService", () => {
       universe: "US",
       startDate: "2026-01-01",
       endDate: "2026-01-31",
+      datasetSnapshotId,
       providerKey: "promotion_stub_bt",
       workflowRunId,
       createdBy: "agent",
@@ -117,6 +149,7 @@ describe("FactorBacktestPromotionService", () => {
     expect(result.backtest.workflowRunId).toBe(workflowRunId);
     expect(result.backtest.compositionId).toBe(result.composition.id);
     expect(result.backtest.status).toBe("completed");
+    expect(result.backtest.config.experiment).toEqual({ parameterSelection: "unknown" });
     expect(result.backtest.result?.metrics.totalReturn).toBe(0.03);
 
     const db = await getDb();

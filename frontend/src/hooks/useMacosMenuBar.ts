@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { listMonitorWorkflows, listStrategyRuntimes } from "../api/backend";
+import { flattenMonitorWorkflowRows, listMonitorWorkflows, listStrategyRuntimes } from "../api/backend";
 import {
   isMacosTauriEnv,
   tauriUpdateMenuBarSummary,
@@ -79,9 +79,10 @@ export function useMacosMenuBar(): void {
           listStrategyRuntimes({ status: "running" }),
         ]);
         if (workflows.status === "fulfilled") {
+          const rows = flattenMonitorWorkflowRows(workflows.value);
           summary = {
             ...summary,
-            runningWorkflows: workflows.value
+            runningWorkflows: rows
               .map(toWorkflowSummary)
               .filter((workflow): workflow is { id: string; goal: string } => workflow !== null)
               .slice(0, 3),

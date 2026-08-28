@@ -125,7 +125,6 @@ export const SimpleWorkspace: FC = () => {
         {page === "chat" ? (
           <ChatPanel
             displayMode="simple"
-            workflowRunId={focusedWorkflowRunId}
             onWorkflowFocusChange={setFocusedWorkflowRunId}
           />
         ) : null}

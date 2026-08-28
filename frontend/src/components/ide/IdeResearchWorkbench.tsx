@@ -5,6 +5,7 @@ import { KlinePanel } from "../chart/KlinePanel";
 import { useAppStore } from "../../store";
 import { useTranslation } from "../../i18n";
 import { IdeBacktestDock } from "./IdeBacktestDock";
+import { IdeDockingWorkbench } from "./IdeDockingWorkbench";
 import { IdeLeftColumn } from "./IdeLeftColumn";
 import { IdeQuickTradePanel } from "./IdeQuickTradePanel";
 import { IdeWorkbenchToolbar } from "./IdeWorkbenchToolbar";
@@ -12,8 +13,9 @@ import { IdeWorkbenchToolbar } from "./IdeWorkbenchToolbar";
 const MIN_IDE_LEFT_PCT = 22;
 const MAX_IDE_LEFT_PCT = 68;
 
-/** 左栏编辑器宿主 + 中栏 K 线/回测；对话在右侧 Agent，不再嵌入左栏。 */
+/** 左栏编辑器宿主 + 中栏 K 线/回测 + Docking 自由拖拽分屏；对话在右侧 Agent。 */
 export const IdeResearchWorkbench: FC = () => {
+  const ideLayoutMode = useAppStore((s) => s.ideLayoutMode);
   const idePanels = useAppStore((s) => s.idePanels);
   const ideQuickTradeOpen = useAppStore((s) => s.ideQuickTradeOpen);
   const { t } = useTranslation();
@@ -52,44 +54,50 @@ export const IdeResearchWorkbench: FC = () => {
   return (
     <div data-qb-ide-workbench style={styles.root}>
       <IdeWorkbenchToolbar />
-      <div ref={wrapRef} style={styles.mainRow}>
-        {idePanels.left ? (
-          <>
-            <div style={{ ...styles.leftPane, flexBasis: `${leftPct}%` }}>
-              <IdeLeftColumn />
-            </div>
-            <div
-              role="separator"
-              aria-orientation="vertical"
-              aria-label={t("ide.workbench.gutterAriaLabel")}
-              onMouseDown={onGutterDown}
-              style={styles.gutter}
-            />
-          </>
-        ) : null}
-        <div style={styles.rightPane}>
-          <div style={styles.centerStack}>
-            {showCenterContent ? (
-              <>
-                {idePanels.chart ? (
-                  <div style={styles.chartArea}>
-                    <KlinePanel embedded linkTraderMarkers />
-                  </div>
-                ) : null}
-                {idePanels.backtest ? <IdeBacktestDock /> : null}
-              </>
-            ) : (
-              <div style={styles.emptyCenter}>{t("ide.workbench.emptyCenter")}</div>
-            )}
-          </div>
-          {ideQuickTradeOpen ? (
+      {ideLayoutMode === "docking" ? (
+        <div style={styles.dockingRow}>
+          <IdeDockingWorkbench />
+        </div>
+      ) : (
+        <div ref={wrapRef} style={styles.mainRow}>
+          {idePanels.left ? (
             <>
-              <div style={styles.quickGutter} aria-hidden />
-              <IdeQuickTradePanel />
+              <div style={{ ...styles.leftPane, flexBasis: `${leftPct}%` }}>
+                <IdeLeftColumn />
+              </div>
+              <div
+                role="separator"
+                aria-orientation="vertical"
+                aria-label={t("ide.workbench.gutterAriaLabel")}
+                onMouseDown={onGutterDown}
+                style={styles.gutter}
+              />
             </>
           ) : null}
+          <div style={styles.rightPane}>
+            <div style={styles.centerStack}>
+              {showCenterContent ? (
+                <>
+                  {idePanels.chart ? (
+                    <div style={styles.chartArea}>
+                      <KlinePanel embedded linkTraderMarkers />
+                    </div>
+                  ) : null}
+                  {idePanels.backtest ? <IdeBacktestDock /> : null}
+                </>
+              ) : (
+                <div style={styles.emptyCenter}>{t("ide.workbench.emptyCenter")}</div>
+              )}
+            </div>
+            {ideQuickTradeOpen ? (
+              <>
+                <div style={styles.quickGutter} aria-hidden />
+                <IdeQuickTradePanel />
+              </>
+            ) : null}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };
@@ -103,6 +111,14 @@ const styles: Record<string, CSSProperties> = {
     width: "100%",
     overflow: "hidden",
     background: "var(--qb-bg-root, #09090b)",
+  },
+  dockingRow: {
+    display: "flex",
+    flex: 1,
+    minHeight: 0,
+    width: "100%",
+    position: "relative",
+    overflow: "hidden",
   },
   mainRow: {
     display: "flex",

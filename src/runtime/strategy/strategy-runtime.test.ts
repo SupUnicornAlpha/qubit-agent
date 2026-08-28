@@ -197,7 +197,20 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
         projectId: pid,
         strategyVersionId: paper.strategyVersionId,
         evalKind,
-        metricsJson: {},
+        metricsJson:
+          evalKind === "backtest"
+            ? {
+                datasetQualification: {
+                  useClass: "strategy_validation",
+                  universeHistory: "verified",
+                  corporateActions: "verified",
+                  pointInTime: "verified",
+                },
+                antiLeakageReport: { status: "passed" },
+                pitReport: { pass: true, verdict: "point_in_time_clean" },
+                statisticalValidationReport: { status: "passed" },
+              }
+            : {},
         pass: true,
       });
     }

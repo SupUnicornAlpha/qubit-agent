@@ -58,11 +58,15 @@ export const WorkspaceCodeEditor: FC<{
   onChange: (value: string) => void;
   path: string;
   readOnly?: boolean;
-}> = ({ value, onChange, path, readOnly = false }) => {
+  onSave?: () => void;
+  onCursorChange?: (line: number, col: number) => void;
+}> = ({ value, onChange, path, readOnly = false, onSave, onCursorChange }) => {
   const [engine, setEngine] = useState<"monaco" | "tokyo">("monaco");
   const [monacoReady, setMonacoReady] = useState(false);
   const [hostSize, setHostSize] = useState({ w: 0, h: 0 });
+  const [cursorPos, setCursorPos] = useState({ line: 1, col: 1 });
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoLanguage = useMemo(() => monacoLangFromPath(path), [path]);
   const tokyoLanguage = useMemo(() => tokyoLangFromPath(path), [path]);
 
@@ -96,19 +100,55 @@ export const WorkspaceCodeEditor: FC<{
     return () => ro.disconnect();
   }, [engine, monacoReady]);
 
-  const onMount: OnMount = (ed) => {
+  const onMount: OnMount = (ed, monacoInstance) => {
+    editorRef.current = ed;
     ed.updateOptions({
-      minimap: { enabled: false },
+      minimap: { enabled: true, maxColumn: 80, scale: 1, renderCharacters: false },
       fontSize: 13,
       lineHeight: 20,
+      fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace",
+      fontLigatures: true,
       scrollBeyondLastLine: false,
       wordWrap: "on",
       tabSize: 2,
-      renderLineHighlight: "line",
+      renderLineHighlight: "all",
+      folding: true,
+      showFoldingControls: "mouseover",
+      bracketPairColorization: { enabled: true },
+      smoothScrolling: true,
+      cursorBlinking: "smooth",
+      cursorSmoothCaretAnimation: "on",
+      renderWhitespace: "selection",
       padding: { top: 8, bottom: 8 },
       automaticLayout: true,
     });
+
+    ed.onDidChangeCursorPosition((e) => {
+      const pos = { line: e.position.lineNumber, col: e.position.column };
+      setCursorPos(pos);
+      onCursorChange?.(pos.line, pos.col);
+    });
+
+    if (onSave) {
+      ed.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyS, () => {
+        onSave();
+      });
+    }
   };
+
+  useEffect(() => {
+    const onJump = (e: Event) => {
+      const detail = (e as CustomEvent<{ line: number; column?: number; path?: string }>).detail;
+      if (!detail || (detail.path && detail.path !== path)) return;
+      if (editorRef.current) {
+        editorRef.current.revealLineInCenter(detail.line);
+        editorRef.current.setPosition({ lineNumber: detail.line, column: detail.column ?? 1 });
+        editorRef.current.focus();
+      }
+    };
+    window.addEventListener("qb-ide-jump-to-line", onJump);
+    return () => window.removeEventListener("qb-ide-jump-to-line", onJump);
+  }, [path]);
 
   if (engine === "tokyo") {
     return (
@@ -133,7 +173,12 @@ export const WorkspaceCodeEditor: FC<{
 
   return (
     <div style={styles.wrap} data-qb-editor-engine="monaco">
-      <div style={styles.badge}>Monaco · {monacoLanguage}</div>
+      <div style={styles.badgeRow}>
+        <span style={styles.badge}>Monaco · {monacoLanguage}</span>
+        <span style={styles.cursorMeta}>
+          Ln {cursorPos.line}, Col {cursorPos.col} · UTF-8
+        </span>
+      </div>
       {!monacoReady ? <div style={styles.loading}>编辑器加载中…</div> : null}
       <div ref={hostRef} style={styles.editorHost}>
         {monacoReady ? (
@@ -150,8 +195,9 @@ export const WorkspaceCodeEditor: FC<{
             options={{
               readOnly,
               automaticLayout: true,
-              minimap: { enabled: false },
+              minimap: { enabled: true, maxColumn: 80, scale: 1, renderCharacters: false },
               fontSize: 13,
+              fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace",
               wordWrap: "on",
               scrollBeyondLastLine: false,
               lineNumbers: "on",
@@ -170,21 +216,32 @@ const styles: Record<string, CSSProperties> = {
     minHeight: 0,
     display: "flex",
     flexDirection: "column",
-    gap: 6,
+    gap: 4,
     overflow: "hidden",
   },
-  badge: {
+  badgeRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
     flexShrink: 0,
+    padding: "0 2px",
+  },
+  badge: {
     fontSize: 10,
     color: "#71717a",
     letterSpacing: "0.02em",
+  },
+  cursorMeta: {
+    fontSize: 10,
+    color: "#71717a",
+    fontFamily: "monospace",
   },
   editorHost: {
     flex: 1,
     minHeight: 360,
     borderRadius: 6,
     overflow: "hidden",
-    border: "1px solid #2a2a30",
+    border: "1px solid var(--qb-sidebar-border, #2a2a30)",
     background: "#1e1e1e",
   },
   loading: {

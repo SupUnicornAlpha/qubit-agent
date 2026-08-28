@@ -23,6 +23,8 @@ import { FINANCE_RECALL_PREFER_SUB_KINDS, type FinanceSubKind } from "./types";
 
 export interface FinanceRecallContext extends RecallContext {
   symbols?: string[];
+  /** true = 仅保留 metadata/tags 命中 symbols 的条目（默认 false = domainBoost 软匹配） */
+  hardFilterSymbols?: boolean;
   decisionCutoff?: string;
   preferSubKinds?: FinanceSubKind[];
 }
@@ -97,11 +99,14 @@ export class FinanceRecall {
         continue;
       }
       if (exp.subKind === "strategy_recipe" && !meta.compositionId) continue;
-      if (
-        exp.subKind === "research_conclusion" &&
+      if (exp.subKind === "research_conclusion" &&
         (!Array.isArray(meta.symbols) || meta.symbols.length === 0)
       ) {
         continue;
+      }
+
+      if (ctx.hardFilterSymbols && ctx.symbols?.length) {
+        if (!experienceMatchesSymbols(exp, ctx.symbols)) continue;
       }
 
       const scored = this.scoreFinance(exp, hit, tokens, ctx.symbols);
@@ -291,4 +296,17 @@ export function computeOutcomeWeight(exp: Experience, successRateFallback: numbe
     0.4 * exp.qualityScore +
       0.6 * (Number.isFinite(successRateFallback) ? successRateFallback : 0.5)
   );
+}
+
+export function experienceMatchesSymbols(exp: Experience, symbols: string[]): boolean {
+  if (symbols.length === 0) return true;
+  const tagSyms = exp.tagsJson
+    .filter((t) => t.startsWith("symbol:"))
+    .map((t) => t.slice("symbol:".length).toUpperCase());
+  const meta = exp.metadataJson ?? {};
+  const metaSyms = Array.isArray(meta.symbols)
+    ? (meta.symbols as unknown[]).map((s) => String(s).toUpperCase())
+    : [];
+  const all = new Set([...tagSyms, ...metaSyms]);
+  return symbols.some((s) => all.has(s.toUpperCase()));
 }

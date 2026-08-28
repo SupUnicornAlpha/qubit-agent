@@ -1,0 +1,109 @@
+/**
+ * FlexLayout 专业 IDE 停靠系统样式深度定制
+ * 与 VSCode Dark+, VSCode Light+, JetBrains Darcula 等全套主题 CSS 变量完美联动
+ */
+
+.qb-flexlayout-host {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.qb-flexlayout-host .flexlayout__layout {
+  background-color: var(--qb-bg-root, #1e1e1e) !important;
+  color: var(--qb-body-fg, #cccccc) !important;
+  font-family: inherit;
+}
+
+.qb-flexlayout-host .flexlayout__tabset {
+  background-color: var(--qb-bg-root, #1e1e1e) !important;
+  border: 1px solid var(--qb-separator, #2d2d2d) !important;
+  box-sizing: border-box;
+}
+
+.qb-flexlayout-host .flexlayout__tabset_header {
+  background-color: var(--qb-bg-root-top, #252526) !important;
+  border-bottom: 1px solid var(--qb-separator, #2d2d2d) !important;
+  height: 28px !important;
+  box-sizing: border-box;
+}
+
+.qb-flexlayout-host .flexlayout__tabset_header_content {
+  height: 28px !important;
+}
+
+.qb-flexlayout-host .flexlayout__tabset_content {
+  background-color: var(--qb-bg-surface, #1e1e1e) !important;
+}
+
+.qb-flexlayout-host .flexlayout__tab_button {
+  background-color: transparent !important;
+  color: var(--qb-body-muted, #858585) !important;
+  font-size: 11.5px !important;
+  font-family: inherit !important;
+  padding: 0 10px !important;
+  height: 28px !important;
+  line-height: 28px !important;
+  border-right: 1px solid var(--qb-separator, #2d2d2d) !important;
+  border-top: 2px solid transparent !important;
+  box-sizing: border-box;
+  transition: all 0.12s ease;
+}
+
+.qb-flexlayout-host .flexlayout__tab_button:hover {
+  color: var(--qb-body-fg, #ffffff) !important;
+  background-color: rgba(255, 255, 255, 0.04) !important;
+}
+
+.qb-flexlayout-host .flexlayout__tab_button--selected {
+  background-color: var(--qb-bg-root, #1e1e1e) !important;
+  color: var(--qb-body-fg, #ffffff) !important;
+  border-top: 2px solid var(--qb-blue, #007acc) !important;
+  font-weight: 500 !important;
+}
+
+.qb-flexlayout-host .flexlayout__tab_button_trailing {
+  font-size: 12px !important;
+  color: var(--qb-body-muted, #858585) !important;
+  margin-left: 6px !important;
+  border-radius: 3px !important;
+}
+
+.qb-flexlayout-host .flexlayout__tab_button_trailing:hover {
+  color: var(--qb-body-fg, #ffffff) !important;
+  background-color: rgba(255, 255, 255, 0.15) !important;
+}
+
+.qb-flexlayout-host .flexlayout__splitter {
+  background-color: var(--qb-separator, #2d2d2d) !important;
+  transition: background-color 0.15s ease;
+}
+
+.qb-flexlayout-host .flexlayout__splitter:hover,
+.qb-flexlayout-host .flexlayout__splitter_drag {
+  background-color: var(--qb-blue, #007acc) !important;
+}
+
+.qb-flexlayout-host .flexlayout__outline_rect {
+  border: 2px solid var(--qb-blue, #007acc) !important;
+  background-color: rgba(0, 122, 204, 0.15) !important;
+  border-radius: 4px;
+}
+
+.qb-flexlayout-host .flexlayout__drag_rect {
+  border: 1px solid var(--qb-blue, #007acc) !important;
+  background-color: rgba(0, 122, 204, 0.2) !important;
+  color: #ffffff !important;
+}
+
+.qb-flexlayout-host .flexlayout__tab_button_toolbar_button {
+  color: var(--qb-body-muted, #858585) !important;
+}
+
+.qb-flexlayout-host .flexlayout__tab_button_toolbar_button:hover {
+  color: var(--qb-body-fg, #ffffff) !important;
+}

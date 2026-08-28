@@ -119,12 +119,20 @@ const MARKET_CONTRACTS: ToolContract[] = [
     kind: "builtin",
     category: "backtest",
     arity: "either",
-    requiredAfterNormalize: ["factor_ids", "start_date", "end_date"],
+    requiredAfterNormalize: ["factor_ids", "start_date", "end_date", "dataset_snapshot_id"],
     normalize: (raw) => ({
-      ...raw,
+      ...normalizeMarketSymbolParams(raw, {
+        arity: "either",
+        toolName: "factor.promote_backtest",
+      }),
       factor_ids: raw.factor_ids ?? raw.factorIds ?? (raw.factor_id ? [raw.factor_id] : undefined),
+      dataset_snapshot_id:
+        raw.dataset_snapshot_id ?? raw.datasetSnapshotId ?? raw.snapshot_id ?? raw.snapshotId,
       start_date: raw.start_date ?? raw.startDate ?? raw.from,
       end_date: raw.end_date ?? raw.endDate ?? raw.to ?? raw.asOf,
+      parameter_selection: raw.parameter_selection ?? raw.parameterSelection,
+      pre_registration_id: raw.pre_registration_id ?? raw.preRegistrationId,
+      candidate_trials: raw.candidate_trials ?? raw.candidateTrials,
     }),
     errorCodes: {
       factor_not_found: "permanent",
@@ -139,19 +147,56 @@ const MARKET_CONTRACTS: ToolContract[] = [
     kind: "builtin",
     category: "backtest",
     arity: "either",
-    requiredAfterNormalize: ["strategy_version_id", "symbols"],
+    requiredAfterNormalize: ["strategy_version_id", "symbols", "dataset_snapshot_id"],
     normalize: (raw) => ({
       ...normalizeMarketSymbolParams(raw, {
         arity: "either",
         toolName: "backtest.run",
       }),
       strategy_version_id: raw.strategy_version_id ?? raw.strategyVersionId,
+      dataset_snapshot_id:
+        raw.dataset_snapshot_id ?? raw.datasetSnapshotId ?? raw.snapshot_id ?? raw.snapshotId,
+      composition_id: raw.composition_id ?? raw.compositionId,
+      parameter_selection: raw.parameter_selection ?? raw.parameterSelection,
+      pre_registration_id: raw.pre_registration_id ?? raw.preRegistrationId,
+      candidate_trials: raw.candidate_trials ?? raw.candidateTrials,
       start_date: raw.start_date ?? raw.startDate ?? raw.start ?? raw.from,
       end_date: raw.end_date ?? raw.endDate ?? raw.end ?? raw.to ?? raw.asOf,
     }),
     errorCodes: {
       factor_not_found: "permanent",
       missing_strategy_version_id: "permanent",
+    },
+    timeoutClass: "market",
+    sideEffects: "write",
+    lifecycle: "active",
+  },
+  {
+    name: "backtest.walk_forward",
+    kind: "builtin",
+    category: "backtest",
+    arity: "one",
+    requiredAfterNormalize: ["backtest_run_id"],
+    normalize: (raw) => ({
+      ...raw,
+      backtest_run_id: raw.backtest_run_id ?? raw.backtestRunId ?? raw.job_id ?? raw.jobId,
+      folds: raw.folds ?? raw.fold_count ?? raw.foldCount,
+      purge_days: raw.purge_days ?? raw.purgeDays,
+      embargo_days: raw.embargo_days ?? raw.embargoDays,
+      selection_candidates:
+        raw.selection_candidates ?? raw.selectionCandidates ?? raw.candidates,
+      selection_objective: raw.selection_objective ?? raw.selectionObjective ?? raw.objective,
+    }),
+    errorCodes: {
+      missing_backtest_run_id: "permanent",
+      walk_forward_selection_requires_at_least_2_candidates: "permanent",
+      walk_forward_selection_max_20_candidates: "permanent",
+      walk_forward_selection_candidates_must_be_unique: "permanent",
+      walk_forward_selection_objective_invalid: "permanent",
+      walk_forward_folds_invalid: "permanent",
+      walk_forward_purge_days_invalid: "permanent",
+      walk_forward_embargo_days_invalid: "permanent",
+      walk_forward_isolation_gap_exceeds_train_window: "permanent",
     },
     timeoutClass: "market",
     sideEffects: "write",
@@ -166,6 +211,13 @@ const MARKET_CONTRACTS: ToolContract[] = [
     normalize: (raw) => ({
       ...raw,
       strategy_version_id: raw.strategy_version_id ?? raw.strategyVersionId,
+      factor_ids:
+        raw.factor_ids ??
+        raw.factorIds ??
+        (raw.factor_id ? [raw.factor_id] : raw.factorId ? [raw.factorId] : undefined),
+      rule_ids: raw.rule_ids ?? raw.ruleIds ?? (raw.rule_id ? [raw.rule_id] : undefined),
+      weight_method: raw.weight_method ?? raw.weightMethod,
+      factor_weights: raw.factor_weights ?? raw.factorWeights,
     }),
     errorCodes: { missing_strategy_version_id: "permanent" },
     timeoutClass: "light",

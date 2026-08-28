@@ -1,0 +1,182 @@
+/**
+ * VSCode Light+ 风格：经典 VSCode 明亮浅色工程主题
+ * 调色：#ffffff 编辑器底色、#f3f3f3 侧边栏/工具栏、#2c2c2c 活动栏、#007acc 状态栏、#005fb8 标志蓝、#e5e5e5 分割线
+ */
+
+html[data-qb-style="vscode-light"] {
+  color-scheme: light;
+
+  /* 基础与根容器 */
+  --qb-bg-root: #ffffff;
+  --qb-bg-root-top: #f3f3f3;
+  --qb-bg-surface: #f3f3f3;
+  --qb-tint: rgba(0, 95, 184, 0.08);
+  --qb-tint-strong: rgba(0, 95, 184, 0.16);
+  --qb-blue: #005fb8;
+  --qb-blue-deep: #003f7a;
+  --qb-focus-ring: rgba(0, 95, 184, 0.45);
+  --qb-hairline: rgba(0, 0, 0, 0.08);
+  --qb-separator: #e5e5e5;
+
+  --qb-body-fg: #333333;
+  --qb-body-muted: #6e6e6e;
+
+  /* 滚动条 */
+  --qb-scrollbar-track: #f5f5f5;
+  --qb-scrollbar-thumb-top: #cccccc;
+  --qb-scrollbar-thumb-bot: #cccccc;
+  --qb-scrollbar-thumb-hover-top: #b0b0b0;
+  --qb-scrollbar-thumb-hover-bot: #b0b0b0;
+  --qb-scrollbar-corner: #ffffff;
+  --qb-scrollbar-border: #e5e5e5;
+  --qb-scrollbar-thumb-border: #f5f5f5;
+
+  /* 侧边栏与活动栏 */
+  --qb-sidebar-nav-bg: #f3f3f3;
+  --qb-sidebar-activity-bg: #2c2c2c;
+  --qb-sidebar-explorer-bg: #f3f3f3;
+  --qb-sidebar-border: #e5e5e5;
+  --qb-sidebar-muted: #6e6e6e;
+  --qb-sidebar-text: #333333;
+
+  --qb-brand-icon: #007acc;
+  --qb-brand-icon-glow: rgba(0, 122, 204, 0.4);
+
+  --qb-topbar-bg: #dddddd;
+  --qb-workbench-toolbar-bg: #f3f3f3;
+  --qb-segmented-active-bg: #005fb8;
+
+  --qb-main-input-bg: #ffffff;
+  --qb-main-input-border: #cecece;
+  --qb-main-input-fg: #333333;
+  --qb-main-meta: #6e6e6e;
+
+  /* ─── 研究团队 / 工作台 / 拓扑图完整适配 ─── */
+  --qb-team-shell-bg: #ffffff;
+  --qb-team-shell-border: #e5e5e5;
+  --qb-team-left-bg: #f8f9fa;
+  --qb-team-center-bg: #ffffff;
+  --qb-team-right-bg: #f8f9fa;
+  --qb-team-gutter-bg: #e5e5e5;
+  --qb-team-canvas-bg: #ffffff;
+  --qb-team-panel-bg: #f8f9fa;
+  --qb-team-panel-border: #e5e5e5;
+  --qb-team-stage-bg: #ffffff;
+  --qb-team-titlebar-bg: #f3f3f3;
+  --qb-team-titlebar-fg: #333333;
+  --qb-team-input-bg: #ffffff;
+  --qb-team-input-border: #d0d0d0;
+  --qb-team-input-fg: #333333;
+  --qb-team-meta: #6e6e6e;
+  --qb-team-section-fg: #1f1f1f;
+  --qb-team-tab-bg: #ececec;
+  --qb-team-tab-fg: #6e6e6e;
+  --qb-team-tab-active-bg: #ffffff;
+  --qb-team-tab-active-fg: #005fb8;
+  --qb-team-tab-active-border: #005fb8;
+  --qb-team-screener-bg: #ffffff;
+  --qb-team-screener-btn-bg: #f3f3f3;
+  --qb-team-screener-btn-fg: #333333;
+  --qb-team-screener-btn-active-bg: rgba(0, 95, 184, 0.08);
+  --qb-team-screener-btn-active-border: #005fb8;
+  --qb-team-table-row-border: #e5e5e5;
+  --qb-team-trend-bg: #f8f9fa;
+  --qb-team-run-footer-bg: #fdfdfd;
+  --qb-team-run-footer-summary-bg: #f3f3f3;
+  --qb-team-act-btn-fg: #6e6e6e;
+  --qb-team-act-btn-active-bg: #e5e5e5;
+  --qb-team-act-btn-active-border: #005fb8;
+  --qb-team-act-btn-active-fg: #005fb8;
+
+  /* 拓扑图节点与连线 */
+  --qb-topo-node-fill: #fdfdfd;
+  --qb-topo-node-stroke: #d0d0d0;
+  --qb-topo-node-stroke-w: 1;
+  --qb-topo-node-rx: 6;
+  --qb-topo-node-active-fill: rgba(0, 95, 184, 0.08);
+  --qb-topo-node-active-stroke: #005fb8;
+  --qb-topo-edge-stroke: #a0a0a0;
+  --qb-topo-edge-stroke-w: 1.5;
+  --qb-topo-canvas-border: #e5e5e5;
+  --qb-topo-label-fg: #1f1f1f;
+  --qb-topo-sublabel-fg: #6e6e6e;
+  --qb-team-edge-fg: #a0a0a0;
+  --qb-team-edge-active: #005fb8;
+  --qb-team-edge-hot: #007acc;
+  --qb-team-node-selected-fill: rgba(0, 95, 184, 0.12);
+  --qb-team-node-selected-stroke: #005fb8;
+  --qb-team-node-hot-fill: rgba(0, 95, 184, 0.08);
+  --qb-team-node-hot-stroke: #007acc;
+
+  /* 量化与回测工坊 */
+  --qb-quant-bg: #ffffff;
+  --qb-quant-card-bg: #f8f9fa;
+  --qb-quant-border: #e5e5e5;
+  --qb-quant-accent: #005fb8;
+
+  /* K 线与行情 */
+  --qb-kline-root-bg: #ffffff;
+  --qb-kline-header-border: #e5e5e5;
+  --qb-kline-embedded-bar-bg: #f3f3f3;
+
+  --qb-font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "JetBrains Mono", Consolas, monospace;
+}
+
+/* 侧边栏与活动栏高亮条 */
+html[data-qb-style="vscode-light"] .qb-nav-activity-btn {
+  color: #cccccc !important;
+}
+
+html[data-qb-style="vscode-light"] .qb-nav-activity-btn:hover {
+  color: #ffffff !important;
+  background: rgba(255, 255, 255, 0.1) !important;
+}
+
+html[data-qb-style="vscode-light"] .qb-nav-activity-btn--active {
+  background: rgba(255, 255, 255, 0.16) !important;
+  color: #ffffff !important;
+  box-shadow: inset 2px 0 0 0 #007acc !important;
+}
+
+html[data-qb-style="vscode-light"] .qb-pro-statusbar {
+  background: #007acc !important;
+  color: #ffffff !important;
+  border-top: 1px solid #005a9e !important;
+}
+
+html[data-qb-style="vscode-light"] .qb-pro-statusbar button {
+  color: #ffffff !important;
+}
+
+html[data-qb-style="vscode-light"] .qb-pro-statusbar button:hover {
+  background: rgba(255, 255, 255, 0.16) !important;
+}
+
+html[data-qb-style="vscode-light"] .qb-pro-resize-handle:hover,
+html[data-qb-style="vscode-light"] .qb-pro-resize-handle[data-resize-handle-state="drag"] {
+  background: #007acc !important;
+}
+
+/* 团队工作台与面板微调 */
+html[data-qb-style="vscode-light"] [data-qb-team-shell] {
+  background: #ffffff !important;
+  border-color: #e5e5e5 !important;
+  box-shadow: none !important;
+}
+
+html[data-qb-style="vscode-light"] [data-qb-team-shell] nav[aria-label="研究团队视图"] {
+  border-right: 1px solid #e5e5e5 !important;
+  background: #f8f9fa !important;
+}
+
+html[data-qb-style="vscode-light"] .qb-bottom-panel {
+  background: #ffffff !important;
+  border-top: 1px solid #e5e5e5 !important;
+}
+
+/* 聊天对话气泡浅色适配 */
+html[data-qb-style="vscode-light"] [data-qb-chat-panel] .qb-chat-bubble--agent,
+html[data-qb-style="vscode-light"] .qb-pro-agent-panel {
+  background: #f8f9fa;
+  color: #333333;
+}

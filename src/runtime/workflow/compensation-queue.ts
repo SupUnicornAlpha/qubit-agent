@@ -14,12 +14,28 @@ export async function enqueueCompensationTask(input: {
   nextRunAt?: string;
 }) {
   const db = await getDb();
+  const reason = input.reason ?? "";
+  const actionType = input.actionType ?? "retry_from_start";
+  const existing = await db
+    .select()
+    .from(workflowCompensationTask)
+    .where(
+      and(
+        eq(workflowCompensationTask.workflowRunId, input.workflowRunId),
+        eq(workflowCompensationTask.status, "pending"),
+        eq(workflowCompensationTask.actionType, actionType),
+        eq(workflowCompensationTask.reason, reason)
+      )
+    )
+    .limit(1);
+  if (existing[0]) return existing[0];
+
   const id = randomUUID();
   await db.insert(workflowCompensationTask).values({
     id,
     workflowRunId: input.workflowRunId,
-    actionType: input.actionType ?? "retry_from_start",
-    reason: input.reason ?? "",
+    actionType,
+    reason,
     payloadJson: input.payloadJson ?? {},
     maxRetries: input.maxRetries ?? 3,
     nextRunAt: input.nextRunAt ?? new Date().toISOString(),

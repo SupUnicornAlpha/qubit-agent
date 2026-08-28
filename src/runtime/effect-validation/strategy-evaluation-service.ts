@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
-import { getDb } from "../../db/sqlite/client";
+import { and, desc, eq } from "drizzle-orm";
+import { type DbClient, getDb } from "../../db/sqlite/client";
 import { strategy, strategyEvalRun, strategyVersion } from "../../db/sqlite/schema";
 import type { BacktestJobRecord } from "../backtest/backtest-job-service";
 
@@ -14,7 +14,10 @@ export interface StrategyGateCheck {
     | "cvar95"
     | "positive_period_rate"
     | "turnover"
-    | "annual_return";
+    | "annual_return"
+    | "research_integrity"
+    | "pit_integrity"
+    | "statistical_confidence";
   label: string;
   value: number;
   threshold: number;
@@ -32,6 +35,73 @@ export interface StrategyEvaluationRecord {
   metrics: Record<string, unknown>;
   checks: StrategyGateCheck[];
   createdAt: string;
+}
+
+/**
+ * Admission decision for a real-money strategy deployment.
+ *
+ * This deliberately does not reuse a display-only `pass` boolean alone: an
+ * evaluation also has to carry the frozen dataset qualification that produced
+ * it.  That makes it impossible for a strong-looking research-only backtest
+ * to be silently treated as live-trading evidence.
+ */
+export interface StrategyExecutionAdmission {
+  eligible: boolean;
+  code:
+    | "strategy_evaluation_missing"
+    | "strategy_evaluation_failed"
+    | "strategy_dataset_not_validation_qualified"
+    | "strategy_backtest_integrity_not_passed"
+    | "strategy_promotion_incomplete"
+    | "strategy_execution_admitted";
+  reason: string;
+  evaluationId: string | null;
+  backtestRunId: string | null;
+  datasetSnapshotId: string | null;
+}
+
+/** A historical result is deployment evidence only with all PIT prerequisites. */
+export function hasValidationQualifiedDataset(metricsJson: unknown): boolean {
+  if (!isRecord(metricsJson) || !isRecord(metricsJson.datasetQualification)) return false;
+  const qualification = metricsJson.datasetQualification;
+  return (
+    qualification.useClass === "strategy_validation" &&
+    qualification.universeHistory === "verified" &&
+    qualification.corporateActions === "verified" &&
+    qualification.pointInTime === "verified"
+  );
+}
+
+export function hasPassedBacktestIntegrity(metricsJson: unknown): boolean {
+  return (
+    isRecord(metricsJson) &&
+    hasPassedBacktestCoreIntegrity(metricsJson.antiLeakageReport) &&
+    hasPassedPointInTimeIntegrity(metricsJson.pitReport) &&
+    isRecord(metricsJson.statisticalValidationReport) &&
+    metricsJson.statisticalValidationReport.status === "passed"
+  );
+}
+
+export function hasPassedPointInTimeIntegrity(report: unknown): boolean {
+  return isRecord(report) && report.pass === true && report.verdict === "point_in_time_clean";
+}
+
+/**
+ * A base run has no independent OOS by construction. It may pass the core gate
+ * when OOS is its only unresolved item; the separate walk-forward evaluation
+ * remains mandatory before deployment.
+ */
+export function hasPassedBacktestCoreIntegrity(report: unknown): boolean {
+  if (!isRecord(report)) return false;
+  if (report.status === "passed") return true;
+  if (report.status !== "research_only") return false;
+  const failed = Array.isArray(report.failedChecks) ? report.failedChecks : [];
+  const unknown = Array.isArray(report.unknownChecks) ? report.unknownChecks : [];
+  return (
+    failed.length === 0 &&
+    unknown.every((key) => key === "oos_isolation" || key === "embargo_isolation") &&
+    unknown.includes("oos_isolation")
+  );
 }
 
 const DEFAULT_THRESHOLDS = {
@@ -69,7 +139,13 @@ export class StrategyEvaluationService {
       check("sortino", "成本后 Sortino", metrics.sortino ?? 0, thresholds.minSortino, ">="),
       check("calmar", "Calmar", metrics.calmar ?? 0, thresholds.minCalmar, ">="),
       check("max_drawdown", "最大回撤", metrics.maxDrawdown, thresholds.maxDrawdown, "<="),
-      check("cvar95", "CVaR 95%", metrics.conditionalValueAtRisk95 ?? 1, thresholds.maxCvar95, "<="),
+      check(
+        "cvar95",
+        "CVaR 95%",
+        metrics.conditionalValueAtRisk95 ?? 1,
+        thresholds.maxCvar95,
+        "<="
+      ),
       check(
         "positive_period_rate",
         "正收益期占比",
@@ -79,6 +155,27 @@ export class StrategyEvaluationService {
       ),
       check("turnover", "换手率", metrics.turnover, thresholds.maxTurnover, "<="),
       check("annual_return", "年化收益", metrics.annualReturn, thresholds.minAnnualReturn, ">"),
+      check(
+        "research_integrity",
+        "研究完整性",
+        hasPassedBacktestCoreIntegrity(job.result.meta.antiLeakageReport) ? 1 : 0,
+        1,
+        ">="
+      ),
+      check(
+        "pit_integrity",
+        "PIT 审计",
+        hasPassedPointInTimeIntegrity(job.result.meta.pitReport) ? 1 : 0,
+        1,
+        ">="
+      ),
+      check(
+        "statistical_confidence",
+        "统计置信度",
+        job.result.meta.statisticalValidationReport?.status === "passed" ? 1 : 0,
+        1,
+        ">="
+      ),
     ];
     const qualityScore = checks.filter((item) => item.pass).length / checks.length;
     const pass = checks.every((item) => item.pass);
@@ -88,8 +185,17 @@ export class StrategyEvaluationService {
       barCount: job.result.meta.barCount,
       skippedDays: job.result.meta.skippedDays,
       costs: job.config.costs,
+      // Keep the exact research-input classification alongside the score.
+      // It is later consumed by the deployment gate, not inferred from a
+      // mutable market feed or a UI label.
+      datasetSnapshotId: job.config.dataset.snapshotId,
+      datasetQualification:
+        job.result.meta.datasetQualification ?? job.config.dataset.qualification,
+      antiLeakageReport: job.result.meta.antiLeakageReport ?? null,
+      pitReport: job.result.meta.pitReport ?? null,
+      statisticalValidationReport: job.result.meta.statisticalValidationReport ?? null,
       checks,
-      gateVersion: "strategy-gate-v2",
+      gateVersion: "strategy-gate-v4",
     };
     const existing = await db
       .select({ id: strategyEvalRun.id })
@@ -174,6 +280,107 @@ export class StrategyEvaluationService {
       createdAt: row.createdAt,
     };
   }
+}
+
+/**
+ * Real-money admission is intentionally stricter than a performance report.
+ * `research_only` data can remain useful for hypothesis generation and paper
+ * experiments, but cannot be used as evidence for a live strategy version.
+ */
+export async function assessStrategyExecutionAdmission(
+  db: DbClient,
+  strategyVersionId: string
+): Promise<StrategyExecutionAdmission> {
+  const rows = await db
+    .select({
+      id: strategyEvalRun.id,
+      backtestRunId: strategyEvalRun.backtestRunId,
+      evalKind: strategyEvalRun.evalKind,
+      pass: strategyEvalRun.pass,
+      metricsJson: strategyEvalRun.metricsJson,
+    })
+    .from(strategyEvalRun)
+    .where(eq(strategyEvalRun.strategyVersionId, strategyVersionId))
+    .orderBy(desc(strategyEvalRun.createdAt))
+    .limit(40);
+  const latestByKind = new Map<string, (typeof rows)[number]>();
+  for (const row of rows) {
+    if (!latestByKind.has(row.evalKind)) latestByKind.set(row.evalKind, row);
+  }
+  const backtest = latestByKind.get("backtest");
+  if (!backtest) {
+    return {
+      eligible: false,
+      code: "strategy_evaluation_missing",
+      reason: "live strategy requires a completed, approved backtest evaluation",
+      evaluationId: null,
+      backtestRunId: null,
+      datasetSnapshotId: null,
+    };
+  }
+
+  const metrics = (backtest.metricsJson as Record<string, unknown>) ?? {};
+  const datasetSnapshotId =
+    typeof metrics.datasetSnapshotId === "string" ? metrics.datasetSnapshotId : null;
+  if (!hasValidationQualifiedDataset(metrics)) {
+    return {
+      eligible: false,
+      code: "strategy_dataset_not_validation_qualified",
+      reason:
+        "live strategy requires a validation-qualified historical dataset (versioned universe, corporate actions, and PIT evidence); research_only backtests are not deployable",
+      evaluationId: backtest.id,
+      backtestRunId: backtest.backtestRunId,
+      datasetSnapshotId,
+    };
+  }
+  if (!hasPassedBacktestIntegrity(metrics)) {
+    return {
+      eligible: false,
+      code: "strategy_backtest_integrity_not_passed",
+      reason:
+        "live strategy requires base anti-leakage core checks and statisticalValidationReport.status=passed; OOS integrity is enforced by the separate walk-forward gate",
+      evaluationId: backtest.id,
+      backtestRunId: backtest.backtestRunId,
+      datasetSnapshotId,
+    };
+  }
+  if (backtest.pass !== true) {
+    return {
+      eligible: false,
+      code: "strategy_evaluation_failed",
+      reason: "latest backtest evaluation did not pass the strategy quality gate",
+      evaluationId: backtest.id,
+      backtestRunId: backtest.backtestRunId,
+      datasetSnapshotId,
+    };
+  }
+  const missingOrFailed = ["walk_forward", "paper", "live"].filter(
+    (kind) => latestByKind.get(kind)?.pass !== true
+  );
+  if (missingOrFailed.length > 0) {
+    return {
+      eligible: false,
+      code: "strategy_promotion_incomplete",
+      reason:
+        "live strategy additionally requires passed walk-forward, paper, and explicit human live approval; missing_or_failed=" +
+        missingOrFailed.join(","),
+      evaluationId: backtest.id,
+      backtestRunId: backtest.backtestRunId,
+      datasetSnapshotId,
+    };
+  }
+  return {
+    eligible: true,
+    code: "strategy_execution_admitted",
+    reason: "approved_backtest_with_validation_qualified_dataset",
+    evaluationId: backtest.id,
+    backtestRunId: backtest.backtestRunId,
+    datasetSnapshotId,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 function check(

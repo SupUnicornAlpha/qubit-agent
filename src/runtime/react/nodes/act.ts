@@ -31,7 +31,7 @@ import {
   recordToolCallSuccess,
   recordToolCallTimeout,
 } from "../../tools/tool-call-log-service";
-import { recordWorkflowToolFailure } from "../../tools/tool-governance-policy";
+import { isCacheableWorkflowToolFailure, recordWorkflowToolFailure } from "../../tools/tool-governance-policy";
 import {
   findWorkflowArtifactByFingerprint,
   recordWorkflowDataGap,
@@ -916,7 +916,9 @@ export async function actNode(
       targetName,
       params: mcp ? mcp.arguments : enrichedToolParams,
       reason: errMsg,
-      cacheable: Boolean(semanticFailure) || errorClass === "blocked" || errorClass === "permanent",
+      cacheable:
+        (Boolean(semanticFailure) || errorClass === "blocked" || errorClass === "permanent") &&
+        isCacheableWorkflowToolFailure(errMsg),
     });
     const recovery = buildToolRecoveryPlan({
       failedTool: targetName,

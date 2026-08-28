@@ -2678,6 +2678,9 @@ export const evalRun = sqliteTable("eval_run", {
     .references(() => evalDataset.id),
   configSnapshotJson: text("config_snapshot_json", { mode: "json" }).notNull().default("{}"),
   modelSnapshotJson: text("model_snapshot_json", { mode: "json" }).notNull().default("{}"),
+  /** Prompt / model / harness 稳定哈希，用于 experiment 对比。 */
+  configFingerprint: text("config_fingerprint"),
+  experimentLabel: text("experiment_label"),
   status: text("status", { enum: ["pending", "running", "completed", "failed"] })
     .notNull()
     .default("pending"),
@@ -2686,6 +2689,59 @@ export const evalRun = sqliteTable("eval_run", {
   endedAt: text("ended_at"),
   createdAt: createdAt(),
 });
+
+export const evalDatasetItem = sqliteTable(
+  "eval_dataset_item",
+  {
+    id: id(),
+    datasetId: text("dataset_id")
+      .notNull()
+      .references(() => evalDataset.id, { onDelete: "cascade" }),
+    caseKey: text("case_key").notNull(),
+    inputJson: text("input_json", { mode: "json" }).notNull().default({}),
+    expectedJson: text("expected_json", { mode: "json" }).notNull().default({}),
+    metadataJson: text("metadata_json", { mode: "json" }).notNull().default({}),
+    sourceWorkflowRunId: text("source_workflow_run_id").references(() => workflowRun.id, {
+      onDelete: "set null",
+    }),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("idx_eval_dataset_item_case").on(t.datasetId, t.caseKey)]
+);
+
+export const agentScore = sqliteTable(
+  "agent_score",
+  {
+    id: id(),
+    name: text("name").notNull(),
+    dataType: text("data_type", {
+      enum: ["NUMERIC", "CATEGORICAL", "BOOLEAN", "TEXT"],
+    }).notNull(),
+    valueNumeric: real("value_numeric"),
+    valueCategorical: text("value_categorical"),
+    valueBoolean: integer("value_boolean", { mode: "boolean" }),
+    valueText: text("value_text"),
+    comment: text("comment"),
+    source: text("source", {
+      enum: ["heuristic", "llm_judge", "code", "human", "domain_plugin"],
+    }).notNull(),
+    evaluatorId: text("evaluator_id"),
+    workflowRunId: text("workflow_run_id")
+      .notNull()
+      .references(() => workflowRun.id, { onDelete: "cascade" }),
+    observationId: text("observation_id"),
+    sessionId: text("session_id").references(() => chatSession.id, { onDelete: "set null" }),
+    evalRunId: text("eval_run_id").references(() => evalRun.id, { onDelete: "set null" }),
+    datasetItemId: text("dataset_item_id"),
+    configFingerprint: text("config_fingerprint"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("idx_agent_score_workflow_name").on(t.workflowRunId, t.name),
+    index("idx_agent_score_name_created").on(t.name, t.createdAt),
+    index("idx_agent_score_session_name").on(t.sessionId, t.name),
+  ]
+);
 
 export const evalCaseResult = sqliteTable("eval_case_result", {
   id: id(),
@@ -2871,6 +2927,8 @@ export const factorEvaluation = sqliteTable("factor_evaluation", {
     .references(() => factorDefinition.id, { onDelete: "cascade" }),
   asof: text("asof").notNull(),
   universe: text("universe").notNull(),
+  /** Immutable input evidence; NULL marks legacy/unversioned evaluations. */
+  datasetSnapshotId: text("dataset_snapshot_id"),
   providerId: text("provider_id"),
   ic: real("ic"),
   rankIc: real("rank_ic"),
@@ -3369,9 +3427,10 @@ export const envInstallLog = sqliteTable(
  *   failure_mode / fact / preference / persona / iteration_summary
  *
  * visibility 决定召回路由：
- *   - agent_private    仅 definitionId 自己可见 —— reflective 强制
- *   - role_shared      同 role 共享（按 agent_definition.role 比对）
- *   - project_shared   同 project 内所有 agent 可见 —— semantic / procedural 默认
+ *   - agent_private      仅 definitionId 自己可见 —— reflective 强制
+ *   - role_shared        同 role 共享（按 agent_definition.role / tags role:* 比对）
+ *   - project_shared     同 project 内所有 agent 可见 —— semantic / procedural 默认
+ *   - workspace_shared   同 FS workspace 内可见（scope=workspace 召回路径）
  */
 export const experience = sqliteTable(
   "experience",
@@ -3392,7 +3451,7 @@ export const experience = sqliteTable(
       onDelete: "set null",
     }),
     visibility: text("visibility", {
-      enum: ["agent_private", "role_shared", "project_shared"],
+      enum: ["agent_private", "role_shared", "project_shared", "workspace_shared"],
     })
       .notNull()
       .default("project_shared"),

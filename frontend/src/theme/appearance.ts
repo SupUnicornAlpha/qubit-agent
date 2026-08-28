@@ -42,11 +42,13 @@ export function coercePaletteForStyle(_style: UiStyleId, palette: UiPaletteId): 
 
 export const STYLE_LABELS: Record<BuiltinStyleId, string> = {
   default: "默认",
+  "vscode-dark": "VSCode Dark+",
+  "vscode-light": "VSCode Light+",
+  "jetbrains-darcula": "JetBrains Darcula",
   "feishu-clean": "简洁",
   industrial: "工业设计",
   bauhaus: "Bauhaus 包豪斯",
   "sci-fi-hud": "科幻 HUD",
-  "comic-book": "Comic Book 漫画书",
 };
 
 export interface UiAppearance {
@@ -65,8 +67,10 @@ const LEGACY_PALETTE_MAP: Record<string, UiPaletteId> = {
   "light-sky": "dark-purple",
 };
 
-/** 已下线的风格 → 回落到现存风格（多数无对应，统一回 default） */
-const LEGACY_STYLE_MAP: Record<string, UiStyleId> = {};
+/** 已下线的风格 → 回落到现存风格 */
+const LEGACY_STYLE_MAP: Record<string, UiStyleId> = {
+  "comic-book": "vscode-dark",
+};
 
 export function isLightPalette(palette: UiPaletteId): boolean {
   return palette.startsWith("light");

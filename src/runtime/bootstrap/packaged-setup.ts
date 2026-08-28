@@ -165,6 +165,21 @@ export async function runPlatformBootstrap(options?: {
   // 路径（agent_group 等）若想引用 workspace_id 时需要它已存在。
   await ensureDefaultUserWorkspace();
   await seedAgentDefinitions();
+  try {
+    const { consolidateAllChatSessionWorkflows } = await import(
+      "../conversation/session-workflow"
+    );
+    const r = await consolidateAllChatSessionWorkflows();
+    if (r.duplicatesCancelled > 0) {
+      console.log(
+        `[QUBIT] Chat session workflows consolidated: ${r.duplicatesCancelled} duplicate(s) across ${r.sessionsScanned} session(s)`
+      );
+    }
+  } catch (e) {
+    console.warn(
+      `[QUBIT] consolidateAllChatSessionWorkflows failed (non-fatal): ${(e as Error).message}`
+    );
+  }
   await bootstrapProviders();
   await bootstrapResearchScenarios();
   /**

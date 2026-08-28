@@ -20,7 +20,20 @@ function evaluation(
     evalKind,
     periodStart: null,
     periodEnd: null,
-    metricsJson: {},
+    metricsJson:
+      evalKind === "backtest"
+        ? {
+            datasetQualification: {
+              useClass: "strategy_validation",
+              universeHistory: "verified",
+              corporateActions: "verified",
+              pointInTime: "verified",
+            },
+            antiLeakageReport: { status: "passed" },
+            pitReport: { pass: true, verdict: "point_in_time_clean" },
+            statisticalValidationReport: { status: "passed" },
+          }
+        : {},
     qualityScore,
     pass,
     notes: "",
@@ -47,6 +60,24 @@ describe("strategy champion challenger scorecards", () => {
     const scorecard = buildStrategyVersionScorecards([
       evaluation("v2", "backtest", 1),
       evaluation("v2", "walk_forward", 1),
+    ])[0]!;
+    expect(scorecard.allPrerequisitesPassed).toBe(false);
+  });
+
+  test("does not let a research-only backtest pass the promotion prerequisite", () => {
+    const backtest = evaluation("v3", "backtest", 1);
+    backtest.metricsJson = {
+      datasetQualification: {
+        useClass: "research_only",
+        universeHistory: "not_verified",
+        corporateActions: "not_verified",
+        pointInTime: "verified",
+      },
+    };
+    const scorecard = buildStrategyVersionScorecards([
+      backtest,
+      evaluation("v3", "walk_forward", 1),
+      evaluation("v3", "paper", 1),
     ])[0]!;
     expect(scorecard.allPrerequisitesPassed).toBe(false);
   });

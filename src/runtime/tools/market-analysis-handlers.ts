@@ -1,7 +1,13 @@
 import {
+  canonicalCalendarSessions,
   getOrCreateMarketSnapshot,
   isMarketSnapshotGetEnabled,
 } from "../market/contracts/market-snapshot-service";
+import {
+  MarketCorporateActionLedgerSchema,
+  MarketFundamentalLedgerSchema,
+  MarketUniverseHistorySchema,
+} from "../market/contracts/market-event-v2";
 import { loadBuiltinConnectorSettings } from "../config/builtin-connector-settings";
 import { computeDateRangeForLimit, queryBarsRange } from "../market/klines-query";
 import { getMarketDataReadiness } from "../market/market-data-health";
@@ -18,10 +24,7 @@ import {
 import { extractSymbolArgs, requireSymbols } from "../market/normalize-symbol-args";
 import { detectRegimeFromBars } from "../market/regime";
 import { resolveTickerMarket } from "../market/resolve-ticker-market";
-import {
-  getIdeMarketSubscriptions,
-  getMarketWatchlist,
-} from "../market/watchlist-service";
+import { getIdeMarketSubscriptions, getMarketWatchlist } from "../market/watchlist-service";
 import { marketStreamGateway } from "../market/market-stream-gateway";
 import {
   computeBollinger,
@@ -81,7 +84,10 @@ export const MARKET_ANALYSIS_HANDLERS: Record<string, BuiltinToolHandler> = {
           ? params.bridge
           : undefined;
     const timeoutCandidate = Number(params.timeoutMs ?? params.timeout_ms ?? 5_000);
-    const timeoutMs = Math.max(1_000, Math.min(Number.isFinite(timeoutCandidate) ? timeoutCandidate : 5_000, 15_000));
+    const timeoutMs = Math.max(
+      1_000,
+      Math.min(Number.isFinite(timeoutCandidate) ? timeoutCandidate : 5_000, 15_000)
+    );
     const results = await Promise.allSettled(
       symbols.map(async (symbol) => {
         const resolution = resolveTickerMarket(symbol, {
@@ -129,39 +135,74 @@ export const MARKET_ANALYSIS_HANDLERS: Record<string, BuiltinToolHandler> = {
   "market.options.strategy_analyze": async (_ctx, params) => {
     const symbol = String(params.symbol ?? params.underlying ?? "").trim();
     if (!symbol) throw new Error("market.options.strategy_analyze: symbol is required");
-    const strategy = String(params.strategy ?? "single").trim().toLowerCase();
-    if (!isOptionStrategyName(strategy)) throw new Error("market.options.strategy_analyze: invalid strategy");
-    const sourceRaw = String(params.source ?? "auto").trim().toLowerCase();
+    const strategy = String(params.strategy ?? "single")
+      .trim()
+      .toLowerCase();
+    if (!isOptionStrategyName(strategy))
+      throw new Error("market.options.strategy_analyze: invalid strategy");
+    const sourceRaw = String(params.source ?? "auto")
+      .trim()
+      .toLowerCase();
     if (!["auto", "futu", "alpaca", "research"].includes(sourceRaw)) {
-      throw new Error("market.options.strategy_analyze: source must be auto, futu, alpaca, or research");
+      throw new Error(
+        "market.options.strategy_analyze: source must be auto, futu, alpaca, or research"
+      );
     }
     const exchange = typeof params.exchange === "string" ? params.exchange.trim() : "";
     const expiry = typeof params.expiry === "string" ? params.expiry.trim() : "";
     const requestedFarExpiry = typeof params.farExpiry === "string" ? params.farExpiry.trim() : "";
     const settings = await loadBuiltinConnectorSettings();
     const source = sourceRaw as OptionChainRequestSource;
-    const chain = await fetchOptionChain({ symbol, ...(exchange ? { exchange } : {}), ...(expiry ? { expiry } : {}), source, settings });
+    const chain = await fetchOptionChain({
+      symbol,
+      ...(exchange ? { exchange } : {}),
+      ...(expiry ? { expiry } : {}),
+      source,
+      settings,
+    });
     const needsFarExpiry = strategy === "calendar" || strategy === "diagonal";
-    const farExpiry = requestedFarExpiry || chain.expirations.find((value) => !expiry || !value.startsWith(expiry));
-    const farChain = needsFarExpiry && farExpiry
-      ? await fetchOptionChain({ symbol, ...(exchange ? { exchange } : {}), expiry: farExpiry, source, settings })
-      : null;
-    const quote = await queryMarketQuote({ symbol, ...(exchange ? { exchange } : {}) }).catch(() => null);
+    const farExpiry =
+      requestedFarExpiry || chain.expirations.find((value) => !expiry || !value.startsWith(expiry));
+    const farChain =
+      needsFarExpiry && farExpiry
+        ? await fetchOptionChain({
+            symbol,
+            ...(exchange ? { exchange } : {}),
+            expiry: farExpiry,
+            source,
+            settings,
+          })
+        : null;
+    const quote = await queryMarketQuote({ symbol, ...(exchange ? { exchange } : {}) }).catch(
+      () => null
+    );
     const numberParam = (key: string) => {
       const value = Number(params[key]);
       return Number.isFinite(value) ? value : undefined;
     };
     const input: OptionStrategyInput = {
       strategy,
-      ...(numberParam("centerStrike") !== undefined ? { centerStrike: numberParam("centerStrike") } : {}),
+      ...(numberParam("centerStrike") !== undefined
+        ? { centerStrike: numberParam("centerStrike") }
+        : {}),
       ...(numberParam("widthSteps") !== undefined ? { widthSteps: numberParam("widthSteps") } : {}),
       ...(numberParam("quantity") !== undefined ? { quantity: numberParam("quantity") } : {}),
-      ...(params.singleRight === "call" || params.singleRight === "put" ? { singleRight: params.singleRight } : {}),
-      ...(params.singleSide === "buy" || params.singleSide === "sell" ? { singleSide: params.singleSide } : {}),
-      ...(params.direction === "bullish" || params.direction === "bearish" ? { direction: params.direction } : {}),
+      ...(params.singleRight === "call" || params.singleRight === "put"
+        ? { singleRight: params.singleRight }
+        : {}),
+      ...(params.singleSide === "buy" || params.singleSide === "sell"
+        ? { singleSide: params.singleSide }
+        : {}),
+      ...(params.direction === "bullish" || params.direction === "bearish"
+        ? { direction: params.direction }
+        : {}),
       ...(Array.isArray(params.legs) ? { legs: parseOptionStrategyLegs(params.legs) } : {}),
     };
-    const analysis = analyzeOptionStrategy(input, farChain ? [chain, farChain] : [chain], quote?.lastPrice ?? null);
+    const analysis = analyzeOptionStrategy(
+      input,
+      farChain ? [chain, farChain] : [chain],
+      quote?.lastPrice ?? null
+    );
     return {
       ...analysis,
       underlying: chain.underlying,
@@ -172,7 +213,7 @@ export const MARKET_ANALYSIS_HANDLERS: Record<string, BuiltinToolHandler> = {
       fetchedAt: chain.fetchedAt,
       networkAccessed: true,
       guidance:
-        "只读策略分析，不创建订单或持仓。期权链的 feedClass/licenseUse 决定可用范围；L0 research_fallback 仅可研究，不能用于交易决策或订单准入。"
+        "只读策略分析，不创建订单或持仓。期权链的 feedClass/licenseUse 决定可用范围；L0 research_fallback 仅可研究，不能用于交易决策或订单准入。",
     };
   },
 
@@ -252,6 +293,43 @@ export const MARKET_ANALYSIS_HANDLERS: Record<string, BuiltinToolHandler> = {
       purposeRaw === "risk"
         ? purposeRaw
         : "research";
+    const universeHistoryRaw =
+      canonical.universeHistory ??
+      canonical.universe_history ??
+      canonical.universe_history_provenance;
+    const corporateActionLedgerRaw =
+      canonical.corporateActionLedger ??
+      canonical.corporate_action_ledger ??
+      canonical.corporate_actions;
+    const fundamentalLedgerRaw =
+      canonical.fundamentalLedger ??
+      canonical.fundamental_ledger ??
+      canonical.fundamental_revisions;
+    const universeHistory =
+      universeHistoryRaw === undefined
+        ? undefined
+        : MarketUniverseHistorySchema.safeParse(universeHistoryRaw);
+    if (universeHistory && !universeHistory.success) {
+      throw new Error("market.snapshot.get: universe_history must be a versioned membership table");
+    }
+    const corporateActionLedger =
+      corporateActionLedgerRaw === undefined
+        ? undefined
+        : MarketCorporateActionLedgerSchema.safeParse(corporateActionLedgerRaw);
+    if (corporateActionLedger && !corporateActionLedger.success) {
+      throw new Error(
+        "market.snapshot.get: corporate_action_ledger must be a versioned point-in-time action ledger"
+      );
+    }
+    const fundamentalLedger =
+      fundamentalLedgerRaw === undefined
+        ? undefined
+        : MarketFundamentalLedgerSchema.safeParse(fundamentalLedgerRaw);
+    if (fundamentalLedger && !fundamentalLedger.success) {
+      throw new Error(
+        "market.snapshot.get: fundamental_ledger must be a versioned point-in-time observation ledger"
+      );
+    }
 
     return getOrCreateMarketSnapshot({
       symbols,
@@ -262,6 +340,19 @@ export const MARKET_ANALYSIS_HANDLERS: Record<string, BuiltinToolHandler> = {
       limit: typeof canonical.limit === "number" ? canonical.limit : undefined,
       adjustMethod: typeof canonical.adjustMethod === "string" ? canonical.adjustMethod : undefined,
       timezone: typeof canonical.timezone === "string" ? canonical.timezone : undefined,
+      calendarVersion:
+        typeof (canonical.calendarVersion ?? canonical.calendar_version) === "string"
+          ? String(canonical.calendarVersion ?? canonical.calendar_version)
+          : undefined,
+      calendarSessionsByVenue:
+        canonicalCalendarSessions(
+          canonical.calendarSessionsByVenue ?? canonical.calendar_sessions_by_venue
+        ) ?? undefined,
+      ...(universeHistory?.success ? { universeHistory: universeHistory.data } : {}),
+      ...(corporateActionLedger?.success
+        ? { corporateActionLedger: corporateActionLedger.data }
+        : {}),
+      ...(fundamentalLedger?.success ? { fundamentalLedger: fundamentalLedger.data } : {}),
     });
   },
 
@@ -402,14 +493,17 @@ function parseOptionStrategyLegs(value: unknown[]): StrategyLegInput[] {
       return Number.isFinite(candidate) ? candidate : undefined;
     };
     const right = row.right === "call" || row.right === "put" ? row.right : undefined;
-    const expiry = typeof row.expiry === "string" && row.expiry.trim() ? row.expiry.trim() : undefined;
+    const expiry =
+      typeof row.expiry === "string" && row.expiry.trim() ? row.expiry.trim() : undefined;
     const leg: StrategyLegInput = {
       action,
       ...(right ? { right } : {}),
       ...(number("strike") !== undefined ? { strike: number("strike") } : {}),
       ...(number("quantity") !== undefined ? { quantity: number("quantity") } : {}),
       ...(number("entryPrice") !== undefined ? { entryPrice: number("entryPrice") } : {}),
-      ...(number("underlyingShares") !== undefined ? { underlyingShares: number("underlyingShares") } : {}),
+      ...(number("underlyingShares") !== undefined
+        ? { underlyingShares: number("underlyingShares") }
+        : {}),
       ...(expiry ? { expiry } : {}),
     };
     return [leg];

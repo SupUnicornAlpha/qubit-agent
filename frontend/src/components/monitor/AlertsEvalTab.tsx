@@ -10,6 +10,7 @@ import type {
   EvalRunRecord,
 } from "../../api/types";
 import { styles } from "./monitor-shared";
+import { AgentEvalPlatformPanel } from "./AgentEvalPlatformPanel";
 
 export type AlertStatusFilter = "open" | "ack" | "resolved" | "";
 
@@ -35,6 +36,7 @@ export type AlertsEvalTabProps = {
   onOpenEvalRun: (runId: string) => void | Promise<void>;
   /** 在 select 变化时一并刷新 alerts（保持原行为：调用 listAlerts 后 setAlerts） */
   onAlertFilterChange: (v: AlertStatusFilter) => void;
+  projectId: string;
 };
 
 export const AlertsEvalTab: FC<AlertsEvalTabProps> = ({
@@ -58,6 +60,7 @@ export const AlertsEvalTab: FC<AlertsEvalTabProps> = ({
   onRunEval,
   onOpenEvalRun,
   onAlertFilterChange,
+  projectId,
 }) => {
   return (
     <>
@@ -111,8 +114,15 @@ export const AlertsEvalTab: FC<AlertsEvalTabProps> = ({
         ))}
       </div>
 
+      <AgentEvalPlatformPanel
+        projectId={projectId}
+        evalDatasets={evalDatasets}
+        evalRuns={evalRuns}
+        onRefreshRuns={(id) => void loadEvalBoard(id)}
+      />
+
       <h3 className="qb-monitor__section" style={styles.subTitle}>
-        评测报告
+        评测报告（Legacy MSA/SDP/RFV）
       </h3>
       <div style={styles.form}>
         <input style={styles.input} value={datasetName} onChange={(e) => setDatasetName(e.target.value)} />

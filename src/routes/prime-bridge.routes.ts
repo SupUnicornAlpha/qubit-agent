@@ -35,6 +35,7 @@ import { getCoreMonitorHandle } from "../runtime/prime/project-core-monitor";
 import { classifyToolError } from "../runtime/react/nodes/tool-error-classifier";
 import {
   evaluateToolGovernance,
+  isCacheableWorkflowToolFailure,
   recordWorkflowToolFailure,
 } from "../runtime/tools/tool-governance-policy";
 import { dispatchBuiltinTool, isBuiltinTool } from "../runtime/tools/builtin-tools";
@@ -98,6 +99,7 @@ export const BRIDGED_TOOLS = [
   "factor.mine.llm",
   "factor.promote_backtest",
   "backtest.run",
+  "backtest.walk_forward",
   "workspace.context.snapshot",
   "web.search",
   "web.fetch",
@@ -239,6 +241,26 @@ export function normalizeBridgeToolArgs(
   if (next.startDate == null && typeof next.start_date === "string")
     next.startDate = next.start_date;
   if (next.endDate == null && typeof next.end_date === "string") next.endDate = next.end_date;
+
+  if (
+    toolName === "strategy.compose" ||
+    toolName === "backtest.run" ||
+    toolName === "factor.promote_backtest"
+  ) {
+    if (next.strategy_version_id == null) {
+      next.strategy_version_id = next.strategyVersionId;
+    }
+    if (next.composition_id == null) next.composition_id = next.compositionId;
+    if (next.dataset_snapshot_id == null) {
+      next.dataset_snapshot_id =
+        next.datasetSnapshotId ?? next.snapshot_id ?? next.snapshotId;
+    }
+    if (next.factor_ids == null) {
+      next.factor_ids =
+        next.factorIds ??
+        (next.factor_id ? [next.factor_id] : next.factorId ? [next.factorId] : undefined);
+    }
+  }
 
   if (toolName === "web.fetch") {
     const query = typeof next.query === "string" ? next.query.trim() : "";
@@ -495,7 +517,13 @@ async function invokeMcpViaBridge(input: {
         reason: semanticFailure
           ? `semantic_data_failure:${semanticFailure}`
           : (failureCode ?? "mcp_failed"),
-        cacheable: Boolean(semanticFailure) || !result.accepted,
+        cacheable:
+          (Boolean(semanticFailure) || !result.accepted) &&
+          isCacheableWorkflowToolFailure(
+            semanticFailure
+              ? `semantic_data_failure:${semanticFailure}`
+              : (failureCode ?? "mcp_failed")
+          ),
       });
     }
     const observation = {
@@ -556,7 +584,9 @@ async function invokeMcpViaBridge(input: {
         targetName: wireName,
         params: normalizedArgs,
         reason: message,
-        cacheable: errorClass === "permanent" || errorClass === "blocked",
+        cacheable:
+          (errorClass === "permanent" || errorClass === "blocked") &&
+          isCacheableWorkflowToolFailure(message),
       });
     }
     if (activity.workflowId !== "prime-bridge") {
@@ -793,7 +823,13 @@ primeBridgeRouter.post("/rpc", async (c) => {
             reason: semanticFailure
               ? `semantic_data_failure:${semanticFailure}`
               : (failureReason ?? "tool_failed"),
-            cacheable: Boolean(semanticFailure),
+            cacheable:
+              Boolean(semanticFailure) &&
+              isCacheableWorkflowToolFailure(
+                semanticFailure
+                  ? `semantic_data_failure:${semanticFailure}`
+                  : (failureReason ?? "tool_failed")
+              ),
           });
         }
         const summary = ok
@@ -847,7 +883,9 @@ primeBridgeRouter.post("/rpc", async (c) => {
             targetName: name,
             params: args,
             reason: message,
-            cacheable: errorClass === "permanent" || errorClass === "blocked",
+            cacheable:
+          (errorClass === "permanent" || errorClass === "blocked") &&
+          isCacheableWorkflowToolFailure(message),
           });
         }
         if (activity.workflowId !== "prime-bridge") {

@@ -1,0 +1,9 @@
+{
+  "id": "a3-content-judge",
+  "type": "llm_judge",
+  "enabled": true,
+  "sampleRate": 0.05,
+  "outputScoreName": "aqm.A-3",
+  "maxArtifacts": 5,
+  "rubric": "content-judge"
+}

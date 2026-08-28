@@ -29,6 +29,7 @@ import {
   patchMarketDataSource,
 } from "../runtime/market/market-data-source-control";
 import { marketStreamGateway } from "../runtime/market/market-stream-gateway";
+import { getOrCreateMarketSnapshot } from "../runtime/market/contracts/market-snapshot-service";
 import {
   queryChipDistribution,
   queryMarketOrderBook,
@@ -88,7 +89,10 @@ marketRouter.get("/stream/metrics", (c) =>
 );
 
 /** 本机用户自选 + 已关联券商持仓；只读聚合，永不写券商侧。 */
-marketRouter.get("/watchlist", async (c) => c.json({ ok: true, data: await getMarketWatchlist() }));
+marketRouter.get("/watchlist", async (c) => {
+  const includePositions = c.req.query("includePositions") !== "0";
+  return c.json({ ok: true, data: await getMarketWatchlist({ includePositions }) });
+});
 
 marketRouter.post("/watchlist", async (c) => {
   const body = await c.req.json<{ symbol?: string; exchange?: string; label?: string }>();
@@ -105,11 +109,45 @@ marketRouter.post("/watchlist", async (c) => {
 });
 
 marketRouter.delete("/watchlist/:symbol", async (c) => {
+  const exchange = c.req.query("exchange");
   const data = await removeMarketWatchlistItem({
     symbol: c.req.param("symbol"),
-    ...(c.req.query("exchange") !== undefined ? { exchange: c.req.query("exchange") } : {}),
+    ...(exchange !== undefined ? { exchange } : {}),
   });
   return c.json({ ok: true, data });
+});
+
+/**
+ * 冻结研究/回测输入。UI 可在提交回测前调用，随后 backtest_run 只消费该 snapshotId。
+ * 这是数据复制，而不是行情订阅或交易授权。
+ */
+marketRouter.post("/snapshots", async (c) => {
+  try {
+    const body = await c.req.json<{
+      symbols?: string[];
+      exchange?: string;
+      asOf?: string;
+      timeframe?: string;
+      limit?: number;
+      purpose?: "research" | "backtest";
+    }>();
+    const symbols = [...new Set((body.symbols ?? []).map((symbol) => symbol.trim()).filter(Boolean))];
+    if (symbols.length === 0) return c.json({ ok: false, error: "symbols are required" }, 400);
+    const data = await getOrCreateMarketSnapshot({
+      symbols,
+      ...(body.exchange ? { exchange: body.exchange } : {}),
+      ...(body.asOf ? { asOf: body.asOf } : {}),
+      purpose: body.purpose ?? "backtest",
+      timeframe: body.timeframe ?? "1d",
+      ...(body.limit ? { limit: body.limit } : {}),
+    });
+    return c.json({ ok: true, data });
+  } catch (error) {
+    return c.json(
+      { ok: false, error: error instanceof Error ? error.message : "market_snapshot_failed" },
+      400
+    );
+  }
 });
 
 /** Pluggable broker market-data bridges (Futu / IB / SuperMind / …). */
@@ -207,14 +245,20 @@ marketRouter.get("/options/strategy-analyze", async (c) => {
       ? await fetchOptionChain({ symbol, ...(exchange ? { exchange } : {}), expiry: resolvedFarExpiry, source, settings })
       : null;
     const quote = await queryMarketQuote({ symbol, ...(exchange ? { exchange } : {}) }).catch(() => null);
+    const centerStrike = numeric("centerStrike");
+    const widthSteps = numeric("widthSteps");
+    const quantity = numeric("quantity");
+    const singleRight = c.req.query("singleRight");
+    const singleSide = c.req.query("singleSide");
+    const direction = c.req.query("direction");
     const input: OptionStrategyInput = {
       strategy: strategyRaw,
-      ...(numeric("centerStrike") !== undefined ? { centerStrike: numeric("centerStrike") } : {}),
-      ...(numeric("widthSteps") !== undefined ? { widthSteps: numeric("widthSteps") } : {}),
-      ...(numeric("quantity") !== undefined ? { quantity: numeric("quantity") } : {}),
-      ...(c.req.query("singleRight") === "call" || c.req.query("singleRight") === "put" ? { singleRight: c.req.query("singleRight") as "call" | "put" } : {}),
-      ...(c.req.query("singleSide") === "buy" || c.req.query("singleSide") === "sell" ? { singleSide: c.req.query("singleSide") as "buy" | "sell" } : {}),
-      ...(c.req.query("direction") === "bullish" || c.req.query("direction") === "bearish" ? { direction: c.req.query("direction") as "bullish" | "bearish" } : {}),
+      ...(centerStrike !== undefined ? { centerStrike } : {}),
+      ...(widthSteps !== undefined ? { widthSteps } : {}),
+      ...(quantity !== undefined ? { quantity } : {}),
+      ...(singleRight === "call" || singleRight === "put" ? { singleRight } : {}),
+      ...(singleSide === "buy" || singleSide === "sell" ? { singleSide } : {}),
+      ...(direction === "bullish" || direction === "bearish" ? { direction } : {}),
     };
     const analysis = analyzeOptionStrategy(input, farChain ? [chain, farChain] : [chain], quote?.lastPrice ?? null);
     return c.json({
@@ -387,6 +431,48 @@ marketRouter.get("/klines", async (c) => {
             : 500;
     console.error("[market/klines]", e);
     return c.json({ ok: false, error: wrapped }, status);
+  }
+});
+
+/** 批量 K 线（自选 sparkline 等）；服务端限流并发，复用 queryKlines 缓存。 */
+marketRouter.post("/klines/batch", async (c) => {
+  try {
+    const body = (await c.req.json().catch(() => ({}))) as {
+      requests?: Array<{ symbol?: string; exchange?: string; timeframe?: string; limit?: number }>;
+    };
+    const requests = Array.isArray(body.requests) ? body.requests.slice(0, 30) : [];
+    if (requests.length === 0) {
+      return c.json({ ok: true, data: {} as Record<string, unknown> });
+    }
+    const concurrency = 4;
+    const results: Record<
+      string,
+      { bars: Awaited<ReturnType<typeof queryKlines>>["bars"]; meta: Awaited<ReturnType<typeof queryKlines>>["meta"]; error?: Awaited<ReturnType<typeof queryKlines>>["error"] }
+    > = {};
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < requests.length) {
+        const index = cursor++;
+        const req = requests[index]!;
+        const symbol = String(req.symbol ?? "").trim();
+        if (!symbol) continue;
+        const exchange = req.exchange?.trim() ?? "";
+        const key = `${symbol.toUpperCase()}:${exchange.toUpperCase()}`;
+        const { bars, meta, error } = await queryKlines({
+          symbol,
+          ...(exchange ? { exchange } : {}),
+          ...(req.timeframe ? { timeframe: req.timeframe } : {}),
+          ...(req.limit !== undefined ? { limit: req.limit } : {}),
+        });
+        results[key] = { bars, meta, ...(error ? { error } : {}) };
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, requests.length) }, () => worker()));
+    return c.json({ ok: true, data: results });
+  } catch (e) {
+    const wrapped = wrapKlinesThrownError(e);
+    console.error("[market/klines/batch]", e);
+    return c.json({ ok: false, error: wrapped }, 500);
   }
 });
 

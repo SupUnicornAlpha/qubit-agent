@@ -102,6 +102,9 @@ function inferMissingParams(toolName: string, params: Record<string, unknown>): 
   if (toolName === "backtest.run") {
     if (!params.strategy_version_id) missing.push("strategy_version_id");
     if (!Array.isArray(params.symbols) || params.symbols.length === 0) missing.push("symbols");
+    if (!params.dataset_snapshot_id && !params.datasetSnapshotId && !params.snapshot_id) {
+      missing.push("dataset_snapshot_id（先 market.snapshot.get）");
+    }
   }
   if (toolName === "recommendation.record") {
     if (!params.symbol) missing.push("symbol");

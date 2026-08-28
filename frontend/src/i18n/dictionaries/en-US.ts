@@ -197,11 +197,13 @@ const pack: LocalePack = {
     theme: {
       styles: {
         default: "Default",
+        "vscode-dark": "VSCode Dark+",
+        "vscode-light": "VSCode Light+",
+        "jetbrains-darcula": "JetBrains Darcula",
         "feishu-clean": "Clean",
         industrial: "Industrial",
         bauhaus: "Bauhaus",
         "sci-fi-hud": "Sci-Fi HUD",
-        "comic-book": "Comic Book",
       },
       palettes: {
         "dark-purple": "Dark Purple",
@@ -217,6 +219,7 @@ const pack: LocalePack = {
         ariaLabel: "Left workbench tools",
         editor: "Code editor",
         watchlist: "Watchlist / positions",
+        outline: "Outline navigation",
         editorEmptyTitle: "Workspace file editor",
         editorEmptyBody:
           "Chat lives in the right Agent panel. Edit workspace files here with Monaco — open .md / .py / .ts from the Explorer.",
@@ -786,6 +789,13 @@ const pack: LocalePack = {
         hide: "Hide",
         toggleTitle: "Toggle Agent panel",
         resizeAria: "Resize Agent panel",
+      },
+      bottomPanel: {
+        toggleTitle: "Show/hide Bottom Engineering Panel (⌘` / Ctrl+`)",
+        problems: "Problems",
+        output: "Output",
+        strategyLog: "Strategy Console",
+        terminal: "Terminal",
       },
       resize: {
         sideCenter: "Resize sidebar and editor",

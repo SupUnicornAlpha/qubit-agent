@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Minus, Plus, RefreshCw, WalletCards } from "lucide-react";
 import {
   addMarketWatchlistItem,
-  getKlines,
+  getKlinesBatch,
   getMarketWatchlist,
   removeMarketWatchlistItem,
   subscribeMarketQuoteStream,
@@ -16,6 +16,10 @@ type StreamStatus = "connecting" | "connected" | "reconnecting" | "stale" | "clo
 type MarketPanelTab = "watchlist" | "positions";
 type SparklineData = { bars: KlineBar[]; intradayChange: number | null };
 type SparklineState = Record<string, SparklineData | undefined>;
+const SPARKLINE_TIMEFRAME = "5m";
+/** 小 K 线只需最近 16 根；limit 24 留余量 */
+const SPARKLINE_LIMIT = 24;
+const SPARKLINE_DEFER_MS = 600;
 const quoteKey = (entry: Pick<MarketWatchlistEntry, "symbol" | "exchange">) =>
   `${entry.symbol}:${entry.exchange}`;
 const positionKey = (entry: MarketWatchlistEntry) =>
@@ -105,19 +109,42 @@ export const MarketWatchlistPanel: FC<{ compact?: boolean }> = ({ compact = fals
   const [sparklines, setSparklines] = useState<SparklineState>({});
   const [sparklineRefresh, setSparklineRefresh] = useState(0);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { includePositions?: boolean }) => {
+    const includePositions = opts?.includePositions ?? false;
     setBusy(true);
     try {
-      const next = await getMarketWatchlist();
-      setSnapshot(next);
+      const next = await getMarketWatchlist({ includePositions });
+      setSnapshot((previous) => {
+        if (!includePositions && previous?.positionEntries.length) {
+          return {
+            ...next,
+            positionEntries: previous.positionEntries,
+            connectedAccounts: previous.connectedAccounts,
+            brokerErrors: previous.brokerErrors,
+            entries: [
+              ...next.watchlistEntries,
+              ...previous.positionEntries.filter(
+                (entry) =>
+                  !next.watchlistEntries.some(
+                    (manual) =>
+                      manual.symbol === entry.symbol && manual.exchange === entry.exchange
+                  )
+              ),
+            ],
+          };
+        }
+        return next;
+      });
       setQuotes((previous) => {
         const allowed = new Set([
           ...(next.watchlistEntries ?? next.entries.filter((entry) => entry.sources.includes("manual"))),
-          ...(next.positionEntries ?? next.entries.filter((entry) => entry.position)),
+          ...(includePositions
+            ? (next.positionEntries ?? next.entries.filter((entry) => entry.position))
+            : []),
         ].map(quoteKey));
         return Object.fromEntries(Object.entries(previous).filter(([key]) => allowed.has(key)));
       });
-      setSparklineRefresh((value) => value + 1);
+      if (includePositions) setSparklineRefresh((value) => value + 1);
       setMessage(null);
     } catch (error) {
       setMessage(`加载行情上下文失败：${error instanceof Error ? error.message : "unknown_error"}`);
@@ -127,8 +154,13 @@ export const MarketWatchlistPanel: FC<{ compact?: boolean }> = ({ compact = fals
   }, []);
 
   useEffect(() => {
-    void load();
+    void load({ includePositions: false });
   }, [load]);
+
+  useEffect(() => {
+    if (activeTab !== "positions") return;
+    void load({ includePositions: true });
+  }, [activeTab, load]);
 
   const watchlistEntries = snapshot?.watchlistEntries ?? snapshot?.entries.filter((entry) => entry.sources.includes("manual")) ?? [];
   const positionEntries = snapshot?.positionEntries ?? snapshot?.entries.filter((entry) => entry.position) ?? [];
@@ -165,20 +197,31 @@ export const MarketWatchlistPanel: FC<{ compact?: boolean }> = ({ compact = fals
       return;
     }
     let cancelled = false;
-    void Promise.allSettled(uniqueEntries.slice(0, 30).map(async (entry) => ({
-      key: quoteKey(entry),
-      sparkline: intradaySparkline(
-        (await getKlines({ symbol: entry.symbol, exchange: entry.exchange, timeframe: "5m", limit: 120 })).data
-      ),
-    }))).then((results) => {
-      if (cancelled) return;
-      setSparklines((previous) => {
-        const next: SparklineState = {};
-        for (const result of results) if (result.status === "fulfilled") next[result.value.key] = result.value.sparkline;
-        return { ...previous, ...next };
+    const timer = window.setTimeout(() => {
+      void getKlinesBatch({
+        requests: uniqueEntries.slice(0, 30).map((entry) => ({
+          symbol: entry.symbol,
+          exchange: entry.exchange,
+          timeframe: SPARKLINE_TIMEFRAME,
+          limit: SPARKLINE_LIMIT,
+        })),
+      }).then((batch) => {
+        if (cancelled) return;
+        setSparklines((previous) => {
+          const next: SparklineState = { ...previous };
+          for (const entry of uniqueEntries.slice(0, 30)) {
+            const key = quoteKey(entry);
+            const row = batch[`${entry.symbol.toUpperCase()}:${entry.exchange.toUpperCase()}`];
+            if (row?.bars?.length) next[key] = intradaySparkline(row.bars);
+          }
+          return next;
+        });
       });
-    });
-    return () => { cancelled = true; };
+    }, SPARKLINE_DEFER_MS);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [sparklineEntriesKey, sparklineRefresh, watchlistEntries, positionEntries]);
 
   const subscriptionKey = visibleEntries
@@ -229,7 +272,16 @@ export const MarketWatchlistPanel: FC<{ compact?: boolean }> = ({ compact = fals
     setBusy(true);
     try {
       const next = await addMarketWatchlistItem({ symbol, ...(exchange.trim() ? { exchange } : {}) });
-      setSnapshot(next);
+      setSnapshot((previous) => ({
+        ...next,
+        ...(previous?.positionEntries.length
+          ? {
+              positionEntries: previous.positionEntries,
+              connectedAccounts: previous.connectedAccounts,
+              brokerErrors: previous.brokerErrors,
+            }
+          : null),
+      }));
       setSparklineRefresh((value) => value + 1);
       setSymbol("");
       setExchange("");
@@ -298,7 +350,7 @@ export const MarketWatchlistPanel: FC<{ compact?: boolean }> = ({ compact = fals
                     ? "未订阅"
                     : "连接中"}
           </span>
-          <button type="button" className="qb-btn-secondary qb-btn--compact" onClick={() => void load()} disabled={busy} title="刷新自选、K 线和券商持仓">
+          <button type="button" className="qb-btn-secondary qb-btn--compact" onClick={() => void load({ includePositions: activeTab === "positions" })} disabled={busy} title="刷新自选、K 线和券商持仓">
             <RefreshCw size={14} aria-hidden /> 刷新
           </button>
         </div>

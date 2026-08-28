@@ -118,7 +118,7 @@ html {
   border: 1px solid color-mix(in srgb, var(--qb-chat-bubble-border, #3f3f46) 88%, transparent);
   border-radius: 10px;
   overflow: hidden;
-  background: color-mix(in srgb, var(--qb-chat-page-bg, #0d0d0f) 88%, #1d2735 12%);
+  background: color-mix(in srgb, var(--qb-chat-page-bg, #0d0d0f) 92%, var(--qb-bg-surface, #252526) 8%);
 }
 
 [data-qb-chat-panel] .qb-chat-execution__toggle,

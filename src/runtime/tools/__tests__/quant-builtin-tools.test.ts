@@ -2,7 +2,7 @@
  * Agent 量化工坊工具入口集成测试
  *
  * 验证 builtin-tools 中新增的 factor.list / factor.autoEvaluate / discovery.run /
- * discovery.promote / backtest.run 能通过 dispatchBuiltinTool 调用，并正确路由到
+ * discovery.promote / backtest.run / backtest.walk_forward 能通过 dispatchBuiltinTool 调用，并正确路由到
  * factorService / discoveryService / backtestJobService。
  *
  * 与 services 自身的单测互补：这里只验证「工具入口的参数解析与编排链路」。
@@ -68,6 +68,7 @@ describe("Agent 量化工坊工具入口", () => {
       "discovery.run",
       "discovery.promote",
       "backtest.run",
+      "backtest.walk_forward",
       "code.run_python",
     ]) {
       expect(names).toContain(t);
@@ -175,6 +176,16 @@ describe("Agent 量化工坊工具入口", () => {
         signals: { kind: "factor_score", expr: "Mean($close, 20)", lang: "qlib_expr" },
       })
     ).rejects.toThrow(/strategy_version_id/);
+  });
+
+  test("backtest.walk_forward 缺 backtest_run_id → 抛错", async () => {
+    const ctx = buildCtx();
+    await expect(
+      dispatchBuiltinTool("backtest.walk_forward", ctx as never, {
+        folds: 3,
+        purge_days: 5,
+      })
+    ).rejects.toThrow(/backtest_run_id/);
   });
 
   test("factor.autoEvaluate 必填校验", async () => {

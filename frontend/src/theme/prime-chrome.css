@@ -84,6 +84,10 @@ html[data-qb-ux="pro"] .qb-pro-panel--agent {
   flex-direction: column;
 }
 
+html[data-qb-ux="pro"] .qb-pro-panel--sidebar {
+  background: var(--qb-sidebar-activity-bg);
+}
+
 html[data-qb-ux="pro"] .qb-pro-panel--center {
   display: flex;
   flex-direction: column;
@@ -94,6 +98,31 @@ html[data-qb-ux="pro"] .qb-pro-resize-handle {
   flex: 0 0 4px;
   background: transparent;
   transition: background 120ms ease;
+}
+
+html[data-qb-ux="pro"] .qb-pro-resize-handle--vertical {
+  width: 100%;
+  height: 4px;
+  flex: 0 0 4px;
+}
+
+html[data-qb-ux="pro"] .qb-pro-panel-group--vertical {
+  height: 100%;
+  width: 100%;
+}
+
+html[data-qb-ux="pro"] .qb-pro-panel--stage {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+html[data-qb-ux="pro"] .qb-pro-panel--bottom {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
 }
 
 html[data-qb-ux="pro"] .qb-pro-resize-handle:hover,

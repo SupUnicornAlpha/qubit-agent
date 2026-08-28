@@ -1,4 +1,5 @@
 import type { FC } from "react";
+import { GitBranch, Terminal as TerminalIcon, AlertCircle } from "lucide-react";
 import { useAppStore } from "../../store";
 import { useTranslation } from "../../i18n";
 import { getPageDescriptor } from "../../pages/registry";
@@ -15,6 +16,10 @@ export const ProStatusBar: FC = () => {
   const activeFsWorkspaceId = useAppStore((s) => s.activeFsWorkspaceId);
   const chromeDensity = useAppStore((s) => s.chromeDensity);
   const toggleChromeDensity = useAppStore((s) => s.toggleChromeDensity);
+  const proBottomPanelOpen = useAppStore((s) => s.proBottomPanelOpen);
+  const toggleProBottomPanelOpen = useAppStore((s) => s.toggleProBottomPanelOpen);
+  const setProBottomTab = useAppStore((s) => s.setProBottomTab);
+  const setProBottomPanelOpen = useAppStore((s) => s.setProBottomPanelOpen);
   const { t } = useTranslation();
 
   const page = getPageDescriptor(activeView);
@@ -36,12 +41,21 @@ export const ProStatusBar: FC = () => {
           ? "qb-pro-statusbar__dot qb-pro-statusbar__dot--ok"
           : "qb-pro-statusbar__dot";
 
+  const openProblems = () => {
+    setProBottomTab("problems");
+    setProBottomPanelOpen(true);
+  };
+
   return (
     <footer className="qb-pro-statusbar" role="status">
       <div className="qb-pro-statusbar__left">
         <span className={dotClass} aria-hidden />
         <span>
           {connected ? t("common.backend.connected") : t("common.backend.offline")}
+        </span>
+        <span aria-hidden>·</span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+          <GitBranch size={11} /> main
         </span>
         <span aria-hidden>·</span>
         <span>{pageLabel}</span>
@@ -57,6 +71,24 @@ export const ProStatusBar: FC = () => {
         <span>{stateLabel}</span>
       </div>
       <div className="qb-pro-statusbar__right">
+        <button
+          type="button"
+          title="Problems 诊断 (0 错误)"
+          onClick={openProblems}
+          style={{ display: "inline-flex", alignItems: "center", gap: 3 }}
+        >
+          <AlertCircle size={11} /> 0
+        </button>
+        <button
+          type="button"
+          title="切换下置工程面板 (⌘` / Ctrl+`)"
+          onClick={() => toggleProBottomPanelOpen()}
+          style={{ display: "inline-flex", alignItems: "center", gap: 3 }}
+        >
+          <TerminalIcon size={11} /> {proBottomPanelOpen ? "隐藏面板" : "工程面板"}
+        </button>
+        <span>UTF-8</span>
+        <span>Spaces: 2</span>
         <button
           type="button"
           title="⌘K / Ctrl+K"

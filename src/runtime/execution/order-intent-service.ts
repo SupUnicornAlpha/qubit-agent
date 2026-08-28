@@ -9,6 +9,7 @@ import {
 } from "../../db/sqlite/schema";
 import type { OrderSide, OrderType, RiskDecisionResult, TimeInForce } from "../../types/entities";
 import { appendAuditLog } from "../audit/audit-chain-service";
+import { assessStrategyExecutionAdmission } from "../effect-validation/strategy-evaluation-service";
 import { resolveExecutionEvidenceBinding } from "../market/contracts/evidence-binding";
 import { linkForecastBookEntry } from "../market/contracts/forecast-book-service";
 import { assertTradingModuleEnabled } from "../trader/trading-module-control";
@@ -129,8 +130,8 @@ export async function createOrderIntentWithExecution(
   const dispatchMode = input.dispatchMode ?? "paper";
 
   const evidence = await resolveExecutionEvidenceBinding({
-    thesisId: input.thesisId,
-    snapshotId: input.snapshotId,
+    ...(input.thesisId !== undefined ? { thesisId: input.thesisId } : {}),
+    ...(input.snapshotId !== undefined ? { snapshotId: input.snapshotId } : {}),
     dispatchMode,
     requireQualityGate: input.requireDataQualityGate === true,
   });
@@ -171,6 +172,18 @@ export async function createOrderIntentWithExecution(
         snapshotId: boundSnapshotId,
         thesisId: boundThesisId,
       };
+    }
+  }
+
+  // A live intent is a deployment decision, not merely an order-shaped
+  // research output.  Evidence binding above validates the current market
+  // snapshot/thesis; this gate additionally validates the strategy version's
+  // own frozen historical experiment.  Paper and broker-sim remain available
+  // for validation workflows, but real-money dispatch fails closed.
+  if (dispatchMode === "live") {
+    const admission = await assessStrategyExecutionAdmission(db, input.strategyVersionId);
+    if (!admission.eligible) {
+      throw new Error(`strategy_execution_not_admitted:${admission.code}:${admission.reason}`);
     }
   }
 
@@ -240,7 +253,7 @@ export async function createOrderIntentWithExecution(
     try {
       await linkForecastBookEntry(boundThesisId, {
         orderIntentIds: [orderIntentId],
-        riskDecisionIds: extra?.riskDecisionIds,
+        ...(extra?.riskDecisionIds ? { riskDecisionIds: extra.riskDecisionIds } : {}),
         attributionNotes: [`order_intent:${risk.outcome}`],
       });
     } catch {

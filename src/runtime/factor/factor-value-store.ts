@@ -9,8 +9,11 @@
  *   - 与 metric_timeseries / backtest_result_meta 同库，便于联合查询
  *
  * 表结构：
- *   factor_value(factor_id, symbol, date, value, created_at)
- *   PK = (factor_id, symbol, date) 由 upsert 保证去重
+ *   factor_value(factor_id, symbol, date, value, created_at) — 兼容旧的未版本化计算
+ *   factor_value_snapshot(dataset_snapshot_id, factor_id, symbol, date, value, created_at)
+ *
+ * 快照计算绝不能写进旧表：旧表的 PK 不含数据版本，后一次计算会覆盖前一次结果，
+ * 导致评估无法复跑。快照表把 dataset_snapshot_id 纳入主键，保留每一版不可变结果。
  */
 
 import { getDuckDb } from "../../db/duckdb/client";
@@ -32,6 +35,23 @@ CREATE INDEX IF NOT EXISTS idx_factor_value_sym_date
   ON factor_value (symbol, date);
 `;
 
+const ENSURE_SNAPSHOT = `
+CREATE TABLE IF NOT EXISTS factor_value_snapshot (
+  dataset_snapshot_id VARCHAR NOT NULL,
+  factor_id           VARCHAR NOT NULL,
+  symbol              VARCHAR NOT NULL,
+  date                DATE NOT NULL,
+  value               DOUBLE,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (dataset_snapshot_id, factor_id, symbol, date)
+);
+`;
+
+const ENSURE_SNAPSHOT_IDX = `
+CREATE INDEX IF NOT EXISTS idx_factor_value_snapshot_factor_date
+  ON factor_value_snapshot (factor_id, date);
+`;
+
 let initPromise: Promise<void> | null = null;
 
 async function ensureSchema(): Promise<void> {
@@ -41,6 +61,8 @@ async function ensureSchema(): Promise<void> {
     try {
       await conn.run(ENSURE);
       await conn.run(ENSURE_IDX_SYM);
+      await conn.run(ENSURE_SNAPSHOT);
+      await conn.run(ENSURE_SNAPSHOT_IDX);
     } finally {
       conn.disconnectSync();
     }
@@ -51,10 +73,14 @@ async function ensureSchema(): Promise<void> {
 export interface FactorValueWriteInput {
   factorId: string;
   rows: FactorComputeRow[];
+  /** Present for reproducible research; values are isolated by immutable snapshot. */
+  datasetSnapshotId?: string;
 }
 
 export interface FactorValueQuery {
   factorId: string;
+  /** Omit only for legacy/unversioned values. */
+  datasetSnapshotId?: string;
   symbols?: string[];
   startDate?: string;
   endDate?: string;
@@ -64,6 +90,7 @@ export interface FactorValueQuery {
 
 export interface FactorValueRow {
   factorId: string;
+  datasetSnapshotId: string | null;
   symbol: string;
   date: string;
   value: number | null;
@@ -92,15 +119,23 @@ export class FactorValueStore {
     const inst = await getDuckDb();
     const conn = await inst.connect();
     try {
-      // 用临时表 + UPSERT 模式，避免一次 INSERT VALUES 太长（DuckDB 上限是 1MB-ish）
-      await conn.run(`CREATE TEMP TABLE IF NOT EXISTS _factor_value_stage (
-        factor_id VARCHAR, symbol VARCHAR, date DATE, value DOUBLE
-      );`);
-      await conn.run("DELETE FROM _factor_value_stage;");
+      const snapshotId = input.datasetSnapshotId?.trim() || null;
+      const stage = snapshotId ? "_factor_value_snapshot_stage" : "_factor_value_stage";
+      if (snapshotId) {
+        await conn.run(`CREATE TEMP TABLE IF NOT EXISTS _factor_value_snapshot_stage (
+          dataset_snapshot_id VARCHAR, factor_id VARCHAR, symbol VARCHAR, date DATE, value DOUBLE
+        );`);
+      } else {
+        await conn.run(`CREATE TEMP TABLE IF NOT EXISTS _factor_value_stage (
+          factor_id VARCHAR, symbol VARCHAR, date DATE, value DOUBLE
+        );`);
+      }
+      await conn.run(`DELETE FROM ${stage};`);
 
       // 分批 1000 行一次 INSERT
       const BATCH = 1000;
       const fid = escapeIdent(input.factorId);
+      const sid = snapshotId ? escapeIdent(snapshotId) : null;
       for (let off = 0; off < input.rows.length; off += BATCH) {
         const chunk = input.rows.slice(off, off + BATCH);
         const values = chunk
@@ -108,20 +143,31 @@ export class FactorValueStore {
             const sym = escapeIdent(r.symbol);
             const date = escapeIdent(toDate(r.date));
             const val = r.value == null || !Number.isFinite(r.value) ? "NULL" : String(r.value);
-            return `('${fid}', '${sym}', DATE '${date}', ${val})`;
+            return snapshotId
+              ? `('${sid}', '${fid}', '${sym}', DATE '${date}', ${val})`
+              : `('${fid}', '${sym}', DATE '${date}', ${val})`;
           })
           .join(", ");
-        await conn.run(`INSERT INTO _factor_value_stage VALUES ${values};`);
+        await conn.run(`INSERT INTO ${stage} VALUES ${values};`);
       }
 
-      const writtenSql = `
-        INSERT INTO factor_value (factor_id, symbol, date, value)
-        SELECT factor_id, symbol, date, value FROM _factor_value_stage
-        ON CONFLICT (factor_id, symbol, date) DO UPDATE
-          SET value = EXCLUDED.value, created_at = now();
-      `;
+      const writtenSql = snapshotId
+        ? `
+          INSERT INTO factor_value_snapshot
+            (dataset_snapshot_id, factor_id, symbol, date, value)
+          SELECT dataset_snapshot_id, factor_id, symbol, date, value
+          FROM _factor_value_snapshot_stage
+          ON CONFLICT (dataset_snapshot_id, factor_id, symbol, date) DO UPDATE
+            SET value = EXCLUDED.value, created_at = now();
+        `
+        : `
+          INSERT INTO factor_value (factor_id, symbol, date, value)
+          SELECT factor_id, symbol, date, value FROM _factor_value_stage
+          ON CONFLICT (factor_id, symbol, date) DO UPDATE
+            SET value = EXCLUDED.value, created_at = now();
+        `;
       await conn.run(writtenSql);
-      await conn.run("DELETE FROM _factor_value_stage;");
+      await conn.run(`DELETE FROM ${stage};`);
 
       return { written: input.rows.length };
     } finally {
@@ -136,6 +182,10 @@ export class FactorValueStore {
     const conn = await inst.connect();
     try {
       const wheres: string[] = [`factor_id = '${escapeIdent(q.factorId)}'`];
+      const table = q.datasetSnapshotId ? "factor_value_snapshot" : "factor_value";
+      if (q.datasetSnapshotId) {
+        wheres.push(`dataset_snapshot_id = '${escapeIdent(q.datasetSnapshotId)}'`);
+      }
       if (q.symbols && q.symbols.length > 0) {
         const syms = q.symbols.map((s) => `'${escapeIdent(s)}'`).join(", ");
         wheres.push(`symbol IN (${syms})`);
@@ -147,18 +197,21 @@ export class FactorValueStore {
       if (q.latestN && q.latestN > 0 && !q.startDate && !q.endDate) {
         sql = `
           WITH ranked AS (
-            SELECT factor_id, symbol, date, value,
+            SELECT ${q.datasetSnapshotId ? "dataset_snapshot_id" : "NULL AS dataset_snapshot_id"},
+                   factor_id, symbol, date, value,
                    ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
-            FROM factor_value
+            FROM ${table}
             WHERE ${wheres.join(" AND ")}
           )
-          SELECT factor_id, symbol, date, value FROM ranked WHERE rn <= ${Math.floor(q.latestN)}
+          SELECT dataset_snapshot_id, factor_id, symbol, date, value
+          FROM ranked WHERE rn <= ${Math.floor(q.latestN)}
           ORDER BY symbol, date;
         `;
       } else {
         sql = `
-          SELECT factor_id, symbol, date, value
-          FROM factor_value
+          SELECT ${q.datasetSnapshotId ? "dataset_snapshot_id" : "NULL AS dataset_snapshot_id"},
+                 factor_id, symbol, date, value
+          FROM ${table}
           WHERE ${wheres.join(" AND ")}
           ORDER BY symbol, date;
         `;
@@ -170,12 +223,13 @@ export class FactorValueStore {
       const out: FactorValueRow[] = [];
       for (const row of rows) {
         const tuple = row as unknown[];
-        const dateRaw = tuple[2];
+        const dateRaw = tuple[3];
         out.push({
-          factorId: String(tuple[0]),
-          symbol: String(tuple[1]),
+          datasetSnapshotId: tuple[0] == null ? null : String(tuple[0]),
+          factorId: String(tuple[1]),
+          symbol: String(tuple[2]),
           date: this.dateToIso(dateRaw),
-          value: this.toNumberOrNull(tuple[3]),
+          value: this.toNumberOrNull(tuple[4]),
         });
       }
       return out;
@@ -185,8 +239,17 @@ export class FactorValueStore {
   }
 
   /** 取某日横截面（所有 symbol） */
-  async queryAt(factorId: string, date: string): Promise<FactorValueRow[]> {
-    return this.query({ factorId, startDate: date, endDate: date });
+  async queryAt(
+    factorId: string,
+    date: string,
+    datasetSnapshotId?: string
+  ): Promise<FactorValueRow[]> {
+    return this.query({
+      factorId,
+      startDate: date,
+      endDate: date,
+      ...(datasetSnapshotId ? { datasetSnapshotId } : {}),
+    });
   }
 
   /** 删某因子的全部值（用于重算 / archived） */
@@ -197,6 +260,9 @@ export class FactorValueStore {
     try {
       const sql = `DELETE FROM factor_value WHERE factor_id = '${escapeIdent(factorId)}';`;
       await conn.run(sql);
+      await conn.run(
+        `DELETE FROM factor_value_snapshot WHERE factor_id = '${escapeIdent(factorId)}';`
+      );
       // DuckDB delete 不直接返 rowcount；按写入时记录估算可后续补
       return { deleted: -1 };
     } finally {
@@ -205,7 +271,7 @@ export class FactorValueStore {
   }
 
   /** 统计某因子的样本数与最新日期，便于 UI 概览 */
-  async stats(factorId: string): Promise<{
+  async stats(factorId: string, datasetSnapshotId?: string): Promise<{
     rowCount: number;
     symbolCount: number;
     minDate: string | null;
@@ -215,12 +281,17 @@ export class FactorValueStore {
     const inst = await getDuckDb();
     const conn = await inst.connect();
     try {
+      const table = datasetSnapshotId ? "factor_value_snapshot" : "factor_value";
+      const snapshotFilter = datasetSnapshotId
+        ? ` AND dataset_snapshot_id = '${escapeIdent(datasetSnapshotId)}'`
+        : "";
       const sql = `
         SELECT COUNT(*) AS row_count,
                COUNT(DISTINCT symbol) AS symbol_count,
                MIN(date) AS min_date,
                MAX(date) AS max_date
-        FROM factor_value WHERE factor_id = '${escapeIdent(factorId)}';
+        FROM ${table}
+        WHERE factor_id = '${escapeIdent(factorId)}'${snapshotFilter};
       `;
       const prepared = await conn.prepare(sql);
       const result = await prepared.run();

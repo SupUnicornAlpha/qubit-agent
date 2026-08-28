@@ -768,7 +768,11 @@ export type ExperienceKind = "episodic" | "semantic" | "procedural" | "reflectiv
 
 export type ExperienceScope = "org" | "workspace" | "project" | "strategy" | "workflow";
 
-export type ExperienceVisibility = "agent_private" | "role_shared" | "project_shared";
+export type ExperienceVisibility =
+  | "agent_private"
+  | "role_shared"
+  | "project_shared"
+  | "workspace_shared";
 
 /**
  * 经验体内容载体：summary 是给检索 / Prompt 注入用的短摘要；body 放完整正文。

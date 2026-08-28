@@ -177,7 +177,7 @@ async function brokerPositions(): Promise<{
   return { positions, connectedAccounts: accounts.length, errors };
 }
 
-export async function getMarketWatchlist(): Promise<{
+export type MarketWatchlistSnapshot = {
   entries: MarketWatchlistEntry[];
   /** 用户显式维护的自选；不混入券商持仓，删除操作只会作用于这一组。 */
   watchlistEntries: MarketWatchlistEntry[];
@@ -186,10 +186,15 @@ export async function getMarketWatchlist(): Promise<{
   connectedAccounts: number;
   brokerErrors: string[];
   brokerWatchlistSupported: false;
-}> {
+};
+
+export async function getMarketWatchlist(options?: {
+  /** 默认 true（Agent/兼容）；IDE 首屏传 false 跳过券商持仓拉取。 */
+  includePositions?: boolean;
+}): Promise<MarketWatchlistSnapshot> {
+  const includePositions = options?.includePositions !== false;
   const config = await loadStoredConfig();
   const stored = parseStoredItems(config[WATCHLIST_KEY]);
-  const broker = await brokerPositions();
   const watchlistEntries = stored.map((item) => {
     const exchange = resolveWatchlistExchange(item.symbol, item.exchange);
     return {
@@ -200,6 +205,17 @@ export async function getMarketWatchlist(): Promise<{
       position: null,
     } satisfies MarketWatchlistEntry;
   });
+  if (!includePositions) {
+    return {
+      entries: watchlistEntries,
+      watchlistEntries,
+      positionEntries: [],
+      connectedAccounts: 0,
+      brokerErrors: [],
+      brokerWatchlistSupported: false,
+    };
+  }
+  const broker = await brokerPositions();
   const positionEntries = broker.positions
     .filter((position) => {
       const symbol = normalizeSymbol(position.symbol);
@@ -264,7 +280,7 @@ export async function addMarketWatchlistItem(input: { symbol: string; exchange?:
     items.push({ symbol, exchange, label: input.label?.trim().slice(0, 80) || undefined, createdAt: new Date().toISOString() });
     await saveStoredItems(items);
   }
-  return getMarketWatchlist();
+  return getMarketWatchlist({ includePositions: false });
 }
 
 export async function removeMarketWatchlistItem(input: { symbol: string; exchange?: string }) {
@@ -278,5 +294,5 @@ export async function removeMarketWatchlistItem(input: { symbol: string; exchang
         !(item.symbol === symbol && resolveWatchlistExchange(item.symbol, item.exchange) === exchange)
     )
   );
-  return getMarketWatchlist();
+  return getMarketWatchlist({ includePositions: false });
 }

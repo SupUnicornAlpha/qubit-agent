@@ -12,6 +12,10 @@ import {
 } from "./contracts/market-event-mirror";
 import { symbolToBinancePair } from "./crypto-market";
 import { computeDateRangeForLimit, timeframeToPeriod } from "./klines-query";
+import {
+  buildKlinesQueryKey,
+  getCachedKlinesBars,
+} from "./klines-request-cache";
 import { MarketBarAggregator } from "./market-stream-aggregator";
 import { queryMarketOrderBook, queryMarketQuote, queryMarketTrades } from "./microstructure-query";
 import { resolveTickerMarket } from "./resolve-ticker-market";
@@ -600,13 +604,27 @@ async function emitBackfill(
 ): Promise<void> {
   if (!input.channels.includes("bar")) return;
   try {
+    const period = timeframeToPeriod(input.timeframe);
+    const { startDate, endDate } = computeDateRangeForLimit(input.timeframe, 120);
+    const queryKey = buildKlinesQueryKey({
+      symbol: input.symbol,
+      exchange: input.exchange,
+      period,
+      startDate,
+      endDate,
+    });
+    const cached = getCachedKlinesBars(queryKey);
+    if (cached && cached.length >= 8) {
+      hooks.backfill();
+      hooks.publish("backfill", source, cached.slice(-120));
+      return;
+    }
     const connector = connectorRegistry.get("qubit-data");
     if (!connector) throw new Error("qubit-data connector is not registered");
-    const { startDate, endDate } = computeDateRangeForLimit(input.timeframe, 120);
     const bars = (await connector.execute("fetch_bars", {
       symbol: input.symbol,
       exchange: input.exchange,
-      period: timeframeToPeriod(input.timeframe),
+      period,
       startDate,
       endDate,
     })) as BarData[];

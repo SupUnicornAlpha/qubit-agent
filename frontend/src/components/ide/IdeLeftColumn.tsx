@@ -3,10 +3,11 @@ import { useTranslation } from "../../i18n";
 import { useAppStore } from "../../store";
 import { MarketWatchlistPanel } from "../market/MarketWatchlistPanel";
 import { IdeEditorPane } from "./IdeEditorPane";
+import { IdeOutlinePanel } from "./IdeOutlinePanel";
 import { listIdeLeftTools, type IdeLeftTabId } from "./ideLeftTools";
 
 /**
- * IDE 左栏：默认展示自选/行情上下文；代码编辑器作为可切换工作表面。
+ * IDE 左栏：默认展示自选/行情上下文；代码编辑器与符号大纲作为可切换工作表面。
  */
 export const IdeLeftColumn: FC = () => {
   const { t } = useTranslation();
@@ -36,7 +37,13 @@ export const IdeLeftColumn: FC = () => {
         </div>
       ) : null}
       <div style={styles.body}>
-        {activeTab === "editor" ? <IdeEditorPane /> : <MarketWatchlistPanel compact />}
+        {activeTab === "editor" ? (
+          <IdeEditorPane />
+        ) : activeTab === "outline" ? (
+          <IdeOutlinePanel />
+        ) : (
+          <MarketWatchlistPanel compact />
+        )}
       </div>
     </div>
   );

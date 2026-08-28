@@ -66,6 +66,16 @@ export interface QuantContext {
   sourceLabel?: string;
 }
 
+/** 量化工作台产出 lineage 筛选：按 workflow_run 或 chat session。 */
+export type QuantLineageFilterMode = "none" | "workflow" | "session";
+
+export interface QuantLineageFilter {
+  mode: QuantLineageFilterMode;
+  id: string;
+}
+
+export const EMPTY_QUANT_LINEAGE_FILTER: QuantLineageFilter = { mode: "none", id: "" };
+
 /**
  * 量化工作台 4 tab 间的跨 tab handoff payload。
  *
@@ -285,6 +295,11 @@ export interface AppState {
   /** 研究产物跳转带入的 project/workflow；为空时量化工坊使用默认项目。 */
   quantContext: QuantContext | null;
   setQuantContext: (context: QuantContext | null) => void;
+  /** 量化工作台列表 scope：`null` = 全部 project；string = 只看该 project。 */
+  quantProjectScopeId: string | null;
+  setQuantProjectScopeId: (projectId: string | null) => void;
+  quantLineageFilter: QuantLineageFilter;
+  setQuantLineageFilter: (filter: QuantLineageFilter) => void;
   /**
    * 量化工作台跨 tab handoff（migration 0080 量化工作台增强）：
    *   - Discovery 单候选「一键试跑」→ 写 { kind:'raw', expr, lang, reverse } → 切到 backtest
@@ -322,6 +337,12 @@ export interface AppState {
    */
   proAgentLifecycle: "idle" | "running" | "awaiting_hitl";
   setProAgentLifecycle: (lifecycle: "idle" | "running" | "awaiting_hitl") => void;
+  /** 专业壳底部面板（Problems / Output / Strategy / Terminal） */
+  proBottomPanelOpen: boolean;
+  setProBottomPanelOpen: (open: boolean) => void;
+  toggleProBottomPanelOpen: () => void;
+  proBottomTab: "problems" | "output" | "strategy_log" | "terminal";
+  setProBottomTab: (tab: "problems" | "output" | "strategy_log" | "terminal") => void;
   chartOverlays: ChartOverlaysState;
   toggleChartOverlay: (key: ChartOverlayKey) => void;
   idePanels: IdePanelsState;
@@ -330,6 +351,9 @@ export interface AppState {
   setIdeIndicatorLabel: (v: string) => void;
   ideQuickTradeOpen: boolean;
   setIdeQuickTradeOpen: (v: boolean) => void;
+  /** IDE 布局模式：经典分栏 (classic) 或 FlexLayout 自由停靠 (docking) */
+  ideLayoutMode: "classic" | "docking";
+  setIdeLayoutMode: (mode: "classic" | "docking") => void;
   ideStrategySource: string;
   setIdeStrategySource: (v: string) => void;
   /** 与底部坞「代码策略」共用：Python 输出 buy/sell 供 /market/backtests/python */
@@ -340,9 +364,9 @@ export interface AppState {
   setIdeActiveStrategyScriptId: (v: string | null) => void;
   ideAiPrompt: string;
   setIdeAiPrompt: (v: string) => void;
-  /** IDE 左栏工具（自选/持仓或代码编辑器；见 ideLeftTools） */
-  ideLeftTab: "editor" | "watchlist";
-  setIdeLeftTab: (v: "editor" | "watchlist") => void;
+  /** IDE 左栏工具（自选/持仓、代码编辑器或大纲；见 ideLeftTools） */
+  ideLeftTab: "editor" | "watchlist" | "outline";
+  setIdeLeftTab: (v: "editor" | "watchlist" | "outline") => void;
   chatDraftPrefill: string | null;
   setChatDraftPrefill: (v: string | null) => void;
   agents: AgentSummary[];
@@ -542,6 +566,53 @@ function persistExplorerOpen(open: boolean) {
   }
 }
 
+const QUANT_PROJECT_SCOPE_LS = "qb.quant-project-scope";
+/** localStorage 存 project id；`__all__` = 跨 project 浏览 */
+const QUANT_SCOPE_ALL = "__all__";
+
+function readQuantProjectScopeId(): string | null {
+  try {
+    const v = localStorage.getItem(QUANT_PROJECT_SCOPE_LS);
+    if (v === null || v === QUANT_SCOPE_ALL) return null;
+    return v;
+  } catch {
+    return null;
+  }
+}
+
+function persistQuantProjectScopeId(id: string | null) {
+  try {
+    localStorage.setItem(QUANT_PROJECT_SCOPE_LS, id ?? QUANT_SCOPE_ALL);
+  } catch {
+    /* ignore */
+  }
+}
+
+const QUANT_LINEAGE_FILTER_LS = "qb.quant-lineage-filter";
+
+function readQuantLineageFilter(): QuantLineageFilter {
+  try {
+    const raw = localStorage.getItem(QUANT_LINEAGE_FILTER_LS);
+    if (!raw) return { ...EMPTY_QUANT_LINEAGE_FILTER };
+    const parsed = JSON.parse(raw) as Partial<QuantLineageFilter>;
+    const mode =
+      parsed.mode === "workflow" || parsed.mode === "session" || parsed.mode === "none"
+        ? parsed.mode
+        : "none";
+    return { mode, id: typeof parsed.id === "string" ? parsed.id : "" };
+  } catch {
+    return { ...EMPTY_QUANT_LINEAGE_FILTER };
+  }
+}
+
+function persistQuantLineageFilter(filter: QuantLineageFilter) {
+  try {
+    localStorage.setItem(QUANT_LINEAGE_FILTER_LS, JSON.stringify(filter));
+  } catch {
+    /* ignore */
+  }
+}
+
 function loadTraderConfig(): TraderAgentConfigState {
   try {
     const raw = sessionStorage.getItem(TRADER_CFG_KEY);
@@ -689,6 +760,16 @@ export const useAppStore = create<AppState>((set) => ({
   setQuantTab: (quantTab) => set({ quantTab }),
   quantContext: null,
   setQuantContext: (quantContext) => set({ quantContext }),
+  quantProjectScopeId: readQuantProjectScopeId(),
+  setQuantProjectScopeId: (quantProjectScopeId) => {
+    persistQuantProjectScopeId(quantProjectScopeId);
+    set({ quantProjectScopeId });
+  },
+  quantLineageFilter: readQuantLineageFilter(),
+  setQuantLineageFilter: (quantLineageFilter) => {
+    persistQuantLineageFilter(quantLineageFilter);
+    set({ quantLineageFilter });
+  },
   quantHandoff: null,
   setQuantHandoff: (quantHandoff) => set({ quantHandoff }),
   chartReloadNonce: 0,
@@ -757,6 +838,11 @@ export const useAppStore = create<AppState>((set) => ({
   setIdeEditorSurface: (ideEditorSurface) => set({ ideEditorSurface }),
   proAgentLifecycle: "idle",
   setProAgentLifecycle: (proAgentLifecycle) => set({ proAgentLifecycle }),
+  proBottomPanelOpen: false,
+  setProBottomPanelOpen: (open) => set({ proBottomPanelOpen: open }),
+  toggleProBottomPanelOpen: () => set((s) => ({ proBottomPanelOpen: !s.proBottomPanelOpen })),
+  proBottomTab: "problems",
+  setProBottomTab: (tab) => set({ proBottomTab: tab }),
   chartOverlays: { ...defaultChartOverlays },
   toggleChartOverlay: (key) =>
     set((s) => ({ chartOverlays: { ...s.chartOverlays, [key]: !s.chartOverlays[key] } })),
@@ -771,6 +857,21 @@ export const useAppStore = create<AppState>((set) => ({
   setIdeIndicatorLabel: (v) => set({ ideIndicatorLabel: v }),
   ideQuickTradeOpen: false,
   setIdeQuickTradeOpen: (v) => set({ ideQuickTradeOpen: v }),
+  ideLayoutMode: (() => {
+    try {
+      return (window.localStorage.getItem("qb.ide.layout-mode") as "classic" | "docking") || "docking";
+    } catch {
+      return "docking";
+    }
+  })(),
+  setIdeLayoutMode: (mode) => {
+    try {
+      window.localStorage.setItem("qb.ide.layout-mode", mode);
+    } catch {
+      /* ignore */
+    }
+    set({ ideLayoutMode: mode });
+  },
   ideStrategySource: DEFAULT_IDE_STRATEGY_SOURCE,
   setIdeStrategySource: (v) => set({ ideStrategySource: v }),
   ideSignalPythonCode: DEFAULT_PYTHON_SIGNAL_STRATEGY,

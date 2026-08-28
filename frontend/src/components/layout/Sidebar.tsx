@@ -1,5 +1,5 @@
 import type { FC } from "react";
-import { PanelRight, Sparkles } from "lucide-react";
+import { PanelBottom, PanelRight, Sparkles } from "lucide-react";
 import { useAppStore, type ConfigSubPage, type ExplorerSection, type QuantTab } from "../../store";
 import type { NavKey } from "../../lib/navIcons";
 import { NavGlyph } from "../../lib/navIcons";
@@ -51,8 +51,11 @@ export const Sidebar: FC<{ fill?: boolean }> = ({ fill = false }) => {
   const setConfigSubPage = useAppStore((s) => s.setConfigSubPage);
   const quantTab = useAppStore((s) => s.quantTab);
   const setQuantTab = useAppStore((s) => s.setQuantTab);
+  const setQuantContext = useAppStore((s) => s.setQuantContext);
   const agentPanelOpen = useAppStore((s) => s.agentPanelOpen);
   const toggleAgentPanelOpen = useAppStore((s) => s.toggleAgentPanelOpen);
+  const proBottomPanelOpen = useAppStore((s) => s.proBottomPanelOpen);
+  const toggleProBottomPanelOpen = useAppStore((s) => s.toggleProBottomPanelOpen);
   const { t } = useTranslation();
   const navPages = proNavPages();
   const activePage = navPages.find((p) => p.id === activeView) ?? navPages[0];
@@ -64,6 +67,10 @@ export const Sidebar: FC<{ fill?: boolean }> = ({ fill = false }) => {
       if (!agentPanelOpen) toggleAgentPanelOpen();
       setActiveView("team");
       return;
+    }
+    if (key === "quant") {
+      // 侧栏直接进入量化工坊 = 看默认 project 全量历史，清掉研究页带入的 project 覆盖
+      setQuantContext(null);
     }
     setActiveView(key);
     if (key === "config") setConfigSubPage("llm");
@@ -136,6 +143,23 @@ export const Sidebar: FC<{ fill?: boolean }> = ({ fill = false }) => {
           );
         })}
         <div style={{ flex: 1 }} />
+        <button
+          type="button"
+          className={[
+            "qb-nav-activity-btn",
+            proBottomPanelOpen ? "qb-nav-activity-btn--active" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          title="切换下置工程面板 (⌘` / Ctrl+`)"
+          aria-label="切换下置工程面板"
+          aria-pressed={proBottomPanelOpen}
+          onClick={() => toggleProBottomPanelOpen()}
+        >
+          <span style={styles.activityIcon}>
+            <PanelBottom size={18} strokeWidth={2} />
+          </span>
+        </button>
         <button
           type="button"
           className={[
@@ -237,6 +261,7 @@ export const Sidebar: FC<{ fill?: boolean }> = ({ fill = false }) => {
                       key={sub.id}
                       type="button"
                       onClick={() => {
+                        setQuantContext(null);
                         setActiveView("quant");
                         setQuantTab(sub.id);
                       }}

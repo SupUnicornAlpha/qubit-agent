@@ -298,12 +298,13 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
   def({
     id: "def-backtest",
     role: "backtest",
-    /** 4.4.0：回测主路径 + 数学审计；全套 skill 编辑仍在编排器。 */
-    version: "4.4.0",
+    /** 4.14.0：显式期货换月的平旧开新与审计。 */
+    version: "4.14.0",
     name: "回测",
     systemPrompt: PROMPT_BACKTEST,
     tools: [
       "backtest.run",
+      "backtest.walk_forward",
       "factor.list",
       "factor.compute",
       "fetch_klines",
@@ -340,10 +341,11 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     id: "def-walk-forward-validator",
     role: "backtest_engineer",
     name: "Walk-Forward 验证师",
-    version: "1.3.0",
+    version: "1.6.0",
     systemPrompt: PROMPT_WALK_FORWARD_VALIDATOR,
     tools: [
       "backtest.run",
+      "backtest.walk_forward",
       "factor.list",
       "factor.autoEvaluate",
       "factor.evaluate.batch",

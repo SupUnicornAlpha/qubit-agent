@@ -376,6 +376,15 @@ pub struct TurnContextOpts {
     /// Protect newest tool observation chars; older ones stubbed. Default: 40000. `0` = off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_observation_protect_chars: Option<u32>,
+    /// Host-supplied WorkingMemory for the `working` slot (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_memory: Option<WorkingMemory>,
+    /// Symbols in focus for workspace context slice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focus_symbols: Option<Vec<String>>,
+    /// Open file paths for workspace context slice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open_files: Option<Vec<String>>,
 }
 
 impl TurnContextOpts {

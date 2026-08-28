@@ -1,0 +1,531 @@
+/**
+ * 回测工坊 · 结果报告区（BacktestResultView）
+ * 扁平 IDE 风格：分区标题、工具栏、KPI 网格、Gate 表、Callout 提示。
+ */
+
+/* VSCode Dark+ / 专业壳下量化 token 对齐 */
+html[data-qb-style="vscode-dark"] .qb-quant-shell,
+html[data-qb-ux="pro"] .qb-quant-shell {
+  --qb-bg-surface: #1e1e1e;
+  --qb-bg-elevated: #252526;
+  --qb-bg-elevated-strong: #2d2d2d;
+  --qb-bg-hero: #252526;
+  --qb-border-subtle: #2d2d2d;
+  --qb-border-strong: #3c3c3c;
+  --qb-text-muted: #858585;
+  --qb-text-strong: #cccccc;
+  --qb-quant-hero-glow: none;
+  --qb-quant-card-shadow: none;
+}
+
+html[data-qb-style="vscode-dark"] .qb-quant-hero-card,
+html[data-qb-ux="pro"] .qb-quant-hero-card {
+  background: var(--qb-bg-elevated);
+  background-image: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+html[data-qb-style="vscode-dark"] .qb-quant-hero-card::before,
+html[data-qb-ux="pro"] .qb-quant-hero-card::before {
+  display: none;
+}
+
+/* ─── 报告根 ─── */
+.qb-bt-report {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid var(--qb-border-subtle);
+  background: var(--qb-bg-elevated);
+}
+
+.qb-bt-report-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--qb-border-subtle);
+  background: var(--qb-bg-surface);
+}
+
+.qb-bt-report-header-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.qb-bt-report-identity {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.qb-bt-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  font-family: var(--qb-font-mono);
+  border: 1px solid var(--qb-border-strong);
+  background: var(--qb-bg-elevated);
+  color: var(--qb-text-strong);
+}
+
+.qb-bt-status[data-status="completed"] {
+  border-color: color-mix(in srgb, var(--qb-success) 45%, var(--qb-border-subtle));
+  color: var(--qb-success);
+}
+
+.qb-bt-status[data-status="running"] {
+  border-color: color-mix(in srgb, var(--qb-info) 45%, var(--qb-border-subtle));
+  color: var(--qb-info);
+}
+
+.qb-bt-status[data-status="failed"] {
+  border-color: color-mix(in srgb, var(--qb-error) 45%, var(--qb-border-subtle));
+  color: var(--qb-error);
+}
+
+.qb-bt-engine {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--qb-font-mono);
+  color: var(--qb-text-strong);
+}
+
+.qb-bt-report-meta {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--qb-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.qb-bt-report-meta strong {
+  color: var(--qb-text-strong);
+  font-weight: 500;
+}
+
+/* ─── 分析工具栏 ─── */
+.qb-bt-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 0 0;
+  border-top: 1px solid var(--qb-border-subtle);
+  margin-top: 4px;
+}
+
+.qb-bt-toolbar-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--qb-text-muted);
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+
+.qb-bt-tool-btn {
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--qb-text-muted);
+  cursor: pointer;
+  transition: background 100ms ease, color 100ms ease, border-color 100ms ease;
+}
+
+.qb-bt-tool-btn:hover:not(:disabled) {
+  background: var(--qb-bg-elevated);
+  color: var(--qb-text-strong);
+  border-color: var(--qb-border-subtle);
+}
+
+.qb-bt-tool-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.qb-bt-tool-btn.is-active {
+  background: color-mix(in srgb, var(--qb-info, #007acc) 18%, transparent);
+  border-color: color-mix(in srgb, var(--qb-info, #007acc) 50%, var(--qb-border-subtle));
+  color: var(--qb-text-strong);
+}
+
+.qb-bt-toolbar-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--qb-text-muted);
+  white-space: nowrap;
+}
+
+/* ─── Callout 合规/审计条 ─── */
+.qb-bt-callouts {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--qb-border-subtle);
+}
+
+.qb-bt-callout {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 14px;
+  font-size: 11px;
+  line-height: 1.45;
+  border-bottom: 1px solid var(--qb-border-subtle);
+  background: var(--qb-bg-surface);
+}
+
+.qb-bt-callout:last-child {
+  border-bottom: none;
+}
+
+.qb-bt-callout::before {
+  content: "";
+  flex-shrink: 0;
+  width: 3px;
+  align-self: stretch;
+  border-radius: 1px;
+  background: var(--qb-info, #007acc);
+}
+
+.qb-bt-callout[data-tone="warn"]::before {
+  background: var(--qb-warn, #cca700);
+}
+
+.qb-bt-callout[data-tone="pass"]::before {
+  background: var(--qb-success, #89d185);
+}
+
+.qb-bt-callout[data-tone="fail"]::before {
+  background: var(--qb-error, #f48771);
+}
+
+.qb-bt-callout-label {
+  flex-shrink: 0;
+  min-width: 7.5em;
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--qb-text-muted);
+}
+
+.qb-bt-callout-body {
+  flex: 1;
+  min-width: 0;
+  color: var(--qb-text-strong);
+}
+
+/* ─── 分区（Gate / 绩效 / 分析） ─── */
+.qb-bt-section {
+  border-bottom: 1px solid var(--qb-border-subtle);
+  background: var(--qb-bg-elevated);
+}
+
+.qb-bt-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--qb-border-subtle);
+  background: var(--qb-bg-surface);
+}
+
+.qb-bt-section-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--qb-text-strong);
+}
+
+.qb-bt-section-desc {
+  margin-top: 3px;
+  font-size: 10px;
+  color: var(--qb-text-muted);
+  line-height: 1.4;
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+}
+
+.qb-bt-verdict {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  font-family: var(--qb-font-mono);
+  border: 1px solid var(--qb-border-strong);
+  border-radius: 2px;
+}
+
+.qb-bt-verdict[data-pass="true"] {
+  color: var(--qb-success);
+  border-color: color-mix(in srgb, var(--qb-success) 40%, var(--qb-border-subtle));
+  background: color-mix(in srgb, var(--qb-success) 8%, transparent);
+}
+
+.qb-bt-verdict[data-pass="false"] {
+  color: var(--qb-warn);
+  border-color: color-mix(in srgb, var(--qb-warn) 40%, var(--qb-border-subtle));
+  background: color-mix(in srgb, var(--qb-warn) 8%, transparent);
+}
+
+/* ─── Gate 检查表 ─── */
+.qb-bt-gate-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 1px;
+  background: var(--qb-border-subtle);
+  border-top: none;
+}
+
+.qb-bt-gate-cell {
+  display: grid;
+  grid-template-rows: auto auto auto;
+  gap: 4px;
+  padding: 10px 12px;
+  background: var(--qb-bg-elevated);
+  min-height: 72px;
+}
+
+.qb-bt-gate-cell-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.qb-bt-gate-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--qb-text-strong);
+}
+
+.qb-bt-gate-verdict {
+  font-size: 10px;
+  font-weight: 650;
+  font-family: var(--qb-font-mono);
+}
+
+.qb-bt-gate-verdict[data-pass="true"] {
+  color: var(--qb-success);
+}
+
+.qb-bt-gate-verdict[data-pass="false"] {
+  color: var(--qb-error);
+}
+
+.qb-bt-gate-threshold {
+  font-size: 10px;
+  color: var(--qb-text-muted);
+  font-family: var(--qb-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── KPI 主指标 ─── */
+.qb-bt-kpi-section {
+  padding: 0;
+}
+
+.qb-bt-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--qb-border-subtle);
+}
+
+@media (max-width: 1100px) {
+  .qb-bt-kpi-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .qb-bt-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.qb-bt-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  background: var(--qb-bg-elevated);
+  border-left: 2px solid transparent;
+  min-height: 58px;
+}
+
+.qb-bt-kpi[data-tone="positive"] {
+  border-left-color: var(--qb-success);
+}
+
+.qb-bt-kpi[data-tone="negative"] {
+  border-left-color: var(--qb-error);
+}
+
+.qb-bt-kpi[data-tone="neutral"] {
+  border-left-color: var(--qb-border-strong);
+}
+
+.qb-bt-kpi[data-tone="accent"] {
+  border-left-color: var(--qb-info, #007acc);
+}
+
+.qb-bt-kpi-label {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  color: var(--qb-text-muted);
+  line-height: 1.2;
+}
+
+.qb-bt-kpi-value {
+  font-size: 15px;
+  font-weight: 600;
+  font-family: var(--qb-font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--qb-text-strong);
+  line-height: 1.2;
+}
+
+.qb-bt-kpi-value[data-sign="pos"] {
+  color: var(--qb-success);
+}
+
+.qb-bt-kpi-value[data-sign="neg"] {
+  color: var(--qb-error);
+}
+
+/* 覆盖旧 metric 圆点卡片在报告区的样式 */
+.qb-bt-kpi-section .qb-quant-metric {
+  border: none;
+  border-radius: 0;
+  border-left: 2px solid var(--qb-border-strong);
+  background: var(--qb-bg-elevated);
+  padding: 10px 12px !important;
+}
+
+.qb-bt-kpi-section .qb-quant-metric:hover {
+  border-color: var(--qb-border-strong);
+  transform: none;
+}
+
+.qb-bt-kpi-section .qb-quant-metrics-grid {
+  gap: 1px;
+  background: var(--qb-border-subtle);
+  border: none;
+}
+
+/* ─── 全维绩效画像 ─── */
+.qb-bt-diagnostics .qb-quant-performance-grid {
+  gap: 1px;
+  background: var(--qb-border-subtle);
+  padding: 0;
+}
+
+.qb-bt-diagnostics .qb-quant-performance-group {
+  border-left: none;
+  padding: 12px 14px;
+  background: var(--qb-bg-elevated);
+}
+
+.qb-bt-diagnostics .qb-quant-performance-group + .qb-quant-performance-group {
+  border-top: none;
+}
+
+.qb-bt-diagnostics .qb-quant-detail-meta,
+.qb-bt-diagnostics [style*="diagnosticGroupDescription"] {
+  font-size: 10px;
+}
+
+.qb-bt-diagnostics [style*="diagnosticValue"] {
+  padding: 3px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--qb-border-subtle) 70%, transparent);
+}
+
+.qb-bt-diagnostics [style*="diagnosticValue"]:last-child {
+  border-bottom: none;
+}
+
+.qb-bt-diag-group-title {
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--qb-text-strong);
+}
+
+.qb-bt-diag-group-desc {
+  color: var(--qb-text-muted);
+  font-size: 10px;
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+.qb-bt-diag-list {
+  display: flex;
+  flex-direction: column;
+  margin-top: 8px;
+  gap: 0;
+}
+
+.qb-bt-diag-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  padding: 5px 0;
+  font-size: 11px;
+  border-bottom: 1px solid color-mix(in srgb, var(--qb-border-subtle) 65%, transparent);
+}
+
+.qb-bt-diag-row:last-child {
+  border-bottom: none;
+}
+
+.qb-bt-diag-label {
+  color: var(--qb-text-muted);
+  flex-shrink: 0;
+}
+
+.qb-bt-diag-value {
+  font-family: var(--qb-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  text-align: right;
+}
+
+/* Gate / KPI 区块与报告头视觉衔接 */
+.qb-bt-section + .qb-bt-section {
+  margin-top: 0;
+  border-top: none;
+}
+
+.qb-quant-col--mid > .qb-bt-section:first-of-type,
+.qb-quant-col--mid > .qb-bt-report + .qb-bt-section {
+  margin-top: 0;
+}
+
+.qb-quant-col--mid > .qb-bt-report + .qb-bt-section {
+  border-top: none;
+}

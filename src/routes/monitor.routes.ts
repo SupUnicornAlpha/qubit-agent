@@ -525,6 +525,7 @@ monitorRouter.get("/workflows", async (c) => {
   const mode = c.req.query("mode");
   const projectId = c.req.query("projectId");
   const includeCancelled = c.req.query("includeCancelled") === "true";
+  const groupBySession = c.req.query("groupBySession") === "true";
   const limitParam = Number(c.req.query("limit") ?? "200");
   const limit = Number.isFinite(limitParam) ? Math.max(1, Math.min(500, limitParam)) : 200;
 
@@ -565,6 +566,20 @@ monitorRouter.get("/workflows", async (c) => {
 
   const filtered = includeCancelled ? rows : rows.filter((r) => r.status !== "cancelled");
 
+  const sessionIds = [
+    ...new Set(filtered.map((row) => row.sessionId).filter((id): id is string => Boolean(id))),
+  ];
+  const sessionTitleById = new Map<string, string>();
+  if (sessionIds.length > 0) {
+    const sessionRows = await db
+      .select({ id: chatSession.id, title: chatSession.title })
+      .from(chatSession)
+      .where(inArray(chatSession.id, sessionIds));
+    for (const row of sessionRows) {
+      sessionTitleById.set(row.id, row.title);
+    }
+  }
+
   /**
    * 一次性兼容旧版「研究团队 · 范围 · 标的 · 时间」标题：当交互日志里有首条
    * 用户问题时，以它回填为短标题。没有原始问题的旧记录保持原样，绝不猜测内容。
@@ -601,12 +616,47 @@ monitorRouter.get("/workflows", async (c) => {
     );
   }
 
-  return c.json({
-    data: filtered.map((row) => {
-      const inferredTitle = inferredTitles.get(row.id);
-      return { ...row, ...(inferredTitle ? { goal: inferredTitle } : {}) };
-    }),
+  const enriched = filtered.map((row) => {
+    const inferredTitle = inferredTitles.get(row.id);
+    const sessionTitle = row.sessionId ? sessionTitleById.get(row.sessionId) : undefined;
+    return {
+      ...row,
+      ...(inferredTitle ? { goal: inferredTitle } : {}),
+      ...(sessionTitle ? { sessionTitle } : {}),
+    };
   });
+
+  if (groupBySession) {
+    const groups = new Map<
+      string,
+      { sessionId: string; sessionTitle: string | null; workflows: typeof enriched }
+    >();
+    const unbound: typeof enriched = [];
+    for (const row of enriched) {
+      if (!row.sessionId) {
+        unbound.push(row);
+        continue;
+      }
+      const existing = groups.get(row.sessionId);
+      if (existing) {
+        existing.workflows.push(row);
+      } else {
+        groups.set(row.sessionId, {
+          sessionId: row.sessionId,
+          sessionTitle: row.sessionTitle ?? sessionTitleById.get(row.sessionId) ?? null,
+          workflows: [row],
+        });
+      }
+    }
+    const grouped = [...groups.values()].sort((a, b) => {
+      const aAt = a.workflows[0]?.startedAt ?? "";
+      const bAt = b.workflows[0]?.startedAt ?? "";
+      return aAt < bAt ? 1 : aAt > bAt ? -1 : 0;
+    });
+    return c.json({ data: { groups: grouped, unbound } });
+  }
+
+  return c.json({ data: enriched });
 });
 
 monitorRouter.get("/workflows/:id/observability", async (c) => {

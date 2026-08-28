@@ -10,7 +10,8 @@ import {
   rehydrateAnalystResearchJobsCache,
 } from "../msa/analyst-research-jobs";
 import { loadLatestCheckpointSnapshot } from "../react/agent-checkpoint-snapshot";
-import { enqueueCompensationTask } from "./compensation-queue";
+import { enqueueCompensationTask, processCompensationQueue } from "./compensation-queue";
+import { setWorkflowState } from "./workflow-state-machine";
 
 export type RestoreOutcome = {
   scanned: number;
@@ -18,6 +19,7 @@ export type RestoreOutcome = {
   enqueuedRetry: number;
   markedFailed: number;
   cliResumed: number;
+  compensationProcessed: number;
   /**
    * 从 analyst_research_job DB 回填到 in-memory cache 的 job 条数。
    * P0-2：HITL 审批 + 长跑 analyst 任务需要这条线，否则进程重启会让前端轮询
@@ -118,6 +120,7 @@ export async function restoreRunningWorkflows(): Promise<RestoreOutcome> {
     enqueuedRetry: 0,
     markedFailed: 0,
     cliResumed: 0,
+    compensationProcessed: 0,
     analystJobsRehydrated,
     awaitingApproval: awaitingRows.length,
     hitlStaleRepaired,
@@ -164,8 +167,9 @@ export async function restoreRunningWorkflows(): Promise<RestoreOutcome> {
           workflowRunId: wf.id,
           actionType: "retry_from_start",
           reason: "process_restart_no_snapshot",
-          maxRetries: 1,
+          maxRetries: 3,
         });
+        await setWorkflowState(wf.id, "pending", { reason: "restore:no_snapshot_compensation" });
         outcome.enqueuedRetry += 1;
         console.log(
           `[restoreRunningWorkflows] no snapshot for workflow=${wf.id}, enqueued retry_from_start`
@@ -204,6 +208,24 @@ export async function restoreRunningWorkflows(): Promise<RestoreOutcome> {
       console.error(
         `[restoreRunningWorkflows] failed to handle workflow=${wf.id}:`,
         error instanceof Error ? error.message : error
+      );
+    }
+  }
+
+  if (outcome.enqueuedRetry > 0) {
+    try {
+      const processed = await processCompensationQueue(Math.max(10, outcome.enqueuedRetry));
+      outcome.compensationProcessed = processed.picked;
+      if (processed.picked > 0) {
+        console.log(
+          `[restoreRunningWorkflows] processed ${processed.picked} compensation task(s): ` +
+            `success=${processed.success} failed=${processed.failed}`
+        );
+      }
+    } catch (err) {
+      console.error(
+        "[restoreRunningWorkflows] compensation queue processing failed:",
+        err instanceof Error ? err.message : err
       );
     }
   }

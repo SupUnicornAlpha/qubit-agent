@@ -16,6 +16,10 @@
  */
 
 import type { BarData } from "../../../../connectors/data/data.connector";
+import {
+  fundamentalFieldName,
+  materializeFundamentalPitFields,
+} from "../../../backtest/fundamental-pit-series";
 import { queryBarsRange } from "../../../market/klines-query";
 import type {
   FactorComputeProvider,
@@ -110,19 +114,23 @@ export class QlibExprFactorProvider implements FactorComputeProvider {
 
     const rows: FactorComputeRow[] = [];
 
-    // 串行拉取 → 简单稳健（避免多源 connector 并发竞争）
+    // 串行计算。绑定 dataset 时严禁回落到 connector 取数，保证研究/回测读取同一快照。
     for (const symbol of symbols) {
       let bars: BarData[];
-      try {
-        bars = await queryBarsRange({
-          symbol,
-          exchange: this.resolveExchange(symbol),
-          period: "1d",
-          startDate: input.startDate,
-          endDate: input.endDate,
-        });
-      } catch {
-        continue; // 单 symbol 失败不影响整体
+      if (input.dataset) {
+        bars = (input.dataset.barsBySymbol[symbol] ?? []) as BarData[];
+      } else {
+        try {
+          bars = await queryBarsRange({
+            symbol,
+            exchange: this.resolveExchange(symbol),
+            period: "1d",
+            startDate: input.startDate,
+            endDate: input.endDate,
+          });
+        } catch {
+          continue; // 单 symbol 失败不影响整体
+        }
       }
       if (!bars || bars.length === 0) continue;
 
@@ -137,6 +145,12 @@ export class QlibExprFactorProvider implements FactorComputeProvider {
           turnover: bars.map((b) => b.turnover),
           // 算子内 vwap = turnover / volume （安全降级 close）
           vwap: bars.map((b) => (b.volume > 0 ? b.turnover / b.volume : b.close)),
+          ...materializeFundamentalPitFields(
+            bars,
+            input.dataset?.fundamentalObservations?.filter(
+              (observation) => observation.symbol === symbol
+            )
+          ),
         },
       };
 
@@ -149,7 +163,7 @@ export class QlibExprFactorProvider implements FactorComputeProvider {
       }
 
       for (let i = 0; i < bars.length; i++) {
-        const date = bars[i]?.timestamp.slice(0, 10);
+        const date = bars[i]!.timestamp.slice(0, 10);
         const value = factorSeries[i];
         rows.push({
           symbol,
@@ -161,18 +175,40 @@ export class QlibExprFactorProvider implements FactorComputeProvider {
 
     return {
       rows,
-      meta: input.factorId
-        ? { factorId: input.factorId, rowCount: rows.length, latencyMs: Date.now() - t0 }
-        : { rowCount: rows.length, latencyMs: Date.now() - t0 },
+      meta: {
+        ...(input.factorId ? { factorId: input.factorId } : {}),
+        rowCount: rows.length,
+        latencyMs: Date.now() - t0,
+        ...(input.dataset ? { datasetSnapshotId: input.dataset.snapshotId } : {}),
+        ...(input.dataset ? { sourceIds: input.dataset.sourceIds } : {}),
+        ...(input.dataset?.fundamentalObservations?.length
+          ? { fundamentalAvailabilityPolicy: "first_bar_strictly_after_available_at" as const }
+          : {}),
+        ...(input.dataset?.fundamentalObservations?.length
+          ? {
+              fundamentalFields: [
+                ...new Set(
+                  input.dataset.fundamentalObservations.map((observation) =>
+                    fundamentalFieldName(observation.metric)
+                  )
+                ),
+              ].sort(),
+            }
+          : {}),
+      },
     };
   }
 
   private emptyResult(input: FactorComputeRequest, t0: number, _err?: string): FactorComputeResult {
     return {
       rows: [],
-      meta: input.factorId
-        ? { factorId: input.factorId, rowCount: 0, latencyMs: Date.now() - t0 }
-        : { rowCount: 0, latencyMs: Date.now() - t0 },
+      meta: {
+        ...(input.factorId ? { factorId: input.factorId } : {}),
+        rowCount: 0,
+        latencyMs: Date.now() - t0,
+        ...(input.dataset ? { datasetSnapshotId: input.dataset.snapshotId } : {}),
+        ...(input.dataset ? { sourceIds: input.dataset.sourceIds } : {}),
+      },
     };
   }
 }

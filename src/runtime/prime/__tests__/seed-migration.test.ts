@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readFile } from "node:fs/promises";
 import { SEED_AGENT_DEFINITIONS } from "../../seed-agent-definitions-data";
 import {
   buildPrimeAgentSpecs,
@@ -27,7 +28,7 @@ describe("prime seed → AgentSpec migration", () => {
   test("every seed definition gets executionKind", () => {
     for (const def of SEED_AGENT_DEFINITIONS) {
       expect(def.executionKind).toBeDefined();
-      expect(["primary", "subagent", "reactor"]).toContain(def.executionKind);
+      expect(["primary", "subagent", "reactor"] as string[]).toContain(def.executionKind);
     }
   });
 
@@ -55,5 +56,18 @@ describe("prime seed → AgentSpec migration", () => {
     expect(coder.execution_kind).toBe("subagent");
     expect(coder.labels).toContain("strategy_coder");
     expect(coder.labels).toContain("research");
+  });
+
+  test("packaged Rust seed versions do not drift from runtime definitions", async () => {
+    const packaged = JSON.parse(
+      await readFile(
+        new URL("../../../../crates/qubit-app-server/seed/prime-agent-specs.json", import.meta.url),
+        "utf8"
+      )
+    ) as Array<{ id: string; version: string }>;
+    const runtimeById = new Map(buildPrimeAgentSpecs().map((spec) => [spec.id, spec] as const));
+    for (const spec of packaged) {
+      expect(runtimeById.get(spec.id)?.version).toBe(spec.version);
+    }
   });
 });

@@ -21,15 +21,16 @@ import { ComposerTab } from "./ComposerTab";
 import { BacktestStudioTab } from "./BacktestStudioTab";
 import { EvolutionStudioTab } from "./EvolutionStudioTab";
 import { ScriptStudioTab } from "./ScriptStudioTab";
-import {
-  listBacktestJobs,
-  listDiscoveryJobs,
-  listFactors,
-  listProjectStrategyScripts,
-  listStrategyVersions,
-  listStrategyCompositions,
-} from "../../api/backend";
+import { listStrategyCompositions } from "../../api/backend";
 import { useDefaultProject } from "./useDefaultProject";
+import { QuantLineageFilterBar } from "./QuantLineageFilterBar";
+import {
+  fetchQuantBacktestJobs,
+  fetchQuantDiscoveryJobs,
+  fetchQuantFactors,
+  fetchQuantStrategyScripts,
+  fetchQuantStrategyVersions,
+} from "../../lib/quantListScope";
 
 const TABS: readonly { id: QuantTab; label: string; desc: string; color: string }[] = [
   { id: "factor", label: "因子工坊", desc: "FactorWorkbench", color: "var(--qb-quant-accent-1)" },
@@ -61,20 +62,31 @@ export const QuantStudioPanel: FC = () => {
   const setTab = useAppStore((s) => s.setQuantTab);
   const quantContext = useAppStore((s) => s.quantContext);
   const setQuantContext = useAppStore((s) => s.setQuantContext);
-  const { projectId } = useDefaultProject();
+  const {
+    defaultProjectId,
+    scopeProjectId,
+    scopeAllProjects,
+    listProjectFilter,
+    lineageFilter,
+    listScopeKey,
+    projects,
+    setScopeProjectId,
+    setLineageFilter,
+    loading: projectMetaLoading,
+  } = useDefaultProject();
   const [kpi, setKpi] = useState<KpiSummary>(EMPTY_KPI);
 
   useEffect(() => {
-    if (!projectId) return;
+    if (projectMetaLoading) return;
     let cancelled = false;
     (async () => {
       try {
         const [factors, discoveries, versions, backtests, scripts] = await Promise.all([
-          listFactors({ projectId }).catch(() => []),
-          listDiscoveryJobs({ projectId }).catch(() => []),
-          listStrategyVersions(projectId).catch(() => []),
-          listBacktestJobs({ projectId }).catch(() => []),
-          listProjectStrategyScripts({ projectId }).catch(() => []),
+          fetchQuantFactors(listProjectFilter, lineageFilter).catch(() => []),
+          fetchQuantDiscoveryJobs(listProjectFilter, lineageFilter).catch(() => []),
+          fetchQuantStrategyVersions(listProjectFilter, lineageFilter).catch(() => []),
+          fetchQuantBacktestJobs(listProjectFilter, lineageFilter).catch(() => []),
+          fetchQuantStrategyScripts(listProjectFilter, lineageFilter).catch(() => []),
         ]);
         // 聚合 composition 数量（每个 strategy_version 各取一次；限制并发避免压垮 SQLite）
         const compositionsByVersion = await Promise.all(
@@ -115,7 +127,11 @@ export const QuantStudioPanel: FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [projectId, tab]);
+  }, [projectMetaLoading, listScopeKey, tab]);
+
+  const scopeLabel = scopeAllProjects
+    ? "全部项目"
+    : projects.find((p) => p.id === scopeProjectId)?.name ?? "当前项目";
 
   return (
     <div data-qb-quant-shell className="qb-quant-shell" style={styles.root}>
@@ -127,6 +143,32 @@ export const QuantStudioPanel: FC = () => {
           <div className="qb-quant-subtitle" style={styles.subtitle}>
             因子研究 · 自动挖掘 · 策略回测 — 后端由 Provider 抽象层驱动，可在「配置中心 · Providers」切换实现
           </div>
+          <div className="qb-quant-scope-row" style={styles.scopeRow} aria-label="项目范围">
+            <label style={styles.scopeLabel}>
+              数据范围
+              <select
+                className="qb-quant-scope-select"
+                value={scopeProjectId ?? ""}
+                onChange={(e) => setScopeProjectId(e.target.value ? e.target.value : null)}
+                style={styles.scopeSelect}
+                disabled={projectMetaLoading}
+              >
+                <option value="">全部项目（跨 project 浏览）</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                    {p.id === defaultProjectId && !scopeProjectId ? " · 默认写入" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <span style={styles.scopeHint}>
+              {scopeAllProjects
+                ? "列表含所有 project 的历史因子/策略/回测；新建仍写入默认 project"
+                : `仅显示「${scopeLabel}」· 新建写入该项目`}
+            </span>
+          </div>
+          <QuantLineageFilterBar />
           {quantContext ? (
             <div
               className="qb-quant-context"
@@ -138,6 +180,7 @@ export const QuantStudioPanel: FC = () => {
               <span>
                 研究上下文
                 {quantContext.sourceLabel ? ` · ${quantContext.sourceLabel}` : ""}
+                {quantContext.workflowRunId ? " · 已套用工作流筛选" : ""}
               </span>
               {quantContext.workflowRunId ? (
                 <code style={styles.contextCode}>{quantContext.workflowRunId.slice(0, 8)}…</code>
@@ -146,10 +189,13 @@ export const QuantStudioPanel: FC = () => {
                 type="button"
                 className="qb-quant-btn qb-quant-btn--ghost"
                 style={styles.contextReset}
-                onClick={() => setQuantContext(null)}
-                title="退出研究 workflow 上下文，返回 QUBIT Default Project"
+                onClick={() => {
+                  setQuantContext(null);
+                  setLineageFilter({ mode: "none", id: "" });
+                }}
+                title="清除研究上下文与 workflow 筛选"
               >
-                返回默认项目
+                清除研究上下文
               </button>
             </div>
           ) : null}
@@ -238,6 +284,30 @@ const styles: Record<string, CSSProperties> = {
   },
   title: { fontSize: 19, fontWeight: 700 },
   subtitle: { fontSize: 12, color: "var(--qb-text-muted)", marginTop: 4 },
+  scopeRow: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 6,
+  },
+  scopeLabel: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 3,
+    fontSize: 11,
+    color: "var(--qb-text-muted)",
+  },
+  scopeSelect: {
+    minWidth: 220,
+    fontSize: 12,
+    padding: "4px 8px",
+    borderRadius: 6,
+    border: "1px solid var(--qb-border-subtle)",
+    background: "var(--qb-bg-elevated)",
+    color: "inherit",
+  },
+  scopeHint: { fontSize: 11, color: "var(--qb-text-muted)", maxWidth: 420, lineHeight: 1.4 },
   contextBar: {
     display: "flex",
     alignItems: "center",

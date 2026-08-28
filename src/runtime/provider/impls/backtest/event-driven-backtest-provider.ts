@@ -13,17 +13,20 @@
  * 这是 M3 的"主 Provider"：priority > sma_legacy。
  */
 
-import type { BarData } from "../../../../connectors/data/data.connector";
-import { queryBarsRange } from "../../../market/klines-query";
-import { providerResolver } from "../../resolver";
-import type {
-  BacktestProvider,
-  BacktestRequest,
-  BacktestResult,
-  FactorComputeProvider,
-  ProviderMeta,
-} from "../../types";
+import type { BacktestProvider, BacktestRequest, BacktestResult, ProviderMeta } from "../../types";
+import { buildBacktestIntegrityReport } from "../../../backtest/anti-leakage-report";
+import { buildAssetLifecycleReport } from "../../../backtest/asset-lifecycle-model";
+import {
+  fundamentalFieldName,
+  materializeFundamentalPitFields,
+} from "../../../backtest/fundamental-pit-series";
+import { verifyPointInTimeIntegrity } from "../../../backtest/pit-verifier";
+import { buildStatisticalValidationReport } from "../../../backtest/statistical-validation-report";
 import { type BarPoint, type EngineInput, runEventEngine } from "./event-engine";
+import { ExprEvalError, type PriceSeries, evalExpr } from "../factor/qlib-expr/evaluator";
+import { type Ast, parse } from "../factor/qlib-expr/parser";
+
+const FACTOR_AST_CACHE = new Map<string, Ast>();
 
 const META: ProviderMeta = {
   kind: "backtest",
@@ -33,7 +36,7 @@ const META: ProviderMeta = {
     "多 symbol 横截面 topN 等权再平衡 + 滑点 + 双边手续费；下一根 open 撮合避免 lookahead。",
   version: "0.1.0",
   capability: {
-    supportedAssetClasses: ["stock", "crypto"],
+    supportedAssetClasses: ["stock", "future", "option", "crypto"],
     features: [
       "multi_symbol",
       "cross_section",
@@ -41,6 +44,9 @@ const META: ProviderMeta = {
       "long_short",
       "slippage",
       "commission",
+      "contract_multiplier",
+      "cash_settled_expiry",
+      "perpetual_funding",
     ],
     performanceProfile: "batch",
   },
@@ -58,7 +64,7 @@ export class EventDrivenBacktestProvider implements BacktestProvider {
   async run(input: BacktestRequest): Promise<BacktestResult> {
     const t0 = Date.now();
 
-    if (input.signals.kind !== "factor_score") {
+    if (input.signals.kind !== "factor_score" && input.signals.kind !== "factor_composite") {
       return this.errorResult(
         t0,
         `event_driven backtest 暂仅支持 factor_score signals；收到 ${input.signals.kind}`
@@ -69,67 +75,108 @@ export class EventDrivenBacktestProvider implements BacktestProvider {
       return this.errorResult(t0, "symbols_required");
     }
 
-    // 1) 拉取 bars
+    // The event engine currently uses one execution event per exchange date. Accepting an
+    // intraday snapshot here would overwrite earlier bars that share a date and annualize the
+    // resulting return series as daily data. Reject rather than manufacture a misleading result
+    // until the intraday/session-window engine is implemented.
+    if (!isDailyTimeframe(input.dataset.timeframe)) {
+      return this.errorResult(
+        t0,
+        `intraday_timeframe_not_supported:${input.dataset.timeframe || "unknown"}`
+      );
+    }
+
+    const assetLifecycleReport = buildAssetLifecycleReport(input);
+    if (assetLifecycleReport.status === "invalid") {
+      const failures = assetLifecycleReport.checks
+        .filter((check) => check.state === "fail")
+        .map((check) => `${check.symbol}:${check.code}`)
+        .join(",");
+      return this.errorResult(t0, `asset_lifecycle_invalid:${failures}`, assetLifecycleReport);
+    }
+
+    // 1) 只消费提交时绑定的数据集。严禁在 Provider 内重新请求市场行情，否则同一
+    // config 将随时间漂移，无法复现历史回测。
     const barsByDate = new Map<string, Map<string, BarPoint>>();
     const datesSet = new Set<string>();
-    const symbolBars = new Map<string, BarData[]>();
 
     for (const symbol of input.symbols) {
-      try {
-        const bars = await queryBarsRange({
-          symbol,
-          exchange: "",
-          period: "1d",
-          startDate: input.startDate,
-          endDate: input.endDate,
-        });
-        if (bars.length === 0) continue;
-        symbolBars.set(symbol, bars);
-        for (const b of bars) {
-          const d = b.timestamp.slice(0, 10);
-          datesSet.add(d);
-          let byDate = barsByDate.get(d);
-          if (!byDate) {
-            byDate = new Map();
-            barsByDate.set(d, byDate);
-          }
-          byDate.set(symbol, {
-            open: b.open,
-            high: b.high,
-            low: b.low,
-            close: b.close,
-            volume: b.volume,
-          });
+      const bars = (input.dataset.barsBySymbol[symbol] ?? []).filter((bar) => {
+        const date = bar.timestamp.slice(0, 10);
+        return date >= input.startDate && date <= input.endDate;
+      });
+      if (!bars || bars.length === 0) {
+        return this.errorResult(t0, `dataset_missing_bars:${symbol}`);
+      }
+      for (const b of bars) {
+        const d = b.timestamp.slice(0, 10);
+        datesSet.add(d);
+        let byDate = barsByDate.get(d);
+        if (!byDate) {
+          byDate = new Map();
+          barsByDate.set(d, byDate);
         }
-      } catch {}
+        byDate.set(symbol, {
+          open: b.open,
+          high: b.high,
+          low: b.low,
+          close: b.close,
+          volume: b.volume,
+          ...(b.settlementPrice !== undefined ? { settlementPrice: b.settlementPrice } : {}),
+          ...(b.fundingRateBps !== undefined ? { fundingRateBps: b.fundingRateBps } : {}),
+          ...(b.impliedVolatility !== undefined ? { impliedVolatility: b.impliedVolatility } : {}),
+          ...(b.riskFreeRateAnnual !== undefined
+            ? { riskFreeRateAnnual: b.riskFreeRateAnnual }
+            : {}),
+          ...(b.tradable !== undefined ? { tradable: b.tradable } : {}),
+          ...(b.suspended !== undefined ? { suspended: b.suspended } : {}),
+          ...(b.priceLimitUp !== undefined ? { priceLimitUp: b.priceLimitUp } : {}),
+          ...(b.priceLimitDown !== undefined ? { priceLimitDown: b.priceLimitDown } : {}),
+          ...(input.dataset.tradingCalendar?.sessionsBySymbol?.[symbol]?.[d]
+            ? { calendarSession: input.dataset.tradingCalendar.sessionsBySymbol[symbol]![d] }
+            : {}),
+        });
+      }
     }
 
     const dates = Array.from(datesSet).sort();
     if (dates.length === 0) {
       return this.errorResult(t0, "no_bars_available");
     }
-
-    // 2) 算因子分数
-    const factorProvider = await providerResolver.resolve("factor_compute", {});
-    const computeRes = await (factorProvider as FactorComputeProvider).compute({
-      ...(input.signals.factorId ? { factorId: input.signals.factorId } : {}),
-      expr: input.signals.expr,
-      lang: input.signals.lang,
-      universe: input.universe,
-      symbols: input.symbols,
-      startDate: input.startDate,
-      endDate: input.endDate,
-    });
-
-    const signals = new Map<string, Map<string, number | null>>();
-    for (const row of computeRes.rows) {
-      let byDate = signals.get(row.date);
-      if (!byDate) {
-        byDate = new Map();
-        signals.set(row.date, byDate);
+    const delistings = (input.dataset.corporateActionEvents ?? [])
+      .filter((event) => event.kind === "delisting")
+      .map((event) => ({
+        symbol: event.symbol,
+        effectiveDate: event.effectiveDate,
+        ...(event.cashAmount !== undefined ? { cashAmount: event.cashAmount } : {}),
+      }));
+    for (const event of delistings) {
+      if (event.effectiveDate < input.startDate || event.effectiveDate > input.endDate) continue;
+      const hasSettlement = Number.isFinite(event.cashAmount);
+      const hasBar = input.dataset.barsBySymbol[event.symbol]?.some(
+        (bar) => bar.timestamp.slice(0, 10) === event.effectiveDate
+      );
+      if (!hasSettlement && !hasBar) {
+        return this.errorResult(
+          t0,
+          `delisting_settlement_price_missing:${event.symbol}:${event.effectiveDate}`,
+          assetLifecycleReport
+        );
       }
-      byDate.set(row.symbol, row.value);
     }
+
+    // 2) 在同一快照 OHLCV 上计算因子，而非委托可能自行取数的 Provider。
+    const unsupportedLang =
+      input.signals.kind === "factor_score"
+        ? input.signals.lang !== "qlib_expr"
+        : input.signals.factors.some((factor) => factor.lang !== "qlib_expr");
+    if (unsupportedLang) {
+      return this.errorResult(
+        t0,
+        "snapshot_backtest_unsupported_factor_lang: only qlib_expr is currently deterministic"
+      );
+    }
+    const signals = computeSnapshotSignals(input);
 
     // 3) 跑事件引擎
     const engineInput: EngineInput = {
@@ -140,37 +187,65 @@ export class EventDrivenBacktestProvider implements BacktestProvider {
       costs: input.costs,
       rebalance: input.rebalance ?? "daily",
       longShort: input.longShort ?? false,
-      reverse: input.signals.reverse ?? false,
+      reverse: input.signals.kind === "factor_score" ? (input.signals.reverse ?? false) : false,
       ...(typeof input.topN === "number" && input.topN > 0 ? { topN: input.topN } : {}),
+      ...(input.instruments ? { instruments: input.instruments } : {}),
+      ...(delistings.length > 0 ? { delistings } : {}),
     };
 
-    // 基准
+    // 基准同样只能来自绑定快照。
     if (input.benchmark) {
-      try {
-        const bench = await queryBarsRange({
-          symbol: input.benchmark,
-          exchange: "",
-          period: "1d",
-          startDate: input.startDate,
-          endDate: input.endDate,
-        });
+      const bench = (input.dataset.barsBySymbol[input.benchmark] ?? []).filter((bar) => {
+        const date = bar.timestamp.slice(0, 10);
+        return date >= input.startDate && date <= input.endDate;
+      });
+      if (bench) {
         engineInput.benchmarkSeries = bench.map((b) => ({
           date: b.timestamp.slice(0, 10),
           close: b.close,
         }));
-      } catch {
-        // 基准缺失不影响主流程
       }
     }
 
     const result = runEventEngine(engineInput);
+    const pitReport = verifyPointInTimeIntegrity(input.dataset);
+    const antiLeakageReport = buildBacktestIntegrityReport(input, {
+      runtimeDataIsolated: true,
+      nextBarExecution: true,
+    });
+    const statisticalValidationReport = buildStatisticalValidationReport(input, result.equityCurve);
+    const fundamentalFields = [
+      ...new Set(
+        (input.dataset.fundamentalObservations ?? []).map((observation) =>
+          fundamentalFieldName(observation.metric)
+        )
+      ),
+    ].sort();
     return {
       ...result,
-      meta: { ...result.meta, latencyMs: Date.now() - t0 },
+      meta: {
+        ...result.meta,
+        latencyMs: Date.now() - t0,
+        datasetQualification: input.dataset.qualification,
+        antiLeakageReport,
+        pitReport,
+        ...(fundamentalFields.length > 0
+          ? {
+              fundamentalAvailabilityPolicy: "first_bar_strictly_after_available_at" as const,
+              fundamentalFields,
+            }
+          : {}),
+        statisticalValidationReport,
+        assetLifecycleReport,
+      },
     };
   }
 
-  private errorResult(t0: number, error: string): BacktestResult {
+  private errorResult(
+    t0: number,
+    error: string,
+    assetLifecycleReport?: import("../../../backtest/asset-lifecycle-model").AssetLifecycleReport
+  ): BacktestResult {
     return {
       equityCurve: [],
       trades: [],
@@ -184,8 +259,133 @@ export class EventDrivenBacktestProvider implements BacktestProvider {
         tradeCount: 0,
         turnover: 0,
       },
-      meta: { latencyMs: Date.now() - t0, sampleSize: 0, barCount: 0, skippedDays: 0 },
+      meta: {
+        latencyMs: Date.now() - t0,
+        sampleSize: 0,
+        barCount: 0,
+        skippedDays: 0,
+        ...(assetLifecycleReport ? { assetLifecycleReport } : {}),
+      },
       error,
     };
   }
+}
+
+function isDailyTimeframe(timeframe: string | undefined): boolean {
+  return ["d", "1d", "day", "1day", "daily"].includes((timeframe ?? "").trim().toLowerCase());
+}
+
+function computeSnapshotSignals(input: BacktestRequest): Map<string, Map<string, number | null>> {
+  if (input.signals.kind !== "factor_score" && input.signals.kind !== "factor_composite") {
+    throw new Error(`snapshot_factor_signal_unsupported:${input.signals.kind}`);
+  }
+  const factors =
+    input.signals.kind === "factor_score"
+      ? [{ expr: input.signals.expr, weight: 1 }]
+      : input.signals.factors;
+  const factorSeries = factors.map((factor) => ({
+    weight: factor.weight,
+    values: computeOneFactorSnapshot(input, factor.expr),
+  }));
+  if (factorSeries.length === 1) return factorSeries[0]!.values;
+
+  // 因子数值量纲通常不同，因此先逐日截面 rank 标准化到 [-1, 1] 再加权合成。
+  const combined = new Map<string, Map<string, { score: number; weight: number }>>();
+  for (const factor of factorSeries) {
+    for (const [date, values] of factor.values) {
+      const ranks = normalizedRanks(values);
+      const byDate = combined.get(date) ?? new Map<string, { score: number; weight: number }>();
+      for (const [symbol, rank] of ranks) {
+        const acc = byDate.get(symbol) ?? { score: 0, weight: 0 };
+        acc.score += factor.weight * rank;
+        acc.weight += Math.abs(factor.weight);
+        byDate.set(symbol, acc);
+      }
+      combined.set(date, byDate);
+    }
+  }
+  return new Map(
+    Array.from(combined, ([date, values]) => [
+      date,
+      new Map(
+        Array.from(values, ([symbol, value]) => [
+          symbol,
+          value.weight > 1e-12 ? value.score / value.weight : null,
+        ])
+      ),
+    ])
+  );
+}
+
+function computeOneFactorSnapshot(
+  input: BacktestRequest,
+  expr: string
+): Map<string, Map<string, number | null>> {
+  let ast = FACTOR_AST_CACHE.get(expr);
+  if (!ast) {
+    ast = parse(expr);
+    FACTOR_AST_CACHE.set(expr, ast);
+  }
+  const signals = new Map<string, Map<string, number | null>>();
+  for (const symbol of input.symbols) {
+    const bars = (input.dataset.barsBySymbol[symbol] ?? []).filter((bar) => {
+      const date = bar.timestamp.slice(0, 10);
+      return date >= input.startDate && date <= input.endDate;
+    });
+    const series: PriceSeries = {
+      length: bars.length,
+      fields: {
+        open: bars.map((bar) => bar.open),
+        high: bars.map((bar) => bar.high),
+        low: bars.map((bar) => bar.low),
+        close: bars.map((bar) => bar.close),
+        volume: bars.map((bar) => bar.volume),
+        turnover: bars.map((bar) => bar.turnover),
+        vwap: bars.map((bar) => (bar.volume > 0 ? bar.turnover / bar.volume : bar.close)),
+        ...materializeFundamentalPitFields(
+          bars,
+          input.dataset.fundamentalObservations?.filter(
+            (observation) => observation.symbol === symbol
+          )
+        ),
+      },
+    };
+    let values: Array<number | null>;
+    try {
+      values = evalExpr(ast, series);
+    } catch (error) {
+      if (error instanceof ExprEvalError) {
+        throw new Error(`snapshot_factor_eval_failed:${symbol}:${error.message}`);
+      }
+      throw error;
+    }
+    for (let index = 0; index < bars.length; index += 1) {
+      const date = bars[index]!.timestamp.slice(0, 10);
+      const byDate = signals.get(date) ?? new Map<string, number | null>();
+      byDate.set(symbol, values[index] ?? null);
+      signals.set(date, byDate);
+    }
+  }
+  return signals;
+}
+
+function normalizedRanks(values: Map<string, number | null>): Map<string, number> {
+  const valid = Array.from(values)
+    .filter((entry): entry is [string, number] => entry[1] != null && Number.isFinite(entry[1]))
+    .sort((a, b) => a[1] - b[1]);
+  const out = new Map<string, number>();
+  if (valid.length === 1) {
+    out.set(valid[0]![0], 0);
+    return out;
+  }
+  let start = 0;
+  while (start < valid.length) {
+    let end = start + 1;
+    while (end < valid.length && valid[end]![1] === valid[start]![1]) end += 1;
+    const averageIndex = (start + end - 1) / 2;
+    const normalized = (2 * averageIndex) / (valid.length - 1) - 1;
+    for (let index = start; index < end; index += 1) out.set(valid[index]![0], normalized);
+    start = end;
+  }
+  return out;
 }

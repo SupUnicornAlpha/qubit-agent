@@ -1,44 +1,19 @@
 /**
- * useDefaultProject — 取出当前默认的 workspaceId / projectId。
- *
- * 量化工作台的 Tab 大多只需要 projectId（factor/discovery 入库归属），不需要
- * 用户做完整工作区切换，因此这里直接复用 MainContent 启动时已自动 ensure
- * 的「QUBIT Default Workspace / Project」。
- *
- * Project 选择策略（2026-06-09 修复）：
- *   旧版 `projects[0]?.id` 永远拿最老的 project（按 created_at），生产数据库里
- *   往往是 seed 数据（test_proj / fs-proj / disc-proj 等 fixture），跟 Agent /
- *   评测 / dev server 实际使用的 `QUBIT Default Project` 不一致 —— 表现：
- *   ComposerTab 进去看不到 Agent 刚产出的 strategy_version。
- *
- *   新策略：
- *     1. 优先 name === "QUBIT Default Project"（运行时 ensure 出来的官方默认）
- *     2. fallback 找 name === "default"（兼容老 datadir 命名）
- *     3. 最后才回 projects[0]
+ * useDefaultProject — 量化工作台 project + lineage scope。
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { listProjects, listWorkspaces } from "../../api/backend";
-import { useAppStore } from "../../store";
+import {
+  quantLineageFilterActive,
+  quantListProjectFilter,
+  type QuantListProjectFilter,
+} from "../../lib/quantListScope";
+import { useAppStore, type QuantLineageFilter } from "../../store";
 
-export interface DefaultProjectInfo {
-  workspaceId: string | null;
-  projectId: string | null;
-  loading: boolean;
-  error: string | null;
-  /** true 表示当前项目来自研究产物跳转，而不是默认项目选择器。 */
-  contextual: boolean;
-  reload: () => Promise<void>;
-}
-
-/** listProjects 当前回的最小行结构。提成 type 仅给 pickPreferredProject 用。 */
-type ProjectLite = Awaited<ReturnType<typeof listProjects>>[number];
+export type ProjectLite = Awaited<ReturnType<typeof listProjects>>[number];
 
 const PREFERRED_NAMES = ["QUBIT Default Project", "default"] as const;
 
-/**
- * 在多个候选 project 中按优先级挑出"默认"那一个。
- * 提成纯函数便于单测；不依赖 React。
- */
 export function pickPreferredProject(projects: ProjectLite[]): string | null {
   if (projects.length === 0) return null;
   for (const name of PREFERRED_NAMES) {
@@ -48,12 +23,46 @@ export function pickPreferredProject(projects: ProjectLite[]): string | null {
   return projects[0]?.id ?? null;
 }
 
+export { quantListProjectFilter };
+
+export interface DefaultProjectInfo {
+  workspaceId: string | null;
+  projectId: string | null;
+  defaultProjectId: string | null;
+  scopeProjectId: string | null;
+  scopeAllProjects: boolean;
+  listProjectFilter: QuantListProjectFilter;
+  lineageFilter: QuantLineageFilter;
+  lineageFilterActive: boolean;
+  setLineageFilter: (filter: QuantLineageFilter) => void;
+  listScopeKey: string;
+  projects: ProjectLite[];
+  projectNameById: Record<string, string>;
+  setScopeProjectId: (id: string | null) => void;
+  loading: boolean;
+  error: string | null;
+  contextual: boolean;
+  reload: () => Promise<void>;
+}
+
 export function useDefaultProject(): DefaultProjectInfo {
-  const contextProjectId = useAppStore((s) => s.quantContext?.projectId ?? null);
+  const quantContext = useAppStore((s) => s.quantContext);
+  const scopeProjectId = useAppStore((s) => s.quantProjectScopeId);
+  const setScopeProjectId = useAppStore((s) => s.setQuantProjectScopeId);
+  const lineageFilter = useAppStore((s) => s.quantLineageFilter);
+  const setLineageFilter = useAppStore((s) => s.setQuantLineageFilter);
+
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
-  const [projectId, setProjectId] = useState<string | null>(null);
+  const [defaultProjectId, setDefaultProjectId] = useState<string | null>(null);
+  const [projects, setProjects] = useState<ProjectLite[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const wf = quantContext?.workflowRunId?.trim();
+    if (!wf) return;
+    setLineageFilter({ mode: "workflow", id: wf });
+  }, [quantContext?.workflowRunId, setLineageFilter]);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -63,11 +72,13 @@ export function useDefaultProject(): DefaultProjectInfo {
       const wsId = workspaces[0]?.id ?? null;
       setWorkspaceId(wsId);
       if (!wsId) {
-        setProjectId(null);
+        setDefaultProjectId(null);
+        setProjects([]);
         return;
       }
-      const projects = await listProjects(wsId);
-      setProjectId(pickPreferredProject(projects));
+      const rows = await listProjects(wsId);
+      setProjects(rows);
+      setDefaultProjectId(pickPreferredProject(rows));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -79,12 +90,37 @@ export function useDefaultProject(): DefaultProjectInfo {
     void reload();
   }, [reload]);
 
+  const scopeAllProjects = scopeProjectId === null;
+  const listProjectFilter = useMemo(
+    () => quantListProjectFilter(scopeProjectId),
+    [scopeProjectId]
+  );
+  const projectId = scopeProjectId ?? defaultProjectId;
+  const projectNameById = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const p of projects) map[p.id] = p.name;
+    return map;
+  }, [projects]);
+
+  const listScopeKey = `${scopeProjectId ?? "__all__"}|${lineageFilter.mode}|${lineageFilter.id}`;
+
   return {
     workspaceId,
-    projectId: contextProjectId || projectId,
-    loading: contextProjectId ? false : loading,
-    error: contextProjectId ? null : error,
-    contextual: Boolean(contextProjectId),
+    projectId,
+    defaultProjectId,
+    scopeProjectId,
+    scopeAllProjects,
+    listProjectFilter,
+    lineageFilter,
+    lineageFilterActive: quantLineageFilterActive(lineageFilter),
+    setLineageFilter,
+    listScopeKey,
+    projects,
+    projectNameById,
+    setScopeProjectId,
+    loading,
+    error,
+    contextual: Boolean(quantContext),
     reload,
   };
 }

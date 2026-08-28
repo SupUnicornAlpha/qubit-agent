@@ -11,6 +11,10 @@ import {
   backtestJobService,
 } from "../runtime/backtest/backtest-job-service";
 import { walkForwardEvaluationService } from "../runtime/effect-validation/walk-forward-evaluation-service";
+import type { WalkForwardRunOptions } from "../runtime/effect-validation/walk-forward-evaluation-service";
+import { sensitivityAnalysisService, type SensitivityParamKey } from "../runtime/backtest/sensitivity-analysis-service";
+import { monteCarloService } from "../runtime/backtest/monte-carlo-service";
+import { verifyPointInTimeIntegrity } from "../runtime/backtest/pit-verifier";
 
 export const backtestJobRouter = new Hono();
 
@@ -24,9 +28,65 @@ function asError(e: unknown) {
 /** POST /api/v1/backtest-jobs/:id/walk-forward — 扩展窗口 OOS 评估 */
 backtestJobRouter.post("/:id/walk-forward", async (c) => {
   try {
-    const body = await c.req.json<{ folds?: number; purgeDays?: number }>().catch(() => ({}));
+    const body: WalkForwardRunOptions = await c.req.json().catch(() => ({}));
     const data = await walkForwardEvaluationService.run(c.req.param("id"), body);
     return c.json({ ok: true, data });
+  } catch (e) {
+    return c.json(asError(e), 400);
+  }
+});
+
+/** POST /api/v1/backtest-jobs/:id/sensitivity — 参数敏感性热力图分析 */
+backtestJobRouter.post("/:id/sensitivity", async (c) => {
+  try {
+    const body: {
+      xParam?: { key: SensitivityParamKey; values: Array<number | string> };
+      yParam?: { key: SensitivityParamKey; values: Array<number | string> };
+    } = await c.req.json().catch(() => ({}));
+    const data = await sensitivityAnalysisService.run({
+      jobId: c.req.param("id"),
+      ...(body.xParam ? { xParam: body.xParam } : {}),
+      ...(body.yParam ? { yParam: body.yParam } : {}),
+    });
+    return c.json({ ok: true, data });
+  } catch (e) {
+    return c.json(asError(e), 400);
+  }
+});
+
+/** POST /api/v1/backtest-jobs/:id/monte-carlo — 蒙特卡洛压力测试与重抽样 */
+backtestJobRouter.post("/:id/monte-carlo", async (c) => {
+  try {
+    const body: {
+      simulations?: number;
+      blockSize?: number;
+      ruinThresholdRatio?: number;
+      seed?: number;
+    } = await c.req.json().catch(() => ({}));
+    const data = await monteCarloService.run({
+      jobId: c.req.param("id"),
+      ...(body.simulations !== undefined ? { simulations: body.simulations } : {}),
+      ...(body.blockSize !== undefined ? { blockSize: body.blockSize } : {}),
+      ...(body.ruinThresholdRatio !== undefined
+        ? { ruinThresholdRatio: body.ruinThresholdRatio }
+        : {}),
+      ...(body.seed !== undefined ? { seed: body.seed } : {}),
+    });
+    return c.json({ ok: true, data });
+  } catch (e) {
+    return c.json(asError(e), 400);
+  }
+});
+
+/** POST /api/v1/backtest-jobs/:id/pit-audit — Point-In-Time 数据隔离与防未来函数审计 */
+backtestJobRouter.post("/:id/pit-audit", async (c) => {
+  try {
+    const job = await backtestJobService.get(c.req.param("id"));
+    if (!job) {
+      return c.json({ ok: false, code: "not_found", error: "Backtest job not found" }, 404);
+    }
+    const auditReport = verifyPointInTimeIntegrity(job.config.dataset);
+    return c.json({ ok: true, data: auditReport });
   } catch (e) {
     return c.json(asError(e), 400);
   }

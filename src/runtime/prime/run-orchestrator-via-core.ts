@@ -30,8 +30,13 @@ import {
   sanitizeCoreAnswerText,
 } from "./project-core-to-graph";
 import { reconcileCoreAnswerWithWorkflowArtifacts } from "./reconcile-core-answer";
-import type { InteractionMode, SessionSnapshot } from "./types";
+import { enrichTurnContextForCore } from "./core-turn-context";
+import type { InteractionMode, SessionSnapshot, TurnContextOpts } from "./types";
 import { ORCHESTRATOR_TURN_CONTEXT } from "./types";
+import {
+  parseContextIsolation,
+  resolveRecallPolicy,
+} from "../conversation/goal-scope";
 
 /** Long-running multi-agent research routinely exceeds five minutes. */
 const DEFAULT_PRIME_TURN_TIMEOUT_MS = 15 * 60_000;
@@ -304,6 +309,11 @@ export async function runOrchestratorTaskViaCore(
       ? params.conversationTurnId.trim()
       : undefined;
   const { workflow, loopOptions } = await loadWorkflowLoopContext(msg.workflowId);
+  const rawLoopOptions =
+    workflow.loopOptionsJson && typeof workflow.loopOptionsJson === "object"
+      ? (workflow.loopOptionsJson as Record<string, unknown>)
+      : {};
+  const contextIsolation = parseContextIsolation(rawLoopOptions.contextIsolation);
   const sessionChronicle =
     typeof params.context === "string" && params.context.trim() ? params.context.trim() : undefined;
   // P3: authoritative user text only in input.text; chronicle via context.session_chronicle.
@@ -313,8 +323,14 @@ export async function runOrchestratorTaskViaCore(
     workflowGoal: workflow.goal,
     omitContext: true,
   });
-  const turnContext = {
+  const recallPolicy = resolveRecallPolicy({
+    goal: text,
+    contextIsolation,
+  });
+  const baseTurnContext: TurnContextOpts = {
     ...ORCHESTRATOR_TURN_CONTEXT,
+    recall_top_k: recallPolicy.recallTopK,
+    include_skill_recall: recallPolicy.includeSkillRecall,
     ...(sessionChronicle ? { session_chronicle: sessionChronicle } : {}),
   };
   const interactionMode = mapInteractionMode({
@@ -359,9 +375,14 @@ export async function runOrchestratorTaskViaCore(
   };
 
   try {
-    const { sessionId } = await ensureCoreSession({
+    const { sessionId, agentInstanceId } = await ensureCoreSession({
       workflowId: msg.workflowId,
       interactionMode,
+    });
+    const turnContext = await enrichTurnContextForCore({
+      workflowRunId: msg.workflowId,
+      agentInstanceId,
+      base: baseTurnContext,
     });
     setPrimeBridgeRunContext({
       ...activityCtx,

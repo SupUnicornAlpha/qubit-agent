@@ -13,7 +13,6 @@ import type { CSSProperties, FC } from "react";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
   getDiscoveryJob,
-  listDiscoveryJobs,
   promoteDiscoveryCandidate,
   runDiscoveryNow,
   type DiscoveryCandidateDto,
@@ -22,6 +21,7 @@ import {
   type FactorCategory,
 } from "../../api/backend";
 import { useDefaultProject } from "./useDefaultProject";
+import { fetchQuantDiscoveryJobs } from "../../lib/quantListScope";
 import { LineageBadge, LineageTrail } from "./LineageBadge";
 import { useAppStore } from "../../store";
 
@@ -54,7 +54,16 @@ const STATUS_TONES: Record<DiscoveryJobRecord["status"], string> = {
 };
 
 export const DiscoveryStudioTab: FC = () => {
-  const { projectId, loading: projectLoading, error: projectError } = useDefaultProject();
+  const {
+    projectId,
+    listProjectFilter,
+    lineageFilter,
+    listScopeKey,
+    scopeAllProjects,
+    scopeProjectId,
+    loading: projectLoading,
+    error: projectError,
+  } = useDefaultProject();
 
   const [jobs, setJobs] = useState<DiscoveryJobRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -82,11 +91,11 @@ export const DiscoveryStudioTab: FC = () => {
   const setQuantTab = useAppStore((s) => s.setQuantTab);
 
   const reloadList = useCallback(async () => {
-    if (!projectId) return;
+    if (projectLoading) return;
     setBusy(true);
     setError(null);
     try {
-      const rows = await listDiscoveryJobs({ projectId });
+      const rows = await fetchQuantDiscoveryJobs(listProjectFilter, lineageFilter);
       setJobs(rows);
       if (!selectedId && rows.length > 0) setSelectedId(rows[0]!.id);
     } catch (e) {
@@ -94,7 +103,7 @@ export const DiscoveryStudioTab: FC = () => {
     } finally {
       setBusy(false);
     }
-  }, [projectId, selectedId]);
+  }, [projectLoading, listScopeKey, selectedId]);
 
   useEffect(() => {
     void reloadList();
@@ -191,13 +200,13 @@ export const DiscoveryStudioTab: FC = () => {
   );
 
   if (projectLoading) {
-    return <div style={styles.empty}>加载默认 project…</div>;
+    return <div style={styles.empty}>加载 project…</div>;
   }
   if (projectError) {
     return <div style={styles.errorPanel}>项目加载失败：{projectError}</div>;
   }
-  if (!projectId) {
-    return <div style={styles.empty}>未找到默认 project，请先初始化。</div>;
+  if (!scopeAllProjects && !scopeProjectId) {
+    return <div style={styles.empty}>未找到所选 project，请切换数据范围。</div>;
   }
 
   return (
@@ -301,7 +310,7 @@ export const DiscoveryStudioTab: FC = () => {
               </label>
             ) : null}
           </div>
-          <button type="submit" disabled={busy || symbolsList.length === 0} className="qb-quant-btn qb-quant-btn--primary qb-quant-btn--run" style={styles.btnPrimary}>
+          <button type="submit" disabled={busy || symbolsList.length === 0 || !projectId} className="qb-quant-btn qb-quant-btn--primary qb-quant-btn--run" style={styles.btnPrimary}>
             {busy ? "运行中…" : "Run Now"}
           </button>
         </form>

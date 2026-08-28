@@ -4,11 +4,20 @@ import { useDefaultProject } from "./useDefaultProject";
 
 /** 独立入口：不必先选中一条回测结果，也能审计和操作策略基因池。 */
 export const EvolutionStudioTab: FC = () => {
-  const { projectId, loading, error } = useDefaultProject();
+  const { scopeProjectId, defaultProjectId, scopeAllProjects, loading, error } = useDefaultProject();
+  const evolutionProjectId = scopeProjectId ?? defaultProjectId;
 
-  if (loading) return <div style={styles.state}>正在加载默认项目…</div>;
-  if (error || !projectId)
-    return <div style={styles.state}>无法加载基因池：{error ?? "未找到项目"}</div>;
+  if (loading) return <div style={styles.state}>正在加载 project…</div>;
+  if (error) return <div style={styles.state}>无法加载基因池：{error}</div>;
+  if (!evolutionProjectId) {
+    return (
+      <div style={styles.state}>
+        {scopeAllProjects
+          ? "基因池按 project 隔离：请在顶部数据范围中选择一个具体 project。"
+          : "未找到 project，请切换数据范围。"}
+      </div>
+    );
+  }
 
   return (
     <div className="qb-quant-tab-root qb-quant-tab-root--evolution" style={styles.root}>
@@ -24,7 +33,7 @@ export const EvolutionStudioTab: FC = () => {
           准入：样本 ≥ 60 · Sharpe ≥ 0.3 · MDD ≤ 30% · CVaR 95% ≤ 8% · 正收益期 ≥ 40%
         </div>
       </div>
-      <GenomeEvolutionPanel projectId={projectId} />
+      <GenomeEvolutionPanel projectId={evolutionProjectId} />
     </div>
   );
 };

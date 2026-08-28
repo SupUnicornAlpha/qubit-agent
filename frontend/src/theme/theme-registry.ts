@@ -8,11 +8,13 @@
 
 export const BUILTIN_STYLE_IDS = [
   "default",
+  "vscode-dark",
+  "vscode-light",
+  "jetbrains-darcula",
   "feishu-clean",
   "industrial",
   "bauhaus",
   "sci-fi-hud",
-  "comic-book",
 ] as const;
 
 export type BuiltinStyleId = (typeof BUILTIN_STYLE_IDS)[number];
@@ -72,11 +74,13 @@ const SURFACE_SELECTORS: Record<ThemeSurfaceId, string> = {
 
 const BUILTIN_STYLES: ThemeStyleDefinition[] = [
   { id: "default", name: "默认", builtin: true },
+  { id: "vscode-dark", name: "VSCode Dark+", builtin: true, colorScheme: "dark" },
+  { id: "vscode-light", name: "VSCode Light+", builtin: true, colorScheme: "light" },
+  { id: "jetbrains-darcula", name: "JetBrains Darcula", builtin: true, colorScheme: "dark" },
   { id: "feishu-clean", name: "简洁", builtin: true, colorScheme: "light" },
   { id: "industrial", name: "工业设计", builtin: true, colorScheme: "dark" },
   { id: "bauhaus", name: "Bauhaus 包豪斯", builtin: true, colorScheme: "light" },
   { id: "sci-fi-hud", name: "科幻 HUD", builtin: true, colorScheme: "dark" },
-  { id: "comic-book", name: "Comic Book 漫画书", builtin: true, colorScheme: "light" },
 ];
 
 const hasWindow = () => typeof window !== "undefined" && typeof document !== "undefined";

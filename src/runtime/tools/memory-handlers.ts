@@ -1,8 +1,7 @@
-import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { NativeMemoryConnector } from "../../connectors/memory/native/native.memory.connector";
 import { getDb } from "../../db/sqlite/client";
-import { longtermMemory, midtermMemory } from "../../db/sqlite/schema";
+import { midtermMemory, workflowRun } from "../../db/sqlite/schema";
 import type { BuiltinToolHandler } from "./types";
 
 const memoryConnector = new NativeMemoryConnector();
@@ -50,41 +49,96 @@ export const MEMORY_HANDLERS: Record<string, BuiltinToolHandler> = {
     };
   },
   "memory.summarize_workflow": async (ctx, params) => {
-    const { consolidateFromWorkflow } = await import("../memory/memory-consolidation");
     const workflowId = String(params.workflowId ?? ctx.workflowId ?? "");
     if (!workflowId) throw new Error("memory.summarize_workflow: workflowId is required");
+
+    const db = await getDb();
+    const wfRows = await db
+      .select({ projectId: workflowRun.projectId, status: workflowRun.status })
+      .from(workflowRun)
+      .where(eq(workflowRun.id, workflowId))
+      .limit(1);
+    const wf = wfRows[0];
+    if (!wf) throw new Error(`memory.summarize_workflow: workflow ${workflowId} not found`);
+
+    if (wf.status === "completed" && wf.projectId) {
+      const { getExperienceBus } = await import("../experience");
+      getExperienceBus().emit({
+        type: "workflow_terminal",
+        workflowRunId: workflowId,
+        projectId: wf.projectId,
+        status: "completed",
+      });
+    }
+
+    const { consolidateFromWorkflow } = await import("../memory/memory-consolidation");
     return consolidateFromWorkflow(workflowId);
   },
   "memory.consolidate_longterm": async (ctx, params) => {
-    const db = await getDb();
     const definitionId = String(params.definitionId ?? ctx.definition.id ?? "");
     const projectId = String(params.projectId ?? ctx.projectId ?? "");
     const memoryType = String(params.memoryType ?? "playbook");
-    const scope = String(params.scope ?? "project") as "org" | "project" | "strategy";
     const content = String(params.content ?? "");
     if (!content.trim())
       throw new Error("memory.consolidate_longterm: content is required (LLM-generated summary)");
+    if (!projectId) throw new Error("memory.consolidate_longterm: project_id required");
+
     const now = new Date().toISOString();
-    const id = randomUUID();
-    await db.insert(longtermMemory).values({
-      id,
-      scope: scope as never,
-      scopeId: scope === "org" ? "default" : projectId || "default",
-      definitionId: definitionId || null,
-      memoryType: memoryType as never,
-      contentJson: { content, ...params, source: "agent_consolidation" },
-      embeddingRef: null,
-      artifactUri: null,
-      validFrom: now,
-      validTo: null,
-      asofTime: now,
-      confidenceScore: params.confidenceScore != null ? Number(params.confidenceScore) : null,
+    const confidenceScore =
+      params.confidenceScore != null ? Number(params.confidenceScore) : null;
+
+    const { getExperienceStore } = await import("../experience");
+    const { resolveActiveFsWorkspaceId } = await import("../memory/fs-workspace-id");
+    const {
+      defaultVisibilityForWriteScope,
+      resolveExperienceWriteScope,
+    } = await import("../experience/experience-scope");
+    const { onExperiencesWritten } = await import("../memory/long-term-memory");
+
+    const fsWorkspaceId = await resolveActiveFsWorkspaceId({
+      params,
+      workflowId: ctx.workflowId,
     });
-    if (definitionId) {
-      const { syncMemoryFromDb } = await import("../memory/memory-workspace-sync");
-      await syncMemoryFromDb(definitionId);
-    }
-    return { longtermMemoryId: id, memoryType, scope };
+    const writeScope = resolveExperienceWriteScope({ projectId, fsWorkspaceId });
+    const visibility = defaultVisibilityForWriteScope(writeScope.scope);
+
+    const store = getExperienceStore();
+    const exp = await store.insert({
+      kind: "semantic",
+      subKind: memoryType,
+      ...writeScope,
+      definitionId: definitionId || null,
+      visibility,
+      contentJson: {
+        summary: content.trim().slice(0, 240),
+        body: content.trim(),
+        source: "agent_consolidation",
+      },
+      tagsJson: [`memoryType:${memoryType}`, "source:agent_consolidation", ...(definitionId ? [`def:${definitionId}`] : [])],
+      metadataJson: {
+        memoryType,
+        confidenceScore,
+        source: "agent_consolidation",
+        legacyParams: params,
+      },
+      validFrom: now,
+      sourceRunId: ctx.workflowId ?? null,
+      qualityScore: confidenceScore != null ? Math.max(0, Math.min(1, confidenceScore)) : 0.6,
+    });
+
+    await onExperiencesWritten({
+      experiences: [exp],
+      projectId,
+      fsWorkspaceId,
+    });
+
+    return {
+      experienceId: exp.id,
+      memoryType,
+      scope: writeScope.scope,
+      scopeId: writeScope.scopeId,
+      visibility,
+    };
   },
   "memory.refresh_workspace": async (ctx) => {
     const { syncMemoryFromDb } = await import("../memory/memory-workspace-sync");

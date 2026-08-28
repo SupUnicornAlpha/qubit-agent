@@ -197,11 +197,13 @@ const pack: LocalePack = {
     theme: {
       styles: {
         default: "默认",
+        "vscode-dark": "VSCode Dark+",
+        "vscode-light": "VSCode Light+",
+        "jetbrains-darcula": "JetBrains Darcula",
         "feishu-clean": "简洁",
         industrial: "工业设计",
         bauhaus: "Bauhaus 包豪斯",
         "sci-fi-hud": "科幻 HUD",
-        "comic-book": "Comic Book 漫画书",
       },
       palettes: {
         "dark-purple": "黑紫",
@@ -216,6 +218,7 @@ const pack: LocalePack = {
         ariaLabel: "左侧工作台工具",
         editor: "代码编辑",
         watchlist: "自选 / 持仓",
+        outline: "大纲导航",
         editorEmptyTitle: "Workspace 文件编辑",
         editorEmptyBody:
           "对话在右侧 Agent。此处用 Monaco 编辑课题文件；从 Explorer 打开 .md / .py / .ts 等。",
@@ -776,6 +779,13 @@ const pack: LocalePack = {
         hide: "隐藏",
         toggleTitle: "显示/隐藏 Agent 面板",
         resizeAria: "拖动调整 Agent 面板宽度",
+      },
+      bottomPanel: {
+        toggleTitle: "显示/隐藏下置工程面板 (⌘` / Ctrl+`)",
+        problems: "Problems 诊断",
+        output: "Output 输出",
+        strategyLog: "Strategy 控制台",
+        terminal: "Terminal 终端",
       },
       resize: {
         sideCenter: "拖动调整侧栏与编辑区宽度",

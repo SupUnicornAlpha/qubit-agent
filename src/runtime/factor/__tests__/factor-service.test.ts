@@ -1,9 +1,13 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { defaultDataDir } from "../../app-paths";
 import { getDb } from "../../../db/sqlite/client";
 import { runMigrations } from "../../../db/sqlite/migrate";
 import * as schema from "../../../db/sqlite/schema";
 import { _resetBootstrapForTests, bootstrapProviders } from "../../provider/bootstrap";
+import { buildMarketSnapshotRecord } from "../../market/contracts/market-snapshot-service";
 import { FactorServiceError, factorService } from "../factor-service";
 
 let projectId = "";
@@ -90,9 +94,11 @@ describe("FactorService", () => {
   test("list: 仅传 workflowRunId（无 projectId）也能拿到该 workflow 跨 project 的因子", async () => {
     const db = await getDb();
     const otherProjectId = randomUUID();
+    const existingProject = (await db.select().from(schema.project).limit(1))[0];
+    if (!existingProject) throw new Error("factor_service_test_project_missing");
     await db.insert(schema.project).values({
       id: otherProjectId,
-      workspaceId: (await db.select().from(schema.project).limit(1))[0]?.workspaceId,
+      workspaceId: existingProject.workspaceId,
       name: `fs-other-${randomUUID().slice(0, 6)}`,
       marketScope: "CN-A",
       status: "active",
@@ -149,6 +155,7 @@ describe("FactorService", () => {
       factorId: rec.id,
       values,
       futureReturns: future,
+      datasetSnapshotId: "snapshot-eval-v1",
     });
     expect(result.evaluationId).toBeTruthy();
     expect(result.ic).toBeGreaterThan(0.9);
@@ -157,6 +164,16 @@ describe("FactorService", () => {
     const logs = await factorService.listEvaluations(rec.id);
     expect(logs.length).toBeGreaterThan(0);
     expect(logs[0]?.factorId).toBe(rec.id);
+    expect(logs[0]?.datasetSnapshotId).toBe("snapshot-eval-v1");
+    const metric = await factorService.getLatestEvaluationMetric(
+      [rec.id],
+      "rankIc",
+      "snapshot-eval-v1"
+    );
+    expect(metric.get(rec.id)).toBeGreaterThan(0.9);
+    expect(
+      await factorService.getLatestEvaluationMetric([rec.id], "rankIc", "snapshot-missing")
+    ).toEqual(new Map());
   });
 
   test("compute: python_inline fallback 返回空 rows 但不抛错", async () => {
@@ -174,6 +191,55 @@ describe("FactorService", () => {
     });
     expect(res.meta.factorId).toBe(rec.id);
     expect(Array.isArray(res.rows)).toBe(true);
+  });
+
+  test("compute: 绑定快照时 qlib_expr 只消费快照数据并返回数据谱系", async () => {
+    const rec = await factorService.register({
+      projectId,
+      name: `snapshot_compute_${randomUUID().slice(0, 6)}`,
+      category: "momentum",
+      expr: "close - Ref(close, 1)",
+      lang: "qlib_expr",
+      universe: "US",
+    });
+    const record = buildMarketSnapshotRecord({
+      asOf: "2026-01-31T00:00:00.000Z",
+      purpose: "backtest",
+      instruments: [{ symbol: "AAA", venue: "US", assetClass: "equity" }],
+      window: { start: "2026-01-01", end: "2026-01-31" },
+      sources: [{ provider: "fixture", feed: "fixture", upstreamFamily: "fixture" }],
+      barsByInstrument: {
+        "US:AAA": [
+          { timestamp: "2026-01-02T00:00:00.000Z", open: 100, high: 102, low: 99, close: 101, volume: 1000, turnover: 101000 },
+          { timestamp: "2026-01-03T00:00:00.000Z", open: 101, high: 104, low: 100, close: 103, volume: 1100, turnover: 113300 },
+        ],
+      },
+      timeframe: "1d",
+      limit: 2,
+    });
+    const root = join(defaultDataDir(), "market-snapshots");
+    await mkdir(root, { recursive: true });
+    await writeFile(join(root, `${record.snapshot.snapshotId}.json`), JSON.stringify(record), "utf8");
+
+    const result = await factorService.compute({
+      factorId: rec.id,
+      symbols: ["AAA"],
+      startDate: "2026-01-01",
+      endDate: "2026-01-31",
+      datasetSnapshotId: record.snapshot.snapshotId,
+    });
+
+    expect(result.meta.datasetSnapshotId).toBe(record.snapshot.snapshotId);
+    expect(result.meta.sourceIds).toEqual(["fixture"]);
+    expect(result.rows).toHaveLength(2);
+    expect(result.rows[1]?.value).toBe(2);
+    const persisted = await factorService.loadValues({
+      factorId: rec.id,
+      datasetSnapshotId: record.snapshot.snapshotId,
+    });
+    expect(persisted).toEqual(result.rows);
+    // Snapshot values never leak into the unversioned compatibility table.
+    expect(await factorService.loadValues({ factorId: rec.id })).toHaveLength(0);
   });
 
   test("loadValues + valuesStats：手工 upsert 后能查回", async () => {

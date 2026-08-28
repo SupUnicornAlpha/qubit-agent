@@ -1,7 +1,7 @@
 /**
  * QUBIT 主题：在 `html` 上挂 `--qb-*` 变量，供 ide-theme 与侧栏壳层使用。
  * 配色：`data-qb-theme`（dark-purple）
- * 风格：`data-qb-style`（default | feishu-clean | industrial | bauhaus | sci-fi-hud | comic-book，见 theme/styles/）
+ * 风格：`data-qb-style`（default | vscode-dark | vscode-light | jetbrains-darcula | feishu-clean | industrial | bauhaus | sci-fi-hud，见 theme/styles/）
  */
 
 /* ─── 默认 = 黑紫（与显式 dark-purple 一致）─── */
@@ -136,7 +136,15 @@ body {
   overflow: hidden;
 }
 
+.qb-sidebar-shell--explorer-collapsed {
+  /* Explorer 收起时 Panel 仍占 ~4% 宽；壳层与活动栏同色，避免 Activity Bar 右侧露出异色竖条 */
+  background: var(--qb-sidebar-activity-bg);
+}
+
 .qb-sidebar-shell--explorer-collapsed .qb-sidebar-activity {
+  flex: 1;
+  width: auto;
+  min-width: 52px;
   border-right: none;
 }
 

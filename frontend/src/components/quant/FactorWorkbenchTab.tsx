@@ -18,7 +18,6 @@ import {
   factorValuesStats,
   getFactor,
   listFactorEvaluations,
-  listFactors,
   loadFactorValues,
   registerFactor,
   runFactorBacktestPromotionNow,
@@ -34,6 +33,7 @@ import {
   type LineageCreatedBy,
 } from "../../api/backend";
 import { useDefaultProject } from "./useDefaultProject";
+import { fetchQuantFactors } from "../../lib/quantListScope";
 import { pickColor, SvgLineChart, type ChartSeries } from "./charts/SvgLineChart";
 import { LineageBadge, LineageTrail } from "./LineageBadge";
 import { useAppStore } from "../../store";
@@ -80,7 +80,17 @@ const INITIAL_FORM: RegisterFormState = {
 const DEFAULT_SYMBOLS = "AAPL,MSFT,GOOG";
 
 export const FactorWorkbenchTab: FC = () => {
-  const { projectId, loading: projectLoading, error: projectError } = useDefaultProject();
+  const {
+    projectId,
+    listProjectFilter,
+    lineageFilter,
+    listScopeKey,
+    scopeAllProjects,
+    scopeProjectId,
+    projectNameById,
+    loading: projectLoading,
+    error: projectError,
+  } = useDefaultProject();
 
   const [factors, setFactors] = useState<FactorRecord[]>([]);
   const [filterCategory, setFilterCategory] = useState<FactorCategory | "all">("all");
@@ -147,15 +157,13 @@ export const FactorWorkbenchTab: FC = () => {
   }, [handoff, setQuantHandoff]);
 
   const reloadList = useCallback(async () => {
-    if (!projectId) return;
+    if (projectLoading) return;
     setBusy(true);
     setError(null);
     try {
-      const rows = await listFactors({
-        projectId: projectId ?? undefined,
-        category: filterCategory === "all" ? undefined : filterCategory,
-        status: filterStatus === "all" ? undefined : filterStatus,
-      });
+      let rows = await fetchQuantFactors(listProjectFilter, lineageFilter);
+      if (filterCategory !== "all") rows = rows.filter((f) => f.category === filterCategory);
+      if (filterStatus !== "all") rows = rows.filter((f) => f.status === filterStatus);
       setFactors(rows);
       setSelectedId((current) => current ?? rows[0]?.id ?? null);
     } catch (e) {
@@ -163,7 +171,7 @@ export const FactorWorkbenchTab: FC = () => {
     } finally {
       setBusy(false);
     }
-  }, [projectId, filterCategory, filterStatus]);
+  }, [projectLoading, listScopeKey, filterCategory, filterStatus]);
 
   useEffect(() => {
     void reloadList();
@@ -569,13 +577,13 @@ export const FactorWorkbenchTab: FC = () => {
   );
 
   if (projectLoading) {
-    return <div style={styles.empty}>加载默认 project…</div>;
+    return <div style={styles.empty}>加载 project…</div>;
   }
   if (projectError) {
     return <div style={styles.errorPanel}>项目加载失败：{projectError}</div>;
   }
-  if (!projectId) {
-    return <div style={styles.empty}>未找到默认 project，请先在「研究工作台」初始化。</div>;
+  if (!scopeAllProjects && !scopeProjectId) {
+    return <div style={styles.empty}>未找到所选 project，请切换数据范围。</div>;
   }
 
   return (
@@ -583,7 +591,7 @@ export const FactorWorkbenchTab: FC = () => {
       <aside className="qb-quant-col qb-quant-col--left" style={styles.colLeft}>
         <div className="qb-quant-col-header" style={styles.colHeader}>
           <strong>因子列表</strong>
-          <button type="button" onClick={() => setShowForm((s) => !s)} className="qb-quant-btn qb-quant-btn--primary" style={styles.btnPrimary}>
+          <button type="button" onClick={() => setShowForm((s) => !s)} className="qb-quant-btn qb-quant-btn--primary" style={styles.btnPrimary} disabled={!projectId}>
             {showForm ? "取消" : "+ 注册"}
           </button>
         </div>
@@ -804,6 +812,9 @@ export const FactorWorkbenchTab: FC = () => {
                   <span className="qb-quant-status-tag" data-qb-quant-status={f.status} style={{ color: STATUS_TONES[f.status] }}>{STATUS_LABELS[f.status]}</span>
                   <span> · {CATEGORY_LABELS[f.category]}</span>
                   <span> · {f.lang}</span>
+                  {scopeAllProjects ? (
+                    <span> · {projectNameById[f.projectId] ?? f.projectId.slice(0, 8)}</span>
+                  ) : null}
                 </div>
               </button>
             </div>
@@ -1312,7 +1323,7 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     minHeight: 0,
-    overflow: "hidden",
+    overflow: "auto",
   },
   colMid: {
     display: "flex",
@@ -1437,7 +1448,7 @@ const styles: Record<string, CSSProperties> = {
       "linear-gradient(90deg, var(--qb-quant-accent-1), var(--qb-quant-accent-4))",
     transition: "width 220ms ease",
   },
-  list: { flex: 1, minHeight: 0, overflow: "auto" },
+  list: { flex: "0 0 auto", minHeight: 120 },
   listItem: {
     width: "100%",
     textAlign: "left",

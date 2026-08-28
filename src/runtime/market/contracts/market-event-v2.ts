@@ -118,6 +118,96 @@ export const DataQualityConsistencySchema = z.enum(["verified", "divergent", "in
 export const DataQualityStructureSchema = z.enum(["valid", "malformed", "market_closed"]);
 export const DataQualityPitSchema = z.enum(["point_in_time_valid", "invalid"]);
 
+/** Explicit daily session state from a versioned exchange calendar. */
+export const MarketCalendarSessionStateSchema = z.enum(["open", "closed"]);
+export type MarketCalendarSessionState = z.infer<typeof MarketCalendarSessionStateSchema>;
+export const MarketCalendarSessionsByVenueSchema = z.record(
+  z.record(MarketCalendarSessionStateSchema)
+);
+export type MarketCalendarSessionsByVenue = z.infer<typeof MarketCalendarSessionsByVenueSchema>;
+
+/**
+ * Frozen point-in-time membership intervals for a research universe. The source table must
+ * describe membership changes rather than only the symbols that survive in today's universe.
+ */
+export const MarketUniverseHistorySchema = z.object({
+  universeId: z.string().min(1),
+  version: z.string().min(1),
+  source: z.string().min(1),
+  asOf: z.string().min(1),
+  membershipIntervals: z
+    .array(
+      z.object({
+        symbol: z.string().min(1),
+        startDate: z.string().min(1),
+        endDate: z.string().min(1).optional(),
+      })
+    )
+    .min(1),
+});
+export type MarketUniverseHistory = z.infer<typeof MarketUniverseHistorySchema>;
+
+/** Corporate-action ledger with the time at which each action became usable. */
+export const MarketCorporateActionSchema = z.object({
+  kind: z.enum([
+    "cash_dividend",
+    "stock_dividend",
+    "split",
+    "merger",
+    "spinoff",
+    "delisting",
+    "symbol_change",
+    "other",
+  ]),
+  effectiveDate: z.string().min(1),
+  knownAt: z.string().min(1),
+  ratio: z.number().finite().positive().optional(),
+  cashAmount: z.number().finite().optional(),
+  reference: z.string().min(1).optional(),
+});
+export type MarketCorporateAction = z.infer<typeof MarketCorporateActionSchema>;
+
+export const MarketCorporateActionLedgerSchema = z.object({
+  version: z.string().min(1),
+  source: z.string().min(1),
+  asOf: z.string().min(1),
+  /** Must match the snapshot adjustment method; empty arrays are explicit no-action evidence. */
+  adjustmentMethod: z.string().min(1),
+  actionsBySymbol: z.record(z.array(MarketCorporateActionSchema)),
+});
+export type MarketCorporateActionLedger = z.infer<typeof MarketCorporateActionLedgerSchema>;
+
+/**
+ * A scalar fundamental observation as it was first available to the market.
+ * `fiscalPeriodEnd` is the economic period being measured; it is deliberately
+ * distinct from `availableAt`, which is the only timestamp a backtest may use
+ * when deciding whether this revision was observable.
+ */
+export const MarketFundamentalObservationSchema = z.object({
+  metric: z.string().min(1),
+  fiscalPeriodEnd: z.string().min(1),
+  availableAt: z.string().min(1),
+  value: z.number().finite(),
+  unit: z.string().min(1).optional(),
+  revisionId: z.string().min(1).optional(),
+  supersedesRevisionId: z.string().min(1).optional(),
+  reference: z.string().min(1).optional(),
+});
+export type MarketFundamentalObservation = z.infer<typeof MarketFundamentalObservationSchema>;
+
+/**
+ * Versioned, point-in-time financial statement / estimate ledger. Every
+ * revision is retained; consumers must select only observations available at
+ * their decision timestamp instead of substituting today's restated values.
+ */
+export const MarketFundamentalLedgerSchema = z.object({
+  version: z.string().min(1),
+  source: z.string().min(1),
+  asOf: z.string().min(1),
+  observationsBySymbol: z.record(z.array(MarketFundamentalObservationSchema)),
+});
+export type MarketFundamentalLedger = z.infer<typeof MarketFundamentalLedgerSchema>;
+
 export const DataQualityVerdictSchema = z.object({
   instrument: MarketInstrumentSchema,
   feed: z.string().min(1),
@@ -151,8 +241,12 @@ export const MarketSnapshotSchema = z.object({
   sourceRevisions: z.record(z.number().int().nonnegative()).default({}),
   qualityVerdict: DataQualityVerdictSchema.optional(),
   adjustMethod: z.string().optional(),
+  universeHistory: MarketUniverseHistorySchema.optional(),
+  corporateActionLedger: MarketCorporateActionLedgerSchema.optional(),
+  fundamentalLedger: MarketFundamentalLedgerSchema.optional(),
   timezone: z.string().default("UTC"),
   calendarVersion: z.string().optional(),
+  calendarSessionsByVenue: MarketCalendarSessionsByVenueSchema.optional(),
   eventRefs: z.array(z.string()).default([]),
   createdAt: z.string().min(1),
   schemaVersion: z.literal(MARKET_EVENT_SCHEMA_VERSION),

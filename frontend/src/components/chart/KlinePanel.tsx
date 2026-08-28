@@ -279,6 +279,9 @@ export const KlinePanel: FC<{
   const paneChartsRef = useRef(new Map<string, IChartApi>());
   const syncingTimeScaleRef = useRef(false);
   const fittedChartKeyRef = useRef<string | null>(null);
+  /** 记录上次 fit 时的 bar 数；WS 先推 1 根 provisional bar 时不应锁死视口。 */
+  const fittedBarCountRef = useRef(0);
+  const klineLoadKeyRef = useRef("");
 
   const chartOverlays = useAppStore((s) => s.chartOverlays);
   const uiStyle = useAppStore((s) => s.uiStyle);
@@ -429,22 +432,28 @@ export const KlinePanel: FC<{
 
   const load = useCallback(async () => {
     const spec = useAppStore.getState().chartSpec;
+    const loadKey = `${spec.symbol}|${spec.exchange}|${spec.timeframe}`;
+    if (klineLoadKeyRef.current !== loadKey) {
+      setLastBars([]);
+      klineLoadKeyRef.current = loadKey;
+    }
     setLoading(true);
     setError(null);
     setKlinesError(null);
-    setLastBars([]);
     try {
-      const control = await listMarketDataSources().catch(() => null);
+      const [res, control] = await Promise.all([
+        getKlines({
+          symbol: spec.symbol.trim(),
+          exchange: spec.exchange.trim() || undefined,
+          timeframe: spec.timeframe,
+          limit: spec.limit,
+        }),
+        listMarketDataSources().catch(() => null),
+      ]);
       if (control) {
         setSourceRows(control.data);
         setReadiness(control.readiness);
       }
-      const res = await getKlines({
-        symbol: spec.symbol.trim(),
-        exchange: spec.exchange.trim() || undefined,
-        timeframe: spec.timeframe,
-        limit: spec.limit,
-      });
       if (!res.ok || !Array.isArray(res.data)) {
         const wrapped = parseKlinesApiError(res);
         if (wrapped) {
@@ -482,6 +491,7 @@ export const KlinePanel: FC<{
       // A live backfill may populate a few provisional candles before the
       // authoritative history returns. Always reset the initial viewport here.
       fittedChartKeyRef.current = null;
+      fittedBarCountRef.current = 0;
       setLastBars(normalized);
     } catch (e) {
       let msg = e instanceof Error ? e.message : String(e);
@@ -508,10 +518,7 @@ export const KlinePanel: FC<{
   }, []);
 
   useEffect(() => {
-    const t = setTimeout(() => {
-      void load();
-    }, 320);
-    return () => clearTimeout(t);
+    void load();
   }, [
     chartSpec.symbol,
     chartSpec.exchange,
@@ -729,7 +736,15 @@ export const KlinePanel: FC<{
 
   useEffect(() => {
     const fitKey = `${chartSpec.symbol}|${chartSpec.exchange}|${chartSpec.timeframe}|${chartSpec.limit}`;
-    if (lastBars.length === 0 || fittedChartKeyRef.current === fitKey) return;
+    if (lastBars.length === 0) return;
+    const specChanged = fittedChartKeyRef.current !== fitKey;
+    const sparseThenFilled =
+      lastBars.length >= 8 && fittedBarCountRef.current > 0 && fittedBarCountRef.current < 8;
+    const historyExpanded =
+      lastBars.length >= 32 &&
+      fittedBarCountRef.current > 0 &&
+      fittedBarCountRef.current < Math.min(lastBars.length, 32);
+    if (!specChanged && !sparseThenFilled && !historyExpanded) return;
     const frame = requestAnimationFrame(() => {
       const priceChart = paneChartsRef.current.get("price");
       if (!priceChart) return;
@@ -740,6 +755,7 @@ export const KlinePanel: FC<{
         }
       }
       fittedChartKeyRef.current = fitKey;
+      fittedBarCountRef.current = lastBars.length;
     });
     return () => cancelAnimationFrame(frame);
   }, [chartSpec.exchange, chartSpec.limit, chartSpec.symbol, chartSpec.timeframe, lastBars]);

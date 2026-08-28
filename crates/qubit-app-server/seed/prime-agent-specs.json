@@ -1,7 +1,7 @@
 [
   {
     "id": "def-orchestrator",
-    "version": "4.1.2",
+    "version": "4.3.1",
     "display_name": "编排器",
     "execution_kind": "primary",
     "labels": [
@@ -19,7 +19,7 @@
   },
   {
     "id": "def-market-data",
-    "version": "2.6.0",
+    "version": "2.11.0",
     "display_name": "行情数据",
     "execution_kind": "subagent",
     "labels": [
@@ -58,7 +58,7 @@
   },
   {
     "id": "def-analyst-fundamental",
-    "version": "3.6.1",
+    "version": "3.7.0",
     "display_name": "基本面研究员",
     "execution_kind": "subagent",
     "labels": [
@@ -138,7 +138,7 @@
   },
   {
     "id": "def-research",
-    "version": "4.5.0",
+    "version": "4.6.0",
     "display_name": "策略研究",
     "execution_kind": "subagent",
     "labels": [
@@ -159,7 +159,7 @@
   },
   {
     "id": "def-backtest",
-    "version": "4.3.0",
+    "version": "4.14.0",
     "display_name": "回测",
     "execution_kind": "subagent",
     "labels": [
@@ -179,7 +179,7 @@
   },
   {
     "id": "def-risk",
-    "version": "4.3.0",
+    "version": "4.4.0",
     "display_name": "风控",
     "execution_kind": "subagent",
     "labels": [
@@ -199,7 +199,7 @@
   },
   {
     "id": "def-walk-forward-validator",
-    "version": "1.2.0",
+    "version": "1.6.0",
     "display_name": "Walk-Forward 验证师",
     "execution_kind": "subagent",
     "labels": [

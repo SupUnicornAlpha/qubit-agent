@@ -147,13 +147,14 @@ fn tool_description(name: &str) -> String {
         "market.resolve_symbol" => "Resolve a ticker/symbol to a canonical market id.".into(),
         "market.readiness" => "Check market data source readiness.".into(),
         "market.data_sources" => "List configured market data sources.".into(),
-        "market.snapshot.get" => "Fetch an immutable market snapshot (returns snapshotId).".into(),
+        "market.snapshot.get" => "Fetch an immutable market snapshot (returns snapshotId). For validation-grade historical backtests, include versioned universe_history membership intervals and a corporate_action_ledger with per-symbol action arrays; fundamental/valuation/estimate factors must additionally carry a versioned fundamental_ledger with each observation's fiscalPeriodEnd and availableAt. Otherwise results remain research-only.".into(),
         "factor.register" => "Register a factor before computing it. Required: name + expr; returns factor id.".into(),
         "factor.compute" => "Compute values for an existing factor. Required: factor_id returned by factor.register + symbols[].".into(),
         "factor.autoEvaluate" => "Evaluate a computed factor across at least three symbols; call factor.compute first.".into(),
         "strategy.create_version" => "Create a strategy version before composing or backtesting; returns strategy_version_id.".into(),
         "strategy.compose" => "Attach factors/rules to an existing strategy. Required: strategy_version_id; call before backtest.run.".into(),
         "backtest.run" => "Run an event-driven backtest. Required: strategy_version_id and symbols[]; compose first or provide signals.".into(),
+        "backtest.walk_forward" => "Validate a completed backtest with expanding walk-forward folds. Optional candidates are selected on each training window and frozen before its test window.".into(),
         n if n.starts_with("mcp:mathjs:") => {
             "Evaluate ONE math expression. Prefer a single call; do not spam.".into()
         }
@@ -324,12 +325,103 @@ fn tool_parameters_schema(name: &str) -> Value {
                 "ticker": { "type": "string" },
                 "composition_id": { "type": "string" },
                 "signals": { "type": "object" },
+                "dataset_snapshot_id": { "type": "string" },
+                "datasetSnapshotId": { "type": "string", "description": "alias of dataset_snapshot_id" },
+                "instruments": {
+                    "type": "object",
+                    "description": "Point-in-time contract metadata keyed by symbol; required for options, futures, and perpetuals",
+                    "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                            "asset_class": { "type": "string", "enum": ["stock", "future", "option", "crypto"] },
+                            "contract_kind": { "type": "string", "enum": ["spot", "perpetual"] },
+                            "contract_multiplier": { "type": "number", "exclusiveMinimum": 0 },
+                            "lot_size": { "type": "number", "exclusiveMinimum": 0 },
+                            "initial_margin_rate": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+                            "maintenance_margin_rate": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+                            "target_leverage": { "type": "number", "exclusiveMinimum": 0 },
+                            "expiry_date": { "type": "string", "description": "YYYY-MM-DD" },
+                            "settlement_mode": { "type": "string", "enum": ["cash", "physical"] },
+                            "underlying_symbol": { "type": "string" },
+                            "strike": { "type": "number" },
+                            "option_right": { "type": "string", "enum": ["call", "put"] },
+                            "exercise_style": { "type": "string", "enum": ["european", "american"] },
+                            "pricing_model": { "type": "string", "enum": ["black_scholes"] },
+                            "future_roll": {
+                                "type": "object",
+                                "description": "Explicit roll instruction; close old and open successor at roll_date. Never infer from a continuous contract symbol.",
+                                "properties": {
+                                    "roll_date": { "type": "string", "description": "YYYY-MM-DD, strictly before expiry_date" },
+                                    "successor_symbol": { "type": "string" }
+                                },
+                                "required": ["roll_date", "successor_symbol"],
+                                "additionalProperties": false
+                            }
+                        },
+                        "required": ["asset_class"],
+                        "additionalProperties": true
+                    }
+                },
                 "start_date": { "type": "string", "description": "YYYY-MM-DD" },
                 "end_date": { "type": "string", "description": "YYYY-MM-DD" },
                 "benchmark": { "type": "string" },
-                "capital": { "type": "number" }
+                "capital": { "type": "number" },
+                "costs": {
+                    "type": "object",
+                    "description": "Frozen execution-cost assumptions. A validation-grade run requires cost_model_version, cost_model_source and cost_model_as_of; omitted costs use an unverified research-only default.",
+                    "properties": {
+                        "commission_bps": { "type": "number", "minimum": 0 },
+                        "slippage_bps": { "type": "number", "minimum": 0 },
+                        "min_commission": { "type": "number", "minimum": 0 },
+                        "slippage_model": { "type": "string", "enum": ["fixed_bps", "square_root", "volatility_adjusted"] },
+                        "impact_coefficient": { "type": "number", "minimum": 0 },
+                        "max_volume_participation": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+                        "borrow_rate_annual_bps": { "type": "number", "minimum": 0 },
+                        "restricted_short_symbols": { "type": "array", "items": { "type": "string" } },
+                        "cost_model_version": { "type": "string" },
+                        "cost_model_source": { "type": "string" },
+                        "cost_model_as_of": { "type": "string", "description": "ISO-8601 timestamp" }
+                    },
+                    "additionalProperties": true
+                }
             },
-            "required": ["strategy_version_id", "symbols"],
+            "required": ["strategy_version_id", "symbols", "dataset_snapshot_id"],
+            "additionalProperties": true
+        });
+    }
+    if bare == "backtest.walk_forward" {
+        return json!({
+            "type": "object",
+            "properties": {
+                "backtest_run_id": { "type": "string" },
+                "backtestRunId": { "type": "string", "description": "alias of backtest_run_id" },
+                "folds": { "type": "integer", "minimum": 2, "maximum": 8 },
+                "purge_days": { "type": "integer", "minimum": 0, "maximum": 30 },
+                "embargo_days": { "type": "integer", "minimum": 0, "maximum": 30 },
+                "selection": {
+                    "type": "object",
+                    "properties": {
+                        "objective": { "type": "string", "enum": ["sharpe", "calmar", "annual_return"] },
+                        "candidates": {
+                            "type": "array",
+                            "minItems": 2,
+                            "maxItems": 20,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "top_n": { "type": "integer", "minimum": 1 },
+                                    "rebalance": { "type": "string", "enum": ["daily", "weekly", "monthly"] },
+                                    "long_short": { "type": "boolean" }
+                                },
+                                "additionalProperties": true
+                            }
+                        }
+                    },
+                    "required": ["candidates"],
+                    "additionalProperties": true
+                }
+            },
+            "required": ["backtest_run_id"],
             "additionalProperties": true
         });
     }
@@ -864,9 +956,28 @@ mod tests {
         let backtest = tool_parameters_schema("backtest.run");
         assert_eq!(
             backtest["required"],
-            json!(["strategy_version_id", "symbols"])
+            json!(["strategy_version_id", "symbols", "dataset_snapshot_id"])
         );
         assert!(backtest["properties"].get("composition_id").is_some());
+        assert!(backtest["properties"].get("instruments").is_some());
+        assert!(backtest["properties"].get("costs").is_some());
+        assert!(
+            backtest["properties"]["instruments"]["additionalProperties"]["properties"]
+                .get("initial_margin_rate")
+                .is_some()
+        );
+        assert!(
+            backtest["properties"]["instruments"]["additionalProperties"]["properties"]
+                .get("future_roll")
+                .is_some()
+        );
+
+        let walk_forward = tool_parameters_schema("backtest.walk_forward");
+        assert_eq!(walk_forward["required"], json!(["backtest_run_id"]));
+        assert_eq!(
+            walk_forward["properties"]["selection"]["properties"]["candidates"]["minItems"],
+            json!(2)
+        );
 
         let compose = tool_parameters_schema("strategy.compose");
         assert_eq!(compose["required"], json!(["strategy_version_id"]));

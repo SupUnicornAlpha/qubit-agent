@@ -1,6 +1,13 @@
 const DATA_TOOL_PATTERN =
   /(fetch|get_quote|get_price|get_stock_info|get_market_news|get_financial|get_fundamental|get_earnings|historical_prices|technical_indicator|klines|bars|news|call_team_|mcp:)/i;
 
+const NON_DATA_TOOL_NAMES = new Set([
+  "strategy.compile",
+  "strategy.contract_backtest",
+  "web.search",
+  "web.fetch",
+]);
+
 /**
  * Control-plane / loop codes are not "data unavailable". Treating them as
  * semantic_data_failure made Orchestrator abandon verified team evidence and
@@ -37,6 +44,8 @@ export function isControlPlaneFailureCode(code: string | null | undefined): bool
 }
 
 export function detectSemanticToolFailure(toolName: string, value: unknown): string | null {
+  const bareTool = toolName.split("/").at(-1) ?? toolName;
+  if (NON_DATA_TOOL_NAMES.has(bareTool)) return null;
   // MCP / data tools: always inspect. Other tools only when payload shows isError.
   const forceInspect =
     DATA_TOOL_PATTERN.test(toolName) || toolName === "call_mcp" || toolName.startsWith("mcp:");

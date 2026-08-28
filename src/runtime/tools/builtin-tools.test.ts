@@ -343,6 +343,27 @@ describe("market.snapshot.get builtin", () => {
       })
     ).rejects.toThrow(/snapshot_not_found/);
   });
+
+  test("rejects unversioned historical evidence before fetching data", async () => {
+    await expect(
+      dispatchBuiltinTool("market.snapshot.get", ctx, {
+        symbol: "AAPL",
+        universe_history: { version: "missing required evidence" },
+      })
+    ).rejects.toThrow(/universe_history/);
+    await expect(
+      dispatchBuiltinTool("market.snapshot.get", ctx, {
+        symbol: "AAPL",
+        corporate_action_ledger: { version: "missing required evidence" },
+      })
+    ).rejects.toThrow(/corporate_action_ledger/);
+    await expect(
+      dispatchBuiltinTool("market.snapshot.get", ctx, {
+        symbol: "AAPL",
+        fundamental_ledger: { version: "missing required evidence" },
+      })
+    ).rejects.toThrow(/fundamental_ledger/);
+  });
 });
 
 describe("IDE subscription and broker quote tools", () => {
@@ -350,9 +371,9 @@ describe("IDE subscription and broker quote tools", () => {
     expect(isBuiltinTool("market.ide_subscription.get")).toBe(true);
     expect(isBuiltinTool("market.broker_quote.get")).toBe(true);
     const catalog = buildToolCatalog();
-    expect(catalog.find((row) => row.name === "market.ide_subscription.get")?.description).toContain(
-      "不访问 Agent 记忆"
-    );
+    expect(
+      catalog.find((row) => row.name === "market.ide_subscription.get")?.description
+    ).toContain("不访问 Agent 记忆");
     expect(catalog.find((row) => row.name === "market.broker_quote.get")?.description).toContain(
       "券商行情桥"
     );

@@ -1,0 +1,162 @@
+/**
+ * JetBrains Darcula 风格：经典 IntelliJ / PyCharm 深灰工程调色
+ * 调色：#2b2b2b 主背景底色、#3c3f41 工具栏/顶栏/状态栏、#313335 侧栏、#4e5254 细分界线、#4a88c7 标志蓝
+ */
+
+html[data-qb-style="jetbrains-darcula"] {
+  color-scheme: dark;
+
+  /* 基础与根容器 */
+  --qb-bg-root: #2b2b2b;
+  --qb-bg-root-top: #3c3f41;
+  --qb-bg-surface: #313335;
+  --qb-tint: rgba(74, 136, 199, 0.16);
+  --qb-tint-strong: rgba(74, 136, 199, 0.28);
+  --qb-blue: #4a88c7;
+  --qb-blue-deep: #214283;
+  --qb-focus-ring: rgba(74, 136, 199, 0.6);
+  --qb-hairline: rgba(255, 255, 255, 0.08);
+  --qb-separator: #323232;
+
+  --qb-body-fg: #a9b7c6;
+  --qb-body-muted: #808080;
+
+  /* 滚动条 */
+  --qb-scrollbar-track: #2b2b2b;
+  --qb-scrollbar-thumb-top: #4b4b4b;
+  --qb-scrollbar-thumb-bot: #4b4b4b;
+  --qb-scrollbar-thumb-hover-top: #5a5a5a;
+  --qb-scrollbar-thumb-hover-bot: #5a5a5a;
+  --qb-scrollbar-corner: #2b2b2b;
+  --qb-scrollbar-border: #323232;
+  --qb-scrollbar-thumb-border: #2b2b2b;
+
+  /* 侧边栏与活动栏 */
+  --qb-sidebar-nav-bg: #313335;
+  --qb-sidebar-activity-bg: #3c3f41;
+  --qb-sidebar-explorer-bg: #313335;
+  --qb-sidebar-border: #323232;
+  --qb-sidebar-muted: #808080;
+  --qb-sidebar-text: #a9b7c6;
+
+  --qb-brand-icon: #4a88c7;
+  --qb-brand-icon-glow: rgba(74, 136, 199, 0.6);
+
+  --qb-topbar-bg: #3c3f41;
+  --qb-workbench-toolbar-bg: #3c3f41;
+  --qb-segmented-active-bg: #214283;
+
+  --qb-main-input-bg: #45494a;
+  --qb-main-input-border: #646464;
+  --qb-main-input-fg: #a9b7c6;
+  --qb-main-meta: #808080;
+
+  /* ─── 研究团队 / 工作台 / 拓扑图完整适配 ─── */
+  --qb-team-shell-bg: #2b2b2b;
+  --qb-team-shell-border: #323232;
+  --qb-team-left-bg: #313335;
+  --qb-team-center-bg: #2b2b2b;
+  --qb-team-right-bg: #313335;
+  --qb-team-gutter-bg: #323232;
+  --qb-team-canvas-bg: #2b2b2b;
+  --qb-team-panel-bg: #313335;
+  --qb-team-panel-border: #323232;
+  --qb-team-stage-bg: #2b2b2b;
+  --qb-team-titlebar-bg: #3c3f41;
+  --qb-team-titlebar-fg: #a9b7c6;
+  --qb-team-input-bg: #45494a;
+  --qb-team-input-border: #646464;
+  --qb-team-input-fg: #a9b7c6;
+  --qb-team-meta: #808080;
+  --qb-team-section-fg: #a9b7c6;
+  --qb-team-tab-bg: #3c3f41;
+  --qb-team-tab-fg: #808080;
+  --qb-team-tab-active-bg: #2b2b2b;
+  --qb-team-tab-active-fg: #ffffff;
+  --qb-team-tab-active-border: #4a88c7;
+  --qb-team-screener-bg: #313335;
+  --qb-team-screener-btn-bg: #3c3f41;
+  --qb-team-screener-btn-fg: #a9b7c6;
+  --qb-team-screener-btn-active-bg: rgba(74, 136, 199, 0.22);
+  --qb-team-screener-btn-active-border: #4a88c7;
+  --qb-team-table-row-border: #323232;
+  --qb-team-trend-bg: #313335;
+  --qb-team-run-footer-bg: #2b2b2b;
+  --qb-team-run-footer-summary-bg: #3c3f41;
+  --qb-team-act-btn-fg: #808080;
+  --qb-team-act-btn-active-bg: #45494a;
+  --qb-team-act-btn-active-border: #4a88c7;
+  --qb-team-act-btn-active-fg: #ffffff;
+
+  /* 拓扑图节点与连线 */
+  --qb-topo-node-fill: #313335;
+  --qb-topo-node-stroke: #4e5254;
+  --qb-topo-node-stroke-w: 1;
+  --qb-topo-node-rx: 6;
+  --qb-topo-node-active-fill: rgba(74, 136, 199, 0.22);
+  --qb-topo-node-active-stroke: #4a88c7;
+  --qb-topo-edge-stroke: #555555;
+  --qb-topo-edge-stroke-w: 1.5;
+  --qb-topo-canvas-border: #323232;
+  --qb-topo-label-fg: #a9b7c6;
+  --qb-topo-sublabel-fg: #808080;
+  --qb-team-edge-fg: #555555;
+  --qb-team-edge-active: #4a88c7;
+  --qb-team-edge-hot: #589df6;
+  --qb-team-node-selected-fill: rgba(74, 136, 199, 0.28);
+  --qb-team-node-selected-stroke: #4a88c7;
+  --qb-team-node-hot-fill: rgba(74, 136, 199, 0.18);
+  --qb-team-node-hot-stroke: #589df6;
+
+  /* 量化与回测工坊 */
+  --qb-quant-bg: #2b2b2b;
+  --qb-quant-card-bg: #313335;
+  --qb-quant-border: #323232;
+  --qb-quant-accent: #4a88c7;
+
+  /* K 线与行情 */
+  --qb-kline-root-bg: #2b2b2b;
+  --qb-kline-header-border: #323232;
+  --qb-kline-embedded-bar-bg: #313335;
+
+  --qb-font-body: "JetBrains Mono", -apple-system, BlinkMacSystemFont, "Segoe UI", Consolas, monospace;
+}
+
+/* JetBrains 风格高亮边与状态栏 */
+html[data-qb-style="jetbrains-darcula"] .qb-nav-activity-btn--active {
+  background: #2d2f31 !important;
+  color: #ffffff !important;
+  box-shadow: inset 3px 0 0 0 #4a88c7 !important;
+}
+
+html[data-qb-style="jetbrains-darcula"] .qb-pro-statusbar {
+  background: #3c3f41 !important;
+  color: #a9b7c6 !important;
+  border-top: 1px solid #323232 !important;
+}
+
+html[data-qb-style="jetbrains-darcula"] .qb-pro-statusbar button:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+
+html[data-qb-style="jetbrains-darcula"] .qb-pro-resize-handle:hover,
+html[data-qb-style="jetbrains-darcula"] .qb-pro-resize-handle[data-resize-handle-state="drag"] {
+  background: #4a88c7 !important;
+}
+
+/* 团队工作台与面板微调 */
+html[data-qb-style="jetbrains-darcula"] [data-qb-team-shell] {
+  background: #2b2b2b !important;
+  border-color: #323232 !important;
+  box-shadow: none !important;
+}
+
+html[data-qb-style="jetbrains-darcula"] [data-qb-team-shell] nav[aria-label="研究团队视图"] {
+  border-right: 1px solid #323232 !important;
+  background: #313335 !important;
+}
+
+html[data-qb-style="jetbrains-darcula"] .qb-bottom-panel {
+  background: #2b2b2b !important;
+  border-top: 1px solid #323232 !important;
+}

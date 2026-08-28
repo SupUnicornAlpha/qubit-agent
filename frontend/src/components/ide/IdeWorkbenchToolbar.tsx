@@ -6,7 +6,9 @@ import {
   ChartCandlestick,
   ChartLine,
   CircleDashed,
+  Columns,
   FlaskConical,
+  LayoutGrid,
   LayoutPanelLeft,
   Waves,
 } from "lucide-react";
@@ -42,6 +44,8 @@ export const IdeWorkbenchToolbar: FC = () => {
   const toggleIdePanelVisible = useAppStore((s) => s.toggleIdePanelVisible);
   const chartOverlays = useAppStore((s) => s.chartOverlays);
   const toggleChartOverlay = useAppStore((s) => s.toggleChartOverlay);
+  const ideLayoutMode = useAppStore((s) => s.ideLayoutMode);
+  const setIdeLayoutMode = useAppStore((s) => s.setIdeLayoutMode);
   const { t } = useTranslation();
 
   const onSubmit = (e: FormEvent) => {
@@ -197,6 +201,22 @@ export const IdeWorkbenchToolbar: FC = () => {
             label={t("ide.toolbar.panelToggles.quickTrade")}
             active={ideQuickTradeOpen}
             onClick={() => setIdeQuickTradeOpen(!ideQuickTradeOpen)}
+          />
+        </div>
+        <span className="qb-toolbar-vsep" aria-hidden />
+        <span style={styles.subLab}>布局架构</span>
+        <div className="qb-toolbar-group">
+          <IconToolbarButton
+            Icon={LayoutGrid}
+            label="自由停靠 (Docking)"
+            active={ideLayoutMode === "docking"}
+            onClick={() => setIdeLayoutMode("docking")}
+          />
+          <IconToolbarButton
+            Icon={Columns}
+            label="经典分栏"
+            active={ideLayoutMode === "classic"}
+            onClick={() => setIdeLayoutMode("classic")}
           />
         </div>
       </div>

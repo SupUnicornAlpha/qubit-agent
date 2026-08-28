@@ -42,13 +42,24 @@ import type { ExperienceBus } from "../experience-bus";
 import type { ExperienceStore } from "../experience-store";
 import type { ExperienceVectorStore, VectorSearchHit } from "../experience-vector-store";
 import { applyLifecycleToScore } from "../lifecycle";
+import {
+  EPISODIC_POOL_LIMIT,
+  isEpisodicRecallAllowed,
+  shouldQueryEpisodicPool,
+} from "../episodic-recall-policy";
+import {
+  filterSharedPool,
+  filterVisibleExperiences,
+  filterVisibleForScopeTarget,
+  sharedVisibilitiesForScopeTarget,
+} from "../recall-visibility";
 
 // ───────────────────────── ctx & 结果 ─────────────────────────
 
 export interface RecallContext {
   projectId: string;
   definitionId: string | null;
-  /** agent 的 role，未来支持 role_shared 时会用 */
+  /** agent 的 role — role_shared visibility 路由 */
   role?: string;
   /** 自然语言 query（来自 reason 节点的 goal+ticker+context） */
   query: string;
@@ -159,7 +170,10 @@ export class ExperienceRecall {
     const vectorIds = Array.from(vectorHitsMap.keys());
     const fromVector = vectorIds.length > 0 ? await this.store.findManyByIds(vectorIds) : [];
     // 过滤 archived 的向量命中（防 vector 表与 sqlite 状态错位）
-    const fromVectorAlive = fromVector.filter((e) => e.validTo === null);
+    const fromVectorAlive = filterVisibleExperiences(fromVector.filter((e) => e.validTo === null), {
+      definitionId: ctx.definitionId,
+      role: ctx.role,
+    });
 
     const dedupePool = mergeExperiences(pool, fromVectorAlive);
 
@@ -243,6 +257,7 @@ export class ExperienceRecall {
       );
 
       for (const target of recallScopeTargets(ctx)) {
+        const visibilities = sharedVisibilitiesForScopeTarget(target);
         if (sharedKinds.length > 0) {
           const hits = await vstore.search(
             queryVec,
@@ -252,7 +267,7 @@ export class ExperienceRecall {
               model: client.model,
               dimension: client.dimension,
               kinds: sharedKinds,
-              visibilities: ["project_shared"],
+              visibilities,
             },
             lance
           );
@@ -299,6 +314,11 @@ export class ExperienceRecall {
       (k) => k === "semantic" || k === "procedural" || k === "identity"
     );
     for (const target of recallScopeTargets(ctx)) {
+      const visibilityCtx = {
+        definitionId: ctx.definitionId,
+        role: ctx.role,
+        scopeTarget: target,
+      };
       if (sharedKinds.length > 0) {
         const shared = await this.store.query({
           kind: sharedKinds,
@@ -308,7 +328,7 @@ export class ExperienceRecall {
           orderBy: "quality_desc",
           limit: POOL_LIMIT_PER_KIND,
         });
-        out.push(...shared);
+        out.push(...filterSharedPool(shared, visibilityCtx));
       }
 
       // reflective → 仅 ctx.definitionId 自己
@@ -322,11 +342,29 @@ export class ExperienceRecall {
           orderBy: "quality_desc",
           limit: POOL_LIMIT_PER_KIND,
         });
-        out.push(...own);
+        out.push(
+          ...filterVisibleForScopeTarget(own, {
+            ...visibilityCtx,
+          })
+        );
       }
     }
 
-    // episodic 通常不召回（噪声大）；P2 起按 sub_kind=workflow_trail 选择性扩展
+    if (shouldQueryEpisodicPool(ctx)) {
+      for (const target of recallScopeTargets(ctx)) {
+        const episodic = await this.store.query({
+          kind: "episodic",
+          scope: target.scope,
+          scopeId: target.scopeId,
+          archivalMode: "exclude_archived",
+          orderBy: "quality_desc",
+          limit: EPISODIC_POOL_LIMIT,
+        });
+        out.push(...episodic.filter((e) => isEpisodicRecallAllowed(e, ctx)));
+      }
+    }
+
+    // episodic：默认排除；同 workflow trail 等见 episodic-recall-policy
     return mergeExperiences([], out);
   }
 

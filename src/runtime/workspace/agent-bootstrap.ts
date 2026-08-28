@@ -18,7 +18,7 @@ export type WorkspaceBootstrapPack = {
 
 export async function buildWorkspaceBootstrapPack(
   workspaceId: string,
-  opts?: { maxInstructionChars?: number; maxMemoryChars?: number }
+  opts?: { maxInstructionChars?: number; maxMemoryChars?: number; omitExecutionMemory?: boolean }
 ): Promise<WorkspaceBootstrapPack> {
   const maxInst = opts?.maxInstructionChars ?? 6000;
   const maxMem = opts?.maxMemoryChars ?? 3000;
@@ -30,7 +30,14 @@ export async function buildWorkspaceBootstrapPack(
     .slice(0, maxInst);
 
   const { memory } = resolveProviders(manifest);
-  const memoryBootstrap = (await memory.loadBootstrap(fs, { maxChars: maxMem })).trim();
+  let memoryBootstrap = (await memory.loadBootstrap(fs, { maxChars: maxMem })).trim();
+  if (opts?.omitExecutionMemory && memoryBootstrap) {
+    memoryBootstrap = memoryBootstrap
+      .split("\n")
+      .filter((line) => !/auto-play\(|factor\.register|strategy\.compose|backtest\.run/i.test(line))
+      .join("\n")
+      .trim();
+  }
 
   let universeText = "";
   if (await fs.exists("input/universe.json")) {

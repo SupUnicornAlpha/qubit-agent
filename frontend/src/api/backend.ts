@@ -456,6 +456,23 @@ export async function getKlines(params: {
   }>(`/api/v1/market/klines?${q.toString()}`);
 }
 
+export type KlinesBatchEntry = {
+  bars: KlineBar[];
+  meta: KlinesResponseMeta;
+  error?: KlinesErrorPayload;
+};
+
+/** 批量 K 线（自选 sparkline）；服务端并发受限并复用缓存。 */
+export async function getKlinesBatch(params: {
+  requests: Array<{ symbol: string; exchange?: string; timeframe?: string; limit?: number }>;
+}): Promise<Record<string, KlinesBatchEntry>> {
+  const response = await httpPost<{ ok: boolean; data: Record<string, KlinesBatchEntry> }>(
+    "/api/v1/market/klines/batch",
+    params
+  );
+  return response.data ?? {};
+}
+
 /** 券商优先期权链；source=futu 禁止公开源降级，research 为明确研究级模式。 */
 export async function getOptionChain(params: {
   symbol: string;
@@ -613,9 +630,13 @@ export function subscribeMarketQuoteStream(params: {
   };
 }
 
-export async function getMarketWatchlist(): Promise<import("./types").MarketWatchlistSnapshot> {
+export async function getMarketWatchlist(options?: {
+  /** false = 跳过券商持仓拉取，IDE 首屏更快 */
+  includePositions?: boolean;
+}): Promise<import("./types").MarketWatchlistSnapshot> {
+  const query = options?.includePositions === false ? "?includePositions=0" : "";
   const response = await httpGet<{ ok: boolean; data: import("./types").MarketWatchlistSnapshot }>(
-    "/api/v1/market/watchlist"
+    `/api/v1/market/watchlist${query}`
   );
   return response.data;
 }
@@ -1875,6 +1896,17 @@ export async function createChatSession(input: {
   return res.data;
 }
 
+/** 获取 session 唯一 chat workflow（1 session = 1 workflow）。 */
+export async function getChatSessionWorkflow(
+  sessionId: string,
+  projectId: string
+): Promise<Record<string, unknown>> {
+  const res = await httpGet<{ data: Record<string, unknown> }>(
+    `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/workflow?projectId=${encodeURIComponent(projectId)}`
+  );
+  return res.data;
+}
+
 /**
  * 删除会话。
  * - `{ hard: false }`（默认）：软删除，标记为 archived，保留消息与衍生数据。
@@ -2899,14 +2931,30 @@ export async function listMonitorWorkflows(params: {
   sessionId?: string;
   status?: string;
   mode?: string;
-}): Promise<unknown[]> {
+  /** true 时返回 `{ groups, unbound }` 结构（按 session 分组） */
+  groupBySession?: boolean;
+}): Promise<unknown[] | { groups: Array<Record<string, unknown>>; unbound: unknown[] }> {
   const query = new URLSearchParams();
   if (params.projectId) query.set("projectId", params.projectId);
   if (params.sessionId) query.set("sessionId", params.sessionId);
   if (params.status) query.set("status", params.status);
   if (params.mode) query.set("mode", params.mode);
-  const res = await httpGet<{ data: unknown[] }>(`/api/v1/monitor/workflows?${query.toString()}`);
+  if (params.groupBySession) query.set("groupBySession", "true");
+  const res = await httpGet<{
+    data: unknown[] | { groups: Array<Record<string, unknown>>; unbound: unknown[] };
+  }>(`/api/v1/monitor/workflows?${query.toString()}`);
   return res.data;
+}
+
+/** 将 listMonitorWorkflows 的 flat / grouped 响应统一为 workflow 行数组。 */
+export function flattenMonitorWorkflowRows(
+  data: unknown[] | { groups: Array<Record<string, unknown>>; unbound: unknown[] }
+): unknown[] {
+  if (Array.isArray(data)) return data;
+  const grouped = data.groups.flatMap((group) =>
+    Array.isArray(group.workflows) ? group.workflows : []
+  );
+  return [...grouped, ...(data.unbound ?? [])];
 }
 
 export async function getWorkflowDetail(workflowId: string): Promise<WorkflowDetail> {
@@ -3105,6 +3153,262 @@ export async function getEvalRunDetail(runId: string): Promise<{
     ok: boolean;
     data: { run: EvalRunRecord; cases: EvalCaseResultRecord[] };
   }>(`/api/v1/monitor/eval/runs/${runId}`);
+  return res.data;
+}
+
+// ─── Agent Eval Platform API (/api/v1/agent-eval) ─────────────────────────────
+
+export type AgentEvalScoreRecord = {
+  id: string;
+  name: string;
+  dataType: string;
+  value: {
+    dataType: string;
+    numeric?: number;
+    categorical?: string;
+    boolean?: boolean;
+    text?: string;
+  };
+  source: string;
+  comment?: string;
+  workflowRunId: string;
+  createdAt: string;
+};
+
+export type AgentEvalObservationTree = {
+  workflowRunId: string;
+  workflowStatus: string;
+  sessionId: string | null;
+  scenarioKey: string | null;
+  root: {
+    id: string;
+    type: string;
+    name: string;
+    children?: Array<{ id: string; type: string; name: string; status?: string }>;
+  };
+};
+
+export type AgentEvalDatasetItemRecord = {
+  id: string;
+  datasetId: string;
+  caseKey: string;
+  inputJson: Record<string, unknown>;
+  expectedJson: Record<string, unknown>;
+  metadataJson: Record<string, unknown>;
+  sourceWorkflowRunId: string | null;
+  createdAt: string;
+};
+
+export type SessionEvalScoreRollup = {
+  sessionId: string;
+  workflowCount: number;
+  workflows: Array<{
+    workflowRunId: string;
+    status: string;
+    goal: string;
+    scoreCount: number;
+  }>;
+  scores: Array<{
+    name: string;
+    count: number;
+    avgNumeric: number | null;
+    minNumeric: number | null;
+    maxNumeric: number | null;
+  }>;
+};
+
+export async function getWorkflowEvalScores(
+  workflowRunId: string
+): Promise<AgentEvalScoreRecord[]> {
+  const res = await httpGet<{ ok: boolean; data: AgentEvalScoreRecord[] }>(
+    `/api/v1/agent-eval/scores?workflowRunId=${encodeURIComponent(workflowRunId)}`
+  );
+  return res.data;
+}
+
+export async function getWorkflowEvalObservations(
+  workflowRunId: string
+): Promise<AgentEvalObservationTree> {
+  const res = await httpGet<{ ok: boolean; data: AgentEvalObservationTree }>(
+    `/api/v1/agent-eval/workflows/${encodeURIComponent(workflowRunId)}/observations`
+  );
+  return res.data;
+}
+
+export async function listWorkflowEvalAnnotations(
+  workflowRunId: string
+): Promise<AgentEvalScoreRecord[]> {
+  const res = await httpGet<{ ok: boolean; data: AgentEvalScoreRecord[] }>(
+    `/api/v1/agent-eval/workflows/${encodeURIComponent(workflowRunId)}/annotations`
+  );
+  return res.data;
+}
+
+export async function submitWorkflowEvalAnnotation(
+  workflowRunId: string,
+  input: {
+    name?: string;
+    dataType: "NUMERIC" | "CATEGORICAL" | "BOOLEAN" | "TEXT";
+    value: number | string | boolean;
+    comment?: string;
+    observationId?: string;
+    actor?: string;
+  }
+): Promise<{ written: number; name: string }> {
+  const res = await httpPost<{ ok: boolean; data: { written: number; name: string } }>(
+    `/api/v1/agent-eval/workflows/${encodeURIComponent(workflowRunId)}/annotations`,
+    input
+  );
+  return res.data;
+}
+
+export async function exportWorkflowGolden(
+  workflowRunId: string,
+  input: { datasetId: string; caseKey?: string; actor?: string }
+): Promise<AgentEvalDatasetItemRecord> {
+  const res = await httpPost<{ ok: boolean; data: AgentEvalDatasetItemRecord }>(
+    `/api/v1/agent-eval/workflows/${encodeURIComponent(workflowRunId)}/export-golden`,
+    input
+  );
+  return res.data;
+}
+
+export async function submitWorkflowEvalFeedback(
+  workflowRunId: string,
+  input: { helpful: boolean; comment?: string; actor?: string }
+): Promise<{ written: number }> {
+  const res = await httpPost<{ ok: boolean; data: { written: number } }>(
+    `/api/v1/agent-eval/workflows/${encodeURIComponent(workflowRunId)}/feedback`,
+    input
+  );
+  return res.data;
+}
+
+export async function submitChatMessageFeedback(
+  chatMessageId: string,
+  input: { helpful: boolean; comment?: string; actor?: string }
+): Promise<{ written: number; workflowRunId: string; chatMessageId: string }> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: { written: number; workflowRunId: string; chatMessageId: string };
+  }>(`/api/v1/agent-eval/chat-messages/${encodeURIComponent(chatMessageId)}/feedback`, input);
+  return res.data;
+}
+
+export async function getSessionEvalScores(sessionId: string): Promise<SessionEvalScoreRollup> {
+  const res = await httpGet<{ ok: boolean; data: SessionEvalScoreRollup }>(
+    `/api/v1/agent-eval/sessions/${encodeURIComponent(sessionId)}/scores`
+  );
+  return res.data;
+}
+
+export type ScoreDailyRollupRow = {
+  day: string;
+  name: string;
+  count: number;
+  avgNumeric: number | null;
+  minNumeric: number | null;
+  maxNumeric: number | null;
+};
+
+export type ScoreCompareResult = {
+  name: string;
+  recentAvg: number | null;
+  baselineAvg: number | null;
+  deltaPct: number | null;
+  recentCount: number;
+  baselineCount: number;
+};
+
+export type AgentEvalExperimentResult = {
+  runId: string;
+  baselineRunId: string | null;
+  cases: Array<{
+    caseKey: string;
+    datasetItemId: string;
+    workflowRunId: string | null;
+    score: number;
+    pass: boolean;
+    error?: string;
+  }>;
+  summary: {
+    caseCount: number;
+    passCount: number;
+    passRate: number;
+    avgScore: number;
+  };
+};
+
+export type AgentEvalExperimentDiff = {
+  baselineRunId: string;
+  challengerRunId: string;
+  rows: Array<{
+    caseKey: string;
+    baselineScore: number | null;
+    challengerScore: number | null;
+    delta: number | null;
+  }>;
+  summary: { improved: number; regressed: number; unchanged: number };
+};
+
+export async function getAgentEvalScoreDailyAnalytics(input?: {
+  names?: string[];
+  since?: string;
+  until?: string;
+}): Promise<ScoreDailyRollupRow[]> {
+  const query = new URLSearchParams();
+  if (input?.names?.length) query.set("names", input.names.join(","));
+  if (input?.since) query.set("since", input.since);
+  if (input?.until) query.set("until", input.until);
+  const suffix = query.toString();
+  const res = await httpGet<{ ok: boolean; data: ScoreDailyRollupRow[] }>(
+    `/api/v1/agent-eval/scores/analytics/daily${suffix ? `?${suffix}` : ""}`
+  );
+  return res.data;
+}
+
+export async function compareAgentEvalScores(
+  name: string,
+  recentDays = 7
+): Promise<ScoreCompareResult> {
+  const res = await httpGet<{ ok: boolean; data: ScoreCompareResult }>(
+    `/api/v1/agent-eval/scores/analytics/compare?name=${encodeURIComponent(name)}&recentDays=${recentDays}`
+  );
+  return res.data;
+}
+
+export async function listAgentEvalDatasetItems(
+  datasetId: string
+): Promise<AgentEvalDatasetItemRecord[]> {
+  const res = await httpGet<{ ok: boolean; data: AgentEvalDatasetItemRecord[] }>(
+    `/api/v1/agent-eval/datasets/${encodeURIComponent(datasetId)}/items`
+  );
+  return res.data;
+}
+
+export async function runAgentEvalExperiment(input: {
+  datasetId: string;
+  experimentLabel: string;
+  configFingerprint: string;
+  projectId: string;
+  baselineRunId?: string;
+  mode?: "replay" | "launch";
+  waitTimeoutMs?: number;
+}): Promise<AgentEvalExperimentResult> {
+  const res = await httpPost<{ ok: boolean; data: AgentEvalExperimentResult }>(
+    "/api/v1/agent-eval/experiments/run",
+    input
+  );
+  return res.data;
+}
+
+export async function diffAgentEvalExperiment(
+  baselineRunId: string,
+  challengerRunId: string
+): Promise<AgentEvalExperimentDiff> {
+  const res = await httpGet<{ ok: boolean; data: AgentEvalExperimentDiff }>(
+    `/api/v1/agent-eval/experiments/diff?baselineRunId=${encodeURIComponent(baselineRunId)}&challengerRunId=${encodeURIComponent(challengerRunId)}`
+  );
   return res.data;
 }
 
@@ -5838,19 +6142,120 @@ export type BacktestSignalSpec =
   | BacktestSignalSpecFactorScore
   | { kind: string; [k: string]: unknown };
 
+export interface BacktestInstrumentSpecDto {
+  assetClass: "stock" | "future" | "option" | "crypto";
+  contractKind?: "spot" | "perpetual";
+  contractMultiplier?: number;
+  lotSize?: number;
+  initialMarginRate?: number;
+  maintenanceMarginRate?: number;
+  targetLeverage?: number;
+  expiryDate?: string;
+  settlementMode?: "cash" | "physical";
+  underlyingSymbol?: string;
+  strike?: number;
+  optionRight?: "call" | "put";
+  exerciseStyle?: "european" | "american";
+  pricingModel?: "black_scholes";
+  futureRoll?: {
+    rollDate: string;
+    successorSymbol: string;
+  };
+}
+
 export interface BacktestRequestDto {
   strategyVersionId?: string;
+  dataset: {
+    snapshotId: string;
+    dataRef: string;
+    asOf: string;
+    timeframe: string;
+    sourceIds: string[];
+    tradingCalendar?: {
+      version?: string;
+      timezone?: string;
+      sessionsBySymbol?: Record<string, Record<string, "open" | "closed">>;
+    };
+    corporateActionEvents?: Array<{
+      symbol: string;
+      effectiveDate: string;
+      knownAt: string;
+      cashAmount?: number;
+      kind:
+        | "cash_dividend"
+        | "stock_dividend"
+        | "split"
+        | "merger"
+        | "spinoff"
+        | "delisting"
+        | "symbol_change"
+        | "other";
+    }>;
+    fundamentalObservations?: Array<{
+      symbol: string;
+      metric: string;
+      fiscalPeriodEnd: string;
+      availableAt: string;
+      value: number;
+      revisionId?: string;
+    }>;
+    qualification: {
+      useClass: "research_only" | "strategy_validation";
+      universeHistory: "verified" | "not_verified";
+      corporateActions: "verified" | "raw_unadjusted" | "not_verified";
+      pointInTime: "verified" | "not_verified";
+      limitations: string[];
+      universeHistoryRef?: { universeId: string; version: string; source: string; asOf: string };
+      corporateActionLedgerRef?: { version: string; source: string; asOf: string };
+      fundamentalLedgerRef?: { version: string; source: string; asOf: string };
+    };
+    barsBySymbol: Record<
+      string,
+      Array<{
+        timestamp: string;
+        open: number;
+        high: number;
+        low: number;
+        close: number;
+        volume: number;
+        turnover: number;
+        settlementPrice?: number;
+        fundingRateBps?: number;
+        impliedVolatility?: number;
+        riskFreeRateAnnual?: number;
+        tradable?: boolean;
+        suspended?: boolean;
+        priceLimitUp?: number;
+        priceLimitDown?: number;
+      }>
+    >;
+  };
   signals: BacktestSignalSpec;
   universe: string;
   symbols: string[];
+  instruments?: Record<string, BacktestInstrumentSpecDto>;
   startDate: string;
   endDate: string;
   capital: number;
-  costs: { commissionBps: number; slippageBps: number; minCommission?: number };
+  costs: {
+    commissionBps: number;
+    slippageBps: number;
+    minCommission?: number;
+    slippageModel?: "fixed_bps" | "square_root" | "volatility_adjusted";
+    impactCoefficient?: number;
+    maxVolumeParticipation?: number;
+    borrowRateAnnualBps?: number;
+    restrictedShortSymbols?: string[];
+  };
   rebalance?: "daily" | "weekly" | "monthly";
   topN?: number;
   longShort?: boolean;
   benchmark?: string;
+  experiment?: {
+    parameterSelection: "fixed_before_run" | "full_sample_optimized" | "unknown";
+    preRegistrationId?: string;
+    candidateTrials?: number;
+  };
 }
 
 export interface BacktestMetricsDto {
@@ -5907,7 +6312,58 @@ export interface BacktestResultDto {
   equityCurve: BacktestEquityPoint[];
   trades: BacktestTradeDto[];
   metrics: BacktestMetricsDto;
-  meta: { latencyMs: number; sampleSize: number; barCount: number; skippedDays: number };
+  meta: {
+    latencyMs: number;
+    sampleSize: number;
+    barCount: number;
+    skippedDays: number;
+    datasetQualification?: {
+      useClass: "research_only" | "strategy_validation";
+      universeHistory: "verified" | "not_verified";
+      corporateActions: "verified" | "raw_unadjusted" | "not_verified";
+      pointInTime: "verified" | "not_verified";
+      limitations: string[];
+    };
+    antiLeakageReport?: BacktestIntegrityReportDto;
+    statisticalValidationReport?: BacktestStatisticalValidationReportDto;
+    assetLifecycleReport?: {
+      version: "asset-lifecycle-v2";
+      status: "passed" | "research_only" | "invalid";
+      assetClasses: string[];
+      checks: Array<{
+        symbol: string;
+        state: "pass" | "warning" | "fail";
+        code: string;
+        message: string;
+      }>;
+      limitations: string[];
+    };
+    assetLifecycleEvents?: Array<{
+      date: string;
+      symbol: string;
+      kind:
+        | "futures_variation_margin"
+        | "futures_roll"
+        | "futures_margin_call"
+        | "futures_forced_liquidation"
+        | "expiry_settlement"
+        | "perpetual_funding"
+        | "option_greeks_snapshot"
+        | "order_unfilled_tradability";
+      amount: number;
+      detail: string;
+      optionRisk?: {
+        underlyingPrice: number;
+        impliedVolatility: number;
+        riskFreeRateAnnual: number;
+        timeToExpiryYears: number;
+        delta: number;
+        gamma: number;
+        thetaPerDay: number;
+        vegaPerPoint: number;
+      };
+    }>;
+  };
   error?: string;
 }
 
@@ -5921,7 +6377,9 @@ export interface StrategyGateCheckDto {
     | "cvar95"
     | "positive_period_rate"
     | "turnover"
-    | "annual_return";
+    | "annual_return"
+    | "research_integrity"
+    | "statistical_confidence";
   label: string;
   value: number;
   threshold: number;
@@ -5951,10 +6409,66 @@ export interface WalkForwardEvaluationDto {
     testStart: string;
     testEnd: string;
     purgeDays: number;
+    embargoDays: number;
+    purgeStart: string | null;
+    purgeEnd: string | null;
+    embargoStart: string | null;
+    embargoEnd: string | null;
     metrics: BacktestMetricsDto;
     sampleSize: number;
     regime: string;
     regimeSource: "market_benchmark" | "benchmark_equity" | "strategy_equity";
+    selection?: {
+      mode: "train_only_grid";
+      objective: "sharpe" | "calmar" | "annual_return";
+      candidateCount: number;
+      selected: { topN?: number; rebalance?: "daily" | "weekly" | "monthly"; longShort?: boolean };
+      trainMetrics: BacktestMetricsDto;
+      falseDiscoveryRate: {
+        method: "benjamini_hochberg";
+        alpha: number;
+        hypothesisCount: number;
+        discoveryCount: number;
+        hypotheses: Array<{
+          id: string;
+          pValue: number | null;
+          adjustedPValue: number | null;
+          pass: boolean;
+        }>;
+      };
+      realityCheck: {
+        version: "white-reality-check-v1";
+        status: "passed" | "research_only";
+        benchmark: "backtest_benchmark" | "cash_zero_return";
+        candidateCount: number;
+        sampleSize: number;
+        simulations: number;
+        blockSize: number;
+        seed: number;
+        bestCandidateId: string | null;
+        observedMaxMeanReturn: number | null;
+        observedStatistic: number | null;
+        pValue: number | null;
+        checks: Array<{
+          key: "candidate_family" | "minimum_sample" | "data_snooping_adjusted_superiority";
+          state: "pass" | "fail" | "unknown";
+          evidence: string;
+        }>;
+      };
+      selectedFdrPass: boolean;
+      leaderboard: Array<{
+        candidate: {
+          topN?: number;
+          rebalance?: "daily" | "weekly" | "monthly";
+          longShort?: boolean;
+        };
+        score: number;
+        metrics: BacktestMetricsDto;
+        pValue: number | null;
+        adjustedPValue: number | null;
+        fdrPass: boolean;
+      }>;
+    };
   }>;
   aggregate: {
     foldCount: number;
@@ -5965,7 +6479,26 @@ export interface WalkForwardEvaluationDto {
     positiveFoldRate: number;
     regimeStability: number;
   };
+  performancePass: boolean;
+  selectionIntegrityPass: boolean;
+  integrityReport: BacktestIntegrityReportDto;
+  statisticalValidationReport: BacktestStatisticalValidationReportDto;
   pass: boolean;
+}
+
+export interface BacktestIntegrityReportDto {
+  version: "anti-leakage-v1" | "anti-leakage-v2";
+  status: "passed" | "research_only" | "rejected";
+  inputFingerprint: string;
+  datasetSnapshotId: string;
+  checks: Array<{
+    key: string;
+    state: "pass" | "fail" | "unknown" | "not_applicable";
+    evidence: string;
+    requiredForValidation: boolean;
+  }>;
+  failedChecks: string[];
+  unknownChecks: string[];
 }
 
 export interface BacktestJobRecord {
@@ -5989,19 +6522,100 @@ export interface BacktestJobRecord {
 
 export interface BacktestJobSubmitBody {
   strategyVersionId: string;
+  datasetSnapshotId?: string;
   compositionId?: string;
   signals?: BacktestSignalSpec;
   symbols: string[];
+  instruments?: Record<string, BacktestInstrumentSpecDto>;
   universe?: string;
   startDate: string;
   endDate: string;
   capital?: number;
-  costs?: { commissionBps: number; slippageBps: number; minCommission?: number };
+  costs?: {
+    commissionBps: number;
+    slippageBps: number;
+    minCommission?: number;
+    slippageModel?: "fixed_bps" | "square_root" | "volatility_adjusted";
+    impactCoefficient?: number;
+    maxVolumeParticipation?: number;
+    borrowRateAnnualBps?: number;
+    restrictedShortSymbols?: string[];
+  };
   rebalance?: "daily" | "weekly" | "monthly";
   topN?: number;
   longShort?: boolean;
   benchmark?: string;
   providerKey?: string;
+  experiment?: {
+    parameterSelection: "fixed_before_run" | "full_sample_optimized" | "unknown";
+    preRegistrationId?: string;
+    candidateTrials?: number;
+  };
+}
+
+export interface BacktestStatisticalValidationReportDto {
+  version: "statistical-validation-v1" | "statistical-validation-v2" | "statistical-validation-v3";
+  status: "passed" | "research_only";
+  sampleSize: number;
+  candidateTrials: number | null;
+  familyWiseAlpha: number;
+  adjustedAlpha: number | null;
+  simulations: number;
+  blockSize: number;
+  seed: number;
+  observedSharpe: number;
+  sharpeConfidenceInterval: { lower: number; upper: number } | null;
+  probabilitySharpePositive: number | null;
+  rawSharpePValue?: number | null;
+  bonferroniAdjustedPValue?: number | null;
+  deflatedSharpe?: {
+    probability: number;
+    observedAnnualizedSharpe: number;
+    benchmarkAnnualizedSharpe: number;
+    trialMeanAnnualizedSharpe: number;
+    trialStdAnnualizedSharpe: number;
+    skewness: number;
+    kurtosis: number;
+    independentTrialCount: number;
+    trialDistributionCount: number;
+    assumptions: [
+      "candidate_trials_treated_as_independent",
+      "psr_moment_approximation_uses_iid_returns",
+    ];
+  } | null;
+  checks: Array<{
+    key:
+      | "minimum_sample"
+      | "trial_count_declared"
+      | "sharpe_confidence"
+      | "multiple_testing"
+      | "deflated_sharpe";
+    state: "pass" | "fail" | "unknown";
+    evidence: string;
+  }>;
+}
+
+export interface MarketSnapshotDto {
+  snapshotId: string;
+  asOf: string;
+  dataRef: string;
+  barCounts: Record<string, number>;
+}
+
+/** 冻结 UI 回测的市场输入，供后续 backtest job 绑定。 */
+export async function createMarketSnapshot(body: {
+  symbols: string[];
+  exchange?: string;
+  asOf?: string;
+  timeframe?: string;
+  limit?: number;
+  purpose?: "research" | "backtest";
+}): Promise<MarketSnapshotDto> {
+  const res = await httpPost<{ ok: boolean; data: MarketSnapshotDto }>(
+    "/api/v1/market/snapshots",
+    body
+  );
+  return res.data;
 }
 
 export async function listBacktestJobs(filter?: {
@@ -6036,13 +6650,159 @@ export async function runBacktestJobNow(body: BacktestJobSubmitBody): Promise<Ba
   return res.data;
 }
 
+export interface SensitivityAnalysisDto {
+  backtestJobId: string;
+  useClass: "research_only";
+  parameterSelection: "full_sample_optimized";
+  integrityWarning: string;
+  xDimension: {
+    key: string;
+    label: string;
+    values: Array<number | string>;
+  };
+  yDimension: {
+    key: string;
+    label: string;
+    values: Array<number | string>;
+  };
+  grid: Array<
+    Array<{
+      xIndex: number;
+      yIndex: number;
+      xValue: number | string;
+      yValue: number | string;
+      sharpe: number;
+      maxDrawdown: number;
+      annualReturn: number;
+      totalReturn: number;
+      calmar: number;
+      turnover: number;
+      compositeScore: number;
+    }>
+  >;
+  optimal: {
+    xValue: number | string;
+    yValue: number | string;
+    metrics: {
+      sharpe: number;
+      maxDrawdown: number;
+      annualReturn: number;
+      calmar: number;
+    };
+  };
+  stabilityScore: number;
+  parameterCliffDetected: boolean;
+  meta: {
+    totalEvaluations: number;
+    latencyMs: number;
+  };
+}
+
+export interface MonteCarloSimulationDto {
+  backtestJobId: string;
+  simulationCount: number;
+  initialCapital: number;
+  metrics: {
+    totalReturnPercentiles: { p5: number; p25: number; median: number; p75: number; p95: number };
+    maxDrawdownPercentiles: { p5: number; p25: number; median: number; p75: number; p95: number };
+    cagrPercentiles: { p5: number; p25: number; median: number; p75: number; p95: number };
+    sharpePercentiles: { p5: number; p25: number; median: number; p75: number; p95: number };
+  };
+  probabilityOfRuin: number;
+  stressScore: number;
+  drawdownRiskRating: "low" | "moderate" | "high" | "critical";
+  simulatedPathsSummary: Array<{
+    date: string;
+    p5Worst: number;
+    median: number;
+    p95Best: number;
+  }>;
+  meta: {
+    sampleDays: number;
+    seed: number;
+    latencyMs: number;
+  };
+}
+
+export interface PitAuditReportDto {
+  pass: boolean;
+  verdict: "point_in_time_clean" | "point_in_time_degraded" | "point_in_time_violated";
+  lookAheadRiskScore: number;
+  totalBarsAudited: number;
+  symbolCount: number;
+  anomalyCount: number;
+  violations: Array<{
+    symbol: string;
+    type: string;
+    timestamp: string;
+    detail: string;
+    severity: "critical" | "warning";
+  }>;
+  coverageRange: {
+    start: string;
+    end: string;
+  };
+  asOfBoundary: string;
+  recommendations: string[];
+}
+
 export async function runWalkForwardEvaluation(
   backtestRunId: string,
-  body: { folds?: number; purgeDays?: number } = {}
+  body: {
+    folds?: number;
+    purgeDays?: number;
+    embargoDays?: number;
+    selection?: {
+      objective?: "sharpe" | "calmar" | "annual_return";
+      candidates: Array<{
+        topN?: number;
+        rebalance?: "daily" | "weekly" | "monthly";
+        longShort?: boolean;
+      }>;
+    };
+  } = {}
 ): Promise<WalkForwardEvaluationDto> {
   const res = await httpPost<{ ok: boolean; data: WalkForwardEvaluationDto }>(
     `/api/v1/backtest-jobs/${encodeURIComponent(backtestRunId)}/walk-forward`,
     body
+  );
+  return res.data;
+}
+
+export async function runSensitivityAnalysis(
+  jobId: string,
+  body: {
+    xParam?: { key: string; values: Array<number | string> };
+    yParam?: { key: string; values: Array<number | string> };
+  } = {}
+): Promise<SensitivityAnalysisDto> {
+  const res = await httpPost<{ ok: boolean; data: SensitivityAnalysisDto }>(
+    `/api/v1/backtest-jobs/${encodeURIComponent(jobId)}/sensitivity`,
+    body
+  );
+  return res.data;
+}
+
+export async function runMonteCarloSimulation(
+  jobId: string,
+  body: {
+    simulations?: number;
+    blockSize?: number;
+    ruinThresholdRatio?: number;
+    seed?: number;
+  } = {}
+): Promise<MonteCarloSimulationDto> {
+  const res = await httpPost<{ ok: boolean; data: MonteCarloSimulationDto }>(
+    `/api/v1/backtest-jobs/${encodeURIComponent(jobId)}/monte-carlo`,
+    body
+  );
+  return res.data;
+}
+
+export async function runPitAudit(jobId: string): Promise<PitAuditReportDto> {
+  const res = await httpPost<{ ok: boolean; data: PitAuditReportDto }>(
+    `/api/v1/backtest-jobs/${encodeURIComponent(jobId)}/pit-audit`,
+    {}
   );
   return res.data;
 }

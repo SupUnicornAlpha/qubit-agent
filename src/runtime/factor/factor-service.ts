@@ -22,6 +22,10 @@ import {
 } from "../../db/sqlite/schema";
 import { generateGbmTicks } from "../../util/synthesize-gbm";
 import { queryBarsRange } from "../market/klines-query";
+import {
+  bindBacktestDataset,
+  DatasetSnapshotBindingError,
+} from "../backtest/dataset-snapshot-binding";
 import { type PriceSeries, evalQlibExpr, parseQlibExpr } from "../provider";
 import { providerResolver } from "../provider/resolver";
 import type {
@@ -139,10 +143,14 @@ export interface FactorComputeInput {
   scope?: ProviderScope;
   /** 是否将结果写入 factor_value（DuckDB）；默认 true */
   persist?: boolean;
+  /** 可选：显式绑定不可变 market snapshot，供可审计研究/回测前因子计算使用。 */
+  datasetSnapshotId?: string;
 }
 
 export interface FactorValueQueryInput {
   factorId: string;
+  /** Query one immutable computation version; omit only for legacy values. */
+  datasetSnapshotId?: string;
   symbols?: string[];
   startDate?: string;
   endDate?: string;
@@ -159,6 +167,8 @@ export interface FactorEvaluateInput {
   /** 显式指定 Provider；不传走 ProviderResolver */
   providerKey?: string;
   scope?: ProviderScope;
+  /** Immutable dataset used for both values and labels; absent means unversioned/manual. */
+  datasetSnapshotId?: string;
 }
 
 export interface FactorAutoEvaluateInput {
@@ -175,6 +185,8 @@ export interface FactorAutoEvaluateInput {
   /** 显式 evaluator Provider */
   providerKey?: string;
   scope?: ProviderScope;
+  /** 传入后，因子值与未来收益均从同一冻结快照计算，不读取实时/修订后的行情。 */
+  datasetSnapshotId?: string;
 }
 
 const DEFAULT_UNIVERSE_SYMBOLS: Record<string, string[]> = {
@@ -484,6 +496,33 @@ export class FactorService {
     const f = await this.get(input.factorId);
     const provider = await this.resolveCompute(f.providerKey, input.providerKey, input.scope);
     const symbols = normalizeFactorComputeSymbols(input.symbols, f.universe);
+    let dataset;
+    if (input.datasetSnapshotId) {
+      if (provider.meta.key !== "qlib_expr" || f.lang !== "qlib_expr") {
+        throw new FactorServiceError(
+          "validation_failed",
+          `dataset_snapshot_provider_unsupported: ${provider.meta.key}/${f.lang}; snapshot-bound factor computation currently requires qlib_expr`,
+          { factorId: f.id, providerKey: provider.meta.key, datasetSnapshotId: input.datasetSnapshotId }
+        );
+      }
+      try {
+        dataset = await bindBacktestDataset({
+          snapshotId: input.datasetSnapshotId,
+          symbols,
+          startDate: input.startDate,
+          endDate: input.endDate,
+          timeframe: "1d",
+        });
+      } catch (error) {
+        if (error instanceof DatasetSnapshotBindingError) {
+          throw new FactorServiceError("validation_failed", error.message, {
+            factorId: f.id,
+            datasetSnapshotId: input.datasetSnapshotId,
+          });
+        }
+        throw error;
+      }
+    }
 
     let result: FactorComputeResult;
     try {
@@ -495,6 +534,7 @@ export class FactorService {
         startDate: input.startDate,
         endDate: input.endDate,
         ...(symbols.length > 0 ? { symbols } : {}),
+        ...(dataset ? { dataset } : {}),
       });
     } catch (e) {
       throw new FactorServiceError(
@@ -506,7 +546,11 @@ export class FactorService {
 
     if ((input.persist ?? true) && result.rows.length > 0) {
       try {
-        await factorValueStore.upsert({ factorId: f.id, rows: result.rows });
+        await factorValueStore.upsert({
+          factorId: f.id,
+          rows: result.rows,
+          ...(dataset ? { datasetSnapshotId: dataset.snapshotId } : {}),
+        });
       } catch (e) {
         // 持久化失败不破坏返回结果（计算成功），但记录到 meta.error
         // eslint-disable-next-line no-console
@@ -523,6 +567,7 @@ export class FactorService {
   async loadValues(q: FactorValueQueryInput): Promise<FactorComputeRow[]> {
     const rows = await factorValueStore.query({
       factorId: q.factorId,
+      ...(q.datasetSnapshotId ? { datasetSnapshotId: q.datasetSnapshotId } : {}),
       ...(q.symbols ? { symbols: q.symbols } : {}),
       ...(q.startDate ? { startDate: q.startDate } : {}),
       ...(q.endDate ? { endDate: q.endDate } : {}),
@@ -532,8 +577,8 @@ export class FactorService {
   }
 
   /** 因子值汇总统计（行数/symbol 数/区间） */
-  async valuesStats(factorId: string) {
-    return factorValueStore.stats(factorId);
+  async valuesStats(factorId: string, datasetSnapshotId?: string) {
+    return factorValueStore.stats(factorId, datasetSnapshotId);
   }
 
   /** 调 Provider 评估因子；汇总指标写入 factor_evaluation 留痕 */
@@ -570,6 +615,7 @@ export class FactorService {
       factorId: f.id,
       asof,
       universe: f.universe,
+      datasetSnapshotId: input.datasetSnapshotId ?? null,
       providerId: null,
       ic: result.ic,
       rankIc: result.rankIc,
@@ -629,7 +675,7 @@ export class FactorService {
   async autoEvaluate(input: FactorAutoEvaluateInput): Promise<
     FactorEvalResult & {
       evaluationId: string;
-      meta: { horizonDays: number; decayHorizons: number[] };
+      meta: { horizonDays: number; decayHorizons: number[]; datasetSnapshotId?: string };
     }
   > {
     const f = await this.get(input.factorId);
@@ -641,13 +687,26 @@ export class FactorService {
           ? [1, 3, 5, 10, 20]
           : [1, 3, 5, 10, 20, horizon].sort((a, b) => a - b);
 
-    // 1) 拉因子值
-    const values = await this.loadValues({
-      factorId: f.id,
-      ...(input.symbols ? { symbols: input.symbols } : {}),
-      startDate: input.startDate,
-      endDate: input.endDate,
-    });
+    // 1) 快照模式必须重新在绑定数据上计算，不能复用未标数据版本的 factor_value。
+    const values = input.datasetSnapshotId
+      ? (
+          await this.compute({
+            factorId: f.id,
+            startDate: input.startDate,
+            endDate: input.endDate,
+            ...(input.symbols ? { symbols: input.symbols } : {}),
+            ...(input.providerKey ? { providerKey: input.providerKey } : {}),
+            ...(input.scope ? { scope: input.scope } : {}),
+            datasetSnapshotId: input.datasetSnapshotId,
+            persist: false,
+          })
+        ).rows
+      : await this.loadValues({
+          factorId: f.id,
+          ...(input.symbols ? { symbols: input.symbols } : {}),
+          startDate: input.startDate,
+          endDate: input.endDate,
+        });
     if (values.length === 0) {
       throw new FactorServiceError(
         "validation_failed",
@@ -682,26 +741,54 @@ export class FactorService {
       );
     }
 
-    // 2) 拉行情 → 算多期未来收益
+    // 2) 取收盘价 → 算多期未来收益。快照模式不允许重新从 connector 拉行情。
     const closesBySymbol = new Map<string, { dates: string[]; closes: number[] }>();
     const maxHorizon = Math.max(horizon, ...decayHorizons);
     const endExtended = this.shiftDate(input.endDate, maxHorizon + 5);
-    for (const sym of symbols) {
+    if (input.datasetSnapshotId) {
+      let dataset;
       try {
-        const bars = await queryBarsRange({
-          symbol: sym,
-          exchange: "",
-          period: "1d",
+        dataset = await bindBacktestDataset({
+          snapshotId: input.datasetSnapshotId,
+          symbols,
           startDate: input.startDate,
           endDate: endExtended,
+          timeframe: "1d",
         });
-        if (bars.length === 0) continue;
+      } catch (error) {
+        if (error instanceof DatasetSnapshotBindingError) {
+          throw new FactorServiceError("validation_failed", error.message, {
+            factorId: f.id,
+            datasetSnapshotId: input.datasetSnapshotId,
+          });
+        }
+        throw error;
+      }
+      for (const sym of symbols) {
+        const bars = dataset.barsBySymbol[sym] ?? [];
         closesBySymbol.set(sym, {
-          dates: bars.map((b) => b.timestamp.slice(0, 10)),
-          closes: bars.map((b) => b.close),
+          dates: bars.map((bar) => bar.timestamp.slice(0, 10)),
+          closes: bars.map((bar) => bar.close),
         });
-      } catch {
-        // 单 symbol 缺数据不影响整体
+      }
+    } else {
+      for (const sym of symbols) {
+        try {
+          const bars = await queryBarsRange({
+            symbol: sym,
+            exchange: "",
+            period: "1d",
+            startDate: input.startDate,
+            endDate: endExtended,
+          });
+          if (bars.length === 0) continue;
+          closesBySymbol.set(sym, {
+            dates: bars.map((b) => b.timestamp.slice(0, 10)),
+            closes: bars.map((b) => b.close),
+          });
+        } catch {
+          // 单 symbol 缺数据不影响整体
+        }
       }
     }
 
@@ -721,6 +808,7 @@ export class FactorService {
       ...(typeof input.groupCount === "number" ? { groupCount: input.groupCount } : {}),
       ...(input.providerKey ? { providerKey: input.providerKey } : {}),
       ...(input.scope ? { scope: input.scope } : {}),
+      ...(input.datasetSnapshotId ? { datasetSnapshotId: input.datasetSnapshotId } : {}),
     });
 
     /**
@@ -746,7 +834,14 @@ export class FactorService {
       );
     }
 
-    return { ...result, meta: { horizonDays: horizon, decayHorizons } };
+    return {
+      ...result,
+      meta: {
+        horizonDays: horizon,
+        decayHorizons,
+        ...(input.datasetSnapshotId ? { datasetSnapshotId: input.datasetSnapshotId } : {}),
+      },
+    };
   }
 
   /** 查询某因子的历史评估记录 */
@@ -772,7 +867,8 @@ export class FactorService {
    */
   async getLatestEvaluationMetric(
     factorIds: string[],
-    metric: "rankIc" | "ir"
+    metric: "rankIc" | "ir",
+    datasetSnapshotId?: string
   ): Promise<Map<string, number>> {
     const out = new Map<string, number>();
     if (factorIds.length === 0) return out;
@@ -785,7 +881,14 @@ export class FactorService {
         asof: factorEvalTable.asof,
       })
       .from(factorEvalTable)
-      .where(inArray(factorEvalTable.factorId, factorIds))
+      .where(
+        datasetSnapshotId
+          ? and(
+              inArray(factorEvalTable.factorId, factorIds),
+              eq(factorEvalTable.datasetSnapshotId, datasetSnapshotId)
+            )
+          : inArray(factorEvalTable.factorId, factorIds)
+      )
       .orderBy(desc(factorEvalTable.asof));
     for (const r of rows) {
       if (out.has(r.factorId)) continue;

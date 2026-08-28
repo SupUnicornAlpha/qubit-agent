@@ -330,3 +330,69 @@ describe("Recall — Prompt 渲染", () => {
     expect(md).toContain("use=12");
   });
 });
+
+describe("Recall — visibility 维度", () => {
+  test("role_shared 仅同 role 召回", async () => {
+    await store.insert({
+      kind: "semantic",
+      scope: "project",
+      scopeId: "proj-1",
+      visibility: "role_shared",
+      tagsJson: ["role:research"],
+      contentJson: { summary: "research-only playbook momentum Sharpe" },
+      validFrom: "2026-06-25T00:00:00.000Z",
+    });
+    await store.insert({
+      kind: "semantic",
+      scope: "project",
+      scopeId: "proj-1",
+      visibility: "role_shared",
+      tagsJson: ["role:risk"],
+      contentJson: { summary: "risk-only limits playbook" },
+      validFrom: "2026-06-25T00:00:00.000Z",
+    });
+
+    const recall = new ExperienceRecall({ store });
+    const hits = await recall.recall({
+      projectId: "proj-1",
+      definitionId: null,
+      role: "research",
+      query: "playbook momentum",
+      topK: 5,
+      silentEmit: true,
+    });
+    expect(hits.length).toBe(1);
+    expect(hits[0]?.experience.tagsJson).toContain("role:research");
+  });
+
+  test("workspace_shared 仅在 workspace scope 路径命中", async () => {
+    await store.insert({
+      kind: "semantic",
+      scope: "workspace",
+      scopeId: "ws-alpha",
+      visibility: "workspace_shared",
+      contentJson: { summary: "workspace local factor note Sharpe" },
+      validFrom: "2026-06-25T00:00:00.000Z",
+    });
+
+    const recall = new ExperienceRecall({ store });
+    const withWs = await recall.recall({
+      projectId: "proj-1",
+      workspaceId: "ws-alpha",
+      definitionId: null,
+      query: "factor Sharpe",
+      topK: 5,
+      silentEmit: true,
+    });
+    expect(withWs.length).toBe(1);
+
+    const projectOnly = await recall.recall({
+      projectId: "proj-1",
+      definitionId: null,
+      query: "factor Sharpe",
+      topK: 5,
+      silentEmit: true,
+    });
+    expect(projectOnly.length).toBe(0);
+  });
+});

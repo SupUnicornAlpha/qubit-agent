@@ -23,7 +23,6 @@ import {
   compileStrategyContract,
   createStrategyRuntime,
   getProjectStrategyScript,
-  listProjectStrategyScripts,
   listStrategyRuntimes,
   paperDeployStrategyContract,
   paperRunStrategyContract,
@@ -38,6 +37,7 @@ import {
 import { preferStrategyApiCode } from "../../lib/strategyApiCode";
 import { useAppStore } from "../../store";
 import { useDefaultProject } from "./useDefaultProject";
+import { fetchQuantStrategyScripts } from "../../lib/quantListScope";
 
 function chartExchangeToMarket(exchange: string): string {
   const u = exchange.trim().toUpperCase();
@@ -78,7 +78,16 @@ const PURPOSE_TONE: Record<
 };
 
 export const ScriptStudioTab: FC = () => {
-  const { projectId, loading: projectLoading, error: projectError } = useDefaultProject();
+  const {
+    projectId,
+    listProjectFilter,
+    lineageFilter,
+    listScopeKey,
+    scopeAllProjects,
+    scopeProjectId,
+    loading: projectLoading,
+    error: projectError,
+  } = useDefaultProject();
   const setActiveView = useAppStore((s) => s.setActiveView);
   const setActiveStrategyScriptId = useAppStore((s) => s.setIdeActiveStrategyScriptId);
   const handoff = useAppStore((s) => s.quantHandoff);
@@ -113,12 +122,11 @@ export const ScriptStudioTab: FC = () => {
   }, [handoff, setQuantHandoff]);
 
   const reloadList = useCallback(async () => {
-    if (!projectId) return;
+    if (projectLoading) return;
     setBusy(true);
     setError(null);
     try {
-      const list = await listProjectStrategyScripts({
-        projectId,
+      const list = await fetchQuantStrategyScripts(listProjectFilter, lineageFilter, {
         ...(purposeFilter !== "all" ? { purpose: purposeFilter } : {}),
       });
       setScripts(list);
@@ -134,7 +142,7 @@ export const ScriptStudioTab: FC = () => {
     } finally {
       setBusy(false);
     }
-  }, [projectId, purposeFilter, requestedScriptId]);
+  }, [projectLoading, listScopeKey, purposeFilter, requestedScriptId]);
 
   useEffect(() => {
     void reloadList();
@@ -460,9 +468,11 @@ export const ScriptStudioTab: FC = () => {
     }
   }, []);
 
-  if (projectLoading) return <div style={styles.empty}>加载默认 project…</div>;
+  if (projectLoading) return <div style={styles.empty}>加载 project…</div>;
   if (projectError) return <div style={styles.errorPanel}>项目加载失败：{projectError}</div>;
-  if (!projectId) return <div style={styles.empty}>未找到默认 project，请先在「研究工作台」初始化。</div>;
+  if (!scopeAllProjects && !scopeProjectId) {
+    return <div style={styles.empty}>未找到所选 project，请切换数据范围。</div>;
+  }
 
   return (
     <div className="qb-quant-tab-root qb-quant-tab-root--script" data-qb-quant-tab="script" style={styles.root}>

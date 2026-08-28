@@ -1,0 +1,166 @@
+/**
+ * VSCode Dark+ 风格：经典 VSCode 深色工程主题
+ * 调色：#1e1e1e 编辑器底色、#252526 侧边栏/资源管理器、#333333 活动栏、#007acc 状态栏与高亮蓝
+ */
+
+html[data-qb-style="vscode-dark"] {
+  color-scheme: dark;
+
+  /* 基础与根容器 */
+  --qb-bg-root: #1e1e1e;
+  --qb-bg-root-top: #252526;
+  --qb-bg-surface: #252526;
+  --qb-tint: rgba(0, 122, 204, 0.16);
+  --qb-tint-strong: rgba(0, 122, 204, 0.28);
+  --qb-blue: #007acc;
+  --qb-blue-deep: #005a9e;
+  --qb-focus-ring: rgba(0, 122, 204, 0.65);
+  --qb-hairline: rgba(255, 255, 255, 0.08);
+  --qb-separator: #2d2d2d;
+
+  --qb-body-fg: #cccccc;
+  --qb-body-muted: #858585;
+
+  /* 滚动条 */
+  --qb-scrollbar-track: #1e1e1e;
+  --qb-scrollbar-thumb-top: #424242;
+  --qb-scrollbar-thumb-bot: #424242;
+  --qb-scrollbar-thumb-hover-top: #4f4f4f;
+  --qb-scrollbar-thumb-hover-bot: #4f4f4f;
+  --qb-scrollbar-corner: #1e1e1e;
+  --qb-scrollbar-border: #252526;
+  --qb-scrollbar-thumb-border: #1e1e1e;
+
+  /* 侧边栏与活动栏 */
+  --qb-sidebar-nav-bg: #252526;
+  --qb-sidebar-activity-bg: #333333;
+  --qb-sidebar-explorer-bg: #252526;
+  --qb-sidebar-border: #2d2d2d;
+  --qb-sidebar-muted: #858585;
+  --qb-sidebar-text: #cccccc;
+
+  --qb-brand-icon: #007acc;
+  --qb-brand-icon-glow: rgba(0, 122, 204, 0.7);
+
+  --qb-topbar-bg: #323233;
+  --qb-workbench-toolbar-bg: #252526;
+  --qb-segmented-active-bg: #007acc;
+
+  --qb-main-input-bg: #3c3c3c;
+  --qb-main-input-border: #3c3c3c;
+  --qb-main-input-fg: #cccccc;
+  --qb-main-meta: #858585;
+
+  /* ─── 研究团队 / 工作台 / 拓扑图完整适配 ─── */
+  --qb-team-shell-bg: #1e1e1e;
+  --qb-team-shell-border: #2d2d2d;
+  --qb-team-left-bg: #252526;
+  --qb-team-center-bg: #1e1e1e;
+  --qb-team-right-bg: #252526;
+  --qb-team-gutter-bg: #2d2d2d;
+  --qb-team-canvas-bg: #1e1e1e;
+  --qb-team-panel-bg: #252526;
+  --qb-team-panel-border: #2d2d2d;
+  --qb-team-stage-bg: #1e1e1e;
+  --qb-team-titlebar-bg: #252526;
+  --qb-team-titlebar-fg: #cccccc;
+  --qb-team-input-bg: #3c3c3c;
+  --qb-team-input-border: #3c3c3c;
+  --qb-team-input-fg: #cccccc;
+  --qb-team-meta: #858585;
+  --qb-team-section-fg: #cccccc;
+  --qb-team-tab-bg: #2d2d2d;
+  --qb-team-tab-fg: #858585;
+  --qb-team-tab-active-bg: #1e1e1e;
+  --qb-team-tab-active-fg: #ffffff;
+  --qb-team-tab-active-border: #007acc;
+  --qb-team-screener-bg: #252526;
+  --qb-team-screener-btn-bg: #2d2d2d;
+  --qb-team-screener-btn-fg: #cccccc;
+  --qb-team-screener-btn-active-bg: rgba(0, 122, 204, 0.2);
+  --qb-team-screener-btn-active-border: #007acc;
+  --qb-team-table-row-border: #2d2d2d;
+  --qb-team-trend-bg: #252526;
+  --qb-team-run-footer-bg: #1e1e1e;
+  --qb-team-run-footer-summary-bg: #252526;
+  --qb-team-act-btn-fg: #858585;
+  --qb-team-act-btn-active-bg: #37373d;
+  --qb-team-act-btn-active-border: #007acc;
+  --qb-team-act-btn-active-fg: #ffffff;
+
+  /* 拓扑图节点与连线 */
+  --qb-topo-node-fill: #252526;
+  --qb-topo-node-stroke: #3c3c3c;
+  --qb-topo-node-stroke-w: 1;
+  --qb-topo-node-rx: 6;
+  --qb-topo-node-active-fill: rgba(0, 122, 204, 0.22);
+  --qb-topo-node-active-stroke: #007acc;
+  --qb-topo-edge-stroke: #4f4f4f;
+  --qb-topo-edge-stroke-w: 1.5;
+  --qb-topo-canvas-border: #2d2d2d;
+  --qb-topo-label-fg: #cccccc;
+  --qb-topo-sublabel-fg: #858585;
+  --qb-team-edge-fg: #4f4f4f;
+  --qb-team-edge-active: #007acc;
+  --qb-team-edge-hot: #3794ff;
+  --qb-team-node-selected-fill: rgba(0, 122, 204, 0.28);
+  --qb-team-node-selected-stroke: #007acc;
+  --qb-team-node-hot-fill: rgba(0, 122, 204, 0.18);
+  --qb-team-node-hot-stroke: #3794ff;
+
+  /* 量化与回测工坊 */
+  --qb-quant-bg: #1e1e1e;
+  --qb-quant-card-bg: #252526;
+  --qb-quant-border: #2d2d2d;
+  --qb-quant-accent: #007acc;
+
+  /* K 线与行情 */
+  --qb-kline-root-bg: #1e1e1e;
+  --qb-kline-header-border: #2d2d2d;
+  --qb-kline-embedded-bar-bg: #252526;
+
+  --qb-font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "JetBrains Mono", Consolas, monospace;
+}
+
+/* 侧边栏与活动栏的高亮条 */
+html[data-qb-style="vscode-dark"] .qb-nav-activity-btn--active {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #ffffff !important;
+  box-shadow: inset 2px 0 0 0 #007acc !important;
+}
+
+html[data-qb-style="vscode-dark"] .qb-pro-statusbar {
+  background: #007acc !important;
+  color: #ffffff !important;
+  border-top: 1px solid #005a9e !important;
+}
+
+html[data-qb-style="vscode-dark"] .qb-pro-statusbar button {
+  color: #ffffff !important;
+}
+
+html[data-qb-style="vscode-dark"] .qb-pro-statusbar button:hover {
+  background: rgba(255, 255, 255, 0.16) !important;
+}
+
+html[data-qb-style="vscode-dark"] .qb-pro-resize-handle:hover,
+html[data-qb-style="vscode-dark"] .qb-pro-resize-handle[data-resize-handle-state="drag"] {
+  background: #007acc !important;
+}
+
+/* 团队工作台与面板微调 */
+html[data-qb-style="vscode-dark"] [data-qb-team-shell] {
+  background: #1e1e1e !important;
+  border-color: #2d2d2d !important;
+  box-shadow: none !important;
+}
+
+html[data-qb-style="vscode-dark"] [data-qb-team-shell] nav[aria-label="研究团队视图"] {
+  border-right: 1px solid #2d2d2d !important;
+  background: #252526 !important;
+}
+
+html[data-qb-style="vscode-dark"] .qb-bottom-panel {
+  background: #1e1e1e !important;
+  border-top: 1px solid #2d2d2d !important;
+}

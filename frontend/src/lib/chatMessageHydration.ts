@@ -168,8 +168,10 @@ export function buildContentFromWorkflowDetail(detail: WorkflowDetail): string {
   if (wfStatus === "awaiting_approval") {
     return `⏸️ 等待人工确认${obsText}`;
   }
-  if (wfStatus === "completed") {
-    return `✅ orchestrator 已完成${obsText}`;
+  // completed-but-no-thought: leave empty so hydrateAssistantMessage can use the
+  // honest "已完成（无文本输出）" fallback instead of a fake success bubble.
+  if (wfStatus === "completed" && obsText) {
+    return `✅ 已完成${obsText}`;
   }
   return "";
 }

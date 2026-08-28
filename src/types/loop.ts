@@ -141,6 +141,24 @@ export const LoopOptionsJsonSchema = z
      * 解析记忆与说明书作用域；非 Core `wf_*` session workspace。
      */
     fsWorkspaceId: z.string().min(1).optional(),
+    /** Rolling Host chronicle persisted per workflow run. */
+    sessionChronicle: z
+      .object({
+        version: z.number().int().positive(),
+        compactedSummary: z.string(),
+        absorbedMessageIds: z.array(z.string()),
+      })
+      .optional(),
+    lastUserPrompt: z.string().optional(),
+    lastUserPromptAt: z.string().optional(),
+    contextIsolation: z
+      .object({
+        version: z.literal(1),
+        reason: z.string(),
+        priorGoal: z.string().optional(),
+        isolatedAt: z.string(),
+      })
+      .optional(),
   })
   .strip();
 

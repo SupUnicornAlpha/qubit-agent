@@ -64,14 +64,40 @@ export function evaluateToolGovernance(input: {
   }
   const cached = negativeCache.get(cacheKey(input.workflowId, input.targetName, market));
   if (cached) {
+    const code = isParameterValidationFailure(cached.reason)
+      ? "known_invalid_request_in_workflow"
+      : "known_failure_in_workflow";
     return {
       allowed: false,
       market,
-      code: "known_failure_in_workflow",
+      code,
       reason: `本 workflow 已确认 ${input.targetName} 对 ${market} 不可用：${cached.reason}。禁止重复调用，请换 provider 或基于已有证据降级交付。`,
     };
   }
   return { allowed: true, market };
+}
+
+/** Parameter/contract mistakes must never poison the workflow-wide negative cache. */
+export function isCacheableWorkflowToolFailure(reason: string): boolean {
+  const r = reason.trim();
+  if (!r) return false;
+  if (isParameterValidationFailure(r)) return false;
+  if (/^semantic_data_failure:nested_error:/i.test(r)) return false;
+  if (/^semantic_data_failure:tool_ok_false$/i.test(r)) return false;
+  if (/^semantic_data_failure:mcp_validation_error$/i.test(r)) return false;
+  if (/^semantic_data_failure:compile_failed$/i.test(r)) return false;
+  return true;
+}
+
+function isParameterValidationFailure(reason: string): boolean {
+  const r = reason.trim();
+  if (/^missing_[a-z0-9_]+:/i.test(r)) return true;
+  if (/TOOL_CONTRACT_VALIDATION_FAILED/i.test(r)) return true;
+  if (/arity_violation/i.test(r)) return true;
+  if (/contract_validation/i.test(r)) return true;
+  if (/required field "[^"]+" missing after normalize/i.test(r)) return true;
+  if (/ is required\b/i.test(r) && /missing_/i.test(r)) return true;
+  return false;
 }
 
 export function recordWorkflowToolFailure(input: {
@@ -82,6 +108,7 @@ export function recordWorkflowToolFailure(input: {
   cacheable: boolean;
 }): void {
   if (!input.cacheable) return;
+  if (!isCacheableWorkflowToolFailure(input.reason)) return;
   const market = inferMarketScope(input.params);
   negativeCache.set(cacheKey(input.workflowId, input.targetName, market), {
     reason: input.reason.slice(0, 240),
@@ -111,6 +138,9 @@ function failureDomain(targetName: string): string {
     ? targetName.split("/", 2)
     : ["builtin", targetName];
   const tool = rawTool.toLowerCase();
+  if (/^missing_[a-z0-9_]+:/.test(tool) || tool.includes("contract")) {
+    return `contract::${provider}::${tool}`;
+  }
   const dataKind = /news|sentiment/.test(tool)
     ? "news"
     : /fundamental|financial|earning|rating|peer|dcf/.test(tool)

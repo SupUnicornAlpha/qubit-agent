@@ -1,4 +1,5 @@
 import type { AgentSkillOutcome } from "../../types/entities";
+import { shouldSuppressExecutionSkill } from "../conversation/goal-scope";
 import { searchFilesystemSkills } from "../skills/filesystem-skill-store";
 import { skillService } from "../skills/skill-service";
 import type { BuiltinToolHandler } from "./types";
@@ -112,6 +113,7 @@ export const SKILL_HANDLERS: Record<string, BuiltinToolHandler> = {
         source: "database" as const,
       })),
     ]
+      .filter((hit) => !shouldSuppressExecutionSkill(hit.name, query))
       .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
       .slice(0, Math.max(1, Math.min(topK || 5, 20)))
       .map((hit, index) => ({ ...hit, rank: index + 1 }));

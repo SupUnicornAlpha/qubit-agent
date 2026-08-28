@@ -52,6 +52,7 @@ pub const DEFAULT_BRIDGED_TOOLS: &[&str] = &[
     "factor.mine.llm",
     "factor.promote_backtest",
     "backtest.run",
+    "backtest.walk_forward",
     "workspace.context.snapshot",
     "web.search",
     "web.fetch",

@@ -451,6 +451,14 @@ impl TurnEngine {
             }
         }
 
+        let turn_ctx = opts.context.clone();
+        let working = turn_ctx.working_memory.clone();
+        let focus = WorkspaceFocus {
+            open_files: turn_ctx.open_files.clone().unwrap_or_default(),
+            focus_symbols: turn_ctx.focus_symbols.clone().unwrap_or_default(),
+            convention_text: None,
+        };
+
         let envelope = self
             .context
             .build(SlotAssembleInput {
@@ -458,13 +466,13 @@ impl TurnEngine {
                 spec: spec.clone(),
                 goal_text: input.text.clone(),
                 tool_names: tool_names.clone(),
-                working: None,
+                working,
                 decision_cutoff: None,
-                focus: WorkspaceFocus::default(),
-                context: opts.context.clone(),
+                focus,
+                context: turn_ctx.clone(),
             })
             .await?;
-        if opts.context.strip_bootstrap_memory_tools() {
+        if turn_ctx.strip_bootstrap_memory_tools() {
             tool_names.retain(|n| {
                 let bare = n.strip_prefix("tool/").unwrap_or(n);
                 !BOOTSTRAP_INJECTED_TOOLS.iter().any(|t| *t == bare)

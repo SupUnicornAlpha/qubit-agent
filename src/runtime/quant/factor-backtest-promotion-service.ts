@@ -18,6 +18,8 @@ export interface FactorBacktestPromotionInput {
   universe?: string;
   startDate: string;
   endDate: string;
+  /** 由 market.snapshot.get 预先冻结的回测数据。 */
+  datasetSnapshotId?: string;
   capital?: number;
   costs?: { commissionBps: number; slippageBps: number; minCommission?: number };
   rebalance?: "daily" | "weekly" | "monthly";
@@ -25,6 +27,11 @@ export interface FactorBacktestPromotionInput {
   longShort?: boolean;
   benchmark?: string;
   providerKey?: string;
+  experiment?: {
+    parameterSelection: "fixed_before_run" | "full_sample_optimized" | "unknown";
+    preRegistrationId?: string;
+    candidateTrials?: number;
+  };
   workflowRunId?: string | null;
   agentInstanceId?: string | null;
   createdBy?: string;
@@ -138,6 +145,7 @@ export class FactorBacktestPromotionService {
       universe,
       startDate: input.startDate,
       endDate: input.endDate,
+      ...(input.datasetSnapshotId ? { datasetSnapshotId: input.datasetSnapshotId } : {}),
       ...(input.capital !== undefined ? { capital: input.capital } : {}),
       ...(input.costs ? { costs: input.costs } : {}),
       ...(input.rebalance ? { rebalance: input.rebalance } : {}),
@@ -145,6 +153,7 @@ export class FactorBacktestPromotionService {
       ...(input.longShort !== undefined ? { longShort: input.longShort } : {}),
       ...(input.benchmark ? { benchmark: input.benchmark } : {}),
       ...(input.providerKey ? { providerKey: input.providerKey } : {}),
+      ...(input.experiment ? { experiment: input.experiment } : {}),
       workflowRunId,
       agentInstanceId: input.agentInstanceId ?? null,
       createdBy,

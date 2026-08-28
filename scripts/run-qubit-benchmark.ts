@@ -28,6 +28,11 @@ import {
 import { scoreRunEnvelope } from "../src/runtime/benchmark/scorecard";
 import { type UpgradeGateResult, evaluateUpgradeGate } from "../src/runtime/benchmark/upgrade-gate";
 import { DEFAULT_USER_PROJECT_ID } from "../src/runtime/bootstrap/ensure-default-workspace";
+import {
+  createAqmScoreContributor,
+  createOutcomeScoreContributor,
+  persistScorecardScores,
+} from "../src/runtime/eval-platform";
 
 const DEV_SERVER = process.env.QUBIT_DEV_SERVER ?? "http://127.0.0.1:17385";
 const PROJECT_ID = process.env.QUBIT_BENCH_PROJECT_ID ?? DEFAULT_USER_PROJECT_ID;
@@ -142,6 +147,14 @@ async function runCase(benchmarkCase: QubitBenchCase): Promise<CaseResult> {
         harnessVersion: QUBIT_BENCH_VERSION,
       })
     );
+    await persistScorecardScores({
+      workflowRunId,
+      scorecard,
+      configFingerprint: QUBIT_BENCH_VERSION,
+      extraContributors: [createAqmScoreContributor(), createOutcomeScoreContributor()],
+    }).catch((err) => {
+      console.warn(`[qubit-bench] persist scores failed for ${workflowRunId}:`, err);
+    });
     return {
       id: benchmarkCase.id,
       title: benchmarkCase.title,

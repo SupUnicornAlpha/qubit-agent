@@ -114,5 +114,6 @@ export const BUSINESS_WRITE_TOOLS: ReadonlySet<string> = new Set([
   "strategy.paper_run",
   "strategy.sim_deploy",
   "backtest.run",
+  "backtest.walk_forward",
   "run_screener",
 ]);

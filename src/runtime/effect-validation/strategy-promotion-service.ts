@@ -7,6 +7,11 @@ import {
   strategyRuntime,
   workflowRun,
 } from "../../db/sqlite/schema";
+import {
+  assessStrategyExecutionAdmission,
+  hasPassedBacktestIntegrity,
+  hasValidationQualifiedDataset,
+} from "./strategy-evaluation-service";
 import { ensureStrategyVersionForScript } from "../strategy/strategy-version-resolver";
 
 export interface StrategyPromotionAssessment {
@@ -51,7 +56,11 @@ export function buildStrategyVersionScorecards(
       const walkForwardScore = walkForward?.qualityScore ?? null;
       const paperScore = paper?.qualityScore ?? null;
       const allPrerequisitesPassed =
-        backtest?.pass === true && walkForward?.pass === true && paper?.pass === true;
+        backtest?.pass === true &&
+        hasValidationQualifiedDataset(backtest.metricsJson) &&
+        hasPassedBacktestIntegrity(backtest.metricsJson) &&
+        walkForward?.pass === true &&
+        paper?.pass === true;
       const score =
         (backtestScore ?? 0) * 0.25 + (walkForwardScore ?? 0) * 0.35 + (paperScore ?? 0) * 0.4;
       return {
@@ -128,7 +137,13 @@ export class StrategyPromotionService {
       .where(eq(strategyEvalRun.strategyVersionId, strategyVersionId));
     const passed = (kind: typeof strategyEvalRun.$inferSelect.evalKind) =>
       rows.some((row) => row.evalKind === kind && row.pass === true);
-    const backtestPassed = passed("backtest");
+    const backtest = rows
+      .filter((row) => row.evalKind === "backtest")
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+    const backtestPassed =
+      backtest?.pass === true &&
+      hasValidationQualifiedDataset(backtest.metricsJson) &&
+      hasPassedBacktestIntegrity(backtest.metricsJson);
     const walkForwardPassed = passed("walk_forward");
     const paperPassed = passed("paper");
     const manuallyApproved = passed("live");
@@ -198,6 +213,10 @@ export class StrategyPromotionService {
     const assessment = await this.assess(resolved.strategyVersionId, db);
     if (!assessment.liveEligible) {
       throw new Error(`live_promotion_gate_blocked:${JSON.stringify(assessment)}`);
+    }
+    const datasetAdmission = await assessStrategyExecutionAdmission(db, resolved.strategyVersionId);
+    if (!datasetAdmission.eligible) {
+      throw new Error(`live_dataset_admission_blocked:${JSON.stringify(datasetAdmission)}`);
     }
   }
 }

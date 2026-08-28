@@ -54,23 +54,21 @@ export const ResearchOutputTabs: FC<ResearchOutputTabsProps> = ({
   const [backtestCount, setBacktestCount] = useState(0);
   const [scriptCount, setScriptCount] = useState(0);
 
-  const tabs: Array<{ key: TabKey; label: string; count: number; accent: string }> = [
-    { key: "signals", label: t("team.outputTabs.signals"), count: signalCount, accent: "#fbbf24" },
-    { key: "drafts", label: t("team.outputTabs.drafts"), count: draftCount, accent: "#f59e0b" },
-    { key: "factors", label: t("team.outputTabs.factors"), count: factorCount, accent: "#60a5fa" },
+  const tabs: Array<{ key: TabKey; label: string; count: number }> = [
+    { key: "signals", label: t("team.outputTabs.signals"), count: signalCount },
+    { key: "drafts", label: t("team.outputTabs.drafts"), count: draftCount },
+    { key: "factors", label: t("team.outputTabs.factors"), count: factorCount },
     {
       key: "strategies",
       label: t("team.outputTabs.strategies"),
       count: strategyCount,
-      accent: "#a78bfa",
     },
     {
       key: "backtests",
       label: t("team.outputTabs.backtests"),
       count: backtestCount,
-      accent: "#34d399",
     },
-    { key: "scripts", label: t("team.outputTabs.scripts"), count: scriptCount, accent: "#38bdf8" },
+    { key: "scripts", label: t("team.outputTabs.scripts"), count: scriptCount },
   ];
 
   return (
@@ -84,30 +82,12 @@ export const ResearchOutputTabs: FC<ResearchOutputTabsProps> = ({
               type="button"
               role="tab"
               aria-selected={isActive}
-              style={{
-                ...styles.tabBtn,
-                ...(isActive
-                  ? {
-                      borderColor: tab.accent,
-                      color: tab.accent,
-                      background: `${tab.accent}14`,
-                    }
-                  : null),
-              }}
+              className={isActive ? "qb-research-output-tab--active" : undefined}
+              style={styles.tabBtn}
               onClick={() => setActive(tab.key)}
             >
               {tab.label}
-              <span
-                style={{
-                  ...styles.badge,
-                  ...(isActive
-                    ? {
-                        background: `${tab.accent}33`,
-                        color: tab.accent,
-                      }
-                    : null),
-                }}
-              >
+              <span className="qb-research-output-badge" style={styles.badge}>
                 {tab.count}
               </span>
             </button>
@@ -214,8 +194,8 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     gap: 4,
     padding: "8px 8px 6px",
-    borderBottom: "1px solid var(--qb-mcp-details-border, #27272a)",
-    background: "rgba(255, 255, 255, 0.02)",
+    borderBottom: "1px solid var(--qb-mcp-details-border, #2d2d2d)",
+    background: "var(--qb-team-titlebar-bg, #252526)",
     flexWrap: "wrap",
   },
   tabBtn: {
@@ -228,10 +208,10 @@ const styles: Record<string, CSSProperties> = {
     padding: "5px 8px",
     fontSize: 12,
     fontWeight: 600,
-    color: "#a1a1aa",
+    color: "var(--qb-team-meta, #858585)",
     background: "transparent",
     border: "1px solid transparent",
-    borderRadius: 6,
+    borderRadius: 4,
     cursor: "pointer",
     transition: "background 0.12s ease, color 0.12s ease, border-color 0.12s ease",
   },
@@ -245,8 +225,8 @@ const styles: Record<string, CSSProperties> = {
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    background: "rgba(255, 255, 255, 0.08)",
-    color: "#a1a1aa",
+    background: "var(--qb-tint, rgba(255, 255, 255, 0.06))",
+    color: "var(--qb-team-meta, #858585)",
   },
   panel: {
     padding: "8px 12px 12px",

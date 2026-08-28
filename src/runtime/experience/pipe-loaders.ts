@@ -9,7 +9,7 @@
  *   - "有 final_answer"：agent_step.actionType === 'final_answer'（文本只能 best-effort
  *     从 actionJson 取，因为真正的 reason/final 文本不落 agent_step，agent_step 是 thin trace）
  */
-import { asc, eq, inArray } from "drizzle-orm";
+import { asc, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import {
   agentDefinition,
@@ -18,6 +18,7 @@ import {
   toolCallLog,
   workflowRun,
 } from "../../db/sqlite/schema";
+import { loadLatestWorkingMemoryByInstance } from "../context/working-memory-loader";
 import type { ExtractorLoader, ExtractorWorkflowSummary } from "./pipes/extractor";
 import type { ReflectorLoader, ReflectorWorkflowContext } from "./pipes/reflector";
 
@@ -245,6 +246,7 @@ export const sqliteExtractorLoader: ExtractorLoader = {
       if (!raw) return null;
       const status = terminalStatus(raw.wf.status);
       if (!status) return null;
+      const workingByInstance = await loadLatestWorkingMemoryByInstance(workflowRunId);
       const mode = (
         ["research", "backtest", "simulation", "live"].includes(raw.wf.mode)
           ? raw.wf.mode
@@ -265,6 +267,7 @@ export const sqliteExtractorLoader: ExtractorLoader = {
           toolChain: i.toolChain,
           finalAnswer: i.finalAnswer,
           stepCount: i.stepCount,
+          workingMemory: workingByInstance.get(i.instanceId) ?? null,
         })),
         episodicIds: [],
         fsWorkspaceId: raw.wf.fsWorkspaceId,

@@ -387,8 +387,9 @@
 }
 
 .qb-team-graph-view-toggle button.is-active {
-  background: rgba(59, 130, 246, 0.2);
-  color: #93c5fd;
+  background: var(--qb-tint, rgba(0, 122, 204, 0.16));
+  color: var(--qb-blue, #007acc);
+  box-shadow: inset 0 -2px 0 0 var(--qb-blue, #007acc);
 }
 
 .qb-team-graph-view-toggle button:hover:not(.is-active) {

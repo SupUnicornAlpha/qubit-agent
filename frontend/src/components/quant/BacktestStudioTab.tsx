@@ -13,18 +13,27 @@ import type { CSSProperties, FC, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   getBacktestJob,
-  listBacktestJobs,
   listStrategyCompositions,
-  listStrategyVersions,
   runBacktestJobNow,
+  createMarketSnapshot,
   runWalkForwardEvaluation,
+  runSensitivityAnalysis,
+  runMonteCarloSimulation,
+  runPitAudit,
   type BacktestJobRecord,
   type BacktestMetricsDto,
   type BacktestSignalSpec,
   type StrategyCompositionRecord,
   type StrategyVersionFlatRecord,
+  type SensitivityAnalysisDto,
+  type MonteCarloSimulationDto,
+  type PitAuditReportDto,
 } from "../../api/backend";
 import { useDefaultProject } from "./useDefaultProject";
+import {
+  fetchQuantBacktestJobs,
+  fetchQuantStrategyVersions,
+} from "../../lib/quantListScope";
 import { pickColor, SvgLineChart, type ChartSeries } from "./charts/SvgLineChart";
 import { LineageBadge, LineageTrail } from "./LineageBadge";
 import { GenomeEvolutionPanel } from "./GenomeEvolutionPanel";
@@ -41,9 +50,17 @@ const STATUS_TONES: Record<BacktestJobRecord["status"], string> = {
 };
 
 export const BacktestStudioTab: FC = () => {
-  const { projectId, loading: projectLoading, error: projectError, contextual } = useDefaultProject();
-  const quantContext = useAppStore((s) => s.quantContext);
-  const workflowFilter = quantContext?.workflowRunId?.trim() || null;
+  const {
+    projectId,
+    defaultProjectId,
+    listProjectFilter,
+    lineageFilter,
+    listScopeKey,
+    scopeAllProjects,
+    scopeProjectId,
+    loading: projectLoading,
+    error: projectError,
+  } = useDefaultProject();
 
   const [versions, setVersions] = useState<StrategyVersionFlatRecord[]>([]);
   const [versionId, setVersionId] = useState<string>("");
@@ -62,6 +79,11 @@ export const BacktestStudioTab: FC = () => {
   const [capital, setCapital] = useState(100_000);
   const [commissionBps, setCommissionBps] = useState(5);
   const [slippageBps, setSlippageBps] = useState(5);
+  const [slippageModel, setSlippageModel] = useState<
+    "fixed_bps" | "square_root" | "volatility_adjusted"
+  >("fixed_bps");
+  const [borrowRateBps, setBorrowRateBps] = useState<number>(0);
+  const [maxVolumeParticipation, setMaxVolumeParticipation] = useState<number>(0);
   const [rebalance, setRebalance] = useState<Rebalance>("daily");
   const [topN, setTopN] = useState<number | "">("");
 
@@ -72,8 +94,6 @@ export const BacktestStudioTab: FC = () => {
   // 对比模式：多选历史任务在同一 equity 图叠加
   const [compareMode, setCompareMode] = useState(false);
   const [compareIds, setCompareIds] = useState<Set<string>>(new Set());
-  /** 有研究上下文时默认只看本工作流回测；可切到项目全部 */
-  const [scopeAllProject, setScopeAllProject] = useState(false);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -112,11 +132,6 @@ export const BacktestStudioTab: FC = () => {
     // factor-ids-to-composer 不属于 backtest 路径：不消费 / 不清空，留给 ComposerTab 接管。
   }, [handoff, setQuantHandoff]);
 
-  useEffect(() => {
-    // 新研究上下文进来时默认回到「本工作流」过滤
-    setScopeAllProject(false);
-  }, [workflowFilter]);
-
   const symbolsList = useMemo(
     () =>
       symbols
@@ -127,15 +142,15 @@ export const BacktestStudioTab: FC = () => {
   );
 
   const reloadVersions = useCallback(async () => {
-    if (!projectId) return;
+    if (projectLoading) return;
     try {
-      const rows = await listStrategyVersions(projectId);
+      const rows = await fetchQuantStrategyVersions(listProjectFilter, lineageFilter);
       setVersions(rows);
       if (!versionId && rows.length > 0) setVersionId(rows[0]!.id);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [projectId, versionId]);
+  }, [projectLoading, listScopeKey, versionId]);
 
   const reloadCompositions = useCallback(async () => {
     if (!versionId) {
@@ -156,11 +171,9 @@ export const BacktestStudioTab: FC = () => {
   }, [versionId]);
 
   const reloadJobs = useCallback(async () => {
+    if (projectLoading) return;
     try {
-      const rows = await listBacktestJobs({
-        projectId: projectId ?? undefined,
-        ...(workflowFilter && !scopeAllProject ? { workflowRunId: workflowFilter } : {}),
-      });
+      const rows = await fetchQuantBacktestJobs(listProjectFilter, lineageFilter);
       setJobs(rows);
       setSelectedId((prev) => {
         if (prev && rows.some((r) => r.id === prev)) return prev;
@@ -169,7 +182,7 @@ export const BacktestStudioTab: FC = () => {
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [projectId, workflowFilter, scopeAllProject]);
+  }, [projectLoading, listScopeKey]);
 
   useEffect(() => {
     void reloadVersions();
@@ -180,8 +193,25 @@ export const BacktestStudioTab: FC = () => {
   }, [reloadCompositions]);
 
   useEffect(() => {
-    void reloadJobs();
-  }, [reloadJobs]);
+    if (projectLoading) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const rows = await fetchQuantBacktestJobs(listProjectFilter, lineageFilter);
+        if (cancelled) return;
+        setJobs(rows);
+        setSelectedId((prev) => {
+          if (prev && rows.some((r) => r.id === prev)) return prev;
+          return rows[0]?.id ?? null;
+        });
+      } catch (e) {
+        if (!cancelled) setError((e as Error).message);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectLoading, listProjectFilter, lineageFilter]);
 
   const reloadSelected = useCallback(async () => {
     if (!selectedId) {
@@ -259,6 +289,24 @@ export const BacktestStudioTab: FC = () => {
       setError(null);
       setInfo(null);
       try {
+        const benchmarkSymbol = benchmark.trim().toUpperCase();
+        const snapshotSymbols = [
+          ...new Set([...symbolsList, ...(benchmarkSymbol ? [benchmarkSymbol] : [])]),
+        ];
+        const rangeDays = Math.max(
+          1,
+          Math.ceil(
+            (Date.parse(`${endDate}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`)) / 86_400_000
+          )
+        );
+        const dataset = await createMarketSnapshot({
+          symbols: snapshotSymbols,
+          asOf: `${endDate}T23:59:59.999Z`,
+          timeframe: "1d",
+          // 交易日缓冲；超过当前快照上限时由服务端明确拒绝覆盖不足的提交。
+          limit: Math.min(500, Math.ceil(rangeDays * 1.55) + 10),
+          purpose: "backtest",
+        });
         const rawSignal: BacktestSignalSpec = {
           kind: "factor_score",
           expr: rawExpr,
@@ -269,12 +317,22 @@ export const BacktestStudioTab: FC = () => {
           strategyVersionId: versionId,
           ...(source === "composition" ? { compositionId } : { signals: rawSignal }),
           symbols: symbolsList,
+          datasetSnapshotId: dataset.snapshotId,
           startDate,
           endDate,
           capital,
-          costs: { commissionBps, slippageBps },
+          costs: {
+            commissionBps,
+            slippageBps,
+            slippageModel,
+            borrowRateAnnualBps: borrowRateBps > 0 ? borrowRateBps : undefined,
+            maxVolumeParticipation: maxVolumeParticipation > 0 ? maxVolumeParticipation : undefined,
+          },
+          // UI does not optimize parameters during this run; freeze the chosen
+          // values so walk-forward can audit parameter-selection timing.
+          experiment: { parameterSelection: "fixed_before_run", candidateTrials: 1 },
           rebalance,
-          ...(benchmark.trim() ? { benchmark: benchmark.trim().toUpperCase() } : {}),
+          ...(benchmarkSymbol ? { benchmark: benchmarkSymbol } : {}),
           ...(typeof topN === "number" ? { topN } : {}),
         });
         setInfo(
@@ -309,13 +367,13 @@ export const BacktestStudioTab: FC = () => {
   );
 
   if (projectLoading) {
-    return <div style={styles.empty}>加载默认 project…</div>;
+    return <div style={styles.empty}>加载 project…</div>;
   }
   if (projectError) {
     return <div style={styles.errorPanel}>项目加载失败：{projectError}</div>;
   }
-  if (!projectId) {
-    return <div style={styles.empty}>未找到默认 project，请先初始化。</div>;
+  if (!scopeAllProjects && !scopeProjectId) {
+    return <div style={styles.empty}>未找到所选 project，请切换数据范围。</div>;
   }
 
   return (
@@ -324,37 +382,6 @@ export const BacktestStudioTab: FC = () => {
       data-qb-quant-tab="backtest"
       style={styles.root}
     >
-      {workflowFilter || contextual ? (
-        <div
-          style={{
-            gridColumn: "1 / -1",
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            padding: "8px 12px",
-            borderBottom: "1px solid var(--qb-border, #27272a)",
-            background: "rgba(16, 185, 129, 0.08)",
-            fontSize: 12,
-            color: "#a7f3d0",
-          }}
-        >
-          <span>
-            {workflowFilter && !scopeAllProject
-              ? `仅展示本工作流回测（${workflowFilter.slice(0, 8)}…）· 共 ${jobs.length} 条`
-              : `研究上下文已绑定 · 展示项目全部回测（${jobs.length}）`}
-          </span>
-          {workflowFilter ? (
-            <button
-              type="button"
-              className="qb-quant-btn qb-quant-btn--ghost"
-              style={{ fontSize: 11, padding: "2px 8px" }}
-              onClick={() => setScopeAllProject((v) => !v)}
-            >
-              {scopeAllProject ? "只看本工作流" : "看项目全部"}
-            </button>
-          ) : null}
-        </div>
-      ) : null}
       <aside className="qb-quant-col qb-quant-col--left" style={styles.colLeft}>
         <div className="qb-quant-col-header" style={styles.colHeader}>
           <strong>发起回测</strong>
@@ -463,7 +490,9 @@ export const BacktestStudioTab: FC = () => {
               placeholder="SPY；留空则不计算相对指标"
               style={styles.input}
             />
-            <span style={styles.formHelp}>美股组合通常使用 SPY；输入可用行情标的，留空仅计算绝对收益。</span>
+            <span style={styles.formHelp}>
+              美股组合通常使用 SPY；输入可用行情标的，留空仅计算绝对收益。
+            </span>
           </label>
           <div style={styles.formRow}>
             <label style={styles.formLabel}>
@@ -539,6 +568,44 @@ export const BacktestStudioTab: FC = () => {
                   setTopN(e.target.value === "" ? "" : Number.parseInt(e.target.value, 10))
                 }
                 placeholder="自动"
+                style={styles.input}
+              />
+            </label>
+          </div>
+          <div style={styles.formRow}>
+            <label style={styles.formLabel}>
+              滑点冲击模型
+              <select
+                value={slippageModel}
+                onChange={(e) => setSlippageModel(e.target.value as any)}
+                style={styles.select}
+              >
+                <option value="fixed_bps">固定基点 (Fixed)</option>
+                <option value="square_root">平方根冲击 (Square-Root)</option>
+                <option value="volatility_adjusted">波动率自适应 (Vol-Adjusted)</option>
+              </select>
+            </label>
+            <label style={styles.formLabel}>
+              融券年利率 (Bps)
+              <input
+                type="number"
+                min={0}
+                value={borrowRateBps}
+                onChange={(e) => setBorrowRateBps(Number.parseFloat(e.target.value) || 0)}
+                placeholder="0 (无融券利息)"
+                style={styles.input}
+              />
+            </label>
+            <label style={styles.formLabel}>
+              最大参与率 (0~1)
+              <input
+                type="number"
+                min={0}
+                max={1}
+                step={0.05}
+                value={maxVolumeParticipation}
+                onChange={(e) => setMaxVolumeParticipation(Number.parseFloat(e.target.value) || 0)}
+                placeholder="0 (不限)"
                 style={styles.input}
               />
             </label>
@@ -656,7 +723,11 @@ export const BacktestStudioTab: FC = () => {
         {compareMode && compareFullJobs.length >= 2 ? (
           <CompareView jobs={compareFullJobs} equitySeries={compareEquitySeries} />
         ) : selected ? (
-          <BacktestResultView job={selected} projectId={projectId} onRefresh={reloadSelected} />
+          <BacktestResultView
+            job={selected}
+            projectId={projectId ?? defaultProjectId ?? ""}
+            onRefresh={reloadSelected}
+          />
         ) : (
           <div className="qb-quant-empty" style={styles.empty}>
             左侧选择历史任务或新建回测。
@@ -675,34 +746,34 @@ export const BacktestStudioTab: FC = () => {
           {(Array.isArray(selected?.result?.trades) ? selected.result.trades : [])
             .slice(0, 200)
             .map((t, i) => (
-            <div
-              key={i}
-              className="qb-quant-trade-row"
-              data-qb-quant-side={t.side}
-              style={styles.tradeRow}
-            >
-              <span className="qb-quant-muted" style={styles.muted}>
-                {t.date}
-              </span>
-              <span
-                className={
-                  t.side === "buy"
-                    ? "qb-quant-side qb-quant-side--buy"
-                    : "qb-quant-side qb-quant-side--sell"
-                }
-                style={t.side === "buy" ? styles.buy : styles.sell}
+              <div
+                key={i}
+                className="qb-quant-trade-row"
+                data-qb-quant-side={t.side}
+                style={styles.tradeRow}
               >
-                {t.side}
-              </span>
-              <span>{t.symbol}</span>
-              <span className="qb-quant-num" style={styles.tradeNum}>
-                {t.qty.toFixed(4)}
-              </span>
-              <span className="qb-quant-num" style={styles.tradeNum}>
-                ${t.price.toFixed(2)}
-              </span>
-            </div>
-          ))}
+                <span className="qb-quant-muted" style={styles.muted}>
+                  {t.date}
+                </span>
+                <span
+                  className={
+                    t.side === "buy"
+                      ? "qb-quant-side qb-quant-side--buy"
+                      : "qb-quant-side qb-quant-side--sell"
+                  }
+                  style={t.side === "buy" ? styles.buy : styles.sell}
+                >
+                  {t.side}
+                </span>
+                <span>{t.symbol}</span>
+                <span className="qb-quant-num" style={styles.tradeNum}>
+                  {t.qty.toFixed(4)}
+                </span>
+                <span className="qb-quant-num" style={styles.tradeNum}>
+                  ${t.price.toFixed(2)}
+                </span>
+              </div>
+            ))}
           {(Array.isArray(selected?.result?.trades) ? selected.result.trades.length : 0) === 0 ? (
             <div className="qb-quant-empty" style={styles.empty}>
               —
@@ -725,6 +796,47 @@ export const BacktestStudioTab: FC = () => {
   );
 };
 
+type BacktestCalloutTone = "info" | "pass" | "warn" | "fail";
+
+const BacktestCallout: FC<{ tone: BacktestCalloutTone; label: string; children: ReactNode }> = ({
+  tone,
+  label,
+  children,
+}) => (
+  <div className="qb-bt-callout" data-tone={tone}>
+    <span className="qb-bt-callout-label">{label}</span>
+    <div className="qb-bt-callout-body">{children}</div>
+  </div>
+);
+
+const BacktestKpi: FC<{
+  label: string;
+  value: number;
+  pct?: boolean;
+  digits?: number;
+  signed?: boolean;
+}> = ({ label, value, pct = false, digits = 4, signed = false }) => {
+  if (!Number.isFinite(value)) {
+    return (
+      <div className="qb-bt-kpi" data-tone="neutral">
+        <span className="qb-bt-kpi-label">{label}</span>
+        <span className="qb-bt-kpi-value">—</span>
+      </div>
+    );
+  }
+  const text = pct ? `${(value * 100).toFixed(2)}%` : value.toFixed(digits);
+  const tone = signed ? (value > 0 ? "positive" : value < 0 ? "negative" : "neutral") : "accent";
+  const signAttr = signed ? (value > 0 ? "pos" : value < 0 ? "neg" : undefined) : undefined;
+  return (
+    <div className="qb-bt-kpi" data-tone={tone}>
+      <span className="qb-bt-kpi-label">{label}</span>
+      <span className="qb-bt-kpi-value" {...(signAttr ? { "data-sign": signAttr } : {})}>
+        {text}
+      </span>
+    </div>
+  );
+};
+
 const BacktestResultView: FC<{
   job: BacktestJobRecord;
   projectId: string;
@@ -733,28 +845,112 @@ const BacktestResultView: FC<{
   const m = job.result?.metrics;
   const equityRaw = job.result?.equityCurve;
   const equity = Array.isArray(equityRaw) ? equityRaw : [];
+
+  const [activeAnalysisTab, setActiveAnalysisTab] = useState<
+    "walk_forward" | "sensitivity" | "monte_carlo" | "pit_audit"
+  >("walk_forward");
+
   const [walkForward, setWalkForward] = useState<Awaited<
     ReturnType<typeof runWalkForwardEvaluation>
   > | null>(null);
   const [walkForwardBusy, setWalkForwardBusy] = useState(false);
   const [walkForwardError, setWalkForwardError] = useState<string | null>(null);
-  const [walkForwardFolds, setWalkForwardFolds] = useState(3);
-  const [walkForwardPurgeDays, setWalkForwardPurgeDays] = useState(5);
+  const walkForwardFolds = 3;
+  const walkForwardPurgeDays = 5;
+  const walkForwardEmbargoDays = 5;
+  const [walkForwardTune, setWalkForwardTune] = useState(false);
+
+  const [sensitivity, setSensitivity] = useState<SensitivityAnalysisDto | null>(null);
+  const [sensitivityBusy, setSensitivityBusy] = useState(false);
+  const [sensitivityError, setSensitivityError] = useState<string | null>(null);
+
+  const [monteCarlo, setMonteCarlo] = useState<MonteCarloSimulationDto | null>(null);
+  const [monteCarloBusy, setMonteCarloBusy] = useState(false);
+  const [monteCarloError, setMonteCarloError] = useState<string | null>(null);
+
+  const [pitAudit, setPitAudit] = useState<PitAuditReportDto | null>(null);
+  const [pitAuditBusy, setPitAuditBusy] = useState(false);
+  const [pitAuditError, setPitAuditError] = useState<string | null>(null);
 
   const runWalkForward = async () => {
     setWalkForwardBusy(true);
     setWalkForwardError(null);
     try {
+      const maxTopN = Math.max(1, job.config.symbols.length);
+      const baseTopN = Math.max(1, Math.min(maxTopN, job.config.topN ?? Math.min(5, maxTopN)));
+      const topNCandidates = Array.from(new Set([1, baseTopN, Math.min(maxTopN, baseTopN + 2)]));
+      const parameterCandidates = topNCandidates.flatMap((candidateTopN) =>
+        (["daily", "weekly", "monthly"] as const).map((candidateRebalance) => ({
+          topN: candidateTopN,
+          rebalance: candidateRebalance,
+          longShort: job.config.longShort ?? false,
+        }))
+      );
       setWalkForward(
         await runWalkForwardEvaluation(job.id, {
           folds: walkForwardFolds,
           purgeDays: walkForwardPurgeDays,
+          embargoDays: walkForwardEmbargoDays,
+          ...(walkForwardTune
+            ? {
+                selection: {
+                  objective: "sharpe",
+                  candidates: parameterCandidates,
+                },
+              }
+            : {}),
         })
       );
+      setActiveAnalysisTab("walk_forward");
     } catch (error) {
       setWalkForwardError(error instanceof Error ? error.message : "walk_forward_failed");
     } finally {
       setWalkForwardBusy(false);
+    }
+  };
+
+  const runSensitivity = async () => {
+    setSensitivityBusy(true);
+    setSensitivityError(null);
+    try {
+      const data = await runSensitivityAnalysis(job.id);
+      setSensitivity(data);
+      setActiveAnalysisTab("sensitivity");
+    } catch (error) {
+      setSensitivityError(error instanceof Error ? error.message : "sensitivity_analysis_failed");
+    } finally {
+      setSensitivityBusy(false);
+    }
+  };
+
+  const runMonteCarlo = async () => {
+    setMonteCarloBusy(true);
+    setMonteCarloError(null);
+    try {
+      const data = await runMonteCarloSimulation(job.id, {
+        simulations: 500,
+        blockSize: 5,
+      });
+      setMonteCarlo(data);
+      setActiveAnalysisTab("monte_carlo");
+    } catch (error) {
+      setMonteCarloError(error instanceof Error ? error.message : "monte_carlo_failed");
+    } finally {
+      setMonteCarloBusy(false);
+    }
+  };
+
+  const runAudit = async () => {
+    setPitAuditBusy(true);
+    setPitAuditError(null);
+    try {
+      const data = await runPitAudit(job.id);
+      setPitAudit(data);
+      setActiveAnalysisTab("pit_audit");
+    } catch (error) {
+      setPitAuditError(error instanceof Error ? error.message : "pit_audit_failed");
+    } finally {
+      setPitAuditBusy(false);
     }
   };
 
@@ -781,150 +977,519 @@ const BacktestResultView: FC<{
     return series;
   }, [equity]);
 
+  const mcSeries = useMemo<ChartSeries[]>(() => {
+    if (!monteCarlo || monteCarlo.simulatedPathsSummary.length === 0) return [];
+    return [
+      {
+        name: "95% 优选路径 (P95)",
+        color: "#10b981",
+        points: monteCarlo.simulatedPathsSummary.map((p) => ({ x: p.date, y: p.p95Best })),
+      },
+      {
+        name: "中位数基线 (Median)",
+        color: "#38bdf8",
+        points: monteCarlo.simulatedPathsSummary.map((p) => ({ x: p.date, y: p.median })),
+      },
+      {
+        name: "5% 极限最坏路径 (P5)",
+        color: "#f43f5e",
+        dashed: true,
+        points: monteCarlo.simulatedPathsSummary.map((p) => ({ x: p.date, y: p.p5Worst })),
+      },
+    ];
+  }, [monteCarlo]);
+
   return (
     <>
-      <div
-        className="qb-quant-hero-card"
-        style={{ display: "flex", flexDirection: "column", gap: 10 }}
-      >
-        <div className="qb-quant-detail-header" style={styles.detailHeader}>
-          <div>
-            <div
-              className="qb-quant-detail-title"
-              style={{ ...styles.detailTitle, display: "flex", alignItems: "center", gap: 8 }}
-            >
-              <span className="qb-quant-status-dot" data-status={job.status} aria-hidden />
-              <span
-                className="qb-quant-status-tag"
-                data-qb-quant-status={job.status}
-                style={{ color: STATUS_TONES[job.status] }}
-              >
-                {job.status.toUpperCase()}
-              </span>{" "}
-              · {job.engineKey}
-              <LineageBadge createdBy={job.createdBy ?? "user"} size="normal" />
-            </div>
-            <div className="qb-quant-detail-meta" style={styles.detailMeta}>
-              {job.config.startDate} ~ {job.config.endDate}
-              {" · "}
-              <span title={job.config.symbols.join(", ") || "无标的"}>
-                {job.config.symbols.length > 0
-                  ? job.config.symbols.join(" · ")
-                  : "无标的"}
-              </span>
-              {" · "}capital=${job.config.capital}
-              {" · "}rebalance={job.config.rebalance ?? "daily"}
+      <div className="qb-bt-report">
+        <header className="qb-bt-report-header">
+          <div className="qb-bt-report-header-top">
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div className="qb-bt-report-identity">
+                <span className="qb-bt-status" data-status={job.status}>
+                  <span className="qb-quant-status-dot" data-status={job.status} aria-hidden />
+                  {job.status.toUpperCase()}
+                </span>
+                <h3 className="qb-bt-engine">{job.engineKey}</h3>
+                <LineageBadge createdBy={job.createdBy ?? "user"} size="normal" />
+              </div>
+              <div className="qb-bt-report-meta">
+                <strong>{job.config.startDate}</strong> — <strong>{job.config.endDate}</strong>
+                {" · "}
+                <span title={job.config.symbols.join(", ") || "无标的"}>
+                  {job.config.symbols.length > 0 ? job.config.symbols.join(" · ") : "无标的"}
+                </span>
+                {" · "}
+                资金 <strong>${job.config.capital.toLocaleString()}</strong>
+                {" · "}
+                调仓 <strong>{job.config.rebalance ?? "daily"}</strong>
+                {job.config.costs?.slippageModel && job.config.costs.slippageModel !== "fixed_bps"
+                  ? ` · 冲击 ${job.config.costs.slippageModel}`
+                  : ""}
+              </div>
             </div>
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <label className="qb-quant-detail-meta" style={styles.detailMeta}>
-              折数
-              <input
-                type="number"
-                min={2}
-                max={8}
-                value={walkForwardFolds}
-                onChange={(event) => setWalkForwardFolds(Number(event.target.value))}
-                style={{ width: 48, marginLeft: 4 }}
-              />
-            </label>
-            <label className="qb-quant-detail-meta" style={styles.detailMeta}>
-              Purge
-              <input
-                type="number"
-                min={0}
-                max={30}
-                value={walkForwardPurgeDays}
-                onChange={(event) => setWalkForwardPurgeDays(Number(event.target.value))}
-                style={{ width: 48, marginLeft: 4 }}
-              />
-            </label>
-            <button
-              type="button"
-              onClick={onRefresh}
-              className="qb-quant-btn qb-quant-btn--ghost"
-              style={styles.btnGhost}
-            >
+          <LineageTrail kind="backtest_run" id={job.id} />
+          <div className="qb-bt-toolbar" role="toolbar" aria-label="回测分析工具">
+            <span className="qb-bt-toolbar-label">分析</span>
+            <button type="button" onClick={onRefresh} className="qb-bt-tool-btn">
               刷新
             </button>
             <button
               type="button"
               onClick={() => void runWalkForward()}
               disabled={walkForwardBusy || job.status !== "completed"}
-              className="qb-quant-btn qb-quant-btn--primary"
+              className={`qb-bt-tool-btn${activeAnalysisTab === "walk_forward" ? " is-active" : ""}`}
             >
-              {walkForwardBusy ? "OOS 评估中…" : "运行 Walk-forward"}
+              {walkForwardBusy ? "OOS 评估中…" : "Walk-Forward"}
             </button>
+            <button
+              type="button"
+              onClick={() => void runSensitivity()}
+              disabled={sensitivityBusy || job.status !== "completed"}
+              className={`qb-bt-tool-btn${activeAnalysisTab === "sensitivity" ? " is-active" : ""}`}
+            >
+              {sensitivityBusy ? "扫描中…" : "敏感性"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void runMonteCarlo()}
+              disabled={monteCarloBusy || job.status !== "completed"}
+              className={`qb-bt-tool-btn${activeAnalysisTab === "monte_carlo" ? " is-active" : ""}`}
+            >
+              {monteCarloBusy ? "模拟中…" : "Monte Carlo"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void runAudit()}
+              disabled={pitAuditBusy || job.status !== "completed"}
+              className={`qb-bt-tool-btn${activeAnalysisTab === "pit_audit" ? " is-active" : ""}`}
+            >
+              {pitAuditBusy ? "审计中…" : "PIT 审计"}
+            </button>
+            <label
+              className="qb-bt-toolbar-opt"
+              title="仅在每折训练区间比较候选，冻结赢家后进入该折 OOS"
+            >
+              <input
+                type="checkbox"
+                checked={walkForwardTune}
+                onChange={(event) => setWalkForwardTune(event.target.checked)}
+                disabled={walkForwardBusy}
+              />
+              训练窗选参
+            </label>
           </div>
-        </div>
-        <LineageTrail kind="backtest_run" id={job.id} />
+        </header>
+        {job.result?.meta.datasetQualification ||
+        job.result?.meta.antiLeakageReport ||
+        job.result?.meta.statisticalValidationReport ||
+        job.result?.meta.assetLifecycleReport ? (
+          <div className="qb-bt-callouts">
+            {job.result?.meta.datasetQualification ? (
+              <BacktestCallout tone="warn" label="数据资格">
+                {job.result.meta.datasetQualification.useClass === "research_only"
+                  ? "研究级数据集，不能直接晋级实盘"
+                  : "策略验证级数据集"}
+                {job.result.meta.datasetQualification.limitations.length > 0
+                  ? ` · ${job.result.meta.datasetQualification.limitations.join("、")}`
+                  : ""}
+              </BacktestCallout>
+            ) : null}
+            {job.result?.meta.antiLeakageReport ? (
+              <BacktestCallout
+                tone={job.result.meta.antiLeakageReport.status === "passed" ? "pass" : "warn"}
+                label="Anti-leakage"
+              >
+                {job.result.meta.antiLeakageReport.status}
+                {job.result.meta.antiLeakageReport.failedChecks.length > 0
+                  ? ` · failed: ${job.result.meta.antiLeakageReport.failedChecks.join(", ")}`
+                  : ""}
+                {job.result.meta.antiLeakageReport.unknownChecks.length > 0
+                  ? ` · unknown: ${job.result.meta.antiLeakageReport.unknownChecks.join(", ")}`
+                  : ""}
+              </BacktestCallout>
+            ) : null}
+            {job.result?.meta.statisticalValidationReport ? (
+              <BacktestCallout
+                tone={
+                  job.result.meta.statisticalValidationReport.status === "passed" ? "pass" : "warn"
+                }
+                label="统计置信"
+              >
+                {job.result.meta.statisticalValidationReport.status}
+                {job.result.meta.statisticalValidationReport.sharpeConfidenceInterval
+                  ? ` · Sharpe CI [${job.result.meta.statisticalValidationReport.sharpeConfidenceInterval.lower.toFixed(2)}, ${job.result.meta.statisticalValidationReport.sharpeConfidenceInterval.upper.toFixed(2)}]`
+                  : " · CI unavailable"}
+                {` · trials ${job.result.meta.statisticalValidationReport.candidateTrials ?? "unknown"}`}
+                {job.result.meta.statisticalValidationReport.bonferroniAdjustedPValue != null
+                  ? ` · adjusted p ${job.result.meta.statisticalValidationReport.bonferroniAdjustedPValue.toFixed(4)}`
+                  : ""}
+                {job.result.meta.statisticalValidationReport.deflatedSharpe
+                  ? ` · DSR ${(job.result.meta.statisticalValidationReport.deflatedSharpe.probability * 100).toFixed(1)}%`
+                  : " · DSR unavailable"}
+              </BacktestCallout>
+            ) : null}
+            {job.result?.meta.assetLifecycleReport ? (
+              <BacktestCallout
+                tone={job.result.meta.assetLifecycleReport.status === "passed" ? "pass" : "warn"}
+                label="资产生命周期"
+              >
+                {job.result.meta.assetLifecycleReport.status}
+                {job.result.meta.assetLifecycleReport.assetClasses.length > 0
+                  ? ` · ${job.result.meta.assetLifecycleReport.assetClasses.join(" / ")}`
+                  : ""}
+                {Array.isArray(job.result.meta.assetLifecycleEvents) &&
+                job.result.meta.assetLifecycleEvents.length > 0
+                  ? ` · ${job.result.meta.assetLifecycleEvents.length} events (${job.result.meta.assetLifecycleEvents
+                      .slice(-3)
+                      .map((event) => event.kind)
+                      .join(", ")})`
+                  : ""}
+                {job.result.meta.assetLifecycleReport.limitations.length > 0
+                  ? ` · ${job.result.meta.assetLifecycleReport.limitations.join("、")}`
+                  : ""}
+              </BacktestCallout>
+            ) : null}
+          </div>
+        ) : null}
       </div>
       {job.result?.error ? (
         <div className="qb-quant-error-panel" style={styles.errorPanel}>
           {job.result.error}
         </div>
       ) : null}
-      {job.evaluation ? (
+      {walkForwardError ? (
+        <div className="qb-quant-error-panel" style={styles.errorPanel}>
+          {walkForwardError}
+        </div>
+      ) : null}
+      {sensitivityError ? (
+        <div className="qb-quant-error-panel" style={styles.errorPanel}>
+          {sensitivityError}
+        </div>
+      ) : null}
+      {monteCarloError ? (
+        <div className="qb-quant-error-panel" style={styles.errorPanel}>
+          {monteCarloError}
+        </div>
+      ) : null}
+      {pitAuditError ? (
+        <div className="qb-quant-error-panel" style={styles.errorPanel}>
+          {pitAuditError}
+        </div>
+      ) : null}
+
+      {/* 参数敏感性热力图展示 */}
+      {sensitivity ? (
         <div
-          className="qb-quant-hero-card qb-quant-expandable-panel qb-quant-gate-panel"
-          style={{ display: "flex", flexDirection: "column", gap: 10 }}
+          className="qb-quant-hero-card"
+          style={{ display: "flex", flexDirection: "column", gap: 12 }}
         >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <strong>参数敏感性热力图 (Parameter Sensitivity Heatmap)</strong>
+              <div className="qb-quant-detail-meta" style={styles.detailMeta}>
+                {sensitivity.xDimension.label} × {sensitivity.yDimension.label} 网格扫描 ·{" "}
+                {sensitivity.meta.totalEvaluations} 次评估
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <span
+                className="qb-quant-status-tag"
+                style={{
+                  color: sensitivity.parameterCliffDetected ? "#f43f5e" : "#10b981",
+                  border: "1px solid currentColor",
+                  padding: "2px 8px",
+                  borderRadius: 4,
+                  fontSize: 11,
+                }}
+              >
+                {sensitivity.parameterCliffDetected
+                  ? "参数悬崖警示 (过拟合风险)"
+                  : "参数平原稳健 (Plateau)"}
+              </span>
+              <span className="qb-quant-detail-meta" style={styles.detailMeta}>
+                稳健度: {(sensitivity.stabilityScore * 100).toFixed(1)}%
+              </span>
+            </div>
+          </div>
+
           <div
             style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: 12,
+              padding: "8px 10px",
+              border: "1px solid rgba(245, 158, 11, 0.45)",
+              color: "#f59e0b",
+              fontSize: 11,
             }}
           >
+            RESEARCH ONLY · 全窗口网格选择存在选择偏差。先冻结候选参数，再运行独立的 purged OOS
+            验证。
+          </div>
+
+          <div style={{ overflowX: "auto" }}>
+            <table
+              style={{
+                width: "100%",
+                borderCollapse: "collapse",
+                fontSize: 11,
+                textAlign: "center",
+              }}
+            >
+              <thead>
+                <tr>
+                  <th
+                    style={{
+                      padding: "6px 8px",
+                      borderBottom: "1px solid var(--qb-border, #333)",
+                      color: "var(--qb-text-muted)",
+                    }}
+                  >
+                    {sensitivity.yDimension.label} \ {sensitivity.xDimension.label}
+                  </th>
+                  {sensitivity.xDimension.values.map((xv, xi) => (
+                    <th
+                      key={xi}
+                      style={{
+                        padding: "6px 8px",
+                        borderBottom: "1px solid var(--qb-border, #333)",
+                      }}
+                    >
+                      {xv}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {sensitivity.grid.map((row, yi) => (
+                  <tr key={yi}>
+                    <td
+                      style={{
+                        padding: "6px 8px",
+                        fontWeight: "bold",
+                        borderRight: "1px solid var(--qb-border, #333)",
+                      }}
+                    >
+                      {sensitivity.yDimension.values[yi]}
+                    </td>
+                    {row.map((cell, xi) => {
+                      const isOptimal =
+                        cell.xValue === sensitivity.optimal.xValue &&
+                        cell.yValue === sensitivity.optimal.yValue;
+                      const sharpeVal = cell.sharpe;
+                      const bgIntensity = Math.min(0.5, Math.max(0.05, Math.abs(sharpeVal) * 0.15));
+                      const bgColor =
+                        sharpeVal >= 0
+                          ? `rgba(16, 185, 129, ${bgIntensity})`
+                          : `rgba(244, 63, 94, ${bgIntensity})`;
+
+                      return (
+                        <td
+                          key={xi}
+                          style={{
+                            padding: "6px 8px",
+                            backgroundColor: bgColor,
+                            border: isOptimal
+                              ? "2px solid #38bdf8"
+                              : "1px solid rgba(255,255,255,0.04)",
+                            borderRadius: 4,
+                          }}
+                        >
+                          <div style={{ fontWeight: isOptimal ? "bold" : "normal" }}>
+                            Sharpe: {cell.sharpe.toFixed(2)}
+                          </div>
+                          <div style={{ fontSize: 10, opacity: 0.75 }}>
+                            DD: {(cell.maxDrawdown * 100).toFixed(1)}%
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ fontSize: 11, color: "var(--qb-text-muted)" }}>
+            * 探索性候选（非验证结论）：{sensitivity.xDimension.label} ={" "}
+            <strong>{sensitivity.optimal.xValue}</strong>，{sensitivity.yDimension.label} ={" "}
+            <strong>{sensitivity.optimal.yValue}</strong>（最优 Sharpe:{" "}
+            {sensitivity.optimal.metrics.sharpe.toFixed(2)}，最大回撤:{" "}
+            {(sensitivity.optimal.metrics.maxDrawdown * 100).toFixed(1)}%）
+          </div>
+        </div>
+      ) : null}
+
+      {/* 蒙特卡洛压力测试展示 */}
+      {monteCarlo ? (
+        <div
+          className="qb-quant-hero-card"
+          style={{ display: "flex", flexDirection: "column", gap: 12 }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div>
-              <strong>策略晋级 Gate</strong>
+              <strong>蒙特卡洛压力测试与重抽样 (Monte Carlo Stress Test)</strong>
               <div className="qb-quant-detail-meta" style={styles.detailMeta}>
+                Block Bootstrap {monteCarlo.simulationCount} 次模拟 · seed {monteCarlo.meta.seed} ·
+                初始资金 ${monteCarlo.initialCapital}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <span
+                className="qb-quant-status-tag"
+                style={{
+                  color:
+                    monteCarlo.drawdownRiskRating === "low"
+                      ? "#10b981"
+                      : monteCarlo.drawdownRiskRating === "moderate"
+                        ? "#38bdf8"
+                        : monteCarlo.drawdownRiskRating === "high"
+                          ? "#f59e0b"
+                          : "#f43f5e",
+                  border: "1px solid currentColor",
+                  padding: "2px 8px",
+                  borderRadius: 4,
+                  fontSize: 11,
+                }}
+              >
+                风险评级: {monteCarlo.drawdownRiskRating.toUpperCase()}
+              </span>
+              <span className="qb-quant-detail-meta" style={styles.detailMeta}>
+                破产概率: {(monteCarlo.probabilityOfRuin * 100).toFixed(2)}%
+              </span>
+            </div>
+          </div>
+
+          <div className="qb-quant-metrics-grid" style={styles.metricsGrid}>
+            <Metric
+              label="5% 极限最坏收益 (P5)"
+              value={monteCarlo.metrics.totalReturnPercentiles.p5}
+              pct
+              tone="rose"
+              signed
+            />
+            <Metric
+              label="中位数预期收益 (P50)"
+              value={monteCarlo.metrics.totalReturnPercentiles.median}
+              pct
+              tone="emerald"
+              signed
+            />
+            <Metric
+              label="95% 极端最大回撤 (P95)"
+              value={monteCarlo.metrics.maxDrawdownPercentiles.p95}
+              pct
+              tone="amber"
+            />
+            <Metric
+              label="中位数 Sharpe (P50)"
+              value={monteCarlo.metrics.sharpePercentiles.median}
+              tone="indigo"
+              signed
+            />
+            <Metric label="压力稳健评分" value={monteCarlo.stressScore} pct tone="pink" />
+          </div>
+
+          {mcSeries.length > 0 ? (
+            <SvgLineChart
+              title="Monte Carlo Representative Pathways (P5 Worst / Median / P95 Best)"
+              series={mcSeries}
+              height={180}
+            />
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* PIT 数据防未来函数审计报告 */}
+      {pitAudit ? (
+        <div
+          className="qb-quant-hero-card"
+          style={{ display: "flex", flexDirection: "column", gap: 10 }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <strong>Point-In-Time (PIT) 数据时序隔离与防未来函数审计</strong>
+              <div className="qb-quant-detail-meta" style={styles.detailMeta}>
+                已审计 {pitAudit.totalBarsAudited} 根 Bar · 跨 {pitAudit.symbolCount} 标的 · AsOf
+                边界: {pitAudit.asOfBoundary || "未设限"}
+              </div>
+            </div>
+            <strong
+              style={{
+                color:
+                  pitAudit.verdict === "point_in_time_clean"
+                    ? "var(--qb-success, #36ad6a)"
+                    : pitAudit.verdict === "point_in_time_degraded"
+                      ? "var(--qb-warning, #d99a32)"
+                      : "var(--qb-danger, #dc5d62)",
+              }}
+            >
+              {pitAudit.verdict.toUpperCase().replace(/_/g, " ")}
+            </strong>
+          </div>
+          <div className="qb-quant-metrics-grid" style={styles.metricsGrid}>
+            <Metric
+              label="前视偏差风险分"
+              value={pitAudit.lookAheadRiskScore}
+              tone={pitAudit.lookAheadRiskScore === 0 ? "emerald" : "rose"}
+            />
+            <Metric
+              label="已校验 K 线总数"
+              value={pitAudit.totalBarsAudited}
+              digits={0}
+              tone="cyan"
+            />
+            <Metric
+              label="异常点数量"
+              value={pitAudit.anomalyCount}
+              digits={0}
+              tone={pitAudit.anomalyCount === 0 ? "emerald" : "amber"}
+            />
+          </div>
+          {pitAudit.recommendations.map((rec, ri) => (
+            <div
+              key={ri}
+              style={{
+                fontSize: 12,
+                color: pitAudit.pass ? "#a7f3d0" : "#fca5a5",
+                background: pitAudit.pass ? "rgba(16, 185, 129, 0.08)" : "rgba(244, 63, 94, 0.08)",
+                padding: "6px 10px",
+                borderRadius: 4,
+              }}
+            >
+              • {rec}
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {job.evaluation ? (
+        <section className="qb-bt-section qb-bt-gate">
+          <header className="qb-bt-section-header">
+            <div>
+              <h4 className="qb-bt-section-title">策略晋级 Gate</h4>
+              <div className="qb-bt-section-desc">
                 成本后指标 · 可复现规则 · 未通过时不得直接进入 live
               </div>
             </div>
-            <span
-              className="qb-quant-status-tag"
-              style={{
-                color: job.evaluation.pass
-                  ? "var(--qb-success, #36ad6a)"
-                  : "var(--qb-warning, #d99a32)",
-              }}
-            >
+            <span className="qb-bt-verdict" data-pass={job.evaluation.pass ? "true" : "false"}>
               {job.evaluation.pass ? "BACKTEST PASSED" : "RESEARCH ONLY"}
             </span>
-          </div>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
-              gap: 8,
-            }}
-          >
+          </header>
+          <div className="qb-bt-gate-grid">
             {job.evaluation.checks.map((check) => (
-              <div
-                key={check.key}
-                style={{ padding: 10, borderRadius: 8, background: "rgba(255,255,255,.025)" }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                  <span>{check.label}</span>
-                  <strong
-                    style={{
-                      color: check.pass
-                        ? "var(--qb-success, #36ad6a)"
-                        : "var(--qb-danger, #dc5d62)",
-                    }}
-                  >
+              <div key={check.key} className="qb-bt-gate-cell">
+                <div className="qb-bt-gate-cell-head">
+                  <span className="qb-bt-gate-label">{check.label}</span>
+                  <span className="qb-bt-gate-verdict" data-pass={check.pass ? "true" : "false"}>
                     {check.pass ? "通过" : "未通过"}
-                  </strong>
+                  </span>
                 </div>
-                <div className="qb-quant-detail-meta" style={styles.detailMeta}>
+                <div className="qb-bt-gate-threshold">
                   {check.value.toFixed(3)} {check.operator} {check.threshold}
                 </div>
               </div>
             ))}
           </div>
-        </div>
+        </section>
       ) : null}
       {walkForwardError ? (
         <div className="qb-quant-error-panel" style={styles.errorPanel}>
@@ -940,8 +1505,9 @@ const BacktestResultView: FC<{
             <div>
               <strong>Walk-forward / OOS</strong>
               <div className="qb-quant-detail-meta" style={styles.detailMeta}>
-                扩展训练窗 · {walkForward.folds[0]?.purgeDays ?? 0} 日 purge · 独立测试折 · regime
-                稳定性
+                {walkForward.folds.some((fold) => fold.selection) ? "训练窗选参后冻结" : "固定参数"}{" "}
+                · expanding-window 切分 · {walkForward.folds[0]?.purgeDays ?? 0} 日 purge +{" "}
+                {walkForward.folds[0]?.embargoDays ?? 0} 日 embargo · 独立测试折 · regime 稳定性
               </div>
             </div>
             <strong
@@ -951,7 +1517,13 @@ const BacktestResultView: FC<{
                   : "var(--qb-warning, #d99a32)",
               }}
             >
-              {walkForward.pass ? "PASSED" : "NOT STABLE"}
+              {walkForward.pass
+                ? "VALIDATED"
+                : !walkForward.selectionIntegrityPass
+                  ? "RESEARCH ONLY · TRAIN FAMILY TEST NOT PASSED"
+                  : walkForward.performancePass
+                    ? `RESEARCH ONLY · ${walkForward.integrityReport.status}/${walkForward.statisticalValidationReport.status}`
+                    : "NOT STABLE"}
             </strong>
           </div>
           <div className="qb-quant-metrics-grid" style={styles.metricsGrid}>
@@ -1007,9 +1579,28 @@ const BacktestResultView: FC<{
                   <br />
                   Test {fold.testStart}–{fold.testEnd}
                   <br />
+                  Isolation: purge {fold.purgeStart ?? "—"}–{fold.purgeEnd ?? "—"}; embargo{" "}
+                  {fold.embargoStart ?? "—"}–{fold.embargoEnd ?? "—"}
+                  <br />
                   Return {(fold.metrics.totalReturn * 100).toFixed(2)}% · Sharpe{" "}
                   {fold.metrics.sharpe.toFixed(2)}
                   <br />
+                  {fold.selection ? (
+                    <>
+                      Selected: topN={fold.selection.selected.topN ?? "default"} ·{" "}
+                      {fold.selection.selected.rebalance ?? "default"}
+                      {" · "}train Sharpe {fold.selection.trainMetrics.sharpe.toFixed(2)} /{" "}
+                      {fold.selection.candidateCount} candidates
+                      <br />
+                      FDR {fold.selection.selectedFdrPass ? "pass" : "not passed"} · discoveries{" "}
+                      {fold.selection.falseDiscoveryRate.discoveryCount}/
+                      {fold.selection.falseDiscoveryRate.hypothesisCount}
+                      <br />
+                      White RC {fold.selection.realityCheck.status} · p{" "}
+                      {fold.selection.realityCheck.pValue?.toFixed(4) ?? "n/a"}
+                      <br />
+                    </>
+                  ) : null}
                   Regime source: {fold.regimeSource}
                 </div>
               </div>
@@ -1018,25 +1609,26 @@ const BacktestResultView: FC<{
         </div>
       ) : null}
       {m ? (
-        <div className="qb-quant-metrics-grid" style={styles.metricsGrid}>
-          <Metric
-            label="总收益"
-            value={m.totalReturn}
-            pct
-            tone="emerald"
-            highlight={m.totalReturn !== 0}
-            signed
-          />
-          <Metric label="年化收益" value={m.annualReturn} pct tone="emerald" signed />
-          <Metric label="年化波动" value={m.annualVol} pct tone="cyan" />
-          <Metric label="Sharpe" value={m.sharpe} tone="indigo" signed />
-          <Metric label="Sortino" value={m.sortino ?? Number.NaN} tone="indigo" signed />
-          <Metric label="Calmar" value={m.calmar ?? Number.NaN} tone="indigo" signed />
-          <Metric label="最大回撤" value={m.maxDrawdown} pct tone="amber" />
-          <Metric label="胜率" value={m.winRate} pct tone="pink" />
-          <Metric label="交易笔数" value={m.tradeCount} digits={0} tone="cyan" />
-          <Metric label="换手率" value={m.turnover} tone="indigo" />
-        </div>
+        <section className="qb-bt-section qb-bt-kpi-section">
+          <header className="qb-bt-section-header">
+            <div>
+              <h4 className="qb-bt-section-title">核心绩效指标</h4>
+              <div className="qb-bt-section-desc">成本后净值 · 与 Gate 规则同源</div>
+            </div>
+          </header>
+          <div className="qb-bt-kpi-grid">
+            <BacktestKpi label="总收益" value={m.totalReturn} pct signed />
+            <BacktestKpi label="年化收益" value={m.annualReturn} pct signed />
+            <BacktestKpi label="年化波动" value={m.annualVol} pct />
+            <BacktestKpi label="Sharpe" value={m.sharpe} signed />
+            <BacktestKpi label="Sortino" value={m.sortino ?? Number.NaN} signed />
+            <BacktestKpi label="Calmar" value={m.calmar ?? Number.NaN} signed />
+            <BacktestKpi label="最大回撤" value={m.maxDrawdown} pct />
+            <BacktestKpi label="胜率" value={m.winRate} pct />
+            <BacktestKpi label="交易笔数" value={m.tradeCount} digits={0} />
+            <BacktestKpi label="换手率" value={m.turnover} />
+          </div>
+        </section>
       ) : null}
       {m ? <PerformanceDiagnostics metrics={m} /> : null}
       {equitySeries.length > 0 ? (
@@ -1055,20 +1647,23 @@ const BacktestResultView: FC<{
 const PerformanceDiagnostics: FC<{ metrics: BacktestMetricsDto }> = ({ metrics }) => {
   const benchmark = metrics.benchmark;
   return (
-    <section className="qb-quant-hero-card qb-quant-performance-diagnostics" style={styles.diagnostics}>
-      <div style={styles.diagnosticsHeader}>
+    <section
+      className="qb-quant-hero-card qb-quant-performance-diagnostics qb-bt-diagnostics qb-bt-section"
+      style={styles.diagnostics}
+    >
+      <header className="qb-bt-section-header">
         <div>
-          <strong>全维绩效画像</strong>
-          <div className="qb-quant-detail-meta" style={styles.detailMeta}>
+          <h4 className="qb-bt-section-title">全维绩效画像</h4>
+          <div className="qb-bt-section-desc">
             以成本后净值为准；用于判断回测是否具备继续验证和进入自进化的条件。
           </div>
         </div>
-        <span className="qb-quant-detail-meta" style={styles.detailMeta}>
+        <span className="qb-bt-report-meta">
           {benchmark
             ? `基准观测 ${benchmark.observations} 期`
-            : "本次未配置基准：在左侧填入 SPY 后重新回测"}
+            : "未配置基准 · 左侧填入 SPY 后重新回测"}
         </span>
-      </div>
+      </header>
       <div className="qb-quant-performance-grid" style={styles.diagnosticColumns}>
         <DiagnosticGroup title="下行与尾部" description="比波动率更关注亏损形态">
           <DiagnosticValue label="下行波动" value={metrics.downsideDeviation} pct />
@@ -1079,7 +1674,12 @@ const PerformanceDiagnostics: FC<{ metrics: BacktestMetricsDto }> = ({ metrics }
         </DiagnosticGroup>
         <DiagnosticGroup title="稳定性与执行" description="避免偶然收益和高成本策略">
           <DiagnosticValue label="正收益期占比" value={metrics.positivePeriodRate} pct />
-          <DiagnosticValue label="最大连亏期" value={metrics.maxConsecutiveLosses} suffix=" 期" risk />
+          <DiagnosticValue
+            label="最大连亏期"
+            value={metrics.maxConsecutiveLosses}
+            suffix=" 期"
+            risk
+          />
           <DiagnosticValue label="累计佣金" value={metrics.totalCommission} prefix="$" digits={2} />
           <DiagnosticValue label="收益偏度" value={metrics.returnSkewness} signed />
           <DiagnosticValue label="超额峰度" value={metrics.excessKurtosis} signed />
@@ -1090,7 +1690,10 @@ const PerformanceDiagnostics: FC<{ metrics: BacktestMetricsDto }> = ({ metrics }
           <DiagnosticValue label="信息比率" value={benchmark?.informationRatio} signed />
           <DiagnosticValue label="跟踪误差" value={benchmark?.trackingError} pct />
           <DiagnosticValue label="相关性" value={benchmark?.correlation} digits={2} />
-          <DiagnosticValue label="上 / 下行捕获" composite={[benchmark?.upCapture, benchmark?.downCapture]} />
+          <DiagnosticValue
+            label="上 / 下行捕获"
+            composite={[benchmark?.upCapture, benchmark?.downCapture]}
+          />
         </DiagnosticGroup>
       </div>
     </section>
@@ -1102,10 +1705,10 @@ const DiagnosticGroup: FC<{ title: string; description: string; children: ReactN
   description,
   children,
 }) => (
-  <div className="qb-quant-performance-group" style={styles.diagnosticGroup}>
-    <div style={styles.diagnosticGroupTitle}>{title}</div>
-    <div style={styles.diagnosticGroupDescription}>{description}</div>
-    <div style={styles.diagnosticList}>{children}</div>
+  <div className="qb-quant-performance-group qb-bt-diag-group">
+    <div className="qb-bt-diag-group-title">{title}</div>
+    <div className="qb-bt-diag-group-desc">{description}</div>
+    <div className="qb-bt-diag-list">{children}</div>
   </div>
 );
 
@@ -1119,7 +1722,17 @@ const DiagnosticValue: FC<{
   suffix?: string;
   signed?: boolean;
   risk?: boolean;
-}> = ({ label, value, composite, pct = false, digits = 3, prefix = "", suffix = "", signed = false, risk = false }) => {
+}> = ({
+  label,
+  value,
+  composite,
+  pct = false,
+  digits = 3,
+  prefix = "",
+  suffix = "",
+  signed = false,
+  risk = false,
+}) => {
   const text = composite
     ? composite.every((entry) => typeof entry === "number" && Number.isFinite(entry))
       ? `${composite[0]?.toFixed(2) ?? "—"} / ${composite[1]?.toFixed(2) ?? "—"}`
@@ -1127,17 +1740,20 @@ const DiagnosticValue: FC<{
     : typeof value === "number" && Number.isFinite(value)
       ? `${prefix}${pct ? `${(value * 100).toFixed(2)}%` : value.toFixed(digits)}${suffix}`
       : "—";
-  const tone = signed && typeof value === "number" && value !== 0
-    ? value > 0
-      ? "var(--qb-success, #36ad6a)"
-      : "var(--qb-danger, #dc5d62)"
-    : risk
-      ? "var(--qb-warning, #d99a32)"
-      : "var(--qb-text-strong)";
+  const tone =
+    signed && typeof value === "number" && value !== 0
+      ? value > 0
+        ? "var(--qb-success, #36ad6a)"
+        : "var(--qb-danger, #dc5d62)"
+      : risk
+        ? "var(--qb-warning, #d99a32)"
+        : "var(--qb-text-strong)";
   return (
-    <div style={styles.diagnosticValue}>
-      <span>{label}</span>
-      <strong style={{ color: tone }}>{text}</strong>
+    <div className="qb-bt-diag-row">
+      <span className="qb-bt-diag-label">{label}</span>
+      <strong className="qb-bt-diag-value" style={{ color: tone }}>
+        {text}
+      </strong>
     </div>
   );
 };
@@ -1308,7 +1924,7 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     minHeight: 0,
-    overflow: "hidden",
+    overflow: "auto",
   },
   colMid: {
     display: "flex",
@@ -1417,7 +2033,7 @@ const styles: Record<string, CSSProperties> = {
     cursor: "pointer",
     color: "var(--qb-text-muted)",
   },
-  list: { flex: 1, minHeight: 0, overflow: "auto" },
+  list: { flex: "0 0 auto", minHeight: 120 },
   listItem: {
     width: "100%",
     textAlign: "left",

@@ -66,4 +66,58 @@ describe("ToolContract registry (market P0)", () => {
   test("unregistered tool has no contract", () => {
     expect(getToolContract("assign_task")).toBeUndefined();
   });
+
+  test("strategy.compose normalizes camelCase factor ids", () => {
+    const contract = getToolContract("strategy.compose")!;
+    expect(
+      applyToolContract(contract, {
+        strategyVersionId: "sv-1",
+        factorIds: ["f1", "f2"],
+      })
+    ).toMatchObject({
+      strategy_version_id: "sv-1",
+      factor_ids: ["f1", "f2"],
+    });
+  });
+
+  test("backtest.run normalizes composition and snapshot aliases", () => {
+    const contract = getToolContract("backtest.run")!;
+    expect(
+      applyToolContract(contract, {
+        strategyVersionId: "sv-1",
+        compositionId: "cmp-1",
+        snapshotId: "snap-1",
+        symbols: ["AAPL"],
+      })
+    ).toMatchObject({
+      strategy_version_id: "sv-1",
+      composition_id: "cmp-1",
+      dataset_snapshot_id: "snap-1",
+      symbols: ["AAPL"],
+    });
+  });
+
+  test("factor.promote_backtest requires dataset snapshot id", () => {
+    const contract = getToolContract("factor.promote_backtest")!;
+    expect(() =>
+      applyToolContract(contract, {
+        factorIds: ["f1"],
+        startDate: "2025-01-01",
+        endDate: "2025-12-31",
+        symbols: ["AAPL"],
+      })
+    ).toThrow(/missing_dataset_snapshot_id/);
+    expect(
+      applyToolContract(contract, {
+        factorIds: ["f1"],
+        snapshotId: "snap-1",
+        startDate: "2025-01-01",
+        endDate: "2025-12-31",
+        symbols: ["AAPL"],
+      })
+    ).toMatchObject({
+      factor_ids: ["f1"],
+      dataset_snapshot_id: "snap-1",
+    });
+  });
 });
