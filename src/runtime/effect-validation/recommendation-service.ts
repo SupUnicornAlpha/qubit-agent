@@ -9,6 +9,10 @@ import {
   workflowRun,
 } from "../../db/sqlite/schema";
 import { appendAuditLog } from "../audit/audit-chain-service";
+import {
+  type RecommendationCalibrationGroup,
+  summarizeRecommendationCalibration,
+} from "./recommendation-calibration";
 
 export type RecommendationSide = "long" | "short" | "neutral";
 export type RecommendationOutcomeValue = "pending" | "win" | "loss" | "flat" | "invalid";
@@ -64,6 +68,7 @@ export interface RecordRecommendationOutcomeInput {
   ambiguousBar?: boolean;
   barsObserved?: number;
   evaluationError?: string | null;
+  marketDataEvidence?: unknown;
   outcome: RecommendationOutcomeValue;
   evaluatedAt?: string | null;
 }
@@ -236,6 +241,7 @@ export class RecommendationService {
         ambiguousBar: input.ambiguousBar ?? false,
         barsObserved: Math.max(0, Math.floor(input.barsObserved ?? 0)),
         evaluationError: input.evaluationError ?? null,
+        marketDataEvidenceJson: input.marketDataEvidence ?? {},
         outcome: input.outcome,
         evaluatedAt: input.evaluatedAt ?? null,
       })
@@ -258,6 +264,7 @@ export class RecommendationService {
           ambiguousBar: input.ambiguousBar ?? false,
           barsObserved: Math.max(0, Math.floor(input.barsObserved ?? 0)),
           evaluationError: input.evaluationError ?? null,
+          marketDataEvidenceJson: input.marketDataEvidence ?? {},
           outcome: input.outcome,
           evaluatedAt: input.evaluatedAt ?? null,
           updatedAt: new Date().toISOString(),
@@ -282,6 +289,7 @@ export class RecommendationService {
         outcome: input.outcome,
         returnPct: input.returnPct ?? null,
         excessReturnPct: input.excessReturnPct ?? null,
+        marketDataFingerprint: readMarketDataFingerprint(input.marketDataEvidence),
       },
     });
     return { id, recommendationId: input.recommendationId };
@@ -345,6 +353,35 @@ export class RecommendationService {
           null,
       };
     });
+  }
+
+  async calibrationReport(input: {
+    projectId: string;
+    minimumObservations?: number;
+  }): Promise<RecommendationCalibrationGroup[]> {
+    const db = await getDb();
+    const rows = await db
+      .select({
+        side: recommendationSnapshot.side,
+        horizonDays: recommendationOutcome.horizonDays,
+        confidence: recommendationSnapshot.confidence,
+        outcome: recommendationOutcome.outcome,
+        returnPct: recommendationOutcome.returnPct,
+        excessReturnPct: recommendationOutcome.excessReturnPct,
+      })
+      .from(recommendationOutcome)
+      .innerJoin(
+        recommendationSnapshot,
+        eq(recommendationOutcome.recommendationId, recommendationSnapshot.id)
+      )
+      .where(eq(recommendationSnapshot.projectId, input.projectId.trim()));
+    return summarizeRecommendationCalibration(
+      rows.filter(
+        (row): row is typeof row & { outcome: "win" | "loss" | "flat" } =>
+          row.outcome === "win" || row.outcome === "loss" || row.outcome === "flat"
+      ),
+      input.minimumObservations
+    );
   }
 
   async get(id: string) {
@@ -414,6 +451,14 @@ export class RecommendationService {
       horizonStats,
     };
   }
+}
+
+function readMarketDataFingerprint(evidence: unknown): string | null {
+  if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)) return null;
+  const target = (evidence as Record<string, unknown>).target;
+  if (!target || typeof target !== "object" || Array.isArray(target)) return null;
+  const fingerprint = (target as Record<string, unknown>).fingerprint;
+  return typeof fingerprint === "string" ? fingerprint : null;
 }
 
 function clamp01(value: number): number {

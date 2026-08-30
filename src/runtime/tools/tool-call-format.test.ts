@@ -265,7 +265,7 @@ describe("stripToolCallSentinels", () => {
    * F-P0-04 回归（2026-06 评估批次）：研究/回测 aux slot 的 LLM 输出会被直接
    * 拼进最终报告。typical pattern 是 LLM 写完研究 markdown 之后再 emit 一个
    * tool_call=none 的 sentinel "宣告任务完成"——这个 sentinel 之前没被
-   * analyst-team-slot-react.ts 剥掉，导致用户看到的报告结尾出现 raw JSON。
+   * 旧的团队 slot 适配层剥掉，导致用户看到的报告结尾出现 raw JSON。
    *
    * 修复点：slot-react.ts 在返回 markdown body 时调 stripToolCallSentinels。
    * 本组 case 锁死 strip helper 能正确处理 aux slot 真实输出形态。

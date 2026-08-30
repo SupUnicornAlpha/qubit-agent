@@ -5,7 +5,10 @@ import {
 } from "../market/contracts/market-snapshot-service";
 import {
   MarketCorporateActionLedgerSchema,
+  MarketCalendarSessionWindowsByVenueSchema,
+  MarketDerivativePricingLedgerSchema,
   MarketFundamentalLedgerSchema,
+  MarketRiskExposureLedgerSchema,
   MarketUniverseHistorySchema,
 } from "../market/contracts/market-event-v2";
 import { loadBuiltinConnectorSettings } from "../config/builtin-connector-settings";
@@ -305,6 +308,14 @@ export const MARKET_ANALYSIS_HANDLERS: Record<string, BuiltinToolHandler> = {
       canonical.fundamentalLedger ??
       canonical.fundamental_ledger ??
       canonical.fundamental_revisions;
+    const riskExposureLedgerRaw =
+      canonical.riskExposureLedger ??
+      canonical.risk_exposure_ledger ??
+      canonical.risk_exposures;
+    const calendarSessionWindowsRaw =
+      canonical.calendarSessionWindowsByVenue ?? canonical.calendar_session_windows_by_venue;
+    const derivativePricingLedgerRaw =
+      canonical.derivativePricingLedger ?? canonical.derivative_pricing_ledger;
     const universeHistory =
       universeHistoryRaw === undefined
         ? undefined
@@ -330,29 +341,69 @@ export const MARKET_ANALYSIS_HANDLERS: Record<string, BuiltinToolHandler> = {
         "market.snapshot.get: fundamental_ledger must be a versioned point-in-time observation ledger"
       );
     }
+    const riskExposureLedger =
+      riskExposureLedgerRaw === undefined
+        ? undefined
+        : MarketRiskExposureLedgerSchema.safeParse(riskExposureLedgerRaw);
+    if (riskExposureLedger && !riskExposureLedger.success) {
+      throw new Error(
+        "market.snapshot.get: risk_exposure_ledger must be a versioned point-in-time exposure ledger"
+      );
+    }
+    const calendarSessionWindows =
+      calendarSessionWindowsRaw === undefined
+        ? undefined
+        : MarketCalendarSessionWindowsByVenueSchema.safeParse(calendarSessionWindowsRaw);
+    if (calendarSessionWindows && !calendarSessionWindows.success) {
+      throw new Error(
+        "market.snapshot.get: calendar_session_windows_by_venue must be explicit open/close ISO windows"
+      );
+    }
+    const derivativePricingLedger =
+      derivativePricingLedgerRaw === undefined
+        ? undefined
+        : MarketDerivativePricingLedgerSchema.safeParse(derivativePricingLedgerRaw);
+    if (derivativePricingLedger && !derivativePricingLedger.success) {
+      throw new Error(
+        "market.snapshot.get: derivative_pricing_ledger must declare version/source/as_of and IV/rate methods"
+      );
+    }
 
     return getOrCreateMarketSnapshot({
       symbols,
-      exchange: typeof canonical.exchange === "string" ? canonical.exchange : undefined,
-      asOf: typeof canonical.asOf === "string" ? canonical.asOf : undefined,
       purpose,
-      timeframe: typeof canonical.timeframe === "string" ? canonical.timeframe : undefined,
-      limit: typeof canonical.limit === "number" ? canonical.limit : undefined,
-      adjustMethod: typeof canonical.adjustMethod === "string" ? canonical.adjustMethod : undefined,
-      timezone: typeof canonical.timezone === "string" ? canonical.timezone : undefined,
-      calendarVersion:
-        typeof (canonical.calendarVersion ?? canonical.calendar_version) === "string"
-          ? String(canonical.calendarVersion ?? canonical.calendar_version)
-          : undefined,
-      calendarSessionsByVenue:
-        canonicalCalendarSessions(
-          canonical.calendarSessionsByVenue ?? canonical.calendar_sessions_by_venue
-        ) ?? undefined,
+      ...(typeof canonical.exchange === "string" ? { exchange: canonical.exchange } : {}),
+      ...(typeof canonical.asOf === "string" ? { asOf: canonical.asOf } : {}),
+      ...(typeof canonical.timeframe === "string" ? { timeframe: canonical.timeframe } : {}),
+      ...(typeof canonical.limit === "number" ? { limit: canonical.limit } : {}),
+      ...(typeof canonical.adjustMethod === "string"
+        ? { adjustMethod: canonical.adjustMethod }
+        : {}),
+      ...(typeof canonical.timezone === "string" ? { timezone: canonical.timezone } : {}),
+      ...(typeof (canonical.calendarVersion ?? canonical.calendar_version) === "string"
+        ? { calendarVersion: String(canonical.calendarVersion ?? canonical.calendar_version) }
+        : {}),
+      ...(canonicalCalendarSessions(
+        canonical.calendarSessionsByVenue ?? canonical.calendar_sessions_by_venue
+      )
+        ? {
+            calendarSessionsByVenue: canonicalCalendarSessions(
+              canonical.calendarSessionsByVenue ?? canonical.calendar_sessions_by_venue
+            )!,
+          }
+        : {}),
+      ...(calendarSessionWindows?.success
+        ? { calendarSessionWindowsByVenue: calendarSessionWindows.data }
+        : {}),
       ...(universeHistory?.success ? { universeHistory: universeHistory.data } : {}),
       ...(corporateActionLedger?.success
         ? { corporateActionLedger: corporateActionLedger.data }
         : {}),
       ...(fundamentalLedger?.success ? { fundamentalLedger: fundamentalLedger.data } : {}),
+      ...(riskExposureLedger?.success ? { riskExposureLedger: riskExposureLedger.data } : {}),
+      ...(derivativePricingLedger?.success
+        ? { derivativePricingLedger: derivativePricingLedger.data }
+        : {}),
     });
   },
 

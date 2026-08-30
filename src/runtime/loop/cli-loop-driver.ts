@@ -4,8 +4,8 @@ import { getDb } from "../../db/sqlite/client";
 import { agentDefinition, workflowRun } from "../../db/sqlite/schema";
 import type { AgentLoopKind, LoopOptionsJson } from "../../types/loop";
 import { parseLoopOptionsJson } from "../../types/loop";
-import { stepStreamBus } from "../react/event-stream";
-import type { StepStreamEvent } from "../react/state";
+import { stepStreamBus } from "../host/event-stream";
+import type { StepStreamEvent } from "../host/step-stream-types";
 import { setWorkflowState } from "../workflow/workflow-state-machine";
 /**
  * P2-B：cli-loop-driver 不再直接 `db.insert(agentStep) / .insert(agentInstance) /

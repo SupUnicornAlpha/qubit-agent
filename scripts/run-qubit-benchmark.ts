@@ -27,7 +27,10 @@ import {
 } from "../src/runtime/benchmark/health-panel";
 import { scoreRunEnvelope } from "../src/runtime/benchmark/scorecard";
 import { type UpgradeGateResult, evaluateUpgradeGate } from "../src/runtime/benchmark/upgrade-gate";
-import { DEFAULT_USER_PROJECT_ID } from "../src/runtime/bootstrap/ensure-default-workspace";
+import {
+  DEFAULT_USER_PROJECT_ID,
+  DEFAULT_USER_WORKSPACE_ID,
+} from "../src/runtime/bootstrap/ensure-default-workspace";
 import {
   createAqmScoreContributor,
   createOutcomeScoreContributor,
@@ -90,43 +93,58 @@ function resolveCases(): readonly QubitBenchCase[] {
 }
 
 async function launchBenchmarkCase(benchmarkCase: QubitBenchCase): Promise<string> {
-  const response = await fetch(
-    `${DEV_SERVER}/api/v1/research-scenarios/${benchmarkCase.scenarioKey}/launch`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        projectId: PROJECT_ID,
-        goal: benchmarkCase.goal,
-        inputParams: benchmarkCase.inputParams,
-        loopOverrides: {
-          maxIterations: benchmarkCase.budget.maxIterations,
-          timeoutMs: benchmarkCase.budget.maxDurationMs,
-          benchmarkNamespace: true,
-          tokenBudget: {
-            maxTotalTokens: benchmarkCase.budget.maxTotalTokens,
-            softLimitRatio: 0.8,
-            maxPromptTokensPerCall: Math.min(80_000, benchmarkCase.budget.maxTokenP95 * 2),
-            maxSystemPromptChars: 120_000,
-            maxUserPromptChars: 80_000,
-          },
-        },
-      }),
-    }
-  );
-  const payload = (await response.json().catch(() => ({}))) as {
-    data?: { workflowRunId?: string };
+  const sessionResponse = await fetch(`${DEV_SERVER}/api/v1/chat/sessions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      workspaceId: DEFAULT_USER_WORKSPACE_ID,
+      projectId: PROJECT_ID,
+      title: benchmarkCase.goal,
+      createdBy: "qubit-benchmark",
+    }),
+  });
+  const sessionPayload = (await sessionResponse.json().catch(() => ({}))) as {
+    data?: { id?: string };
     error?: string;
-    details?: { invalidInputs?: Array<{ field: string; error: string }> };
   };
-  if (!response.ok || !payload.data?.workflowRunId) {
-    const invalid =
-      payload.details?.invalidInputs?.map((item) => `${item.field}:${item.error}`).join(",") ?? "";
+  const sessionId = sessionPayload.data?.id;
+  if (!sessionResponse.ok || !sessionId) {
     throw new Error(
-      `launch_${response.status}:${payload.error ?? "unexpected_response"}${invalid ? `:${invalid}` : ""}`
+      `chat_session_${sessionResponse.status}:${sessionPayload.error ?? "missing_session_id"}`
     );
   }
-  return payload.data.workflowRunId;
+  const loopOptionsJson = {
+    maxIterations: benchmarkCase.budget.maxIterations,
+    timeoutMs: benchmarkCase.budget.maxDurationMs,
+    benchmarkNamespace: true,
+    tokenBudget: {
+      maxTotalTokens: benchmarkCase.budget.maxTotalTokens,
+      softLimitRatio: 0.8,
+      maxPromptTokensPerCall: Math.min(80_000, benchmarkCase.budget.maxTokenP95 * 2),
+      maxSystemPromptChars: 120_000,
+      maxUserPromptChars: 80_000,
+    },
+  };
+  const response = await fetch(`${DEV_SERVER}/api/v1/chat/sessions/${sessionId}/turns`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      projectId: PROJECT_ID,
+      message: `${benchmarkCase.goal}\n研究场景参数：${JSON.stringify(benchmarkCase.inputParams)}`,
+      researchScenarioId: benchmarkCase.scenarioKey,
+      loopOptionsJson,
+      agentMode: "agent",
+    }),
+  });
+  const payload = (await response.json().catch(() => ({}))) as {
+    data?: { workflowRunId?: string; runId?: string };
+    error?: string;
+  };
+  const workflowRunId = payload.data?.workflowRunId ?? payload.data?.runId;
+  if (!response.ok || !workflowRunId) {
+    throw new Error(`chat_turn_${response.status}:${payload.error ?? "missing_workflow_id"}`);
+  }
+  return workflowRunId;
 }
 
 async function runCase(benchmarkCase: QubitBenchCase): Promise<CaseResult> {

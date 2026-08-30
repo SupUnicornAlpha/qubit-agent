@@ -298,13 +298,14 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
   def({
     id: "def-backtest",
     role: "backtest",
-    /** 4.14.0：显式期货换月的平旧开新与审计。 */
-    version: "4.14.0",
+    /** 4.15.0：最终独立 holdout 是 live 晋级前的单次保留验证。 */
+    version: "4.15.0",
     name: "回测",
     systemPrompt: PROMPT_BACKTEST,
     tools: [
       "backtest.run",
       "backtest.walk_forward",
+      "backtest.final_holdout",
       "factor.list",
       "factor.compute",
       "fetch_klines",
@@ -341,11 +342,12 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     id: "def-walk-forward-validator",
     role: "backtest_engineer",
     name: "Walk-Forward 验证师",
-    version: "1.6.0",
+    version: "1.7.0",
     systemPrompt: PROMPT_WALK_FORWARD_VALIDATOR,
     tools: [
       "backtest.run",
       "backtest.walk_forward",
+      "backtest.final_holdout",
       "factor.list",
       "factor.autoEvaluate",
       "factor.evaluate.batch",

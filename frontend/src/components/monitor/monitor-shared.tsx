@@ -51,7 +51,7 @@ export type AgentCardView = AgentSummary & {
 
 export const SCOPE_TABS: { id: MonitorScope; label: string; hint: string }[] = [
   { id: "overview", label: "整体", hint: "全局 KPI、工作流分布、指标聚合、跨维度失败" },
-  { id: "workflow", label: "工作流", hint: "列表、详情、质量快照、按工作流过滤 SSE" },
+  { id: "workflow", label: "工作流", hint: "列表、详情、Eval Score/标注、Session 聚合、质量快照" },
   { id: "agent", label: "Agent", hint: "注册实例、延迟与健康度、点击卡片下钻指标" },
   { id: "skills", label: "Skills", hint: "Skill 召回成功率、失败列表（显式 agent_skill_run 归因）" },
   {
@@ -70,7 +70,11 @@ export const SCOPE_TABS: { id: MonitorScope; label: string; hint: string }[] = [
     hint: "按单一工具或 MCP server 下钻：错误 Top、沙箱阻断分类、熔断状态、最近调用流水",
   },
   { id: "stream", label: "实时流", hint: "全局 SSE 折叠时间线" },
-  { id: "alerts_eval", label: "告警与评测", hint: "告警确认、评测数据集与 run" },
+  {
+    id: "alerts_eval",
+    label: "告警与评测",
+    hint: "评测平台（Score/Experiment）· 告警中心 · Legacy MSA/SDP/RFV",
+  },
 ];
 
 // ------------------------------ 工具函数 ------------------------------

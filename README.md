@@ -189,15 +189,18 @@ bun run dev:frontend
 
 ### 4. 桌面客户端（Tauri v2，可选）
 
-Tauri 仅作为壳，**开发态依旧需要 Web 后端 + 前端 dev server**，`tauri dev` 会自动 `bun run --cwd frontend dev` 并加载 `http://localhost:3041`。
+Tauri 仅作为壳，`tauri dev` 会自动启动前端 dev server 并加载 `http://localhost:3041`；
+Debug 构建会由 Tauri 内置逻辑拉起 Bun 后端 fallback，不需要另外启动 `bun run dev`。
+启动前会自动创建一个被 git 忽略的 sidecar 占位文件，满足 Tauri 对 `externalBin` 的开发态校验；
+实际开发后端仍使用源码 watch 模式。
 
 **前置条件**：
 - 已安装 Rust（`rustup` 推荐）与平台原生编译工具链
 - 步骤 1 完成依赖与迁移
-- 已在另一个终端跑 `bun run dev`（或使用打包态 Sidecar，见下）
+- 如果要使用预编译 sidecar，先执行 `bun run build:app`；否则直接使用下面的开发命令即可
 
 ```bash
-# 终端 3（保持 终端 1 的 bun run dev 运行）
+# 终端 1
 bun run dev:tauri
 ```
 
@@ -391,16 +394,14 @@ bun run scripts/agent-readiness-runner.ts \
 <details>
 <summary>展开 REST 端点列表</summary>
 
-- `POST /api/v1/workflows` — 创建 workflow
 - `GET /api/v1/workflows/:id/stream/:runId` — 步骤流
 - `GET /api/v1/agents/definitions` — Agent 定义与草稿
-- `GET /api/v1/chat/sessions` · `POST .../messages` — 对话
+- `GET /api/v1/chat/sessions` · `POST /api/v1/chat/sessions/:sessionId/turns` — 唯一对话执行入口
 - `GET /api/v1/monitor/sessions/:id/overview` — 会话监控聚合
-- `GET /api/v1/analyst/fusion/:workflowId` — 团队信号融合
+- `GET /api/v1/research-artifacts/fusion/:workflowId` — 历史研究产物融合结果
 - `GET /api/v1/market/data-sources` — 行情源能力、健康、延迟、熔断与优先级
 - `POST /api/v1/market/data-sources/health` — 执行真实样本健康检查
 - `GET /api/v1/market/readiness` — 启动行情 readiness gate 状态
-- `POST /api/v1/research-scenarios/:key/launch` — 通过统一场景 harness 启动 workflow
 - `GET /api/v1/agents/mcp/market/catalog` — MCP 市场（分页）
 - `GET /api/v1/agents/skills/market/search` — Skills 市场（分页）
 - `POST /api/v1/reia/broker/accounts/upsert` — 券商账户

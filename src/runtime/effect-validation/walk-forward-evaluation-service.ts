@@ -21,6 +21,7 @@ import {
 } from "../backtest/reality-check";
 import { detectRegimeFromBars } from "../market/regime";
 import { providerResolver } from "../provider/resolver";
+import { buildStrategyComparisonCohort } from "./strategy-comparison-cohort";
 import type {
   BacktestDataset,
   BacktestEquityPoint,
@@ -265,6 +266,7 @@ export class WalkForwardEvaluationService {
       metricsJson: {
         aggregate,
         folds,
+        comparisonCohort: buildStrategyComparisonCohort(source.config),
         performancePass,
         selectionIntegrityPass,
         antiLeakageReport: integrityReport,

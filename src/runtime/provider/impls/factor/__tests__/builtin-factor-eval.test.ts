@@ -151,4 +151,33 @@ describe("BuiltinFactorEvalProvider v0.2", () => {
     });
     expect(r.turnover).toBeGreaterThan(0.4); // top 20% 完全变化
   });
+
+  test("reports persisted-ready Newey-West evidence instead of treating mean IC as sufficient", async () => {
+    const values: FactorComputeRow[] = [];
+    const futures: FactorComputeRow[] = [];
+    for (let day = 0; day < 60; day += 1) {
+      const date = `2026-05-${String((day % 28) + 1).padStart(2, "0")}-${String(Math.floor(day / 28) + 1)}`;
+      const reversed = day % 7 === 0;
+      for (let symbol = 0; symbol < 6; symbol += 1) {
+        values.push(row(`S${symbol}`, date, symbol));
+        futures.push(row(`S${symbol}`, date, (reversed ? 5 - symbol : symbol) * 0.01));
+      }
+    }
+    const result = await provider.evaluate({
+      factorId: "hac-factor",
+      universe: "test",
+      values,
+      futureReturns: futures,
+    });
+
+    expect(result.statisticalReport).toMatchObject({
+      version: "factor-statistical-validation-v1",
+      dailyObservations: 60,
+      status: "passed",
+    });
+    expect(result.statisticalReport?.ic.pValue).not.toBeNull();
+    expect(result.statisticalReport?.checks).toEqual(
+      expect.arrayContaining([expect.objectContaining({ key: "ic_significance", state: "pass" })])
+    );
+  });
 });

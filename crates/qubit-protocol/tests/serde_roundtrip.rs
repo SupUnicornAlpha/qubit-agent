@@ -21,6 +21,7 @@ fn agent_spec_roundtrip_json() {
         system_prompt: None,
         default_recipe_id: Some("research".into()),
         tool_surface_ref: "surfaces/primary".into(),
+        tools: vec![],
         model_ref: None,
         max_iterations: 10,
         hitl_profile_ref: Some("hitl/default".into()),

@@ -16,6 +16,7 @@ use super::ports::{
     IdentityPromptLoader, RecallBundle, RecallHit, RecallPort, RecallRequest, WorkspaceContextPort,
     WorkspaceFocus,
 };
+use super::prompt_budget::{budget_identity, budget_slot};
 
 #[derive(Clone, Debug)]
 pub struct SlotAssembleInput {
@@ -63,25 +64,62 @@ impl DefaultContextAssembler {
     }
 }
 
-fn truncate(text: &str, max: usize) -> String {
-    if text.chars().count() <= max {
-        return text.to_string();
-    }
-    text.chars().take(max.saturating_sub(1)).collect::<String>() + "…"
-}
-
-fn apply_budget(text: String, budget: &ContextSlotBudget) -> Option<ContextSlotContent> {
-    if budget.compress == CompressMode::Omit {
-        return None;
-    }
-    let t = truncate(&text, budget.max_chars as usize);
-    if t.trim().is_empty() {
+fn apply_budget(
+    slot_id: &str,
+    text: String,
+    budget: &ContextSlotBudget,
+) -> Option<ContextSlotContent> {
+    let rendered = if slot_id == "identity" {
+        budget_identity(&text, budget)?
+    } else {
+        budget_slot(&text, budget, "utf8_truncate")?
+    };
+    if rendered.text.trim().is_empty() {
         return None;
     }
     Some(ContextSlotContent {
-        text: t,
-        meta: None,
+        text: rendered.text,
+        meta: Some(rendered.meta),
     })
+}
+
+/// Keep the user prompt bounded as a whole. The current task and finance
+/// evidence win over background recall and rolling history. This prevents a
+/// large recall result from pushing the actual request out of the model's
+/// effective context window.
+fn enforce_user_budget(
+    slots: &mut BTreeMap<String, ContextSlotContent>,
+    budgets: &BTreeMap<String, ContextSlotBudget>,
+) {
+    const MAX_USER_CHARS: usize = 24_000;
+    let user_order = user_slot_order();
+    let mut total: usize = user_order
+        .iter()
+        .filter_map(|id| slots.get(*id))
+        .map(|slot| slot.text.chars().count() + 2)
+        .sum();
+    if total <= MAX_USER_CHARS {
+        return;
+    }
+
+    // Lower-priority slots are removed as complete units. We do not re-truncate
+    // an already rendered slot because that would reintroduce semantic cuts.
+    let mut candidates: Vec<(&str, u32)> = user_order
+        .iter()
+        .filter_map(|id| {
+            let priority = budgets.get(*id).map(|b| b.priority)?;
+            Some((*id, priority))
+        })
+        .collect();
+    candidates.sort_by_key(|(_, priority)| *priority);
+    for (id, _) in candidates {
+        if total <= MAX_USER_CHARS || id == "goal" {
+            continue;
+        }
+        if let Some(removed) = slots.remove(id) {
+            total = total.saturating_sub(removed.text.chars().count() + 2);
+        }
+    }
 }
 
 fn render_hits(hits: &[RecallHit]) -> String {
@@ -295,10 +333,12 @@ impl ContextAssembler for DefaultContextAssembler {
                 compress: CompressMode::Truncate,
                 priority: 50,
             });
-            if let Some(c) = apply_budget(text, &budget) {
+            if let Some(c) = apply_budget(&id, text, &budget) {
                 slots.insert(id, c);
             }
         }
+
+        enforce_user_budget(&mut slots, &budgets);
 
         let mut system_parts = Vec::new();
         for id in system_slot_order() {

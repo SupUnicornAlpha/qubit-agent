@@ -228,53 +228,6 @@ export const userMessageQueue = sqliteTable(
   })
 );
 
-/**
- * P0-2：研究团队异步任务的持久化真相源。
- *
- * 旧设计：`src/runtime/msa/analyst-research-jobs.ts` 全靠进程内存 Map，重启就丢；
- * `restoreRunningWorkflows` 也不扫 awaiting_approval，所以「审批中遇到 backend 重启
- * → resolveHitlRequest 找不到 resumePayload → workflow 被标 failed」是必然路径。
- *
- * 现在把 register / pause / resume / complete / fail 全落到这张表，Map 仅作热路径
- * cache。重启后 restoreRunningWorkflows 从这里回填 cache，HITL 审批链路就能跨重启续跑。
- */
-export const analystResearchJob = sqliteTable(
-  "analyst_research_job",
-  {
-    /** 与轮询 GET /analyst/job/:jobId 的 jobId 同源；由 analyst.routes 生成 */
-    id: id(),
-    workflowRunId: text("workflow_run_id")
-      .notNull()
-      .references(() => workflowRun.id, { onDelete: "cascade" }),
-    status: text("status", {
-      enum: ["running", "completed", "failed", "awaiting_approval"],
-    })
-      .notNull()
-      .default("running"),
-    ticker: text("ticker").notNull().default(""),
-    /** ParsedResearchTeamExecute JSON；pause/resume 用以让 HITL 批准后重派 */
-    resumePayloadJson: text("resume_payload_json", { mode: "json" }),
-    /** AnalystTeamResult JSON；completed 时填，前端轮询 GET /job/:jobId 读 */
-    resultJson: text("result_json", { mode: "json" }),
-    errorMessage: text("error_message"),
-    /** awaiting_approval 时挂上的 HITL 请求 ID（与 workflow_hitl_request.id 对应） */
-    hitlRequestId: text("hitl_request_id"),
-    hitlTitle: text("hitl_title"),
-    hitlSummary: text("hitl_summary"),
-    /** 不用 createdAt() helper：那个 helper 把 SQL 列名硬编码成 `created_at`，
-     *  这里列名必须叫 `started_at` 与 migration 0046 对齐。 */
-    startedAt: text("started_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
-    endedAt: text("ended_at"),
-    updatedAt: updatedAt(),
-  },
-  (table) => ({
-    byWorkflowStatus: index("idx_analyst_research_job_workflow").on(
-      table.workflowRunId,
-      table.status
-    ),
-  })
-);
-
 export const scheduledJob = sqliteTable("scheduled_job", {
   id: id(),
   workspaceId: text("workspace_id")
@@ -734,7 +687,7 @@ export const agentDefinition = sqliteTable("agent_definition", {
   updatedAt: updatedAt(),
 });
 
-/** 可复用的多 Agent 编排：成员指向 analyst_* 等 definition，relations 描述协作/汇报关系（展示与后续编排用） */
+/** 可复用的多 Agent 编排：成员指向 agent definition，relations 仅用于展示与 Core 编排 */
 export const agentGroup = sqliteTable("agent_group", {
   id: id(),
   workspaceId: text("workspace_id").references(() => workspace.id, { onDelete: "cascade" }),
@@ -742,18 +695,17 @@ export const agentGroup = sqliteTable("agent_group", {
   description: text("description").notNull().default(""),
   relationsJson: text("relations_json", { mode: "json" }).notNull().default("[]"),
   /**
-   * 编组的 dispatch 模式（migration 0073）。决定 analyst-team.ts / 同类 runner
-   * 怎么编排 memberRoles 的产出。
+   * 编组的 dispatch 模式（migration 0073）。决定 Rust Core
+   * 如何编排 memberRoles 的产出。
    *
    * 合法值（详见 src/runtime/seed-agent-catalog.ts `AgentGroupPipelineKind`）：
-   *   - 'msa_fusion'          : 4 类 analyst_* → 投票融合 → 可选 aux post-fusion（**当前默认行为**）
-   *   - 'sequential_research' : 按 memberRoles 顺序跑，无 MSA 投票
+   *   - 'sequential_research' : 按 memberRoles 顺序跑
    *   - 'event_radar'         : events 角色主导扫描，signal 角色辅助
    *   - 'factor_discovery'    : research → factor_candidates → backtest_results
    *
-   * 默认 'msa_fusion'：旧编组 / 用户自定义不指定时保持现状语义。
+   * 默认 'sequential_research'：对话型研究按成员声明顺序执行。
    */
-  pipelineKind: text("pipeline_kind").notNull().default("msa_fusion"),
+  pipelineKind: text("pipeline_kind").notNull().default("sequential_research"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -1712,6 +1664,16 @@ export const tradingAccount = sqliteTable("trading_account", {
     .default("active"),
 });
 
+/** Durable, singleton control plane for the trader module. */
+export const tradingModuleControl = sqliteTable("trading_module_control", {
+  id: text("id").primaryKey(),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  reason: text("reason"),
+  changedBy: text("changed_by"),
+  revision: integer("revision").notNull().default(0),
+  changedAt: text("changed_at").notNull(),
+});
+
 export const orderIntent = sqliteTable("order_intent", {
   id: id(),
   workflowRunId: text("workflow_run_id")
@@ -2392,7 +2354,7 @@ export const communicationMessageLog = sqliteTable("communication_message_log", 
 //
 // 历史角色字典 `agent_role_catalog` 已在 migration 0068 删除 ——
 // 22 行内容运行时永不变更，已固化为 `src/runtime/seed-agent-roles.ts` 常量；
-// `GET /api/v1/analyst/roles` 端点改为返回该常量。
+// `GET /api/v1/research-artifacts/roles` 端点改为返回该常量。
 
 export const analystSignal = sqliteTable("analyst_signal", {
   id: id(),
@@ -2516,6 +2478,10 @@ export const recommendationOutcome = sqliteTable("recommendation_outcome", {
   ambiguousBar: integer("ambiguous_bar", { mode: "boolean" }).notNull().default(false),
   barsObserved: integer("bars_observed").notNull().default(0),
   evaluationError: text("evaluation_error"),
+  /** Exact OHLCV rows used to determine a mature outcome and their hash. */
+  marketDataEvidenceJson: text("market_data_evidence_json", { mode: "json" })
+    .notNull()
+    .default("{}"),
   engineVersion: text("engine_version").notNull().default("decision-signal-v1"),
   hit: integer("hit", { mode: "boolean" }),
   outcome: text("outcome", {
@@ -2936,6 +2902,7 @@ export const factorEvaluation = sqliteTable("factor_evaluation", {
   turnover: real("turnover"),
   decayCurveJson: text("decay_curve_json", { mode: "json" }).notNull().default("[]"),
   groupReturnsJson: text("group_returns_json", { mode: "json" }).notNull().default("[]"),
+  statisticalReportJson: text("statistical_report_json", { mode: "json" }),
   sampleSize: integer("sample_size").notNull().default(0),
   latencyMs: integer("latency_ms").notNull().default(0),
   error: text("error"),
@@ -3043,7 +3010,7 @@ export const strategyEvalRun = sqliteTable("strategy_eval_run", {
   }),
   scenarioKey: text("scenario_key").notNull().default(""),
   evalKind: text("eval_kind", {
-    enum: ["backtest", "paper", "live", "walk_forward", "recommendation"],
+    enum: ["backtest", "paper", "live", "walk_forward", "holdout", "recommendation"],
   })
     .notNull()
     .default("backtest"),
@@ -3056,6 +3023,55 @@ export const strategyEvalRun = sqliteTable("strategy_eval_run", {
   createdBy: text("created_by").notNull().default("system"),
   createdAt: createdAt(),
 });
+
+/**
+ * Strategy candidate graveyard / admission ledger. It preserves rejected and
+ * incomplete hypotheses instead of letting a later search rediscover them as
+ * fresh alpha. Performance fields stay in strategy_eval_run; this table holds
+ * the decision, similarity/capacity/regime evidence and explicit reasons.
+ */
+export const strategyCandidateReview = sqliteTable(
+  "strategy_candidate_review",
+  {
+    id: id(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => project.id, { onDelete: "cascade" }),
+    strategyVersionId: text("strategy_version_id")
+      .notNull()
+      .references(() => strategyVersion.id, { onDelete: "cascade" }),
+    /** Empty is forbidden: even incomplete reviews receive a stable synthetic review cohort. */
+    comparisonCohortId: text("comparison_cohort_id").notNull(),
+    decision: text("decision", { enum: ["eligible", "incomplete", "rejected", "retired"] })
+      .notNull()
+      .default("incomplete"),
+    reasonCodesJson: text("reason_codes_json", { mode: "json" }).notNull().default("[]"),
+    duplicateOfStrategyVersionId: text("duplicate_of_strategy_version_id").references(
+      () => strategyVersion.id,
+      { onDelete: "set null" }
+    ),
+    regimeEvidenceJson: text("regime_evidence_json", { mode: "json" }).notNull().default("[]"),
+    capacityEvidenceJson: text("capacity_evidence_json", { mode: "json" }).notNull().default("{}"),
+    correlationEvidenceJson: text("correlation_evidence_json", { mode: "json" })
+      .notNull()
+      .default("{}"),
+    createdBy: text("created_by").notNull().default("system"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    uniqueIndex("idx_strategy_candidate_review_unique").on(
+      table.projectId,
+      table.strategyVersionId,
+      table.comparisonCohortId
+    ),
+    index("idx_strategy_candidate_review_project_decision").on(
+      table.projectId,
+      table.decision,
+      table.updatedAt
+    ),
+  ]
+);
 
 export const componentEvalRun = sqliteTable(
   "component_eval_run",

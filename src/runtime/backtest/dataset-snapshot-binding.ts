@@ -7,9 +7,9 @@
  */
 
 import {
-  getMarketSnapshotById,
   type MarketSnapshotRecord,
   type SnapshotBar,
+  getMarketSnapshotById,
 } from "../market/contracts/market-snapshot-service";
 import type { BacktestDataset, BacktestDatasetBar } from "../provider/types";
 
@@ -19,6 +19,7 @@ export class DatasetSnapshotBindingError extends Error {
       | "dataset_snapshot_required"
       | "dataset_snapshot_not_found"
       | "dataset_snapshot_invalid"
+      | "dataset_snapshot_window_mismatch"
       | "dataset_snapshot_coverage_missing",
     message: string
   ) {
@@ -94,12 +95,16 @@ export async function bindBacktestDataset(input: {
       timezone: record.snapshot.timezone,
       ...(record.snapshot.calendarVersion ? { version: record.snapshot.calendarVersion } : {}),
       ...calendarSessionsBySymbol(record, requestedSymbols),
+      ...calendarSessionWindowsBySymbol(record, requestedSymbols),
     },
     ...(record.snapshot.corporateActionLedger
       ? { corporateActionEvents: corporateActionEventsFor(record, input.symbols) }
       : {}),
     ...(record.snapshot.fundamentalLedger
       ? { fundamentalObservations: fundamentalObservationsFor(record, input.symbols) }
+      : {}),
+    ...(record.snapshot.derivativePricingLedger
+      ? { derivativePricing: { ...record.snapshot.derivativePricingLedger } }
       : {}),
     barsBySymbol,
     qualification: qualificationFor(record, input.symbols, input.startDate, input.endDate),
@@ -299,7 +304,7 @@ function validateSnapshot(
     (window.end && input.endDate > window.end.slice(0, 10))
   ) {
     throw new DatasetSnapshotBindingError(
-      "dataset_snapshot_coverage_missing",
+      "dataset_snapshot_window_mismatch",
       `dataset_snapshot_window_mismatch: requested ${input.startDate}..${input.endDate}, snapshot ${window.start ?? "?"}..${window.end ?? "?"}`
     );
   }
@@ -327,7 +332,8 @@ function barsForSymbol(record: MarketSnapshotRecord, symbol: string): SnapshotBa
     return keySymbol === target;
   });
   // A snapshot with two venues for the same bare ticker is ambiguous, and must not silently choose one.
-  return candidates.length === 1 ? candidates[0]![1] : null;
+  const [candidate] = candidates;
+  return candidates.length === 1 && candidate ? candidate[1] : null;
 }
 
 function calendarSessionsBySymbol(
@@ -349,13 +355,57 @@ function calendarSessionsBySymbol(
           .toUpperCase() === target
       );
     });
-    if (matches.length !== 1) continue;
-    const key = matches[0]!;
+    const [key] = matches;
+    if (matches.length !== 1 || !key) continue;
     const venue = key.slice(0, key.lastIndexOf(":"));
     const sessions = byVenue[venue];
     if (sessions && Object.keys(sessions).length > 0) sessionsBySymbol[symbol] = { ...sessions };
   }
   return Object.keys(sessionsBySymbol).length > 0 ? { sessionsBySymbol } : {};
+}
+
+function calendarSessionWindowsBySymbol(
+  record: MarketSnapshotRecord,
+  symbols: string[]
+): Pick<NonNullable<BacktestDataset["tradingCalendar"]>, "sessionWindowsBySymbol"> {
+  const byVenue = record.snapshot.calendarSessionWindowsByVenue;
+  if (!byVenue) return {};
+  const sessionWindowsBySymbol: Record<
+    string,
+    Record<string, Array<{ openAt: string; closeAt: string; label?: string }>>
+  > = {};
+  for (const symbol of symbols) {
+    const target = symbol.trim().toUpperCase();
+    const matches = record.snapshot.universe.filter((instrument) => {
+      const separator = instrument.lastIndexOf(":");
+      return (
+        separator >= 0 &&
+        instrument
+          .slice(separator + 1)
+          .trim()
+          .toUpperCase() === target
+      );
+    });
+    const [key] = matches;
+    if (matches.length !== 1 || !key) continue;
+    const venue = key.slice(0, key.lastIndexOf(":"));
+    const windows = byVenue[venue];
+    if (windows && Object.keys(windows).length > 0) {
+      const copiedWindows: Record<
+        string,
+        Array<{ openAt: string; closeAt: string; label?: string }>
+      > = {};
+      for (const [date, entries] of Object.entries(windows)) {
+        copiedWindows[date] = entries.map(({ openAt, closeAt, label }) => ({
+          openAt,
+          closeAt,
+          ...(label !== undefined ? { label } : {}),
+        }));
+      }
+      sessionWindowsBySymbol[symbol] = copiedWindows;
+    }
+  }
+  return Object.keys(sessionWindowsBySymbol).length > 0 ? { sessionWindowsBySymbol } : {};
 }
 
 function toDatasetBar(bar: SnapshotBar): BacktestDatasetBar {

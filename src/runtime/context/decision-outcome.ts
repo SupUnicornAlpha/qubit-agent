@@ -11,6 +11,8 @@ export interface ApplyDecisionOutcomeInput {
   store: ExperienceStore;
   experienceId: string;
   outcome: DecisionRecordOutcome;
+  /** Stable outcome identity prevents worker replays from double-counting. */
+  dedupeKey?: string;
   /** 成功则 successCount++；失败 failCount++ */
   bumpCounts?: boolean;
 }
@@ -30,9 +32,16 @@ export async function applyDecisionOutcome(
     meta.decisionRecord && typeof meta.decisionRecord === "object"
       ? (meta.decisionRecord as Record<string, unknown>)
       : {};
+  const outcomeKeys = Array.isArray(existing.outcomeKeys)
+    ? existing.outcomeKeys.map(String).filter(Boolean)
+    : [];
+  const alreadyApplied = Boolean(input.dedupeKey && outcomeKeys.includes(input.dedupeKey));
   meta.decisionRecord = {
     ...existing,
     outcome: input.outcome,
+    ...(input.dedupeKey && !alreadyApplied
+      ? { outcomeKeys: [...new Set([...outcomeKeys, input.dedupeKey])].slice(-50) }
+      : {}),
   };
 
   const patch: {
@@ -41,7 +50,7 @@ export async function applyDecisionOutcome(
     failCount?: number;
   } = { metadataJson: meta };
 
-  if (input.bumpCounts !== false) {
+  if (!alreadyApplied && input.bumpCounts !== false) {
     if (input.outcome.label === "success") {
       patch.successCount = row.successCount + 1;
     } else if (input.outcome.label === "fail") {
@@ -50,6 +59,7 @@ export async function applyDecisionOutcome(
   }
 
   await input.store.update(input.experienceId, patch);
+  if (alreadyApplied) return { ok: true };
   try {
     await input.store.logOp({
       experienceId: input.experienceId,
@@ -96,6 +106,8 @@ export function recommendationTradeToOutcomeLabel(
 export async function applyRecommendationOutcomeToExperiences(input: {
   projectId: string;
   workflowRunId: string;
+  recommendationId?: string;
+  horizonDays?: number;
   symbol: string;
   confidence: number;
   tradeOutcome: "win" | "loss" | "flat";
@@ -127,8 +139,7 @@ export async function applyRecommendationOutcomeToExperiences(input: {
   });
 
   const sym = input.symbol.toUpperCase();
-  const sameRunFirst: typeof candidates = [];
-  const sameSymbol: typeof candidates = [];
+  const linked: typeof candidates = [];
   for (const exp of candidates) {
     const meta = exp.metadataJson ?? {};
     const symbols = Array.isArray(meta.symbols)
@@ -137,19 +148,28 @@ export async function applyRecommendationOutcomeToExperiences(input: {
     const tagHit = exp.tagsJson.some(
       (t) => t.toUpperCase() === `SYMBOL:${sym}` || t.toUpperCase() === sym
     );
-    if (!symbols.includes(sym) && !tagHit) continue;
     const sameRun =
       exp.sourceRunId === input.workflowRunId || meta.workflowRunId === input.workflowRunId;
-    if (sameRun) sameRunFirst.push(exp);
-    else sameSymbol.push(exp);
+    const explicitRecommendationMatch =
+      Boolean(input.recommendationId) && meta.recommendationId === input.recommendationId;
+    // A symbol is only an additional guard. It must never be used as a causal
+    // link to a different workflow's thesis/research conclusion.
+    if ((sameRun || explicitRecommendationMatch) && (symbols.includes(sym) || tagHit)) {
+      linked.push(exp);
+    }
   }
 
   let updated = 0;
-  for (const exp of [...sameRunFirst, ...sameSymbol]) {
+  const dedupeKey =
+    input.recommendationId && Number.isInteger(input.horizonDays)
+      ? `recommendation:${input.recommendationId}:horizon:${input.horizonDays}`
+      : undefined;
+  for (const exp of linked) {
     const r = await applyDecisionOutcome({
       store,
       experienceId: exp.id,
       outcome,
+      dedupeKey,
     });
     if (r.ok) updated += 1;
     if (updated >= 3) break;

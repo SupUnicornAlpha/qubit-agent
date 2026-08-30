@@ -32,6 +32,34 @@ const buildCtx = () => ({
   workspaceId,
 });
 
+function researchContract(expression: string) {
+  return {
+    version: "factor-research-contract-v1",
+    economicMechanism: "Short-horizon relative strength captures delayed repricing.",
+    dataAvailability: {
+      sourceFields: ["close"],
+      availableAtRule: "Use finalized close after the bar ends.",
+      pointInTime: true,
+    },
+    formula: { expression, frequency: "1d", expectedDirection: "higher_is_bullish" },
+    preprocessing: {
+      missingValuePolicy: "drop",
+      winsorization: "1%/99%",
+      standardization: "z-score",
+      neutralization: "sector neutral",
+    },
+    applicability: {
+      universes: ["CN-A"],
+      horizonsDays: [5],
+      invalidationConditions: ["HAC Rank IC loses significance."],
+    },
+    validation: {
+      independentValidationPlan: "Frozen snapshot OOS evaluation.",
+      minimumDailyObservations: 60,
+    },
+  };
+}
+
 beforeAll(async () => {
   await runMigrations();
 });
@@ -69,16 +97,31 @@ beforeEach(async () => {
     createdAt: NOW,
   } as never);
 
-  // 给项目挂 5 个 active 因子，验证只取前 3
-  // register 默认 status='draft'，需要显式置 active 模拟 agent autoEvaluate 后的状态
+  // 给项目挂 5 个通过研究合同和冻结 HAC 评估的 active 因子，验证只取前 3。
   for (let i = 0; i < 5; i++) {
-    await factorService.register({
+    const expr = `(close - REF(close, ${i + 1})) / REF(close, ${i + 1})`;
+    const factor = await factorService.register({
       projectId,
       name: `mom_${i + 1}d`,
       category: "momentum",
-      expr: `(close - REF(close, ${i + 1})) / REF(close, ${i + 1})`,
+      expr,
       lang: "qlib_expr",
       status: "active",
+      definition: { researchContract: researchContract(expr) },
+    });
+    await db.insert(schema.factorEvaluation).values({
+      id: randomUUID(),
+      factorId: factor.id,
+      asof: "2026-06-30",
+      universe: "CN-A",
+      datasetSnapshotId: `snapshot-autofill-${i}`,
+      sampleSize: 120,
+      latencyMs: 1,
+      statisticalReportJson: {
+        version: "factor-statistical-validation-v1",
+        dailyObservations: 120,
+        status: "passed",
+      } as never,
     });
   }
 
@@ -184,5 +227,23 @@ describe("strategy.compose · factor_score 自动兜底", () => {
         kind: "factor_score",
       })
     ).rejects.toThrow(/factor_score_requires_factor_ids/);
+  });
+
+  test("显式指定缺少研究证据的因子会被拒绝", async () => {
+    const unreviewed = await factorService.register({
+      projectId,
+      name: `unreviewed_${randomUUID().slice(0, 6)}`,
+      category: "momentum",
+      expr: "close / Ref(close, 3) - 1",
+      lang: "qlib_expr",
+      status: "active",
+    });
+    await expect(
+      dispatchBuiltinTool("strategy.compose", buildCtx() as never, {
+        strategy_version_id: strategyVersionId,
+        kind: "factor_score",
+        factor_ids: [unreviewed.id],
+      })
+    ).rejects.toThrow(/factor_research_admission_failed.*factor_research_contract_missing_or_invalid/);
   });
 });

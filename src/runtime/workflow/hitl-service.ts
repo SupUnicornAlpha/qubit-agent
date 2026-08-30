@@ -5,17 +5,13 @@ import { workflowHitlRequest, workflowRun } from "../../db/sqlite/schema";
 import type { LoopOptionsJson } from "../../types/loop";
 import { parseLoopOptionsJson } from "../../types/loop";
 import { dispatchTaskToRole } from "../agent-pool";
-import {
-  findPendingAnalystJobByWorkflow,
-  resumeAnalystResearchJob,
-} from "../msa/analyst-research-jobs";
 // P2-A Batch 2：续跑改走 dispatchTaskToRole（由 agent-pool 按 path 决定），
 // 不再直接调 graphRunner.resumeRoleTask；保留 import 注释作为历史指引。
-import { stepStreamBus } from "../react/event-stream";
-import type { StepStreamEvent } from "../react/state";
+import { stepStreamBus } from "../host/event-stream";
+import type { StepStreamEvent } from "../host/step-stream-types";
 import { setWorkflowState } from "./workflow-state-machine";
 
-export type HitlScope = "chat_orchestrator" | "team_orchestrator";
+export type HitlScope = "chat_orchestrator";
 export type HitlRequestKind = "tool_call" | "team_research_plan" | "user_question";
 export type HitlRequestStatus = "pending" | "approved" | "rejected";
 
@@ -927,145 +923,11 @@ export async function createHitlRequest(input: {
   return { id };
 }
 
-export async function pauseForTeamOrchestratorHitl(input: {
-  workflowRunId: string;
-  runId: string;
-  traceId: string;
-  stepIndex?: number;
-  ticker: string;
-  planBrief: string;
-  slotRoles: string[];
-  /** 涉及的标的列表（basket 多标的）；用于硬规则 scale 判定 */
-  symbols?: string[];
-  /** Orchestrator LLM 自评的 HITL 提示（v2 P1）；undefined 时按 mode 默认 */
-  hitlHint?: HitlHint | null;
-  hitlApproval?: HitlApprovalPayload | null;
-}): Promise<void> {
-  if (input.hitlApproval?.decision === "rejected") {
-    throw new HitlAwaitingApprovalError("", input.workflowRunId, "team orchestrator hitl rejected");
-  }
-  if (input.hitlApproval?.requestId) {
-    const v = await verifyHitlApproval(input.hitlApproval.requestId, input.workflowRunId);
-    if (v.approved) return;
-    if (v.rejected) {
-      throw new HitlAwaitingApprovalError(
-        input.hitlApproval.requestId,
-        input.workflowRunId,
-        "team orchestrator hitl rejected"
-      );
-    }
-  }
-
-  const { workflow, loopOptions } = await loadWorkflowLoopContext(input.workflowRunId);
-
-  // v2：硬规则 retry — 查同 ticker 最近一次状态
-  const recentSameTickerStatus = await getRecentSameTickerStatus(input.ticker, workflow.mode);
-
-  const decision = evaluateTeamHitlTrigger({
-    workflow: { mode: workflow.mode },
-    loopOptions,
-    symbols: input.symbols ?? [input.ticker],
-    analystSlotCount: input.slotRoles.length,
-    recentSameTickerStatus,
-    hitlHint: input.hitlHint ?? null,
-  });
-  if (!decision.trigger) return;
-
-  const titlePrefix =
-    decision.source === "rule_money"
-      ? "[资金风险] "
-      : decision.source === "rule_scale"
-        ? "[大规模任务] "
-        : decision.source === "rule_retry"
-          ? "[重试确认] "
-          : "";
-  const title = `${titlePrefix}研究团队 Orchestrator 规划待确认：${input.ticker}`;
-  // 把触发原因拼进 summary 顶部，让用户立刻看到"为什么这次需要审批"。
-  const reasonHeader = decision.reason ? `[HITL 原因] ${decision.reason}\n\n` : "";
-  const summary = (reasonHeader + input.planBrief).slice(0, 8000);
-
-  const inputSchema = {
-    ...buildHitlInputSchemaFromHint(input.hitlHint),
-    ...(decision.inputKind === "single_choice" || decision.inputKind === "multi_choice"
-      ? { options: decision.options ?? input.hitlHint?.options ?? [] }
-      : {}),
-    ...(decision.inputKind === "free_form" && !input.hitlHint?.placeholder
-      ? { placeholder: "请用一句话告诉 Orchestrator 你的侧重点", maxLength: 500 }
-      : {}),
-  };
-
-  const { id } = await createHitlRequest({
-    workflowRunId: input.workflowRunId,
-    runId: input.runId,
-    traceId: input.traceId,
-    role: "orchestrator",
-    stepIndex: input.stepIndex ?? 0,
-    scope: "team_orchestrator",
-    requestKind: "team_research_plan",
-    title,
-    summary,
-    payloadJson: {
-      ticker: input.ticker,
-      symbols: input.symbols ?? [input.ticker],
-      slotRoles: input.slotRoles,
-      planBrief: input.planBrief,
-      question: input.hitlHint?.question ?? input.hitlHint?.reason ?? decision.reason,
-      triggerSource: decision.source,
-      triggerReason: decision.reason,
-      hitlHint: input.hitlHint ?? null,
-    },
-    inputKind: decision.inputKind,
-    inputSchema,
-  });
-  throw new HitlAwaitingApprovalError(id, input.workflowRunId, title);
-}
-
-/**
- * 用户发起的「协作式中断」断点：在团队 wave 边界被调用，**无条件**起一个 free_form 的
- * team_orchestrator HITL 并抛 HitlAwaitingApprovalError，让团队任务停在 awaiting_approval。
- *
- * 复用与规划 HITL 完全相同的恢复链（resolveHitlRequest → research_team_execute →
- * runAnalystTeam(hitlApproval)）：用户提交的文本经 formatHitlResponseForContext 折进
- * 后续分析师上下文，团队据此续跑。留空直接批准则按原计划继续。
- *
- * 注意：恢复是从 orchestrator 规划处重入（规划 gate 因 approved 直接放行），已完成的
- * wave 会重跑——这是当前团队恢复模型的固有代价（v1 取舍）。
- */
-export async function pauseForUserInterrupt(input: {
-  workflowRunId: string;
-  runId: string;
-  traceId: string;
-  ticker: string;
-  stepIndex?: number;
-}): Promise<never> {
-  const title = `用户中断：请输入要补充/调整的提示词 — ${input.ticker}`;
-  const { id } = await createHitlRequest({
-    workflowRunId: input.workflowRunId,
-    runId: input.runId,
-    traceId: input.traceId,
-    role: "orchestrator",
-    stepIndex: input.stepIndex ?? 0,
-    scope: "team_orchestrator",
-    requestKind: "team_research_plan",
-    title,
-    summary:
-      "你中断了正在进行的研究。请输入新的提示词 / 侧重点，Orchestrator 将带着它继续；" +
-      "留空直接批准则按原计划继续。（注：恢复会从规划处重入，已完成的分析师会重跑。）",
-    payloadJson: { ticker: input.ticker, interrupt: true },
-    inputKind: "free_form",
-    inputSchema: {
-      placeholder: "例如：把重点放到现金流质量与估值安全边际上",
-      maxLength: 1000,
-    },
-  });
-  throw new HitlAwaitingApprovalError(id, input.workflowRunId, title);
-}
-
 /**
  * 查询同 (ticker, mode) 最近一次 workflow 的状态（24h 内）。
  *
  * 现状：workflow_run 没有 ticker 字段，goal 文本里通常含 "· TICKER ·" 串
- * （见 analyst.routes.ts 的 displayLabel 拼装）；用 LIKE 兜底匹配，精确性后续
+ * （见 research-artifacts.routes.ts 的 displayLabel 拼装）；用 LIKE 兜底匹配，精确性后续
  * 加 ticker 列时再升级（v2-P2）。仅取最近"已结束"的状态，跳过 running 等。
  */
 async function getRecentSameTickerStatus(
@@ -1130,28 +992,15 @@ export async function resolveHitlRequest(input: {
   const now = new Date().toISOString();
 
   /**
-   * P0-3：原本是 4 张表（workflow_hitl_request / workflow_run / analyst_research_job /
-   * 进程内 cache）依次裸 update，中间任意一步崩溃会留下「hitl_request 已 approved 但
-   * analyst job 还卡 awaiting_approval」式的死锁 —— restoreRunningWorkflows 也救不了，
-   * 因为 hitl_request 已经不是 pending。
-   *
-   * 这里把 3 张表的 status 写入合并进事务：要么一起成功，要么一起 rollback。
-   * 副作用（A2A dispatch / graphRunner.resumeRoleTask）放事务**之外**，留给
-   * restoreRunningWorkflows 兜底 sweep 在重启后补救。
+   * 先原子更新 HITL 与 workflow 状态，再在事务外派发唯一的 Core resume turn。
+   * 研究团队 job 不再参与 HITL 恢复。
    */
   type ResolveTxOutcome =
     | { kind: "rejected" }
     | {
-        kind: "approved_team";
-        jobId: string;
-        resumePayload: import("../msa/analyst-research-jobs").AnalystResearchJob["resumePayload"];
-        workflowRow: typeof workflowRun.$inferSelect;
-      }
-    | {
         kind: "approved_chat";
         workflowRow: typeof workflowRun.$inferSelect;
-      }
-    | { kind: "missing_resume_payload" };
+      };
 
   const outcome = await runInTransaction(db, async (): Promise<ResolveTxOutcome> => {
     await db
@@ -1166,13 +1015,6 @@ export async function resolveHitlRequest(input: {
 
     if (input.decision === "rejected") {
       await setWorkflowState(row.workflowRunId, "failed", { reason: "hitl:reject" });
-      if (row.scope === "team_orchestrator") {
-        const { failAnalystResearchJob } = await import("../msa/analyst-research-jobs");
-        const pending = await findPendingAnalystJobByWorkflow(row.workflowRunId);
-        if (pending) {
-          await failAnalystResearchJob(pending.jobId, new Error("rejected by human reviewer"));
-        }
-      }
       return { kind: "rejected" };
     }
 
@@ -1186,27 +1028,6 @@ export async function resolveHitlRequest(input: {
     const wfInner = wfRows[0];
     if (!wfInner) throw new Error("workflow_run missing after hitl approve");
 
-    if (row.scope === "team_orchestrator") {
-      const pending = await findPendingAnalystJobByWorkflow(row.workflowRunId);
-      const resumePayload = pending ? await resumeAnalystResearchJob(pending.jobId) : undefined;
-      if (!pending || !resumePayload) {
-        /**
-         * P0-2 之后 DB 永远存着 resumePayload，只有 DB 行被外部 manual 删除 /
-         * migration 故障才会到这；此时把 workflow_run 在同一事务内回到 failed，
-         * 不再像旧代码那样在事务外再发一条 UPDATE 让状态串到 running→failed。
-         */
-        await setWorkflowState(row.workflowRunId, "failed", {
-          reason: "hitl:missing-resume-payload",
-        });
-        return { kind: "missing_resume_payload" };
-      }
-      return {
-        kind: "approved_team",
-        jobId: pending.jobId,
-        resumePayload,
-        workflowRow: wfInner,
-      };
-    }
     return { kind: "approved_chat", workflowRow: wfInner };
   });
 
@@ -1214,45 +1035,6 @@ export async function resolveHitlRequest(input: {
   if (outcome.kind === "rejected") {
     return { workflowRunId: row.workflowRunId, resumed: false };
   }
-  if (outcome.kind === "missing_resume_payload") {
-    throw new Error(
-      "research_team_execute resume payload missing (analyst_research_job row absent or corrupt); please re-run the analysis"
-    );
-  }
-
-  if (outcome.kind === "approved_team") {
-    const { jobId, resumePayload } = outcome;
-    if (!resumePayload) {
-      throw new Error("invariant: approved_team outcome must have resumePayload");
-    }
-    await dispatchTaskToRole({
-      workflowId: row.workflowRunId,
-      role: "orchestrator",
-      payload: {
-        taskId: randomUUID(),
-        taskType: "research_team_execute",
-        assignedRole: "orchestrator",
-        params: {
-          jobId,
-          ticker: resumePayload.ticker,
-          scope: resumePayload.scope ?? undefined,
-          context: resumePayload.context,
-          analystRoles: resumePayload.analystRoles ?? undefined,
-          analystDefinitionIds: resumePayload.analystDefinitionIds ?? undefined,
-          hitlApproval: {
-            requestId: input.requestId,
-            decision: "approved",
-            response: validatedResponse,
-          },
-          hitlInputKind: row.inputKind,
-          hitlInputSchema: row.inputSchemaJson,
-        },
-      },
-    });
-
-    return { workflowRunId: row.workflowRunId, resumed: true, runId: jobId };
-  }
-
   const wf = outcome.workflowRow;
 
   /**

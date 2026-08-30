@@ -35,7 +35,6 @@ const { runMigrations } = await import("../../db/sqlite/migrate");
 const { getDb, closeDb } = await import("../../db/sqlite/client");
 const schema = await import("../../db/sqlite/schema");
 const drizzle = await import("drizzle-orm");
-const { fuseSignals } = await import("../msa/signal-fusion");
 const { runStockScreener } = await import("../screener/stock-screener");
 const { factorService } = await import("../factor/factor-service");
 const { strategyComposer } = await import("../strategy/strategy-composer");
@@ -83,115 +82,6 @@ describe("五产线就绪度（pipeline readiness）", () => {
 
   afterAll(async () => {
     await closeDb();
-  });
-
-  test("产线 1：行情研究 — fuseSignals 落 signal_fusion_result + analyst_signal", async () => {
-    const db = await getDb();
-
-    // 准备最小 agent_definition / agent_instance（analyst_signal.persistSignals 需要 instance）。
-    const fundDefId = `def-fund-${crypto.randomUUID()}`;
-    const macroDefId = `def-macro-${crypto.randomUUID()}`;
-    await db.insert(schema.agentDefinition).values([
-      {
-        id: fundDefId,
-        role: "analyst_fundamental",
-        name: "FundAnalyst",
-        version: "v1",
-        systemPrompt: "",
-        toolsJson: [] as never,
-        mcpServersJson: [] as never,
-        skillsJson: [] as never,
-        subscriptionsJson: [] as never,
-        llmProvider: "mock",
-        maxIterations: 3,
-        sandboxPolicyId: SANDBOX_ID,
-        enabled: true,
-      },
-      {
-        id: macroDefId,
-        role: "analyst_macro",
-        name: "MacroAnalyst",
-        version: "v1",
-        systemPrompt: "",
-        toolsJson: [] as never,
-        mcpServersJson: [] as never,
-        skillsJson: [] as never,
-        subscriptionsJson: [] as never,
-        llmProvider: "mock",
-        maxIterations: 3,
-        sandboxPolicyId: SANDBOX_ID,
-        enabled: true,
-      },
-    ]);
-    const fundInstId = `inst-fund-${crypto.randomUUID()}`;
-    const macroInstId = `inst-macro-${crypto.randomUUID()}`;
-    await db.insert(schema.agentInstance).values([
-      { id: fundInstId, definitionId: fundDefId, workflowRunId, status: "stopped" },
-      { id: macroInstId, definitionId: macroDefId, workflowRunId, status: "stopped" },
-    ]);
-
-    const result = await fuseSignals({
-      workflowRunId,
-      signals: [
-        {
-          definitionId: fundDefId,
-          analystRole: "analyst_fundamental",
-          ticker: "AAPL",
-          signal: "buy",
-          confidence: 0.8,
-          reasoning: "strong earnings",
-        },
-        {
-          definitionId: macroDefId,
-          analystRole: "analyst_macro",
-          ticker: "AAPL",
-          signal: "buy",
-          confidence: 0.6,
-          reasoning: "supportive macro",
-        },
-      ],
-      persistSignals: [
-        {
-          agentInstanceId: fundInstId,
-          signal: {
-            definitionId: fundDefId,
-            analystRole: "analyst_fundamental",
-            ticker: "AAPL",
-            signal: "buy",
-            confidence: 0.8,
-            reasoning: "strong earnings",
-          },
-        },
-        {
-          agentInstanceId: macroInstId,
-          signal: {
-            definitionId: macroDefId,
-            analystRole: "analyst_macro",
-            ticker: "AAPL",
-            signal: "buy",
-            confidence: 0.6,
-            reasoning: "supportive macro",
-          },
-        },
-      ],
-    });
-
-    expect(result.fusedSignal).toBe("buy");
-    expect(result.ticker).toBe("AAPL");
-
-    // 落库断言：signal_fusion_result + analyst_signal 都按 workflowRunId 关联
-    const fusionRows = await db
-      .select()
-      .from(schema.signalFusionResult)
-      .where(drizzle.eq(schema.signalFusionResult.workflowRunId, workflowRunId));
-    expect(fusionRows.length).toBeGreaterThanOrEqual(1);
-    expect(fusionRows.some((r) => r.ticker === "AAPL")).toBe(true);
-
-    const sigRows = await db
-      .select()
-      .from(schema.analystSignal)
-      .where(drizzle.eq(schema.analystSignal.workflowRunId, workflowRunId));
-    expect(sigRows.length).toBe(2);
   });
 
   test("产线 2：股票推荐 — runStockScreener 落 screener_run + screener_candidate", async () => {

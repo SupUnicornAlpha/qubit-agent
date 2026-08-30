@@ -51,7 +51,7 @@ export function resolveScenarioKey(
     const raw = (row?.s ?? "").trim();
     if (!raw) return null;
     const aliases: Record<string, ScenarioRecipe["key"]> = {
-      analyst_debate: "research",
+      conversational_research: "research",
       stock_screening: "stock_pick",
       factor_research: "factor",
       strategy_authoring: "strategy",

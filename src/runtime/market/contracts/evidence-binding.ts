@@ -90,6 +90,21 @@ export async function resolveExecutionEvidenceBinding(
       snapshotId = thesisSnapshot;
       warnings.push("evidence_binding:snapshot_derived_from_thesis");
     }
+    if (
+      mustBind &&
+      (thesis.thesis.claims.length === 0 ||
+        thesis.thesis.claims.some((claim) => claim.evidenceRefs.length === 0) ||
+        thesis.thesis.invalidation.length === 0)
+    ) {
+      return {
+        ok: false,
+        code: "thesis_not_auditable",
+        reason:
+          "evidence_binding:thesis_not_auditable: live/gated execution requires evidence-backed claims and observable invalidation",
+        thesisId,
+        snapshotId,
+      };
+    }
   } else if (!mustBind) {
     warnings.push("evidence_binding:thesis_omitted_paper_compat");
   }

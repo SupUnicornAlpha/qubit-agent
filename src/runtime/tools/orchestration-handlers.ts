@@ -1,24 +1,22 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
-import { analystSignal, workflowRun } from "../../db/sqlite/schema";
-import type { AgentRole, AnalystSignalValue } from "../../types/entities";
+import { workflowRun } from "../../db/sqlite/schema";
+import type { AgentRole } from "../../types/entities";
 import { resolveAgentControlMode } from "../../types/loop";
 import {
   type AgentPlanSnapshot,
   type AgentPlanStepStatus,
   parseAgentPlanSnapshot,
 } from "../agent-control-mode";
-import { summarizeTeamDecision } from "../msa/analyst-team-pipeline";
-import {
-  buildParsedResearchTeamFromToolParams,
-  runResearchTeamFromOrchestrator,
-} from "../msa/research-team-execute";
-import { type RawAnalystSignal, fuseSignals } from "../msa/signal-fusion";
 import { dispatchTeamAgentTask } from "../orchestration/team-dispatch-adapter";
 import { getStepStreamPorts } from "../ports/step-stream";
-import { parseHitlApproval } from "../workflow/hitl-service";
 import { writeWorkflowPlanArtifacts } from "../workflow/plan-artifact";
 import type { BuiltinToolHandler } from "./types";
+
+/** Phase A: TradingAgents-style bulk team tools are hard-rejected (not advertised). */
+const TEAM_COMPAT_RETIRED_MSG =
+  "已退役（Phase A）。请用 assign_task / call_team_<role> / agent.invoke；" +
+  "不要再用 run_analyst_team / fuse_signals / summarize_team_decision。";
 
 /** Handlers that coordinate workflow state or a team of agents. */
 export const ORCHESTRATION_HANDLERS: Record<string, BuiltinToolHandler> = {
@@ -205,92 +203,16 @@ export const ORCHESTRATION_HANDLERS: Record<string, BuiltinToolHandler> = {
     return dispatchTeamAgentTask(ctx, role, params);
   },
 
-  run_analyst_team: async (ctx, params) => {
-    const parsed = buildParsedResearchTeamFromToolParams({
-      workflowRunId: ctx.workflowId,
-      params,
-      ...(ctx.inboundPayload !== undefined ? { inboundPayload: ctx.inboundPayload } : {}),
-    });
-    return runResearchTeamFromOrchestrator({
-      workflowRunId: ctx.workflowId,
-      runId: ctx.runId,
-      traceId: ctx.traceId,
-      parsed,
-      hitlApproval: parseHitlApproval(
-        (ctx.inboundPayload?.params as Record<string, unknown> | undefined)?.hitlApproval
-      ),
-      ensureJob: true,
-    });
+  /** Retired Phase A — still registered so persisted defs fail closed with a clear error. */
+  run_analyst_team: async () => {
+    throw new Error(`run_analyst_team: ${TEAM_COMPAT_RETIRED_MSG}`);
   },
 
-  summarize_team_decision: async (ctx, params) => {
-    const fusionSummary = String(params.fusion_summary ?? params.fusionSummary ?? "").trim();
-    const ticker = String(params.ticker ?? "").trim();
-    if (!fusionSummary || !ticker) {
-      throw new Error(
-        "summarize_team_decision: fusion_summary 与 ticker 必填（请把 run_analyst_team 返回值中的 fusionSummary 与 ticker 原样传入）"
-      );
-    }
-    const allowedSignals: ReadonlyArray<AnalystSignalValue> = ["buy", "sell", "hold"];
-    const rawSignal = String(
-      params.msa_signal ?? params.msaSignal ?? params.fused_signal ?? "hold"
-    ).toLowerCase();
-    const msaSignal = (
-      allowedSignals.includes(rawSignal as AnalystSignalValue) ? rawSignal : "hold"
-    ) as AnalystSignalValue;
-    const confidenceRaw = Number(
-      params.msa_confidence ?? params.msaConfidence ?? params.fused_confidence ?? 0.5
-    );
-    const msaConfidence = Number.isFinite(confidenceRaw)
-      ? Math.max(0, Math.min(1, confidenceRaw))
-      : 0.5;
-    const pickRoles = (key1: string, key2: string): AgentRole[] | undefined => {
-      const raw = params[key1] ?? params[key2];
-      if (!Array.isArray(raw)) return undefined;
-      return raw.filter(
-        (role): role is AgentRole => typeof role === "string" && role.length > 0
-      ) as AgentRole[];
-    };
-    const attendedRoles = pickRoles("attended_roles", "attendedRoles");
-    const missingRoles = pickRoles("missing_roles", "missingRoles");
-    return summarizeTeamDecision({
-      workflowRunId: ctx.workflowId,
-      ticker,
-      orchestratorSystemPrompt: ctx.definition.systemPrompt,
-      fusionSummary,
-      msaSignal,
-      msaConfidence,
-      ...(attendedRoles ? { attendedRoles } : {}),
-      ...(missingRoles ? { missingRoles } : {}),
-    });
+  summarize_team_decision: async () => {
+    throw new Error(`summarize_team_decision: ${TEAM_COMPAT_RETIRED_MSG}`);
   },
 
-  fuse_signals: async (ctx, params) => {
-    const db = await getDb();
-    const workflowRunId = String(params.workflowRunId ?? ctx.workflowId);
-    const ticker = String(params.ticker ?? "");
-    let signals: RawAnalystSignal[] = [];
-    if (Array.isArray(params.signals)) {
-      signals = params.signals as RawAnalystSignal[];
-    } else {
-      const rows = await db
-        .select()
-        .from(analystSignal)
-        .where(eq(analystSignal.workflowRunId, workflowRunId));
-      signals = rows.map((row) => ({
-        definitionId: row.agentInstanceId ?? row.analystRole,
-        analystRole: row.analystRole as AgentRole,
-        ticker: row.ticker,
-        signal: row.signal,
-        confidence: row.confidence,
-        reasoning: row.reasoning ?? "",
-        dataSnapshot: (row.dataSnapshotJson as Record<string, unknown>) ?? {},
-      }));
-    }
-    return fuseSignals({
-      workflowRunId,
-      signals,
-      ...(ticker ? { tickerHint: ticker } : {}),
-    });
+  fuse_signals: async () => {
+    throw new Error(`fuse_signals: ${TEAM_COMPAT_RETIRED_MSG}`);
   },
 };

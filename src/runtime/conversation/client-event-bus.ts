@@ -2,7 +2,7 @@
  * Session 级 ClientEvent 总线 + StepStream → ClientEvent 投影。
  */
 
-import type { StepStreamEvent } from "../react/state";
+import type { StepStreamEvent } from "../host/step-stream-types";
 import { type ClientEvent, makeClientEvent } from "./client-event";
 
 type StreamController = ReadableStreamDefaultController<Uint8Array>;

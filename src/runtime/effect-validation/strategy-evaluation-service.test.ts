@@ -3,10 +3,11 @@ import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
-import { eq } from "drizzle-orm";
 import * as schema from "../../db/sqlite/schema";
+import { createFinalHoldoutContract } from "../backtest/final-holdout-contract";
 import {
   assessStrategyExecutionAdmission,
   hasPassedBacktestCoreIntegrity,
@@ -24,6 +25,7 @@ async function seededDb() {
   const projectId = randomUUID();
   const strategyId = randomUUID();
   const strategyVersionId = randomUUID();
+  const backtestRunId = randomUUID();
   await db.insert(schema.workspace).values({ id: workspaceId, name: "w", owner: "test" });
   await db.insert(schema.project).values({
     id: projectId,
@@ -46,7 +48,15 @@ async function seededDb() {
     logicHash: "logic",
     paramSchemaJson: {},
   });
-  return { db, projectId, strategyVersionId };
+  await db.insert(schema.backtestRun).values({
+    id: backtestRunId,
+    strategyVersionId,
+    connectorInstanceId: "test",
+    datasetSnapshotId: "snap-validation",
+    configJson: {},
+    status: "completed",
+  });
+  return { db, projectId, strategyVersionId, backtestRunId };
 }
 
 describe("strategy live deployment admission", () => {
@@ -137,7 +147,8 @@ describe("strategy live deployment admission", () => {
   });
 
   test("requires both a validation-qualified dataset and a passed evaluation", async () => {
-    const { db, projectId, strategyVersionId } = await seededDb();
+    const { db, projectId, strategyVersionId, backtestRunId } = await seededDb();
+    const comparisonCohort = { id: "strategy_cohort_0123456789abcdef01234567" };
     const qualification = {
       useClass: "strategy_validation",
       universeHistory: "verified",
@@ -149,6 +160,7 @@ describe("strategy live deployment admission", () => {
       id: evaluationId,
       projectId,
       strategyVersionId,
+      backtestRunId,
       evalKind: "backtest",
       metricsJson: {
         datasetSnapshotId: "snap-validation",
@@ -156,6 +168,7 @@ describe("strategy live deployment admission", () => {
         antiLeakageReport: { status: "passed" },
         pitReport: { pass: true, verdict: "point_in_time_clean" },
         statisticalValidationReport: { status: "passed" },
+        comparisonCohort,
       },
       pass: false,
     });
@@ -169,16 +182,62 @@ describe("strategy live deployment admission", () => {
     const promotionBlocked = await assessStrategyExecutionAdmission(db, strategyVersionId);
     expect(promotionBlocked.code).toBe("strategy_promotion_incomplete");
 
-    for (const evalKind of ["walk_forward", "paper", "live"] as const) {
+    for (const evalKind of ["walk_forward", "live"] as const) {
       await db.insert(schema.strategyEvalRun).values({
         id: randomUUID(),
         projectId,
         strategyVersionId,
         evalKind,
-        metricsJson: {},
+        metricsJson: { comparisonCohort },
         pass: true,
       });
     }
+    await db.insert(schema.strategyEvalRun).values({
+      id: randomUUID(),
+      projectId,
+      strategyVersionId,
+      evalKind: "paper",
+      metricsJson: { comparisonCohort: { id: "strategy_cohort_abcdef0123456789abcdef01" } },
+      pass: true,
+    });
+    expect((await assessStrategyExecutionAdmission(db, strategyVersionId)).eligible).toBe(false);
+    await db.insert(schema.strategyEvalRun).values({
+      id: randomUUID(),
+      projectId,
+      strategyVersionId,
+      evalKind: "paper",
+      metricsJson: { comparisonCohort },
+      pass: true,
+    });
+    await db.insert(schema.strategyEvalRun).values({
+      id: randomUUID(),
+      projectId,
+      strategyVersionId,
+      backtestRunId,
+      evalKind: "holdout",
+      metricsJson: { contract: { fingerprint: "holdout_test" } },
+      pass: true,
+    });
+    expect((await assessStrategyExecutionAdmission(db, strategyVersionId)).eligible).toBe(false);
+    await db.insert(schema.strategyEvalRun).values({
+      id: randomUUID(),
+      projectId,
+      strategyVersionId,
+      backtestRunId,
+      evalKind: "holdout",
+      metricsJson: {
+        contract: createFinalHoldoutContract({
+          strategyVersionId,
+          datasetSnapshotId: "snap-validation",
+          trainEnd: "2026-01-31",
+          holdoutStart: "2026-02-06",
+          holdoutEnd: "2026-02-28",
+          purgeDays: 5,
+          embargoDays: 5,
+        }),
+      },
+      pass: true,
+    });
     const admitted = await assessStrategyExecutionAdmission(db, strategyVersionId);
     expect(admitted.eligible).toBe(true);
     expect(admitted.code).toBe("strategy_execution_admitted");

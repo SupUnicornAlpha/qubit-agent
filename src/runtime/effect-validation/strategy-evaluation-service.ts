@@ -1,8 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import { type DbClient, getDb } from "../../db/sqlite/client";
-import { strategy, strategyEvalRun, strategyVersion } from "../../db/sqlite/schema";
+import {
+  strategy,
+  strategyComposition,
+  strategyEvalRun,
+  strategyVersion,
+} from "../../db/sqlite/schema";
 import type { BacktestJobRecord } from "../backtest/backtest-job-service";
+import { matchesFinalHoldoutEvidence } from "../backtest/final-holdout-contract";
+import { factorService } from "../factor/factor-service";
+import {
+  buildStrategyComparisonCohort,
+  readStrategyComparisonCohortId,
+} from "./strategy-comparison-cohort";
 
 export interface StrategyGateCheck {
   key:
@@ -29,7 +40,7 @@ export interface StrategyEvaluationRecord {
   id: string;
   backtestRunId: string;
   strategyVersionId: string | null;
-  evalKind: "backtest" | "paper" | "live" | "walk_forward" | "recommendation";
+  evalKind: "backtest" | "paper" | "live" | "walk_forward" | "holdout" | "recommendation";
   qualityScore: number | null;
   pass: boolean | null;
   metrics: Record<string, unknown>;
@@ -131,6 +142,12 @@ export class StrategyEvaluationService {
     const projectId = projectRows[0]?.projectId;
     if (!projectId) return null;
 
+    const riskExposureEvidence = await readFactorRiskExposureEvidence(
+      db,
+      job.compositionId,
+      job.config.dataset.snapshotId
+    );
+
     const thresholds = DEFAULT_THRESHOLDS;
     const metrics = job.result.metrics;
     const checks: StrategyGateCheck[] = [
@@ -194,6 +211,8 @@ export class StrategyEvaluationService {
       antiLeakageReport: job.result.meta.antiLeakageReport ?? null,
       pitReport: job.result.meta.pitReport ?? null,
       statisticalValidationReport: job.result.meta.statisticalValidationReport ?? null,
+      factorRiskExposure: riskExposureEvidence,
+      comparisonCohort: buildStrategyComparisonCohort(job.config),
       checks,
       gateVersion: "strategy-gate-v4",
     };
@@ -282,6 +301,41 @@ export class StrategyEvaluationService {
   }
 }
 
+async function readFactorRiskExposureEvidence(
+  db: DbClient,
+  compositionId: string | null,
+  datasetSnapshotId: string
+): Promise<Record<string, unknown>> {
+  if (!compositionId) return { required: false, status: "not_applicable" };
+  const composition = await db
+    .select({ factorIdsJson: strategyComposition.factorIdsJson })
+    .from(strategyComposition)
+    .where(eq(strategyComposition.id, compositionId))
+    .limit(1);
+  const factorIdsJson = composition[0]?.factorIdsJson;
+  const factorIds = Array.isArray(factorIdsJson) ? factorIdsJson.map(String).filter(Boolean) : [];
+  if (!factorIds.length) return { required: false, status: "not_applicable" };
+  const results = await Promise.all(
+    factorIds.map(async (factorId) => {
+      try {
+        return {
+          factorId,
+          result: await factorService.regressRiskExposures({ factorId, datasetSnapshotId }),
+        };
+      } catch (error) {
+        return { factorId, error: error instanceof Error ? error.message : String(error) };
+      }
+    })
+  );
+  const passed = results.every(
+    (entry) =>
+      "result" in entry &&
+      entry.result.coverageStatus === "passed" &&
+      entry.result.reasons.length === 0
+  );
+  return { required: true, status: passed ? "passed" : "incomplete", results };
+}
+
 /**
  * Real-money admission is intentionally stricter than a performance report.
  * `research_only` data can remain useful for hypothesis generation and paper
@@ -354,16 +408,41 @@ export async function assessStrategyExecutionAdmission(
       datasetSnapshotId,
     };
   }
-  const missingOrFailed = ["walk_forward", "paper", "live"].filter(
-    (kind) => latestByKind.get(kind)?.pass !== true
+  const comparisonCohortId = readStrategyComparisonCohortId(metrics);
+  const passedOnBacktestCohort = (kind: "walk_forward" | "paper" | "live") =>
+    Boolean(
+      comparisonCohortId &&
+        rows.some(
+          (row) =>
+            row.evalKind === kind &&
+            row.pass === true &&
+            readStrategyComparisonCohortId(row.metricsJson) === comparisonCohortId
+        )
+    );
+  const finalHoldoutPassed = Boolean(
+    backtest.backtestRunId &&
+      rows.some(
+        (row) =>
+          row.evalKind === "holdout" &&
+          row.pass === true &&
+          row.backtestRunId === backtest.backtestRunId &&
+          matchesFinalHoldoutEvidence(row.metricsJson, {
+            strategyVersionId,
+            datasetSnapshotId,
+          })
+      )
   );
+  const missingOrFailed = [
+    ...(passedOnBacktestCohort("walk_forward") ? [] : ["walk_forward"]),
+    ...(finalHoldoutPassed ? [] : ["holdout"]),
+    ...(passedOnBacktestCohort("paper") ? [] : ["paper"]),
+    ...(passedOnBacktestCohort("live") ? [] : ["live"]),
+  ];
   if (missingOrFailed.length > 0) {
     return {
       eligible: false,
       code: "strategy_promotion_incomplete",
-      reason:
-        "live strategy additionally requires passed walk-forward, paper, and explicit human live approval; missing_or_failed=" +
-        missingOrFailed.join(","),
+      reason: `live strategy additionally requires a common frozen comparison cohort and passed walk-forward, one reserved final holdout, paper, and explicit human live approval; missing_or_failed=${missingOrFailed.join(",")}`,
       evaluationId: backtest.id,
       backtestRunId: backtest.backtestRunId,
       datasetSnapshotId,

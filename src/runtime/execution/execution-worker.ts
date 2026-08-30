@@ -11,6 +11,7 @@ import {
 import { processConditionalOrders } from "./conditional-order-service";
 import { dispatchExecutionTask } from "./execution-dispatcher";
 import { pollPendingBrokerOrders } from "./execution-dispatcher-poll";
+import { getTradingModuleStatus } from "../trader/trading-module-control";
 
 const DEFAULT_TICK_MS = 1500;
 const RETRY_DELAY_MS = 30_000;
@@ -122,6 +123,25 @@ async function processOneTask(db: DbClient, taskId: string, nowIso: string): Pro
       .where(eq(orderIntent.id, task.orderIntentId));
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    // A scoped/global pause may race with a worker that has just acquired a
+    // pending task. It is an operator decision, not a transient broker error:
+    // cancel the unsent task and never burn retry budget or revive it later.
+    if (msg === "trading_module_paused" || msg.startsWith("trading_module_paused:")) {
+      await appendEvent(db, {
+        executionTaskId: task.id,
+        eventType: "cancel",
+        payload: { reason: msg },
+      });
+      await db
+        .update(executionTask)
+        .set({ status: "cancelled", lastError: msg, updatedAt: nowIso })
+        .where(eq(executionTask.id, task.id));
+      await db
+        .update(orderIntent)
+        .set({ lifecycleStatus: "cancelled", lifecycleUpdatedAt: nowIso })
+        .where(eq(orderIntent.id, task.orderIntentId));
+      return;
+    }
     const retries = task.retryCount + 1;
     const shouldRetry = retries < task.maxRetries;
     await appendEvent(db, {
@@ -166,6 +186,7 @@ async function processOneTask(db: DbClient, taskId: string, nowIso: string): Pro
 
 export async function processExecutionTasks(db: DbClient, now = new Date()): Promise<void> {
   const nowIso = now.toISOString();
+  if (!(await getTradingModuleStatus(db)).enabled) return;
   await expireStaleRiskReviews(db, nowIso);
   await pollPendingBrokerOrders(db, nowIso);
   await processConditionalOrders(db, nowIso);

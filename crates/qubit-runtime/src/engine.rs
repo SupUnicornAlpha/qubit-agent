@@ -30,6 +30,7 @@ use crate::stall::{
     is_fail_circuit_tool, stall_fingerprint, strip_tool_from_surface, FAIL_CIRCUIT_MAX,
 };
 use crate::store::{initial_turn, new_turn_id, SharedStore};
+use crate::tool_surface::resolve_tool_surface;
 use crate::tools::{L0ToolHost, ToolHost};
 use serde_json::json;
 
@@ -47,14 +48,6 @@ const TOOL_LOOP_HARNESS: &str = r#"
 9. workspace.context.snapshot / research.thesis.write 参数不全时不要反复重试——缺字段先补齐或改用其它路径。
 10. 多维研究 / 新闻深度 / 长回测：优先 call_team_* 或 agent.invoke 拆上下文；拿到结构化回报后再写合同，不要一人刷齐专家本职探测。
 "#;
-
-/// Tools already exercised during context assembly when auto-recall / workspace
-/// snapshot run. Only stripped when `TurnContextOpts.strip_bootstrap_memory_tools`.
-const BOOTSTRAP_INJECTED_TOOLS: &[&str] = &[
-    "memory.recall",
-    "workspace.memory.search",
-    "workspace.context.snapshot",
-];
 
 fn now_ms() -> i64 {
     SystemTime::now()
@@ -415,42 +408,12 @@ impl TurnEngine {
             .await?;
         self.checkpoint(session_id, &turn, seq, None).await?;
 
-        let mut tool_names = self.tools.tool_names();
-        // Single MCP channel: advertise `mcp:<server>:<tool>` only (call_mcp still invokable if forced).
-        tool_names.retain(|n| {
-            let bare = n.strip_prefix("tool/").unwrap_or(n);
-            bare != "call_mcp"
-        });
-        if !policy_snap.tool_allowlist.is_empty() {
-            // Soft intersect: keep tools that appear on allowlist OR are L0 meta.
-            // MCP: keep `mcp:<server>:<tool>` when allowlist enables MCP.
-            let allow_mcp = policy_snap
-                .tool_allowlist
-                .iter()
-                .any(|a| a == "call_mcp" || a.starts_with("mcp:"));
-            tool_names.retain(|n| {
-                let bare = n.strip_prefix("tool/").unwrap_or(n);
-                bare == "update_plan"
-                    || bare == "agent.invoke"
-                    || (allow_mcp && bare.starts_with("mcp:"))
-                    || policy_snap
-                        .tool_allowlist
-                        .iter()
-                        .any(|a| a == bare || a == n)
-            });
-            if tool_names.is_empty() {
-                tool_names = self
-                    .tools
-                    .tool_names()
-                    .into_iter()
-                    .filter(|n| {
-                        let bare = n.strip_prefix("tool/").unwrap_or(n);
-                        bare != "call_mcp"
-                    })
-                    .collect();
-            }
-        }
-
+        let mut tool_names = resolve_tool_surface(
+            self.tools.tool_names(),
+            &spec.tools,
+            &policy_snap.tool_allowlist,
+            opts.context.strip_bootstrap_memory_tools(),
+        );
         let turn_ctx = opts.context.clone();
         let working = turn_ctx.working_memory.clone();
         let focus = WorkspaceFocus {
@@ -472,14 +435,15 @@ impl TurnEngine {
                 context: turn_ctx.clone(),
             })
             .await?;
-        if turn_ctx.strip_bootstrap_memory_tools() {
-            tool_names.retain(|n| {
-                let bare = n.strip_prefix("tool/").unwrap_or(n);
-                !BOOTSTRAP_INJECTED_TOOLS.iter().any(|t| *t == bare)
-            });
-        }
-        let rendered = envelope.rendered.clone().unwrap_or_default();
-        let mut system = if rendered.system.is_empty() {
+        // Keep the stable identity and Core harness contiguous before dynamic
+        // tool/control text. Providers can then reuse the longest prefix cache
+        // across turns even when the active tool surface changes.
+        let identity_text = envelope
+            .slots
+            .get("identity")
+            .map(|slot| slot.text.clone())
+            .unwrap_or_default();
+        let mut system = if identity_text.is_empty() {
             format!(
                 "You are agent {} ({:?}). mode={}",
                 spec.display_name,
@@ -487,9 +451,23 @@ impl TurnEngine {
                 mode.as_str()
             )
         } else {
-            rendered.system
+            identity_text
         };
-        // Policy checklist + hard tool-loop harness (Core identity may be stub without Bun prompts).
+        // Core identity may be minimal without Bun prompts. Put the stable
+        // fallback harness before dynamic policy/tool sections.
+        if !system.contains("## 工具调用收敛（Harness · 强制）") {
+            system.push_str(TOOL_LOOP_HARNESS);
+        }
+        for id in ["tools", "control"] {
+            if let Some(slot) = envelope.slots.get(id) {
+                if !slot.text.trim().is_empty() {
+                    system.push_str("\n\n");
+                    system.push_str(&slot.text);
+                }
+            }
+        }
+        // Policy checklist is dynamic by recipe and intentionally stays after
+        // the stable prefix.
         if !policy_snap.checklist_prompt.is_empty() {
             system.push_str("\n\n## Policy checklist（强制）\n");
             for line in &policy_snap.checklist_prompt {
@@ -498,12 +476,12 @@ impl TurnEngine {
                 system.push('\n');
             }
         }
-        system.push_str(TOOL_LOOP_HARNESS);
-        let user = if rendered.user.is_empty() {
-            input.text.clone()
-        } else {
-            rendered.user
-        };
+        let user = envelope
+            .rendered
+            .as_ref()
+            .map(|rendered| rendered.user.clone())
+            .filter(|text| !text.is_empty())
+            .unwrap_or_else(|| input.text.clone());
         let image_urls = input
             .attachments
             .iter()
@@ -566,6 +544,7 @@ impl TurnEngine {
             if let Some(protect) = opts.context.tool_observation_protect_chars() {
                 prune_tool_observations(&mut history, protect);
             }
+            let tool_definitions = self.tools.tool_definitions(&tool_names);
 
             let sample = match self
                 .models
@@ -574,7 +553,7 @@ impl TurnEngine {
                         system: system.clone(),
                         user: user.clone(),
                         image_urls: image_urls.clone(),
-                        tools: tool_names.clone(),
+                        tools: tool_definitions,
                         history: history.clone(),
                     },
                     cancel.child(),

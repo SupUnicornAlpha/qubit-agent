@@ -21,6 +21,7 @@ import {
 } from "../runtime/trader/trader-agent-service";
 import { cancelTraderWorkflows } from "../runtime/trader/trader-workflow";
 import {
+  cancelPendingTradingWork,
   getTradingModuleStatus,
   setTradingModuleEnabled,
 } from "../runtime/trader/trading-module-control";
@@ -30,21 +31,67 @@ import type { OrderSide, OrderType } from "../types/entities";
 export const traderRouter = new Hono();
 
 /** 总开关由后端持有，页面刷新、其它入口或 Agent 调用都会读到同一状态。 */
-traderRouter.get("/module", (c) => c.json({ ok: true, data: getTradingModuleStatus() }));
+traderRouter.get("/module", async (c) => {
+  const brokerAccountId = c.req.query("brokerAccountId")?.trim();
+  const strategyRuntimeId = c.req.query("strategyRuntimeId")?.trim();
+  return c.json({
+    ok: true,
+    data: await getTradingModuleStatus(undefined, {
+      ...(brokerAccountId ? { brokerAccountId } : {}),
+      ...(strategyRuntimeId ? { strategyRuntimeId } : {}),
+    }),
+  });
+});
 
 traderRouter.put("/module", async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { enabled?: unknown };
+  const body = (await c.req.json().catch(() => ({}))) as {
+    enabled?: unknown;
+    reason?: unknown;
+    brokerAccountId?: unknown;
+    strategyRuntimeId?: unknown;
+  };
   if (typeof body.enabled !== "boolean") {
     return c.json({ ok: false, error: "enabled must be boolean" }, 400);
   }
-  const status = setTradingModuleEnabled(body.enabled);
+  const brokerAccountId = typeof body.brokerAccountId === "string" ? body.brokerAccountId.trim() : "";
+  const strategyRuntimeId =
+    typeof body.strategyRuntimeId === "string" ? body.strategyRuntimeId.trim() : "";
+  const scope = {
+    ...(brokerAccountId ? { brokerAccountId } : {}),
+    ...(strategyRuntimeId ? { strategyRuntimeId } : {}),
+  };
+  if (brokerAccountId && strategyRuntimeId) {
+    return c.json(
+      { ok: false, error: "set one scope at a time: brokerAccountId or strategyRuntimeId" },
+      400
+    );
+  }
+  const status = await setTradingModuleEnabled(body.enabled, {
+    reason:
+      typeof body.reason === "string" && body.reason.trim()
+        ? body.reason.trim()
+        : body.enabled
+          ? "operator_resumed"
+          : "operator_paused",
+    changedBy: "trader_ui",
+    scope,
+  });
   if (status.enabled) return c.json({ ok: true, data: { ...status, stoppedRuntimeIds: [] } });
 
-  const running = await listStrategyRuntimes({ status: "running" });
+  const running = (await listStrategyRuntimes({ status: "running" })).filter(
+    (runtime) =>
+      (!brokerAccountId || runtime.brokerAccountId === brokerAccountId) &&
+      (!strategyRuntimeId || runtime.id === strategyRuntimeId)
+  );
   await Promise.all(running.map((runtime) => stopStrategyRuntime(runtime.id)));
+  const cancelledTaskIds = await cancelPendingTradingWork(undefined, undefined, scope);
   return c.json({
     ok: true,
-    data: { ...status, stoppedRuntimeIds: running.map((runtime) => runtime.id) },
+    data: {
+      ...status,
+      stoppedRuntimeIds: running.map((runtime) => runtime.id),
+      cancelledTaskIds,
+    },
   });
 });
 

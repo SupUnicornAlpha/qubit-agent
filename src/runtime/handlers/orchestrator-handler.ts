@@ -2,9 +2,9 @@
  * Orchestrator role 的专用 handler。
  *
  * P1-C 拆分：原 `role-handlers.ts` 里的 `orchestratorHandler.onMessage` 把
- * `workflow_resume / workflow_retry` / `research_team_execute` / delegate /
- * default 四种 TASK_ASSIGN 用 if 分支堆在一个 30+ 行的箭头函数里，可读性差、
- * 难以单测。这里按 task type 拆成 4 个独立函数 + 一个分发表，行为完全等价。
+ * `workflow_resume / workflow_retry` / delegate / default 四种 TASK_ASSIGN 用 if
+ * 分支堆在一个 30+ 行的箭头函数里，可读性差、难以单测。这里按 task type
+ * 拆成独立函数 + 一个分发表，且所有 Agent 执行统一交给 Rust Core。
  *
  * 设计：
  * - 每个分支函数自己负责发 TASK_RESULT（成功 / 失败）并管理 workflow status
@@ -16,37 +16,8 @@ import type { TaskAssignPayload } from "../../types/a2a";
 import type { A2AMessageEnvelope } from "../../types/a2a";
 import type { AgentRole } from "../../types/entities";
 import { getA2APool } from "../a2a/a2a-pool";
-import { runA2aReactTaskAssign } from "../a2a/a2a-react-task";
-import { completeA2ATask, markA2ATaskWorking } from "../a2a/a2a-task-service";
-import { buildTaskResult } from "../a2a/task-result";
-import { onWorkflowTerminal } from "../monitor/observability-hook";
-import {
-  failResearchTeamExecuteJob,
-  parseResearchTeamExecutePayload,
-  runTeamResearchAndPersist,
-} from "../msa/research-team-execute";
-import { resolveCoreBackend } from "../prime/core-runtime";
-import { ensureCoreSession } from "../prime/ensure-core-session";
-import { projectTeamResearchEdges } from "../prime/project-core-to-graph";
-import {
-  runOrchestratorChatViaCore,
-  runOrchestratorTaskViaCore,
-} from "../prime/run-orchestrator-via-core";
-import { parseHandoffEnvelope } from "../research-team/handoff-envelope";
-import { projectWorkflowFinalAnswer } from "../research-team/interaction-log";
+import { runOrchestratorTaskViaCore } from "../prime/run-orchestrator-via-core";
 import type { RuntimeHandlerContext, RuntimeRoleHandler } from "../types";
-import { parseHitlApproval } from "../workflow/hitl-service";
-import { setWorkflowState } from "../workflow/workflow-state-machine";
-
-async function setWorkflowStatus(
-  workflowId: string,
-  status: "completed" | "partial" | "failed" | "running" | "awaiting_approval"
-): Promise<void> {
-  await setWorkflowState(workflowId, status, { reason: "orchestrator-handler" });
-  if (status === "completed" || status === "partial" || status === "failed") {
-    onWorkflowTerminal(workflowId, status);
-  }
-}
 
 function receiverForRole(role: AgentRole, fallback: string): string {
   try {
@@ -56,256 +27,55 @@ function receiverForRole(role: AgentRole, fallback: string): string {
   }
 }
 
+/** 统一抽取 Core/历史任务结果中的面向用户正文。 */
+export function extractWorkflowFinalAnswer(finalResponse: unknown): string {
+  if (!finalResponse || typeof finalResponse !== "object" || Array.isArray(finalResponse)) {
+    return "";
+  }
+  const response = finalResponse as Record<string, unknown>;
+  const observation =
+    response.observation &&
+    typeof response.observation === "object" &&
+    !Array.isArray(response.observation)
+      ? (response.observation as Record<string, unknown>)
+      : {};
+  const pick = (value: unknown): string =>
+    typeof value === "string" && value.trim() && value.trim() !== "no tool requested"
+      ? value.trim()
+      : "";
+  return (
+    pick(response.answerText) ||
+    pick(response.summary) ||
+    pick(response.reasonText) ||
+    pick(observation.reasonText)
+  );
+}
+
 type OrchestratorTaskHandler = (
   ctx: RuntimeHandlerContext,
   msg: A2AMessageEnvelope,
   payload: TaskAssignPayload
 ) => Promise<void>;
 
-/** 兼容 ReAct finalize 的多种形态，统一抽取面向用户的自然语言终答。 */
-export function extractWorkflowFinalAnswer(finalResponse: unknown): string {
-  if (!finalResponse || typeof finalResponse !== "object" || Array.isArray(finalResponse)) {
-    return "";
-  }
-  const fr = finalResponse as Record<string, unknown>;
-  const obs =
-    fr.observation && typeof fr.observation === "object" && !Array.isArray(fr.observation)
-      ? (fr.observation as Record<string, unknown>)
-      : {};
-  const pick = (value: unknown): string =>
-    typeof value === "string" && value.trim() && value.trim() !== "no tool requested"
-      ? value.trim()
-      : "";
-  return pick(fr.answerText) || pick(fr.summary) || pick(fr.reasonText) || pick(obs.reasonText);
-}
-
-async function projectReactResult(
-  workflowId: string,
-  taskType: string,
-  result: Awaited<ReturnType<typeof runA2aReactTaskAssign>>,
-  conversationTurnId?: string
-): Promise<void> {
-  if (!result) return;
-  let answer = extractWorkflowFinalAnswer(result.finalResponse);
-  if (!answer && result.terminalStatus === "failed") {
-    const error = result.finalResponse.error;
-    const reason = result.finalResponse.reason;
-    const detail =
-      typeof error === "string" && error.trim()
-        ? error.trim()
-        : typeof reason === "string" && reason.trim()
-          ? reason.trim()
-          : "工作流执行失败，未生成可验证的最终产物。";
-    answer = `任务未能完成：${detail}`;
-  }
-  if (!answer) return;
-  const handoff = parseHandoffEnvelope(answer);
-  await projectWorkflowFinalAnswer({
-    workflowRunId: workflowId,
-    contentText: answer,
-    sourceTaskType: taskType,
-    ...(conversationTurnId ? { conversationTurnId } : {}),
-    payloadJson: {
-      terminalStatus: result.terminalStatus,
-      ...(handoff ? { handoff } : {}),
-    },
-  });
-}
-
-/**
- * workflow_resume / workflow_retry：收敛后续跑唯一走 A2A —— 让 orchestrator 自己
- * 重新跑一遍 ReAct loop（runA2aReactTaskAssign）。
- *
- * 续跑上下文来源：
- *   - 自研 snapshot：payload.params.resume=true 时 executeAgentReact 按 workflowId 取
- *     最近 agent_checkpoint_snapshot 还原运行态、从下一轮 reason 重入（进程重启 / sweep）。
- *   - HITL approve：hitlApproval / hitlPayload 通过 payload.params 自然进入 LLM 上下文，
- *     orchestrator 重跑 ReAct 自行决定下一步（不带 snapshot resume）。
- *
- * A2A 的 source of truth 是消息流（a2a_message）+ analystResearchJob.resumePayload +
- * 自研 snapshot，orchestrator 完全可以重建上下文。
- *
- * runA2aReactTaskAssign 内部已处理 awaiting_approval / failed 分支并自己发 TASK_RESULT。
- */
+/** workflow resume/retry is a Rust Core turn; there is no TS fallback. */
 const handleWorkflowResume: OrchestratorTaskHandler = async (ctx, msg, payload) => {
-  if (resolveCoreBackend() === "rust") {
-    await runOrchestratorTaskViaCore(ctx, msg, payload);
-    return;
-  }
-  try {
-    const result = await runA2aReactTaskAssign(ctx, msg);
-    await projectReactResult(msg.workflowId, payload.taskType, result);
-  } catch (err) {
-    await setWorkflowStatus(msg.workflowId, "failed");
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    await ctx.send({
-      workflowId: msg.workflowId,
-      traceId: msg.traceId,
-      receiverAgent: msg.senderAgent,
-      messageType: "TASK_RESULT",
-      payload: buildTaskResult(payload.taskId, "orchestrator", {
-        success: false,
-        result: {
-          taskType: payload.taskType,
-          error: errorMessage,
-        },
-        errorMessage,
-      }),
-      priority: msg.priority,
-    });
-  }
+  await runOrchestratorTaskViaCore(ctx, msg, payload);
 };
 
-/**
- * research_team_execute：Orchestrator 研究团队**短路**（不经 ReAct loop）。
- * 与 ReAct 内 `run_analyst_team` 工具共用 `runTeamResearchAndPersist` 真理源；
- * 差异仅在于入口（HTTP 按钮 → TASK_ASSIGN vs LLM 工具调用）。
- */
-const handleResearchTeamExecute: OrchestratorTaskHandler = async (ctx, msg, payload) => {
-  // Short-circuit MSA (not ReAct). Under rust valve we still run Bun team pipeline
-  // (slot ReAct lives in Bun until Core has team recipe), but bind Core session +
-  // project topology edges so TeamPage stays consistent.
-  await markA2ATaskWorking(payload.taskId);
-
-  const completeAndSend = async (result: ReturnType<typeof buildTaskResult>) => {
-    await completeA2ATask(payload.taskId, result);
-    await ctx.send({
-      workflowId: msg.workflowId,
-      traceId: msg.traceId,
-      receiverAgent: msg.senderAgent,
-      messageType: "TASK_RESULT",
-      payload: result,
-      priority: msg.priority,
-    });
-  };
-
-  if (resolveCoreBackend() === "rust") {
-    try {
-      await ensureCoreSession({ workflowId: msg.workflowId, interactionMode: "agent" });
-    } catch (err) {
-      console.warn(
-        "[research_team_execute] ensureCoreSession failed:",
-        err instanceof Error ? err.message : err
-      );
-    }
-  }
-
-  const parsed = parseResearchTeamExecutePayload(payload);
-  if (!parsed.ok) {
-    await failResearchTeamExecuteJob(parsed.jobId, parsed.error);
-    await setWorkflowStatus(msg.workflowId, "failed");
-    await completeAndSend(
-      buildTaskResult(payload.taskId, "orchestrator", {
-        success: false,
-        result: { taskType: "research_team_execute", error: parsed.error },
-        errorCode: "invalid_research_team_payload",
-        errorMessage: parsed.error,
-      })
-    );
-    return;
-  }
-
-  const hitlApproval = parseHitlApproval((payload.params as Record<string, unknown>).hitlApproval);
-
-  const outcome = await runTeamResearchAndPersist({
-    workflowRunId: msg.workflowId,
-    runId: msg.workflowId,
-    traceId: msg.traceId,
-    parsed: parsed.params,
-    hitlApproval,
-  });
-
-  if (outcome.kind === "completed") {
-    if (resolveCoreBackend() === "rust") {
-      await projectTeamResearchEdges({
-        workflowRunId: msg.workflowId,
-        attendedRoles: outcome.teamResult.attendedRoles,
-        ticker: outcome.teamResult.ticker,
-        fusionId: outcome.teamResult.fusionId,
-      });
-    }
-    await projectWorkflowFinalAnswer({
-      workflowRunId: msg.workflowId,
-      contentText: outcome.teamResult.report || outcome.teamResult.fusionSummary,
-      sourceTaskType: "research_team_execute",
-      payloadJson: {
-        fusionId: outcome.teamResult.fusionId,
-        fusedSignal: outcome.teamResult.fusedSignal,
-        fusedConfidence: outcome.teamResult.fusedConfidence,
-        ...(resolveCoreBackend() === "rust"
-          ? { backend: "rust", phase: "prime_team_msa_bridge" }
-          : {}),
-      },
-    });
-    await completeAndSend(
-      buildTaskResult(payload.taskId, "orchestrator", {
-        result: {
-          taskType: "research_team_execute",
-          fusionId: outcome.teamResult.fusionId,
-          fusedSignal: outcome.teamResult.fusedSignal,
-          fusedConfidence: outcome.teamResult.fusedConfidence,
-          report: outcome.teamResult.report || outcome.teamResult.fusionSummary,
-        },
-      })
-    );
-    return;
-  }
-
-  if (outcome.kind === "awaiting_approval") {
-    await completeAndSend(
-      buildTaskResult(payload.taskId, "orchestrator", {
-        status: "awaiting_approval",
-        errorCode: "awaiting_approval",
-        errorMessage: "研究团队正在等待人工审批",
-        result: { taskType: "research_team_execute" },
-      })
-    );
-    return;
-  }
-
-  await completeAndSend(
-    buildTaskResult(payload.taskId, "orchestrator", {
-      success: false,
-      result: {
-        taskType: "research_team_execute",
-        error: outcome.error.message,
-      },
-      errorMessage: outcome.error.message,
-    })
-  );
-};
-
-/**
- * orchestrator_chat：研究团队页的「对话消息」入口（非「启动团队分析」按钮）。
- * QUBIT_CORE_BACKEND=rust → Prime Core startTurn + 投影 research_team_interaction；
- * 否则仍走 TS ReAct（过渡期）。
- */
+/** All user-facing Agent work is a conversational Rust Core turn. */
 const handleOrchestratorChat: OrchestratorTaskHandler = async (ctx, msg, payload) => {
-  if (resolveCoreBackend() === "rust") {
-    await runOrchestratorChatViaCore(ctx, msg, payload);
-    return;
-  }
-  const res = await runA2aReactTaskAssign(ctx, msg);
-  const rawTurnId = (payload.params as Record<string, unknown> | undefined)?.conversationTurnId;
-  const conversationTurnId =
-    typeof rawTurnId === "string" && rawTurnId.trim() ? rawTurnId.trim() : undefined;
-  await projectReactResult(msg.workflowId, "orchestrator_chat", res, conversationTurnId);
+  await runOrchestratorTaskViaCore(ctx, msg, payload);
 };
 
 const ORCHESTRATOR_TASK_HANDLERS: Record<string, OrchestratorTaskHandler> = {
   workflow_resume: handleWorkflowResume,
   workflow_retry: handleWorkflowResume,
-  research_team_execute: handleResearchTeamExecute,
   orchestrator_chat: handleOrchestratorChat,
 };
 
 /**
  * 完整 orchestrator handler。非 TASK_ASSIGN 一律 noop；TASK_ASSIGN 按 taskType
- * 路由，未命中且 assignedRole 是其他 role 则转发，否则交给 runA2aReactTaskAssign。
- *
- * P0-A 修复留痕：历史上 "workflow_start" 在这里直接 setWorkflowStatus("completed")
- * + 发假 TASK_RESULT 退出，相当于 A2A 路径下 orchestrator 根本不跑推理。现在
- * 所有未在 ORCHESTRATOR_TASK_HANDLERS 中的 taskType 都会落到 runA2aReactTaskAssign。
+ * 路由，未命中且 assignedRole 是其他 role 则转发，否则交给 Rust Core。
  */
 export function createOrchestratorHandler(): RuntimeRoleHandler {
   return {
@@ -338,12 +108,7 @@ export function createOrchestratorHandler(): RuntimeRoleHandler {
         return;
       }
 
-      const result = await (resolveCoreBackend() === "rust"
-        ? runOrchestratorTaskViaCore(ctx, msg, payload)
-        : runA2aReactTaskAssign(ctx, msg));
-      if (resolveCoreBackend() !== "rust") {
-        await projectReactResult(msg.workflowId, payload.taskType, result);
-      }
+      await runOrchestratorTaskViaCore(ctx, msg, payload);
     },
     onShutdown: async () => {
       console.log("[RoleHandler:orchestrator] shutdown");

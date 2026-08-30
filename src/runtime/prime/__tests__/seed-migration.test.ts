@@ -44,6 +44,9 @@ describe("prime seed → AgentSpec migration", () => {
     const orch = specs.find((s) => s.id === "def-orchestrator")!;
     expect(orch.execution_kind).toBe("primary");
     expect(orch.labels).toContain("orchestrator");
+    expect(orch.tools).toEqual(
+      SEED_AGENT_DEFINITIONS.find((def) => def.id === "def-orchestrator")?.tools
+    );
 
     const news = toPrimeAgentSpec(SEED_AGENT_DEFINITIONS.find((d) => d.id === "def-news-event")!);
     expect(news.execution_kind).toBe("subagent");

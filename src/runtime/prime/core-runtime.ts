@@ -1,7 +1,8 @@
 /**
- * Process-level Core backend valve (01 §11.4 / O13).
- * QUBIT_CORE_BACKEND=ts|rust|auto (default auto → attach at boot).
+ * Process-level Core backend valve (01 §11.4 / O13 / Phase A).
+ * QUBIT_CORE_BACKEND=ts|rust|auto (default rust at attach; config default rust).
  * After attach, env is rewritten to ts|rust only.
+ * `ts` is emergency-only — TsCoreStub is not a working Core.
  */
 
 import { RustCoreClient } from "./rust-core-client";
@@ -24,19 +25,23 @@ export function rustCoreBaseUrl(): string {
 }
 
 /**
- * TS Core stub — keeps valve compilable when backend=ts.
- * Full executeAgentReact wrapping is transitional; use rust for Prime path.
+ * TS Core stub — valve placeholder when `QUBIT_CORE_BACKEND=ts` (emergency only).
+ * Not a working Core: no sessions/turns. Production must use rust.
  */
 class TsCoreStub implements CoreRuntime {
   async health() {
     return {
-      status: "ok",
+      status: "degraded",
       uptime_ms: 0,
       active_turns: 0,
       registered_turns: 0,
       hitl_waiting: 0,
       core_backend: "ts",
-      degraded_reasons: ["ts_core_stub_not_wired_to_executeAgentReact"],
+      degraded_reasons: [
+        "ts_core_stub_not_a_core",
+        "emergency_backend_only",
+        "use_QUBIT_CORE_BACKEND=rust",
+      ],
     };
   }
   async listAgents() {
@@ -46,7 +51,9 @@ class TsCoreStub implements CoreRuntime {
     /* no-op stub */
   }
   async createSession(): Promise<never> {
-    throw new Error("TsCoreRuntime stub: set QUBIT_CORE_BACKEND=rust to use Prime Core");
+    throw new Error(
+      "TsCoreRuntime stub is not a Core (Phase A). Set QUBIT_CORE_BACKEND=rust and start qubit-app-server."
+    );
   }
   async getSession(): Promise<never> {
     throw new Error("TsCoreRuntime stub");

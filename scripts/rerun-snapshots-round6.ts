@@ -168,7 +168,7 @@ function renderSummary(results: Result[]): string {
   lines.push(`- 评测时间：${new Date().toISOString()}`);
   lines.push(`- 报告目录：\`${OUTPUT_DIR}\``);
   lines.push(
-    "- 入口：`POST /api/v1/workflows` (skipDispatch=true) → `POST /api/v1/analyst/run` (带 agentGroupId / ticker / scope)"
+    "- 入口：创建 chat session → `POST /api/v1/chat/sessions/:sessionId/turns`（对话携带场景上下文）"
   );
   lines.push("- 与 Round 5 区别：Round 5 走单 Agent 裸跑；Round 6 走 UI 同款多 Agent 团队");
   lines.push("");

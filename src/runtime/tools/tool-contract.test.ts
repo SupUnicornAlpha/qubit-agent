@@ -80,6 +80,15 @@ describe("ToolContract registry (market P0)", () => {
     });
   });
 
+  test("research.framework.assess normalizes camelCase thesis id", () => {
+    const contract = getToolContract("research.framework.assess")!;
+    expect(applyToolContract(contract, { thesisId: "thesis_abc", candidates: [] })).toMatchObject({
+      thesis_id: "thesis_abc",
+      candidates: [],
+    });
+    expect(contract.requiredAfterNormalize).toEqual(["thesis_id", "candidates"]);
+  });
+
   test("backtest.run normalizes composition and snapshot aliases", () => {
     const contract = getToolContract("backtest.run")!;
     expect(
@@ -118,6 +127,24 @@ describe("ToolContract registry (market P0)", () => {
     ).toMatchObject({
       factor_ids: ["f1"],
       dataset_snapshot_id: "snap-1",
+    });
+  });
+
+  test("factor correlation diagnostics requires frozen evidence and normalizes aliases", () => {
+    const contract = getToolContract("factor.correlation.diagnose")!;
+    expect(() => applyToolContract(contract, { factorIds: ["factor-a", "factor-b"] })).toThrow(
+      /dataset_snapshot_id/
+    );
+    expect(
+      applyToolContract(contract, {
+        factorIds: ["factor-a", "factor-b"],
+        snapshotId: "snapshot-frozen",
+        maxAbsCorrelation: 0.65,
+      })
+    ).toMatchObject({
+      factor_ids: ["factor-a", "factor-b"],
+      dataset_snapshot_id: "snapshot-frozen",
+      max_abs_correlation: 0.65,
     });
   });
 });

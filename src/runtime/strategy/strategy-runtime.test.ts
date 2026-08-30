@@ -7,6 +7,7 @@ import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import * as schema from "../../db/sqlite/schema";
+import { createFinalHoldoutContract } from "../backtest/final-holdout-contract";
 import { paperEvaluationService } from "../effect-validation/paper-evaluation-service";
 import { strategyPromotionService } from "../effect-validation/strategy-promotion-service";
 import { processExecutionTasks } from "../execution/execution-worker";
@@ -190,6 +191,17 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
     await expect(startStrategyRuntime(runtime.id, db)).rejects.toThrow(
       /live_promotion_gate_blocked/
     );
+    const comparisonCohort = { id: "strategy_cohort_0123456789abcdef01234567" };
+    const backtestRunId = randomUUID();
+    const datasetSnapshotId = "snapshot_validation_fixture";
+    await db.insert(schema.backtestRun).values({
+      id: backtestRunId,
+      strategyVersionId: paper.strategyVersionId,
+      connectorInstanceId: "test",
+      datasetSnapshotId,
+      configJson: {},
+      status: "completed",
+    });
     for (const evalKind of ["backtest", "walk_forward"] as const) {
       await db.insert(schema.strategyEvalRun).values({
         id: randomUUID(),
@@ -197,6 +209,7 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
         projectId: pid,
         strategyVersionId: paper.strategyVersionId,
         evalKind,
+        ...(evalKind === "backtest" ? { backtestRunId } : {}),
         metricsJson:
           evalKind === "backtest"
             ? {
@@ -209,11 +222,45 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
                 antiLeakageReport: { status: "passed" },
                 pitReport: { pass: true, verdict: "point_in_time_clean" },
                 statisticalValidationReport: { status: "passed" },
+                datasetSnapshotId,
+                comparisonCohort,
               }
-            : {},
+            : { comparisonCohort },
         pass: true,
       });
     }
+    await db.insert(schema.strategyEvalRun).values({
+      id: randomUUID(),
+      workflowRunId: wrid,
+      projectId: pid,
+      strategyVersionId: paper.strategyVersionId,
+      evalKind: "paper",
+      metricsJson: { comparisonCohort },
+      pass: true,
+    });
+    await expect(strategyPromotionService.approveRuntime(runtime.id, "tester", db)).rejects.toThrow(
+      "finalHoldout"
+    );
+    await db.insert(schema.strategyEvalRun).values({
+      id: randomUUID(),
+      workflowRunId: wrid,
+      projectId: pid,
+      strategyVersionId: paper.strategyVersionId,
+      backtestRunId,
+      evalKind: "holdout",
+      metricsJson: {
+        contract: createFinalHoldoutContract({
+          strategyVersionId: paper.strategyVersionId,
+          datasetSnapshotId,
+          trainEnd: "2026-01-31",
+          holdoutStart: "2026-02-06",
+          holdoutEnd: "2026-02-28",
+          purgeDays: 5,
+          embargoDays: 5,
+        }),
+      },
+      pass: true,
+    });
     const approved = await strategyPromotionService.approveRuntime(runtime.id, "tester", db);
     expect(approved.liveEligible).toBe(true);
     await startStrategyRuntime(runtime.id, db);
@@ -241,10 +288,12 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
 
     expect(created.riskOutcome).toBe("allow");
     await processExecutionTasks(db);
+    const executionTaskId = created.executionTaskId;
+    if (!executionTaskId) throw new Error("test expected execution task");
     const tasks = await db
       .select()
       .from(schema.executionTask)
-      .where(eq(schema.executionTask.id, created.executionTaskId!));
+      .where(eq(schema.executionTask.id, executionTaskId));
     expect(tasks[0]?.status).toBe("filled");
 
     await stopStrategyRuntime(runtime.id, db);

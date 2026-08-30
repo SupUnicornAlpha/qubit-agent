@@ -140,6 +140,32 @@ export interface FactorEvalResult {
   groupReturns: number[];
   sampleSize: number;
   latencyMs: number;
+  /** Auditable inference over the daily cross-sectional IC time series. */
+  statisticalReport?: {
+    version: "factor-statistical-validation-v1";
+    dailyObservations: number;
+    hacLag: number;
+    ic: {
+      mean: number;
+      neweyWestStdError: number | null;
+      tStatistic: number | null;
+      pValue: number | null;
+      positiveRate: number;
+    };
+    rankIc: {
+      mean: number;
+      neweyWestStdError: number | null;
+      tStatistic: number | null;
+      pValue: number | null;
+      positiveRate: number;
+    };
+    status: "passed" | "research_only";
+    checks: Array<{
+      key: "minimum_daily_observations" | "ic_significance" | "rank_ic_significance";
+      state: "pass" | "unknown" | "fail";
+      evidence: string;
+    }>;
+  };
   error?: string;
 }
 
@@ -321,6 +347,19 @@ export interface BacktestDataset {
     timezone?: string;
     /** symbol → YYYY-MM-DD → explicit exchange session state from the frozen snapshot. */
     sessionsBySymbol?: Record<string, Record<string, "open" | "closed">>;
+    /** symbol → session date → explicitly frozen intraday open/close windows. */
+    sessionWindowsBySymbol?: Record<
+      string,
+      Record<string, Array<{ openAt: string; closeAt: string; label?: string }>>
+    >;
+  };
+  /** Immutable provenance for the IV and risk-free-rate inputs used by option risk audit. */
+  derivativePricing?: {
+    version: string;
+    source: string;
+    asOf: string;
+    impliedVolatilityMethod: "market_quote" | "surface_interpolated";
+    riskFreeRateMethod: "explicit_term_rate" | "zero_curve_interpolated";
   };
   /** Corporate actions projected from the frozen ledger for PIT audit. */
   corporateActionEvents?: Array<{
@@ -447,6 +486,9 @@ export interface BacktestResult {
     latencyMs: number;
     sampleSize: number;
     barCount: number;
+    /** Frequency-aware annualization denominator used for return/volatility metrics. */
+    periodsPerYear?: number;
+    executionTimeframe?: string;
     /** 因子值缺失的天数（横截面无可用 symbol） */
     skippedDays: number;
     datasetQualification?: BacktestDataset["qualification"];

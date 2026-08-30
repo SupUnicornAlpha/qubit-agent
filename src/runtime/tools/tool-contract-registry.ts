@@ -115,6 +115,27 @@ const MARKET_CONTRACTS: ToolContract[] = [
     lifecycle: "active",
   },
   {
+    name: "factor.correlation.diagnose",
+    kind: "builtin",
+    category: "research",
+    arity: "either",
+    requiredAfterNormalize: ["factor_ids", "dataset_snapshot_id"],
+    normalize: (raw) => ({
+      factor_ids: raw.factor_ids ?? raw.factorIds ?? (raw.factor_id ? [raw.factor_id] : undefined),
+      dataset_snapshot_id:
+        raw.dataset_snapshot_id ?? raw.datasetSnapshotId ?? raw.snapshot_id ?? raw.snapshotId,
+      max_abs_correlation: raw.max_abs_correlation ?? raw.maxAbsCorrelation,
+      minimum_observations: raw.minimum_observations ?? raw.minimumObservations,
+    }),
+    errorCodes: {
+      factor_not_found: "permanent",
+      factor_values_missing: "permanent",
+    },
+    timeoutClass: "market",
+    sideEffects: "none",
+    lifecycle: "active",
+  },
+  {
     name: "factor.promote_backtest",
     kind: "builtin",
     category: "backtest",
@@ -139,6 +160,50 @@ const MARKET_CONTRACTS: ToolContract[] = [
       missing_factor_ids: "permanent",
     },
     timeoutClass: "market",
+    sideEffects: "write",
+    lifecycle: "active",
+  },
+  {
+    name: "factor.set_research_contract",
+    kind: "builtin",
+    category: "research",
+    arity: "one",
+    requiredAfterNormalize: ["factor_id", "research_contract"],
+    normalize: (raw) => ({
+      ...raw,
+      factor_id:
+        raw.factor_id ??
+        raw.factorId ??
+        (Array.isArray(raw.factor_ids) ? raw.factor_ids[0] : undefined),
+      research_contract: raw.research_contract ?? raw.researchContract ?? raw.contract,
+    }),
+    errorCodes: {
+      factor_not_found: "permanent",
+      factor_research_contract_invalid: "permanent",
+      factor_research_contract_expression_mismatch: "permanent",
+    },
+    timeoutClass: "light",
+    sideEffects: "write",
+    lifecycle: "active",
+  },
+  {
+    name: "factor.activate",
+    kind: "builtin",
+    category: "research",
+    arity: "one",
+    requiredAfterNormalize: ["factor_id"],
+    normalize: (raw) => ({
+      ...raw,
+      factor_id:
+        raw.factor_id ??
+        raw.factorId ??
+        (Array.isArray(raw.factor_ids) ? raw.factor_ids[0] : undefined),
+    }),
+    errorCodes: {
+      factor_not_found: "permanent",
+      factor_research_admission_failed: "permanent",
+    },
+    timeoutClass: "light",
     sideEffects: "write",
     lifecycle: "active",
   },
@@ -183,8 +248,7 @@ const MARKET_CONTRACTS: ToolContract[] = [
       folds: raw.folds ?? raw.fold_count ?? raw.foldCount,
       purge_days: raw.purge_days ?? raw.purgeDays,
       embargo_days: raw.embargo_days ?? raw.embargoDays,
-      selection_candidates:
-        raw.selection_candidates ?? raw.selectionCandidates ?? raw.candidates,
+      selection_candidates: raw.selection_candidates ?? raw.selectionCandidates ?? raw.candidates,
       selection_objective: raw.selection_objective ?? raw.selectionObjective ?? raw.objective,
     }),
     errorCodes: {
@@ -197,6 +261,42 @@ const MARKET_CONTRACTS: ToolContract[] = [
       walk_forward_purge_days_invalid: "permanent",
       walk_forward_embargo_days_invalid: "permanent",
       walk_forward_isolation_gap_exceeds_train_window: "permanent",
+    },
+    timeoutClass: "market",
+    sideEffects: "write",
+    lifecycle: "active",
+  },
+  {
+    name: "backtest.final_holdout",
+    kind: "builtin",
+    category: "backtest",
+    arity: "one",
+    requiredAfterNormalize: ["backtest_run_id", "train_end", "holdout_start", "holdout_end"],
+    normalize: (raw) => ({
+      ...raw,
+      backtest_run_id: raw.backtest_run_id ?? raw.backtestRunId ?? raw.job_id ?? raw.jobId,
+      train_end: raw.train_end ?? raw.trainEnd,
+      holdout_start: raw.holdout_start ?? raw.holdoutStart,
+      holdout_end: raw.holdout_end ?? raw.holdoutEnd,
+      purge_days: raw.purge_days ?? raw.purgeDays,
+      embargo_days: raw.embargo_days ?? raw.embargoDays,
+    }),
+    errorCodes: {
+      missing_backtest_run_id: "permanent",
+      final_holdout_requires_completed_backtest: "permanent",
+      final_holdout_train_end_must_match_source_backtest_end: "permanent",
+      final_holdout_date_invalid: "permanent",
+      final_holdout_dataset_snapshot_mismatch: "permanent",
+      dataset_snapshot_not_found: "permanent",
+      dataset_snapshot_invalid: "permanent",
+      dataset_snapshot_window_mismatch: "permanent",
+      dataset_snapshot_coverage_missing: "permanent",
+      final_holdout_dates_not_strictly_after_training: "permanent",
+      final_holdout_purge_embargo_required: "permanent",
+      final_holdout_purge_days_invalid: "permanent",
+      final_holdout_embargo_days_invalid: "permanent",
+      final_holdout_already_evaluated: "permanent",
+      final_holdout_window_already_reserved: "permanent",
     },
     timeoutClass: "market",
     sideEffects: "write",
@@ -397,6 +497,26 @@ const MARKET_CONTRACTS: ToolContract[] = [
     },
     timeoutClass: "light",
     sideEffects: "write",
+    lifecycle: "active",
+  },
+  {
+    name: "research.framework.assess",
+    kind: "builtin",
+    category: "research",
+    arity: "many",
+    normalize: (raw) => ({
+      ...raw,
+      thesis_id: raw.thesis_id ?? raw.thesisId,
+      candidates: raw.candidates,
+    }),
+    requiredAfterNormalize: ["thesis_id", "candidates"],
+    errorCodes: {
+      missing_thesis_id: "permanent",
+      thesis_framework_card_missing: "permanent",
+      missing_candidates: "permanent",
+    },
+    timeoutClass: "light",
+    sideEffects: "none",
     lifecycle: "active",
   },
   {

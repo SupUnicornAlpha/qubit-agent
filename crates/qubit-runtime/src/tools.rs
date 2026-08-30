@@ -4,6 +4,7 @@ use qubit_protocol::{
     EffectRecord, GoalStatus, InteractionMode, InvocationBudget, InvocationId, InvocationRequest,
     PlanStepStatus, SessionId, ToolCallId, ToolResult, TurnId,
 };
+use qubit_tool_host::ToolDefinition;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -388,6 +389,15 @@ pub trait ToolHost: Send + Sync {
     /// Tool names advertised to the model for this turn.
     fn tool_names(&self) -> Vec<String> {
         vec![]
+    }
+
+    /// Definitions are supplied by the registry/host and requested only for
+    /// the already-resolved turn surface.
+    fn tool_definitions(&self, names: &[String]) -> Vec<ToolDefinition> {
+        names
+            .iter()
+            .map(|name| ToolDefinition::generic(name.clone()))
+            .collect()
     }
 
     /// Bind workspace/session so bridge invokes can correlate Bun UI streams.
@@ -794,6 +804,7 @@ mod tests {
                 system_prompt: None,
                 default_recipe_id: None,
                 tool_surface_ref: "t".into(),
+                tools: vec![],
                 model_ref: None,
                 max_iterations: 5,
                 hitl_profile_ref: None,
@@ -811,6 +822,7 @@ mod tests {
                 system_prompt: None,
                 default_recipe_id: None,
                 tool_surface_ref: "t".into(),
+                tools: vec![],
                 model_ref: None,
                 max_iterations: 5,
                 hitl_profile_ref: None,

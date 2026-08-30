@@ -806,6 +806,41 @@
       "when": 1815868800000,
       "tag": "0115_experience_visibility_workspace_shared",
       "breakpoints": true
+    },
+    {
+      "idx": 115,
+      "version": "7",
+      "when": 1815955200000,
+      "tag": "0116_factor_evaluation_statistical_report",
+      "breakpoints": true
+    },
+    {
+      "idx": 116,
+      "version": "7",
+      "when": 1816041600000,
+      "tag": "0117_persistent_trading_module_control",
+      "breakpoints": true
+    },
+    {
+      "idx": 117,
+      "version": "7",
+      "when": 1816128000000,
+      "tag": "0118_strategy_candidate_review",
+      "breakpoints": true
+    },
+    {
+      "idx": 118,
+      "version": "7",
+      "when": 1816214400000,
+      "tag": "0119_final_holdout_eval_kind",
+      "breakpoints": true
+    },
+    {
+      "idx": 119,
+      "version": "7",
+      "when": 1816300800000,
+      "tag": "0120_recommendation_outcome_market_evidence",
+      "breakpoints": true
     }
   ]
 }

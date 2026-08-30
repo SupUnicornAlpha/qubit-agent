@@ -41,7 +41,10 @@ function equity(count: number, dailyReturn: number) {
   let value = 100_000;
   return Array.from({ length: count }, (_, index) => {
     if (index > 0) value *= 1 + dailyReturn + (index % 5 === 0 ? -0.0002 : 0.0001);
-    return { date: `2025-${String(Math.floor(index / 28) + 1).padStart(2, "0")}-${String((index % 28) + 1).padStart(2, "0")}`, equity: value };
+    return {
+      date: `2025-${String(Math.floor(index / 28) + 1).padStart(2, "0")}-${String((index % 28) + 1).padStart(2, "0")}`,
+      equity: value,
+    };
   });
 }
 
@@ -49,7 +52,9 @@ describe("statistical validation report", () => {
   test("undeclared trial count remains research-only", () => {
     const report = buildStatisticalValidationReport(request(), equity(100, 0.001));
     expect(report.status).toBe("research_only");
-    expect(report.checks.find((item) => item.key === "trial_count_declared")?.state).toBe("unknown");
+    expect(report.checks.find((item) => item.key === "trial_count_declared")?.state).toBe(
+      "unknown"
+    );
   });
 
   test("positive long sample passes adjusted bootstrap confidence", () => {
@@ -76,6 +81,17 @@ describe("statistical validation report", () => {
       simulations: 200,
     });
     expect(second).toEqual(first);
+  });
+
+  test("uses the declared execution frequency instead of silently annualizing intraday returns as daily", () => {
+    const curve = equity(100, 0.0005);
+    const daily = buildStatisticalValidationReport(request(1), curve, { periodsPerYear: 252 });
+    const intraday = buildStatisticalValidationReport(request(1), curve, {
+      periodsPerYear: 19_656,
+    });
+    expect(daily.periodsPerYear).toBe(252);
+    expect(intraday.periodsPerYear).toBe(19_656);
+    expect(intraday.observedSharpe / daily.observedSharpe).toBeCloseTo(Math.sqrt(19_656 / 252), 4);
   });
 
   test("multiple trials without their Sharpe distribution remain research-only", () => {

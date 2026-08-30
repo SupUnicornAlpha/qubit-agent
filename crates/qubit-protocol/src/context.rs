@@ -294,9 +294,14 @@ pub struct ContextHandoffV1 {
 pub fn default_slot_budgets() -> BTreeMap<String, ContextSlotBudget> {
     let mut m = BTreeMap::new();
     let entries = [
-        ("identity", 8_000, CompressMode::Truncate, 100u32),
+        // Agent identity prompts contain executable rules. Give them enough
+        // room for the current role contracts, then use section-aware
+        // selection in Core instead of cutting through a rule.
+        ("identity", 16_000, CompressMode::Truncate, 100u32),
         ("tools", 6_000, CompressMode::Truncate, 95),
-        ("goal", 2_000, CompressMode::Truncate, 90),
+        // The current task is authoritative; it must not compete with
+        // low-priority recall/history for a tiny slot.
+        ("goal", 6_000, CompressMode::Truncate, 90),
         ("slot", 6_000, CompressMode::Truncate, 85),
         ("recall_finance", 4_000, CompressMode::Truncate, 80),
         ("recall_skill", 3_500, CompressMode::Truncate, 75),

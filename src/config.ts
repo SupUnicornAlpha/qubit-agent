@@ -14,11 +14,12 @@ const ConfigSchema = z.object({
    */
   agentExecutionPath: z.enum(["graph", "a2a"]).default("a2a"),
   /**
-   * Prime Core backend valve (01 §11.4):
-   * - rust: default — Bun spawns qubit-app-server then attaches; never falls back to ts
-   *   (process exits if Core unhealthy). Escape: QUBIT_CORE_STRICT=0 or QUBIT_CORE_BACKEND=ts.
-   * - auto: probe only; use rust if healthy else ts
-   * - ts: legacy Bun ReAct
+   * Prime Core backend valve (01 §11.4 / Phase A):
+   * - rust: **production default** — Bun spawns qubit-app-server then attaches;
+   *   unhealthy Core → process exit (no silent TS fallback).
+   * - auto: probe only; use rust if healthy else ts (dev attach only).
+   * - ts: **emergency only** — legacy Bun ReAct; not a supported production path.
+   *   Prefer fixing Core over setting this. QUBIT_ALLOW_TS_REACT_UNDER_RUST is gone.
    */
   coreBackend: z.enum(["ts", "rust", "auto"]).default("rust"),
   rustCoreUrl: z.string().default("http://127.0.0.1:8787"),

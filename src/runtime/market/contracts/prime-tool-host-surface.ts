@@ -28,11 +28,12 @@ export const PRIME_HOST_CONTRACT_TOOLS = [
   "strategy.sim_deploy",
   "backtest.run",
   "backtest.walk_forward",
+  "backtest.final_holdout",
   "evaluate_risk",
   "rule.register",
 ] as const;
 
-/** Team-compat bulk tools — OUT of Prime single-agent surface (A2A old bridge only). */
+/** Team-compat bulk tools — Phase A retired (handlers hard-reject; strip from Orchestrator tools). */
 export const ORCHESTRATOR_TEAM_COMPAT_TOOLS = [
   "run_analyst_team",
   "summarize_team_decision",

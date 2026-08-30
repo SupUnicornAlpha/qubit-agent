@@ -105,7 +105,7 @@ async function main() {
   // Block silent TS ReAct fallback when debugging / defaulting to Rust Core.
   if (attachMode === "rust" && (!attach.healthy || attach.activeBackend !== "rust")) {
     console.error(
-      `[QUBIT] FATAL: QUBIT_CORE_BACKEND=rust but Core is not healthy (active=${attach.activeBackend}, reason=${attach.reason}). Refusing to fall back to TS. Build/start qubit-app-server or set QUBIT_CORE_BACKEND=ts / QUBIT_CORE_STRICT=0 explicitly.`
+      `[QUBIT] FATAL: QUBIT_CORE_BACKEND=rust but Core is not healthy (active=${attach.activeBackend}, reason=${attach.reason}). Refusing to fall back to TS. Build/start qubit-app-server. Emergency only: QUBIT_CORE_BACKEND=ts (legacy Bun ReAct; unsupported for production).`
     );
     process.exit(1);
   }

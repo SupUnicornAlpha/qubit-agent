@@ -1,6 +1,6 @@
 import type { CSSProperties, FC } from "react";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { getAnalystTeamGraph } from "../../api/backend";
+import { getResearchWorkflowGraph } from "../../api/backend";
 import type { AnalystTeamGraphInteraction } from "../../api/types";
 import { useTranslation } from "../../i18n";
 import { splitToolCallSegments } from "../../lib/toolCallSegments";
@@ -33,7 +33,7 @@ export interface ResearchExploreFallbackBlockProps {
  *
  * 数据来源：
  *   `research_team_interaction.payload_json.phase === "research_explore_fallback"`
- *   通过 `getAnalystTeamGraph(workflowRunId)` 一次性拉取整个 workflow 的交互流，
+ *   通过 `getResearchWorkflowGraph(workflowRunId)` 一次性拉取整个 workflow 的交互流，
  *   前端再 filter。比单独建一个 API 端点便宜。
  *
  * 显示规则：
@@ -64,7 +64,7 @@ export const ResearchExploreFallbackBlock: FC<ResearchExploreFallbackBlockProps>
     setLoading(true);
     setError(null);
     try {
-      const graph = await getAnalystTeamGraph(workflowRunId);
+      const graph = await getResearchWorkflowGraph(workflowRunId);
       const rows = (graph?.interactions ?? []).filter((row) => {
         const payload = row.payloadJson;
         if (!payload || typeof payload !== "object") return false;

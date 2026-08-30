@@ -134,332 +134,15 @@ fn normalize_openai_base_url(raw: &str) -> String {
     s
 }
 
-fn tool_description(name: &str) -> String {
-    let bare = name.strip_prefix("tool/").unwrap_or(name);
-    match bare {
-        "update_plan" => "Update the structured execution plan (steps/status).".into(),
-        "agent.invoke" => "Invoke an isolated specialist subagent (callee_spec_id + goal) for context-split research; returns structured handoff.".into(),
-        "assign_task" => "Assign a specialist task by role/goal (fallback when call_team_* is unavailable).".into(),
-        "call_mcp" => "Call an MCP tool via {serverName, toolName, arguments?}.".into(),
-        n if n.starts_with("call_team_") => {
-            format!("Dispatch specialist via A2A ({n}). Prefer for context-split research; args: {{goal}}.")
-        }
-        "market.resolve_symbol" => "Resolve a ticker/symbol to a canonical market id.".into(),
-        "market.readiness" => "Check market data source readiness.".into(),
-        "market.data_sources" => "List configured market data sources.".into(),
-        "market.snapshot.get" => "Fetch an immutable market snapshot (returns snapshotId). For validation-grade historical backtests, include versioned universe_history membership intervals and a corporate_action_ledger with per-symbol action arrays; fundamental/valuation/estimate factors must additionally carry a versioned fundamental_ledger with each observation's fiscalPeriodEnd and availableAt. Otherwise results remain research-only.".into(),
-        "factor.register" => "Register a factor before computing it. Required: name + expr; returns factor id.".into(),
-        "factor.compute" => "Compute values for an existing factor. Required: factor_id returned by factor.register + symbols[].".into(),
-        "factor.autoEvaluate" => "Evaluate a computed factor across at least three symbols; call factor.compute first.".into(),
-        "strategy.create_version" => "Create a strategy version before composing or backtesting; returns strategy_version_id.".into(),
-        "strategy.compose" => "Attach factors/rules to an existing strategy. Required: strategy_version_id; call before backtest.run.".into(),
-        "backtest.run" => "Run an event-driven backtest. Required: strategy_version_id and symbols[]; compose first or provide signals.".into(),
-        "backtest.walk_forward" => "Validate a completed backtest with expanding walk-forward folds. Optional candidates are selected on each training window and frozen before its test window.".into(),
-        n if n.starts_with("mcp:mathjs:") => {
-            "Evaluate ONE math expression. Prefer a single call; do not spam.".into()
-        }
-        n if n.starts_with("mcp:investor-agent:") => {
-            format!("Investor-agent MCP tool `{n}`. Cap repeats; prefer synthesizing evidence.")
-        }
-        n if n.starts_with("mcp:") => format!("MCP tool `{n}`."),
-        n => format!("tool {n}"),
-    }
-}
-
-fn tool_parameters_schema(name: &str) -> Value {
-    let bare = name.strip_prefix("tool/").unwrap_or(name);
-    if bare == "call_mcp" {
-        return json!({
-            "type": "object",
-            "properties": {
-                "serverName": { "type": "string" },
-                "toolName": { "type": "string" },
-                "mcpTool": { "type": "string" },
-                "arguments": { "type": "object" }
-            },
-            "required": ["serverName"]
-        });
-    }
-    if bare == "agent.invoke" {
-        return json!({
-            "type": "object",
-            "properties": {
-                "callee_spec_id": {
-                    "type": "string",
-                    "description": "Target agent id or role label, e.g. def-news-event / news_event / 新闻事件"
-                },
-                "agent_ref": { "type": "string", "description": "Alias of callee_spec_id" },
-                "role": { "type": "string", "description": "Alias of callee_spec_id (role/label)" },
-                "goal": { "type": "string", "description": "Task for the subagent" },
-                "task": { "type": "string", "description": "Alias of goal" },
-                "handoff": { "type": "object" }
-            },
-            "required": ["goal", "callee_spec_id"]
-        });
-    }
-    if bare == "update_plan" {
-        return json!({
-            "type": "object",
-            "properties": {
-                "mode": { "type": "string", "description": "agent|plan|goal|ask|diagnose" },
-                "goal": {
-                    "type": "object",
-                    "properties": {
-                        "text": { "type": "string" },
-                        "status": { "type": "string" },
-                        "success_criteria": { "type": "array", "items": { "type": "string" } }
-                    }
-                },
-                "steps": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "id": { "type": "string", "description": "Optional; auto s1/s2… if omitted" },
-                            "title": { "type": "string" },
-                            "status": {
-                                "type": "string",
-                                "description": "pending|in_progress|done|skipped"
-                            },
-                            "note": { "type": "string" }
-                        },
-                        "required": ["title"]
-                    }
-                }
-            },
-            "required": ["steps"]
-        });
-    }
-    if bare.starts_with("mcp:mathjs:") {
-        return json!({
-            "type": "object",
-            "properties": {
-                "expression": { "type": "string", "description": "Single mathjs expression" },
-                "expr": { "type": "string", "description": "Alias of expression" }
-            }
-        });
-    }
-    if bare.starts_with("market.") {
-        return json!({
-            "type": "object",
-            "properties": {
-                "symbol": { "type": "string" },
-                "ticker": { "type": "string" },
-                "snapshotId": { "type": "string" },
-                "interval": { "type": "string" },
-                "limit": { "type": "integer" }
-            }
-        });
-    }
-    if bare == "factor.register" {
-        return json!({
-            "type": "object",
-            "properties": {
-                "name": { "type": "string" },
-                "expr": { "type": "string", "description": "qlib expression" },
-                "expression": { "type": "string", "description": "alias of expr" },
-                "category": { "type": "string" },
-                "lang": { "type": "string" },
-                "universe": { "type": "string" },
-                "horizon": { "type": "integer" }
-            },
-            "required": ["name", "expr"],
-            "additionalProperties": true
-        });
-    }
-    if bare == "factor.compute" || bare == "factor.autoEvaluate" {
-        return json!({
-            "type": "object",
-            "properties": {
-                "factor_id": { "type": "string", "description": "ID returned by factor.register" },
-                "factorId": { "type": "string", "description": "alias of factor_id" },
-                "symbols": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
-                "symbol": { "type": "string" },
-                "ticker": { "type": "string" },
-                "start_date": { "type": "string", "description": "YYYY-MM-DD" },
-                "end_date": { "type": "string", "description": "YYYY-MM-DD" },
-                "startDate": { "type": "string" },
-                "endDate": { "type": "string" }
-            },
-            "required": ["factor_id", "symbols"],
-            "additionalProperties": true
-        });
-    }
-    if bare == "strategy.create_version" {
-        return json!({
-            "type": "object",
-            "properties": {
-                "name": { "type": "string" },
-                "style": { "type": "string" },
-                "description": { "type": "string" },
-                "universe": { "type": "string" }
-            },
-            "required": ["name"],
-            "additionalProperties": true
-        });
-    }
-    if bare == "strategy.compose" {
-        return json!({
-            "type": "object",
-            "properties": {
-                "strategy_version_id": { "type": "string" },
-                "strategyVersionId": { "type": "string", "description": "alias of strategy_version_id" },
-                "factor_ids": { "type": "array", "items": { "type": "string" } },
-                "rule_ids": { "type": "array", "items": { "type": "string" } },
-                "kind": { "type": "string" },
-                "weight_method": { "type": "string" },
-                "universe": { "type": "string" }
-            },
-            "required": ["strategy_version_id"],
-            "additionalProperties": true
-        });
-    }
-    if bare == "backtest.run" {
-        return json!({
-            "type": "object",
-            "properties": {
-                "strategy_version_id": { "type": "string" },
-                "strategyVersionId": { "type": "string", "description": "alias of strategy_version_id" },
-                "symbols": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
-                "symbol": { "type": "string" },
-                "ticker": { "type": "string" },
-                "composition_id": { "type": "string" },
-                "signals": { "type": "object" },
-                "dataset_snapshot_id": { "type": "string" },
-                "datasetSnapshotId": { "type": "string", "description": "alias of dataset_snapshot_id" },
-                "instruments": {
-                    "type": "object",
-                    "description": "Point-in-time contract metadata keyed by symbol; required for options, futures, and perpetuals",
-                    "additionalProperties": {
-                        "type": "object",
-                        "properties": {
-                            "asset_class": { "type": "string", "enum": ["stock", "future", "option", "crypto"] },
-                            "contract_kind": { "type": "string", "enum": ["spot", "perpetual"] },
-                            "contract_multiplier": { "type": "number", "exclusiveMinimum": 0 },
-                            "lot_size": { "type": "number", "exclusiveMinimum": 0 },
-                            "initial_margin_rate": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
-                            "maintenance_margin_rate": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
-                            "target_leverage": { "type": "number", "exclusiveMinimum": 0 },
-                            "expiry_date": { "type": "string", "description": "YYYY-MM-DD" },
-                            "settlement_mode": { "type": "string", "enum": ["cash", "physical"] },
-                            "underlying_symbol": { "type": "string" },
-                            "strike": { "type": "number" },
-                            "option_right": { "type": "string", "enum": ["call", "put"] },
-                            "exercise_style": { "type": "string", "enum": ["european", "american"] },
-                            "pricing_model": { "type": "string", "enum": ["black_scholes"] },
-                            "future_roll": {
-                                "type": "object",
-                                "description": "Explicit roll instruction; close old and open successor at roll_date. Never infer from a continuous contract symbol.",
-                                "properties": {
-                                    "roll_date": { "type": "string", "description": "YYYY-MM-DD, strictly before expiry_date" },
-                                    "successor_symbol": { "type": "string" }
-                                },
-                                "required": ["roll_date", "successor_symbol"],
-                                "additionalProperties": false
-                            }
-                        },
-                        "required": ["asset_class"],
-                        "additionalProperties": true
-                    }
-                },
-                "start_date": { "type": "string", "description": "YYYY-MM-DD" },
-                "end_date": { "type": "string", "description": "YYYY-MM-DD" },
-                "benchmark": { "type": "string" },
-                "capital": { "type": "number" },
-                "costs": {
-                    "type": "object",
-                    "description": "Frozen execution-cost assumptions. A validation-grade run requires cost_model_version, cost_model_source and cost_model_as_of; omitted costs use an unverified research-only default.",
-                    "properties": {
-                        "commission_bps": { "type": "number", "minimum": 0 },
-                        "slippage_bps": { "type": "number", "minimum": 0 },
-                        "min_commission": { "type": "number", "minimum": 0 },
-                        "slippage_model": { "type": "string", "enum": ["fixed_bps", "square_root", "volatility_adjusted"] },
-                        "impact_coefficient": { "type": "number", "minimum": 0 },
-                        "max_volume_participation": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
-                        "borrow_rate_annual_bps": { "type": "number", "minimum": 0 },
-                        "restricted_short_symbols": { "type": "array", "items": { "type": "string" } },
-                        "cost_model_version": { "type": "string" },
-                        "cost_model_source": { "type": "string" },
-                        "cost_model_as_of": { "type": "string", "description": "ISO-8601 timestamp" }
-                    },
-                    "additionalProperties": true
-                }
-            },
-            "required": ["strategy_version_id", "symbols", "dataset_snapshot_id"],
-            "additionalProperties": true
-        });
-    }
-    if bare == "backtest.walk_forward" {
-        return json!({
-            "type": "object",
-            "properties": {
-                "backtest_run_id": { "type": "string" },
-                "backtestRunId": { "type": "string", "description": "alias of backtest_run_id" },
-                "folds": { "type": "integer", "minimum": 2, "maximum": 8 },
-                "purge_days": { "type": "integer", "minimum": 0, "maximum": 30 },
-                "embargo_days": { "type": "integer", "minimum": 0, "maximum": 30 },
-                "selection": {
-                    "type": "object",
-                    "properties": {
-                        "objective": { "type": "string", "enum": ["sharpe", "calmar", "annual_return"] },
-                        "candidates": {
-                            "type": "array",
-                            "minItems": 2,
-                            "maxItems": 20,
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "top_n": { "type": "integer", "minimum": 1 },
-                                    "rebalance": { "type": "string", "enum": ["daily", "weekly", "monthly"] },
-                                    "long_short": { "type": "boolean" }
-                                },
-                                "additionalProperties": true
-                            }
-                        }
-                    },
-                    "required": ["candidates"],
-                    "additionalProperties": true
-                }
-            },
-            "required": ["backtest_run_id"],
-            "additionalProperties": true
-        });
-    }
-    if bare.starts_with("mcp:investor-agent:") {
-        return json!({
-            "type": "object",
-            "properties": {
-                "symbol": { "type": "string" },
-                "ticker": { "type": "string" },
-                "indicator": { "type": "string" },
-                "period": { "type": "string" },
-                "interval": { "type": "string" }
-            }
-        });
-    }
-    json!({
-        "type": "object",
-        "properties": {
-            "query": { "type": "string" },
-            "symbol": { "type": "string" },
-            "arguments": { "type": "object" }
-        },
-        "additionalProperties": true
-    })
-}
-
 fn resolve_provider_label(cfg: &OpenAiCompatibleConfig) -> String {
-    if let Ok(p) = std::env::var("QUBIT_LLM_PROVIDER") {
-        let t = p.trim().to_lowercase();
-        // Keep the explicit protocol label.  Inferring arbitrary compatible
-        // endpoints as OpenAI hides the selected gateway in traces/cost data
-        // and recreates ambiguity from the pre-unified provider-specific reasoning path.
-        if !t.is_empty() {
-            return t;
+    if let Ok(provider) = std::env::var("QUBIT_LLM_PROVIDER") {
+        let normalized = provider.trim().to_ascii_lowercase();
+        if !normalized.is_empty() {
+            return normalized;
         }
     }
-    let base = cfg.base_url.to_lowercase();
-    let model = cfg.model.to_lowercase();
+    let base = cfg.base_url.to_ascii_lowercase();
+    let model = cfg.model.to_ascii_lowercase();
     if base.contains("deepseek") || model.contains("deepseek") {
         return "deepseek".into();
     }
@@ -478,9 +161,9 @@ fn resolve_provider_label(cfg: &OpenAiCompatibleConfig) -> String {
     "openai".into()
 }
 
-/// OpenAI/DeepSeek function names must match `^[a-zA-Z0-9_-]+$`.
-/// Wire names like `market.resolve_symbol` / `mcp:mathjs:add` are encoded for the API
-/// and decoded back before ToolHost routing.
+/// Encode provider-specific tool names. Tool metadata is supplied by ToolHost;
+/// this adapter only translates the provider wire format.
+
 pub fn encode_openai_tool_name(name: &str) -> String {
     if name
         .chars()
@@ -686,15 +369,15 @@ impl ModelClient for OpenAiCompatibleClient {
             Some(
                 req.tools
                     .iter()
-                    .map(|name| {
-                        let encoded = encode_openai_tool_name(name);
-                        encode_map.insert(encoded.clone(), name.clone());
+                    .map(|definition| {
+                        let encoded = encode_openai_tool_name(&definition.name);
+                        encode_map.insert(encoded.clone(), definition.name.clone());
                         json!({
                             "type": "function",
                             "function": {
                                 "name": encoded,
-                                "description": tool_description(name),
-                                "parameters": tool_parameters_schema(name)
+                                "description": definition.description,
+                                "parameters": definition.parameters
                             }
                         })
                     })
@@ -945,41 +628,5 @@ mod tests {
                 { "type": "image_url", "image_url": { "url": image } }
             ])
         );
-    }
-
-    #[test]
-    fn quant_tool_schemas_expose_required_contract_fields() {
-        let factor = tool_parameters_schema("factor.compute");
-        assert_eq!(factor["required"], json!(["factor_id", "symbols"]));
-        assert!(factor["properties"].get("start_date").is_some());
-
-        let backtest = tool_parameters_schema("backtest.run");
-        assert_eq!(
-            backtest["required"],
-            json!(["strategy_version_id", "symbols", "dataset_snapshot_id"])
-        );
-        assert!(backtest["properties"].get("composition_id").is_some());
-        assert!(backtest["properties"].get("instruments").is_some());
-        assert!(backtest["properties"].get("costs").is_some());
-        assert!(
-            backtest["properties"]["instruments"]["additionalProperties"]["properties"]
-                .get("initial_margin_rate")
-                .is_some()
-        );
-        assert!(
-            backtest["properties"]["instruments"]["additionalProperties"]["properties"]
-                .get("future_roll")
-                .is_some()
-        );
-
-        let walk_forward = tool_parameters_schema("backtest.walk_forward");
-        assert_eq!(walk_forward["required"], json!(["backtest_run_id"]));
-        assert_eq!(
-            walk_forward["properties"]["selection"]["properties"]["candidates"]["minItems"],
-            json!(2)
-        );
-
-        let compose = tool_parameters_schema("strategy.compose");
-        assert_eq!(compose["required"], json!(["strategy_version_id"]));
     }
 }

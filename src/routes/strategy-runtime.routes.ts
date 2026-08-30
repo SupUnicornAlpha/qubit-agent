@@ -17,9 +17,11 @@ strategyRuntimeRouter.get("/champion-challenger/compare", async (c) => {
   if (!projectId) return c.json({ ok: false, error: "projectId is required" }, 400);
   const minimumScoreUplift = Number(c.req.query("minimumScoreUplift") ?? 0.03);
   const challengerStrategyVersionId = c.req.query("challengerStrategyVersionId");
+  const comparisonCohortId = c.req.query("comparisonCohortId")?.trim();
   const data = await strategyPromotionService.compareVersions({
     projectId,
     ...(challengerStrategyVersionId ? { challengerStrategyVersionId } : {}),
+    ...(comparisonCohortId ? { comparisonCohortId } : {}),
     minimumScoreUplift: Number.isFinite(minimumScoreUplift) ? minimumScoreUplift : 0.03,
   });
   return c.json({ ok: true, data });

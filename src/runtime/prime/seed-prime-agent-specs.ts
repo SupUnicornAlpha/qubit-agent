@@ -36,6 +36,7 @@ export function toPrimeAgentSpec(def: RuntimeAgentDefinition): AgentSpec {
     system_prompt: def.systemPrompt?.trim() || null,
     default_recipe_id: defaultRecipeForRole(def.role),
     tool_surface_ref: `tools://${def.id}`,
+    tools: [...def.tools],
     model_ref: def.llmProvider || null,
     max_iterations: def.maxIterations,
     hitl_profile_ref: null,

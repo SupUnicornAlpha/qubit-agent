@@ -1,7 +1,7 @@
 import { and, eq, ne } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { agentInstance } from "../../db/sqlite/schema";
-import { deleteCheckpointSnapshotsForWorkflow } from "../react/agent-checkpoint-snapshot";
+import { deleteCheckpointSnapshotsForWorkflow } from "../host/checkpoint-snapshot";
 
 /**
  * 同会话新一轮用户追问：清自研 checkpoint snapshot，避免旧 observation 污染新 goal。

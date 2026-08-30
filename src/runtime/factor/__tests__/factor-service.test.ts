@@ -12,6 +12,38 @@ import { FactorServiceError, factorService } from "../factor-service";
 
 let projectId = "";
 
+function researchContract(expression: string) {
+  return {
+    version: "factor-research-contract-v1" as const,
+    economicMechanism: "Persistent relative-strength reflects slow information diffusion.",
+    dataAvailability: {
+      sourceFields: ["close"],
+      availableAtRule: "Use the close only after the bar is finalized.",
+      pointInTime: true as const,
+    },
+    formula: {
+      expression,
+      frequency: "1d",
+      expectedDirection: "higher_is_bullish" as const,
+    },
+    preprocessing: {
+      missingValuePolicy: "drop" as const,
+      winsorization: "cross-sectional 1%/99%",
+      standardization: "cross-sectional z-score",
+      neutralization: "sector neutral",
+    },
+    applicability: {
+      universes: ["US"],
+      horizonsDays: [5],
+      invalidationConditions: ["Rank IC is no longer statistically positive out of sample."],
+    },
+    validation: {
+      independentValidationPlan: "Freeze parameters, then evaluate on a separate snapshot.",
+      minimumDailyObservations: 60,
+    },
+  };
+}
+
 beforeAll(async () => {
   await runMigrations();
   _resetBootstrapForTests();
@@ -138,6 +170,140 @@ describe("FactorService", () => {
     expect(fresh.status).toBe("active");
   });
 
+  test("research contract + frozen HAC evaluation are both required for strategy admission", async () => {
+    const expr = "close / Ref(close, 20) - 1";
+    const rec = await factorService.register({
+      projectId,
+      name: `admission_${randomUUID().slice(0, 6)}`,
+      category: "momentum",
+      expr,
+      lang: "qlib_expr",
+      definition: { researchContract: researchContract(expr) },
+    });
+    expect(rec.researchContract?.version).toBe("factor-research-contract-v1");
+
+    const db = await getDb();
+    await db.insert(schema.factorEvaluation).values({
+      id: randomUUID(),
+      factorId: rec.id,
+      asof: "2026-06-30",
+      universe: "US",
+      datasetSnapshotId: "snapshot-admission-v1",
+      ic: 0.04,
+      rankIc: 0.05,
+      ir: 0.4,
+      sampleSize: 120,
+      latencyMs: 1,
+      statisticalReportJson: {
+        version: "factor-statistical-validation-v1",
+        dailyObservations: 120,
+        status: "passed",
+      } as never,
+    });
+    expect(await factorService.assessStrategyEligibility([rec.id])).toEqual([
+      expect.objectContaining({
+        factorId: rec.id,
+        eligible: true,
+        datasetSnapshotId: "snapshot-admission-v1",
+      }),
+    ]);
+
+    const legacy = await factorService.register({
+      projectId,
+      name: `admission_legacy_${randomUUID().slice(0, 6)}`,
+      category: "momentum",
+      expr,
+      lang: "qlib_expr",
+    });
+    const [legacyAssessment] = await factorService.assessStrategyEligibility([legacy.id]);
+    expect(legacyAssessment?.eligible).toBe(false);
+    expect(legacyAssessment?.reasons).toContain("factor_research_contract_missing_or_invalid");
+    expect(legacyAssessment?.reasons).toContain("factor_evaluation_missing");
+  });
+
+  test("strategy admission selects the matching frozen snapshot instead of a newer unrelated evaluation", async () => {
+    const expr = "close / Ref(close, 10) - 1";
+    const rec = await factorService.register({
+      projectId,
+      name: `admission_snapshot_${randomUUID().slice(0, 6)}`,
+      category: "momentum",
+      expr,
+      lang: "qlib_expr",
+      definition: { researchContract: researchContract(expr) },
+    });
+    const db = await getDb();
+    for (const [snapshotId, status] of [
+      ["snapshot-matching", "passed"],
+      ["snapshot-newer-but-failed", "research_only"],
+    ] as const) {
+      await db.insert(schema.factorEvaluation).values({
+        id: randomUUID(),
+        factorId: rec.id,
+        asof: "2026-07-01",
+        universe: "US",
+        datasetSnapshotId: snapshotId,
+        sampleSize: 120,
+        latencyMs: 1,
+        statisticalReportJson: {
+          version: "factor-statistical-validation-v1",
+          dailyObservations: 120,
+          status,
+        } as never,
+      });
+    }
+    const [assessment] = await factorService.assessStrategyEligibility([rec.id], {
+      datasetSnapshotId: "snapshot-matching",
+    });
+    expect(assessment).toMatchObject({
+      eligible: true,
+      datasetSnapshotId: "snapshot-matching",
+    });
+  });
+
+  test("rejects a research contract whose formula differs from the executable expression", async () => {
+    await expect(
+      factorService.register({
+        projectId,
+        name: `contract_mismatch_${randomUUID().slice(0, 6)}`,
+        category: "momentum",
+        expr: "close / Ref(close, 20) - 1",
+        lang: "qlib_expr",
+        definition: { researchContract: researchContract("close / Ref(close, 5) - 1") },
+      })
+    ).rejects.toThrow(/factor_research_contract_expression_mismatch/);
+  });
+
+  test("contract can be attached after discovery, but activation requires frozen statistical evidence", async () => {
+    const expr = "close / Ref(close, 15) - 1";
+    const rec = await factorService.register({
+      projectId,
+      name: `activate_${randomUUID().slice(0, 6)}`,
+      category: "momentum",
+      expr,
+      lang: "qlib_expr",
+    });
+    const withContract = await factorService.setResearchContract(rec.id, researchContract(expr));
+    expect(withContract.researchContract?.formula.expression).toBe(expr);
+    await expect(factorService.activate(rec.id)).rejects.toThrow(/factor_evaluation_missing/);
+
+    const db = await getDb();
+    await db.insert(schema.factorEvaluation).values({
+      id: randomUUID(),
+      factorId: rec.id,
+      asof: "2026-06-30",
+      universe: "US",
+      datasetSnapshotId: "snapshot-activation-v1",
+      sampleSize: 120,
+      latencyMs: 1,
+      statisticalReportJson: {
+        version: "factor-statistical-validation-v1",
+        dailyObservations: 120,
+        status: "passed",
+      } as never,
+    });
+    expect((await factorService.activate(rec.id)).status).toBe("active");
+  });
+
   test("evaluate: 跑 builtin factor_eval Provider 写入 factor_evaluation", async () => {
     const rec = await factorService.register({
       projectId,
@@ -165,6 +331,11 @@ describe("FactorService", () => {
     expect(logs.length).toBeGreaterThan(0);
     expect(logs[0]?.factorId).toBe(rec.id);
     expect(logs[0]?.datasetSnapshotId).toBe("snapshot-eval-v1");
+    expect(logs[0]?.statisticalReportJson).toMatchObject({
+      version: "factor-statistical-validation-v1",
+      dailyObservations: 1,
+      status: "research_only",
+    });
     const metric = await factorService.getLatestEvaluationMetric(
       [rec.id],
       "rankIc",
@@ -210,8 +381,24 @@ describe("FactorService", () => {
       sources: [{ provider: "fixture", feed: "fixture", upstreamFamily: "fixture" }],
       barsByInstrument: {
         "US:AAA": [
-          { timestamp: "2026-01-02T00:00:00.000Z", open: 100, high: 102, low: 99, close: 101, volume: 1000, turnover: 101000 },
-          { timestamp: "2026-01-03T00:00:00.000Z", open: 101, high: 104, low: 100, close: 103, volume: 1100, turnover: 113300 },
+          {
+            timestamp: "2026-01-02T00:00:00.000Z",
+            open: 100,
+            high: 102,
+            low: 99,
+            close: 101,
+            volume: 1000,
+            turnover: 101000,
+          },
+          {
+            timestamp: "2026-01-03T00:00:00.000Z",
+            open: 101,
+            high: 104,
+            low: 100,
+            close: 103,
+            volume: 1100,
+            turnover: 113300,
+          },
         ],
       },
       timeframe: "1d",
@@ -219,7 +406,11 @@ describe("FactorService", () => {
     });
     const root = join(defaultDataDir(), "market-snapshots");
     await mkdir(root, { recursive: true });
-    await writeFile(join(root, `${record.snapshot.snapshotId}.json`), JSON.stringify(record), "utf8");
+    await writeFile(
+      join(root, `${record.snapshot.snapshotId}.json`),
+      JSON.stringify(record),
+      "utf8"
+    );
 
     const result = await factorService.compute({
       factorId: rec.id,

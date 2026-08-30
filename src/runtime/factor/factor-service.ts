@@ -43,6 +43,21 @@ import type {
   ProviderScope,
 } from "../provider/types";
 import { factorValueStore } from "./factor-value-store";
+import {
+  diagnoseFactorCorrelation,
+  type FactorCorrelationDiagnostics,
+} from "./factor-correlation-diagnostics";
+import {
+  diagnoseFactorExposure,
+  type FactorExposureDiagnostics,
+} from "./factor-exposure-diagnostics";
+import { regressFactorRiskExposures, type FactorRiskExposureRegression } from "./factor-risk-exposure-regression";
+import { getMarketSnapshotById } from "../market/contracts/market-snapshot-service";
+import {
+  type FactorResearchContract,
+  parseFactorResearchContract,
+  researchContractMatchesExpression,
+} from "./factor-research-contract";
 
 // ─── 类型 ───────────────────────────────────────────────────────────────────
 
@@ -90,6 +105,12 @@ export interface FactorRegisterInput {
   /** 任意补充元数据（写入 definition_json） */
   definition?: Record<string, unknown>;
   /**
+   * Auditable economic/data/validation contract. It remains optional for a
+   * draft, but factors without a valid contract cannot be composed by Agent
+   * strategy tooling.
+   */
+  researchContract?: unknown;
+  /**
    * 产物 lineage（migration 0080）：
    *   - createdBy：'user'（默认）/ 'agent' / 'discovery_promote' / 'system'
    *   - agentInstanceId：发起注册的 agent_instance.id
@@ -135,8 +156,17 @@ export interface FactorRecord {
   agentInstanceId: string | null;
   sourceJobId: string | null;
   definition: Record<string, unknown>;
+  researchContract: FactorResearchContract | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface FactorStrategyEligibility {
+  factorId: string;
+  eligible: boolean;
+  reasons: string[];
+  evaluationId: string | null;
+  datasetSnapshotId: string | null;
 }
 
 export interface FactorComputeInput {
@@ -272,6 +302,24 @@ export class FactorService {
     }
 
     const providerKey = input.providerKey ?? this.defaultProviderKeyForLang(lang);
+
+    const contractRaw = input.researchContract ?? definition.researchContract;
+    if (contractRaw !== undefined) {
+      const researchContract = parseFactorResearchContract(contractRaw);
+      if (!researchContract) {
+        throw new FactorServiceError(
+          "validation_failed",
+          "factor_research_contract_invalid: require mechanism, PIT availability, formula, preprocessing, applicability, invalidation and validation plan"
+        );
+      }
+      if (!researchContractMatchesExpression(researchContract, expr)) {
+        throw new FactorServiceError(
+          "validation_failed",
+          "factor_research_contract_expression_mismatch"
+        );
+      }
+      definition = { ...definition, researchContract };
+    }
 
     // 同 project 内名字不可重复
     const db = await getDb();
@@ -553,6 +601,114 @@ export class FactorService {
       .where(eq(factorDefTable.id, id));
   }
 
+  /** Attach or replace the auditable contract without mutating the expression. */
+  async setResearchContract(id: string, rawContract: unknown): Promise<FactorRecord> {
+    const factor = await this.get(id);
+    const researchContract = parseFactorResearchContract(rawContract);
+    if (!researchContract) {
+      throw new FactorServiceError(
+        "validation_failed",
+        "factor_research_contract_invalid: require mechanism, PIT availability, formula, preprocessing, applicability, invalidation and validation plan"
+      );
+    }
+    if (!researchContractMatchesExpression(researchContract, factor.expr)) {
+      throw new FactorServiceError(
+        "validation_failed",
+        "factor_research_contract_expression_mismatch"
+      );
+    }
+    const db = await getDb();
+    await db
+      .update(factorDefTable)
+      .set({
+        definitionJson: { ...factor.definition, researchContract } as never,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(factorDefTable.id, id));
+    return this.get(id);
+  }
+
+  /** Activation is a promotion action, never a cosmetic status flip. */
+  async activate(id: string): Promise<FactorRecord> {
+    const [eligibility] = await this.assessStrategyEligibility([id]);
+    if (!eligibility?.eligible) {
+      throw new FactorServiceError(
+        "validation_failed",
+        `factor_research_admission_failed: ${id}[${eligibility?.reasons.join(",") ?? "unknown"}]`
+      );
+    }
+    await this.setStatus(id, "active");
+    return this.get(id);
+  }
+
+  /**
+   * A narrow, reusable admission check for Agent-driven strategy composition.
+   * Draft/legacy factors can still be explored, but cannot silently become
+   * strategy inputs without an auditable contract and a frozen-data evaluation
+   * that passed the available HAC statistical gate.
+   */
+  async assessStrategyEligibility(
+    factorIds: string[],
+    options: { datasetSnapshotId?: string } = {}
+  ): Promise<FactorStrategyEligibility[]> {
+    const ids = [...new Set(factorIds.map((id) => id.trim()).filter(Boolean))];
+    const db = await getDb();
+    return Promise.all(
+      ids.map(async (factorId) => {
+        const factor = await this.get(factorId);
+        const reasons: string[] = [];
+        const contract = factor.researchContract;
+        if (!contract) reasons.push("factor_research_contract_missing_or_invalid");
+        else if (!researchContractMatchesExpression(contract, factor.expr)) {
+          reasons.push("factor_research_contract_expression_mismatch");
+        }
+        const evaluations = await db
+          .select({
+            id: factorEvalTable.id,
+            datasetSnapshotId: factorEvalTable.datasetSnapshotId,
+            sampleSize: factorEvalTable.sampleSize,
+            statisticalReportJson: factorEvalTable.statisticalReportJson,
+            error: factorEvalTable.error,
+          })
+          .from(factorEvalTable)
+          .where(eq(factorEvalTable.factorId, factorId))
+          .orderBy(desc(factorEvalTable.createdAt));
+        // When a backtest declares its snapshot, select evidence from that
+        // exact immutable dataset—not merely whichever evaluation was written
+        // most recently for the factor.
+        const evaluation = options.datasetSnapshotId
+          ? evaluations.find((item) => item.datasetSnapshotId === options.datasetSnapshotId)
+          : evaluations[0];
+        if (!evaluation) {
+          reasons.push(
+            evaluations.length > 0 && options.datasetSnapshotId
+              ? "factor_evaluation_snapshot_mismatch"
+              : "factor_evaluation_missing"
+          );
+        } else {
+          if (!evaluation.datasetSnapshotId) reasons.push("factor_evaluation_snapshot_missing");
+          if (evaluation.error) reasons.push("factor_evaluation_error");
+          if (evaluation.sampleSize < 60) reasons.push("factor_evaluation_sample_too_small");
+          const report = evaluation.statisticalReportJson as {
+            status?: unknown;
+            dailyObservations?: unknown;
+          } | null;
+          if (report?.status !== "passed") reasons.push("factor_statistical_validation_not_passed");
+          if (typeof report?.dailyObservations !== "number" || report.dailyObservations < 60) {
+            reasons.push("factor_daily_cross_section_too_small");
+          }
+        }
+        return {
+          factorId,
+          eligible: reasons.length === 0,
+          reasons,
+          evaluationId: evaluation?.id ?? null,
+          datasetSnapshotId: evaluation?.datasetSnapshotId ?? null,
+        };
+      })
+    );
+  }
+
   /**
    * 调 Provider 计算因子值；默认写入 DuckDB `factor_value`，下游可 loadValues 取回。
    */
@@ -570,7 +726,11 @@ export class FactorService {
         throw new FactorServiceError(
           "validation_failed",
           `dataset_snapshot_provider_unsupported: ${provider.meta.key}/${f.lang}; snapshot-bound factor computation requires qlib_expr or snapshot_bound providers (e.g. external_ml/ml_score)`,
-          { factorId: f.id, providerKey: provider.meta.key, datasetSnapshotId: input.datasetSnapshotId }
+          {
+            factorId: f.id,
+            providerKey: provider.meta.key,
+            datasetSnapshotId: input.datasetSnapshotId,
+          }
         );
       }
       try {
@@ -650,6 +810,91 @@ export class FactorService {
     return factorValueStore.stats(factorId, datasetSnapshotId);
   }
 
+  /**
+   * Computes pairwise signal correlation from exactly the frozen factor-value
+   * rows requested by the caller. This is intentionally separate from single-
+   * factor eligibility: correlation is a property of a proposed combination.
+   */
+  async diagnoseCorrelation(input: {
+    factorIds: string[];
+    datasetSnapshotId?: string;
+    maxAbsCorrelation?: number;
+    minimumObservations?: number;
+  }): Promise<FactorCorrelationDiagnostics> {
+    const factorIds = [...new Set(input.factorIds.map((id) => id.trim()).filter(Boolean))];
+    const values = await Promise.all(
+      factorIds.map(
+        async (factorId) =>
+          [
+            factorId,
+            await this.loadValues({
+              factorId,
+              ...(input.datasetSnapshotId ? { datasetSnapshotId: input.datasetSnapshotId } : {}),
+            }),
+          ] as const
+      )
+    );
+    return diagnoseFactorCorrelation({
+      factorValues: Object.fromEntries(values),
+      ...(input.maxAbsCorrelation !== undefined
+        ? { maxAbsCorrelation: input.maxAbsCorrelation }
+        : {}),
+      ...(input.minimumObservations !== undefined
+        ? { minimumObservations: input.minimumObservations }
+        : {}),
+    });
+  }
+
+  /**
+   * Measures signal-basis exposure/VIF on exactly the frozen value rows. This
+   * is intentionally a diagnostic rather than a default promotion gate: true
+   * sector/style exposure additionally needs a versioned external taxonomy.
+   */
+  async diagnoseExposure(input: {
+    factorIds: string[];
+    datasetSnapshotId?: string;
+    maximumVif?: number;
+    minimumObservations?: number;
+  }): Promise<FactorExposureDiagnostics> {
+    const factorIds = [...new Set(input.factorIds.map((id) => id.trim()).filter(Boolean))];
+    const values = await Promise.all(
+      factorIds.map(
+        async (factorId) =>
+          [
+            factorId,
+            await this.loadValues({
+              factorId,
+              ...(input.datasetSnapshotId ? { datasetSnapshotId: input.datasetSnapshotId } : {}),
+            }),
+          ] as const
+      )
+    );
+    return diagnoseFactorExposure({
+      factorValues: Object.fromEntries(values),
+      ...(input.maximumVif !== undefined ? { maximumVif: input.maximumVif } : {}),
+      ...(input.minimumObservations !== undefined
+        ? { minimumObservations: input.minimumObservations }
+        : {}),
+    });
+  }
+
+  async regressRiskExposures(input: {
+    factorId: string;
+    datasetSnapshotId: string;
+    minimumObservations?: number;
+  }): Promise<FactorRiskExposureRegression> {
+    const snapshot = await getMarketSnapshotById(input.datasetSnapshotId);
+    if (!snapshot?.snapshot.riskExposureLedger) {
+      throw new Error("risk_exposure_ledger_missing_or_snapshot_not_found");
+    }
+    return regressFactorRiskExposures({
+      factorId: input.factorId,
+      values: await this.loadValues({ factorId: input.factorId, datasetSnapshotId: input.datasetSnapshotId }),
+      ledger: snapshot.snapshot.riskExposureLedger,
+      ...(input.minimumObservations !== undefined ? { minimumObservations: input.minimumObservations } : {}),
+    });
+  }
+
   /** 调 Provider 评估因子；汇总指标写入 factor_evaluation 留痕 */
   async evaluate(input: FactorEvaluateInput): Promise<FactorEvalResult & { evaluationId: string }> {
     const f = await this.get(input.factorId);
@@ -692,6 +937,7 @@ export class FactorService {
       turnover: result.turnover,
       decayCurveJson: result.decayCurve as never,
       groupReturnsJson: result.groupReturns as never,
+      statisticalReportJson: result.statisticalReport as never,
       sampleSize: result.sampleSize,
       latencyMs: result.latencyMs,
       error: result.error ?? null,
@@ -1041,6 +1287,9 @@ export class FactorService {
       agentInstanceId: r.agentInstanceId ?? null,
       sourceJobId: r.sourceJobId ?? null,
       definition: (r.definitionJson as Record<string, unknown>) ?? {},
+      researchContract: parseFactorResearchContract(
+        (r.definitionJson as Record<string, unknown> | null)?.researchContract
+      ),
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
     };

@@ -149,6 +149,33 @@ export function buildAssetLifecycleReport(input: BacktestRequest): AssetLifecycl
         );
         limitations.add("option_rate_history_missing");
       }
+      const derivativePricing = input.dataset.derivativePricing;
+      if (!derivativePricing) {
+        checks.push(
+          warning(
+            symbol,
+            "option_pricing_provenance_missing",
+            "IV 与无风险利率未绑定版本化曲线/报价来源；Greeks 仅可作研究参考"
+          )
+        );
+        limitations.add("option_pricing_provenance_missing");
+      } else if (!isPricingProvenancePointInTime(derivativePricing.asOf, input.dataset.asOf)) {
+        checks.push(
+          warning(
+            symbol,
+            "option_pricing_provenance_after_snapshot",
+            "IV 或利率曲线的 asOf 晚于市场快照，不能作为 point-in-time Greeks 证据"
+          )
+        );
+        limitations.add("option_pricing_provenance_after_snapshot");
+      } else {
+        checks.push({
+          symbol,
+          state: "pass",
+          code: "option_pricing_provenance_valid",
+          message: `IV=${derivativePricing.impliedVolatilityMethod}; rate=${derivativePricing.riskFreeRateMethod}; ${derivativePricing.source}@${derivativePricing.version}`,
+        });
+      }
     }
 
     if (spec.assetClass === "future") {
@@ -305,6 +332,12 @@ export function buildAssetLifecycleReport(input: BacktestRequest): AssetLifecycl
 
 function validMarginRate(value: number | undefined): boolean {
   return value !== undefined && Number.isFinite(value) && value > 0 && value <= 1;
+}
+
+function isPricingProvenancePointInTime(sourceAsOf: string, snapshotAsOf: string): boolean {
+  const sourceTime = Date.parse(sourceAsOf);
+  const snapshotTime = Date.parse(snapshotAsOf);
+  return Number.isFinite(sourceTime) && Number.isFinite(snapshotTime) && sourceTime <= snapshotTime;
 }
 
 function hasFutureRollCycle(

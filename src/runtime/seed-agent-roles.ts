@@ -7,7 +7,7 @@
  *
  * 收敛动机（详见 docs canvas `qubit-architecture-and-redundancy.canvas.tsx` C9）：
  *   - 写入端 = 仅 SQL 种子，零运行时 insert/update
- *   - 读取端 = 仅 `GET /api/v1/analyst/roles` 一个端点
+ *   - 读取端 = 仅 `GET /api/v1/research-artifacts/roles` 一个端点
  *   - 前端 = 声明了 `AgentRoleCatalogItem` + `getAgentRoles()` 但全仓零调用方
  *
  * 既然没有动态变更需求，把字典固化为代码常量；端点保留（向后兼容），改为返回

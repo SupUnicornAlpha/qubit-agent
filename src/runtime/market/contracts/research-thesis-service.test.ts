@@ -14,6 +14,38 @@ import {
   writeResearchThesis,
 } from "./research-thesis-service";
 
+function qualityGrowthCard() {
+  return {
+    version: "investment-framework-card-v1" as const,
+    framework: "quality_growth" as const,
+    sourceRefs: ["source:quality-growth-principles"],
+    principles: [
+      { statement: "Durable returns and reinvestment support compounding.", sourceRefs: ["source:quality-growth-principles"] },
+    ],
+    economicMechanism: "High-return businesses can reinvest cash flow at attractive rates.",
+    observableProxies: [
+      {
+        key: "roic",
+        label: "ROIC",
+        comparison: "gte" as const,
+        threshold: 0.15,
+        weight: 1,
+        sourceRefs: ["source:quality-growth-principles"],
+      },
+    ],
+    selectionThreshold: 1,
+    applicability: {
+      assetClasses: ["equity"],
+      markets: ["US"],
+      regimes: ["normal"],
+      holdingPeriod: "12m",
+    },
+    exclusionConditions: ["Accounting quality cannot be verified."],
+    invalidation: [{ condition: "ROIC deteriorates", observable: "fund_roic" }],
+    riskBudget: { maxPositionWeightPct: 0.1, maxPortfolioDrawdownPct: 0.15 },
+  };
+}
+
 afterEach(() => {
   clearResearchThesisCatalogForTests();
   clearForecastBookCatalogForTests();
@@ -27,6 +59,8 @@ describe("research thesis + forecast book (D4)", () => {
         snapshotId: "mkt_snapshot_01fixture",
         instrumentScope: ["SSE:600519"],
         direction: "long" as const,
+        framework: "quality_growth" as const,
+        frameworkCard: qualityGrowthCard(),
         horizon: "5d",
         confidence: 0.62,
         claims: [
@@ -51,6 +85,8 @@ describe("research thesis + forecast book (D4)", () => {
 
       const loaded = await getResearchThesisById(a.thesisId, dataDir);
       expect(loaded?.thesis.direction).toBe("long");
+      expect(loaded?.thesis.framework).toBe("quality_growth");
+      expect(loaded?.thesis.frameworkCard?.observableProxies[0]?.key).toBe("roic");
       expect(loaded?.meta.workflowRunId).toBe("wf-1");
     } finally {
       await rm(dataDir, { recursive: true, force: true });
@@ -98,6 +134,10 @@ describe("research thesis + forecast book (D4)", () => {
       expect(linked.recommendationId).toBe("rec-1");
       expect(linked.fillIds).toEqual(["fill-1"]);
       expect(linked.holdingPeriodResult?.realizedReturnPct).toBe(3.2);
+      expect(linked.reflection).toMatchObject({
+        classification: "inconclusive",
+        limitations: expect.arrayContaining(["outcome classification is not causal attribution"]),
+      });
 
       const again = await linkForecastBookEntry(
         written.thesisId,
@@ -109,6 +149,29 @@ describe("research thesis + forecast book (D4)", () => {
 
       const byThesis = await getForecastBookEntry(written.thesisId, dataDir);
       expect(byThesis?.entryId).toBe(opened.entryId);
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  test("requires evidence and a falsifier when a named investment framework is declared", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "qb-thesis-framework-"));
+    try {
+      await expect(
+        writeResearchThesis(
+          {
+            snapshotId: "mkt_snapshot_framework",
+            instrumentScope: ["NASDAQ:AAPL"],
+            direction: "long",
+            framework: "quality_growth",
+            horizon: "20d",
+            confidence: 0.6,
+            claims: [{ claim: "high quality" }],
+            modelAndPromptVersion: "fixture/v1",
+          },
+          { dataDir }
+        )
+      ).rejects.toThrow(/framework_card_required/);
     } finally {
       await rm(dataDir, { recursive: true, force: true });
     }

@@ -460,21 +460,6 @@ export interface LoopOptionsJson {
 
 export type StrategyScriptPurpose = "research" | "live_trading" | "both";
 
-export interface WorkflowCreateInput {
-  projectId: string;
-  goal: string;
-  mode: WorkflowMode;
-  sessionId?: string;
-  source?: "chat" | "manual" | "api";
-  messageId?: string;
-  /** Chat mode: reuse latest workflow in this session instead of creating one per message. */
-  reuseSessionWorkflow?: boolean;
-  /** 为 true 时仅创建 workflow_run，不向 orchestrator 派发任务 */
-  skipDispatch?: boolean;
-  loopKind?: AgentLoopKind;
-  loopOptionsJson?: LoopOptionsJson;
-}
-
 export interface AgentSummary {
   id: string;
   definitionId: string;
@@ -1228,7 +1213,7 @@ export interface AnalystSignalFusionRecord {
 /** @deprecated 用 `AnalystSignalFusionRecord` */
 export type SignalFusionRecord = AnalystSignalFusionRecord;
 
-/** POST /analyst/run scope（与后端 research-scope 一致） */
+/** 对话研究上下文中的 scope（与后端 research-scope 一致） */
 export type ResearchScopeInput = {
   /**
    * - "single"   单标的

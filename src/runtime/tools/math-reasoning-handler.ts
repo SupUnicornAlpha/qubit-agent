@@ -1,18 +1,9 @@
-import {
-  type ReasoningHarnessMode,
-  auditMathDerivation,
-  createMathjsNumericEvaluator,
-  parseMathDerivationContract,
-  pythonMathNumericEvaluator,
-  pythonSympyVerifier,
-  withNumericFallback,
-} from "../harness";
+import { createMathjsNumericEvaluator, withNumericFallback } from "../harness/math-mcp-verifier";
+import { pythonMathNumericEvaluator, pythonSympyVerifier } from "../harness/math-python-verifier";
+import { auditMathDerivation, parseMathDerivationContract } from "../harness/math-reasoning";
+import { resolveReasoningHarnessModeFromTaskMetadata } from "../harness/reasoning-harness";
 import type { BuiltinToolHandler } from "./types";
 import { recordWorkflowToolArtifact } from "./workflow-artifact-ledger";
-
-function requestedMode(value: unknown): ReasoningHarnessMode {
-  return value === "required" || value === "off" || value === "advisory" ? value : "advisory";
-}
 
 /**
  * Verifies a model-proposed derivation with a fixed evaluator. The caller must
@@ -20,6 +11,18 @@ function requestedMode(value: unknown): ReasoningHarnessMode {
  * free-form reasoning or provider thinking fields.
  */
 export const MATH_REASONING_HANDLER: BuiltinToolHandler = async (ctx, params) => {
+  const mode = resolveReasoningHarnessModeFromTaskMetadata({
+    // Dispatch has already authorized the builtin tool. This flag means the
+    // math capability is available, not that every conversation is admitted.
+    capabilityEnabled: true,
+    metadata: { ...(ctx.inboundPayload ?? {}), ...params },
+    requestedMode: params.math_mode ?? params.mathMode,
+  });
+  if (mode === "off") {
+    throw new Error(
+      "math.derivation.verify: math_harness_not_admitted（请显式传 math_mode，或由高保证任务提供 has_mathematical_claim + affects_decision）"
+    );
+  }
   const rawContract = params.contract ?? params.derivation;
   const parsed = parseMathDerivationContract(rawContract);
   if (!parsed.ok) {
@@ -40,7 +43,7 @@ export const MATH_REASONING_HANDLER: BuiltinToolHandler = async (ctx, params) =>
       : pythonMathNumericEvaluator;
   const audit = await auditMathDerivation({
     contract: parsed.contract,
-    mode: requestedMode(params.math_mode),
+    mode,
     numericEvaluator,
     ...(symbolic ? { symbolicVerifier: symbolic } : {}),
   });

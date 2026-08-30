@@ -3,15 +3,17 @@ import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
-import { defaultDataDir } from "../../app-paths";
 import { getDb } from "../../../db/sqlite/client";
 import { runMigrations } from "../../../db/sqlite/migrate";
 import * as schema from "../../../db/sqlite/schema";
+import { defaultDataDir } from "../../app-paths";
+import { finalHoldoutEvaluationService } from "../../effect-validation/final-holdout-evaluation-service";
 import {
   createWalkForwardWindows,
   walkForwardEvaluationService,
 } from "../../effect-validation/walk-forward-evaluation-service";
 import { factorService } from "../../factor/factor-service";
+import { buildMarketSnapshotRecord } from "../../market/contracts/market-snapshot-service";
 import { _resetBootstrapForTests, bootstrapProviders } from "../../provider/bootstrap";
 import { providerRegistry } from "../../provider/registry";
 import type {
@@ -22,7 +24,6 @@ import type {
 } from "../../provider/types";
 import { strategyComposer } from "../../strategy/strategy-composer";
 import { backtestJobService } from "../backtest-job-service";
-import { buildMarketSnapshotRecord } from "../../market/contracts/market-snapshot-service";
 
 class StubBacktestProvider implements BacktestProvider {
   readonly meta: ProviderMeta = {
@@ -34,10 +35,12 @@ class StubBacktestProvider implements BacktestProvider {
     isBuiltin: false,
     isFallback: false,
   };
+  lastRequest: BacktestRequest | null = null;
   async healthCheck() {
     return { ok: true };
   }
   async run(req: BacktestRequest): Promise<BacktestResult> {
+    this.lastRequest = req;
     // 简单回测；topN=2 在训练窗上更优，供 train-only selection 回归测试。
     const sharpe = req.topN === 2 ? 0.9 : 0.5;
     return {
@@ -64,8 +67,13 @@ class StubBacktestProvider implements BacktestProvider {
 let projectId = "";
 let strategyVersionId = "";
 let datasetSnapshotId = "";
+let stubBacktestProvider: StubBacktestProvider;
 
-async function seedDatasetSnapshot(symbols: string[]): Promise<string> {
+async function seedDatasetSnapshot(
+  symbols: string[],
+  options: { includeHoldoutBars?: boolean } = {}
+): Promise<string> {
+  const includeHoldoutBars = options.includeHoldoutBars ?? true;
   const barsByInstrument = Object.fromEntries(
     symbols.map((symbol, offset) => [
       `US:${symbol}`,
@@ -88,18 +96,31 @@ async function seedDatasetSnapshot(symbols: string[]): Promise<string> {
           volume: 1100,
           turnover: 112200,
         },
+        ...(includeHoldoutBars
+          ? [
+              {
+                timestamp: "2026-02-26T00:00:00.000Z",
+                open: 102 + offset,
+                high: 104 + offset,
+                low: 101 + offset,
+                close: 103 + offset,
+                volume: 1200,
+                turnover: 123600,
+              },
+            ]
+          : []),
       ],
     ])
   );
   const record = buildMarketSnapshotRecord({
-    asOf: "2026-01-31T00:00:00.000Z",
+    asOf: includeHoldoutBars ? "2026-02-28T00:00:00.000Z" : "2026-01-31T00:00:00.000Z",
     purpose: "backtest",
     instruments: symbols.map((symbol) => ({ symbol, venue: "US", assetClass: "equity" as const })),
-    window: { start: "2026-01-01", end: "2026-01-31" },
+    window: { start: "2026-01-01", end: includeHoldoutBars ? "2026-02-28" : "2026-01-31" },
     sources: [{ provider: "test_dataset", feed: "fixture", upstreamFamily: "fixture" }],
     barsByInstrument,
     timeframe: "1d",
-    limit: 2,
+    limit: includeHoldoutBars ? 3 : 2,
   });
   const root = join(defaultDataDir(), "market-snapshots");
   await mkdir(root, { recursive: true });
@@ -112,7 +133,8 @@ beforeAll(async () => {
   _resetBootstrapForTests();
   await bootstrapProviders();
   // 把 stub 注入 registry，并把它在 db 里 priority 调到最高
-  providerRegistry.register(new StubBacktestProvider());
+  stubBacktestProvider = new StubBacktestProvider();
+  providerRegistry.register(stubBacktestProvider);
   await providerRegistry.syncToDb();
 
   const db = await getDb();
@@ -172,7 +194,7 @@ describe("BacktestJobService", () => {
     expect(ran.providerId).toBe("stub_bt");
     expect(ran.endedAt).not.toBeNull();
     expect(ran.evaluation).not.toBeNull();
-    expect(ran.evaluation?.checks).toHaveLength(11);
+    expect(ran.evaluation?.checks).toHaveLength(12);
     expect(ran.evaluation?.checks.find((check) => check.key === "research_integrity")?.pass).toBe(
       false
     );
@@ -230,11 +252,45 @@ describe("BacktestJobService", () => {
       tuned.integrityReport.checks.find((check) => check.key === "parameter_selection")?.state
     ).toBe("pass");
     await walkForwardEvaluationService.run(job.id, { folds: 3, purgeDays: 2 });
+    const holdout = await finalHoldoutEvaluationService.run(job.id, {
+      trainEnd: "2026-01-31",
+      holdoutStart: "2026-02-06",
+      holdoutEnd: "2026-02-28",
+      purgeDays: 2,
+      embargoDays: 2,
+    });
+    expect(holdout.contract.fingerprint).toMatch(/^holdout_/);
+    expect(
+      holdout.integrityReport.checks.find((check) => check.key === "oos_isolation")?.state
+    ).toBe("pass");
+    expect(stubBacktestProvider.lastRequest?.dataset.snapshotId).toBe(datasetSnapshotId);
+    expect(stubBacktestProvider.lastRequest?.dataset.barsBySymbol.AAA?.[0]?.timestamp).toContain(
+      "2026-02"
+    );
+    await expect(
+      finalHoldoutEvaluationService.run(job.id, {
+        trainEnd: "2026-01-31",
+        holdoutStart: "2026-02-06",
+        holdoutEnd: "2026-02-28",
+        purgeDays: 2,
+        embargoDays: 2,
+      })
+    ).rejects.toThrow("final_holdout_already_evaluated");
+    await expect(
+      finalHoldoutEvaluationService.run(job.id, {
+        trainEnd: "2026-01-31",
+        holdoutStart: "2026-02-09",
+        holdoutEnd: "2026-02-28",
+        purgeDays: 2,
+        embargoDays: 2,
+      })
+    ).rejects.toThrow("final_holdout_window_already_reserved");
     const walkForwardRows = await db
       .select()
       .from(schema.strategyEvalRun)
       .where(eq(schema.strategyEvalRun.backtestRunId, job.id));
     expect(walkForwardRows.filter((row) => row.evalKind === "walk_forward")).toHaveLength(1);
+    expect(walkForwardRows.filter((row) => row.evalKind === "holdout")).toHaveLength(1);
   });
 
   test("walk-forward windows use expanding train period and purge gap", () => {
@@ -255,6 +311,29 @@ describe("BacktestJobService", () => {
     expect(windows[0]?.embargoEnd).toBe(
       new Date(Date.parse(windows[0]?.testStart ?? "") - 86_400_000).toISOString().slice(0, 10)
     );
+  });
+
+  test("final holdout rejects a reserved window outside the frozen snapshot", async () => {
+    const shortSnapshotId = await seedDatasetSnapshot(["AAA", "BBB"], {
+      includeHoldoutBars: false,
+    });
+    const source = await backtestJobService.submitAndRun({
+      strategyVersionId,
+      signals: { kind: "factor_score", expr: "close", lang: "qlib_expr" },
+      symbols: ["AAA", "BBB"],
+      datasetSnapshotId: shortSnapshotId,
+      startDate: "2026-01-01",
+      endDate: "2026-01-31",
+      providerKey: "stub_bt",
+    });
+
+    await expect(
+      finalHoldoutEvaluationService.run(source.id, {
+        trainEnd: "2026-01-31",
+        holdoutStart: "2026-02-06",
+        holdoutEnd: "2026-02-28",
+      })
+    ).rejects.toThrow("dataset_snapshot_window_mismatch");
   });
 
   test("缺 signals + 缺 compositionId → validation_failed", async () => {

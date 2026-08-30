@@ -36,6 +36,7 @@ export function isMcpToolQuarantined(
 export type BridgedMcpToolSpec = {
   name: string;
   description: string;
+  inputSchema?: Record<string, unknown>;
   kind: "mcp";
   serverName: string;
   toolName: string;
@@ -63,18 +64,28 @@ export function isMcpBridgeToolName(name: string): boolean {
   return name === MCP_META_TOOL || Boolean(parseMcpBridgeToolName(name));
 }
 
-function parseCapabilityTools(raw: unknown): Array<{ name: string; desc?: string }> {
+function parseCapabilityTools(
+  raw: unknown
+): Array<{ name: string; desc?: string; inputSchema?: Record<string, unknown> }> {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
   const toolsRaw = (raw as Record<string, unknown>).tools;
   if (!Array.isArray(toolsRaw)) return [];
-  const out: Array<{ name: string; desc?: string }> = [];
+  const out: Array<{ name: string; desc?: string; inputSchema?: Record<string, unknown> }> = [];
   for (const item of toolsRaw) {
     if (!item || typeof item !== "object") continue;
     const obj = item as Record<string, unknown>;
     const name = typeof obj.name === "string" ? obj.name.trim() : "";
     if (!name || name === "*") continue;
     const desc = typeof obj.desc === "string" ? obj.desc : undefined;
-    out.push(desc ? { name, desc } : { name });
+    const inputSchema =
+      obj.inputSchema && typeof obj.inputSchema === "object" && !Array.isArray(obj.inputSchema)
+        ? (obj.inputSchema as Record<string, unknown>)
+        : obj.input_schema &&
+            typeof obj.input_schema === "object" &&
+            !Array.isArray(obj.input_schema)
+          ? (obj.input_schema as Record<string, unknown>)
+          : undefined;
+    out.push({ name, ...(desc ? { desc } : {}), ...(inputSchema ? { inputSchema } : {}) });
   }
   return out;
 }
@@ -106,6 +117,7 @@ export async function listBridgedMcpTools(): Promise<BridgedMcpToolSpec[]> {
         out.push({
           name: wire,
           description: t.desc?.trim() || `MCP ${server.name}/${t.name} (bridged via Bun L2)`,
+          ...(t.inputSchema ? { inputSchema: t.inputSchema } : {}),
           kind: "mcp",
           serverName: server.name,
           toolName: t.name,

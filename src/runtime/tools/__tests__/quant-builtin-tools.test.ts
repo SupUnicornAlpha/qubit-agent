@@ -2,7 +2,7 @@
  * Agent 量化工坊工具入口集成测试
  *
  * 验证 builtin-tools 中新增的 factor.list / factor.autoEvaluate / discovery.run /
- * discovery.promote / backtest.run / backtest.walk_forward 能通过 dispatchBuiltinTool 调用，并正确路由到
+ * discovery.promote / backtest.run / backtest.walk_forward / backtest.final_holdout 能通过 dispatchBuiltinTool 调用，并正确路由到
  * factorService / discoveryService / backtestJobService。
  *
  * 与 services 自身的单测互补：这里只验证「工具入口的参数解析与编排链路」。
@@ -58,6 +58,8 @@ describe("Agent 量化工坊工具入口", () => {
     const names = listRegisteredBuiltinTools();
     for (const t of [
       "factor.register",
+      "factor.set_research_contract",
+      "factor.activate",
       "factor.compute",
       "factor.evaluate",
       "factor.list",
@@ -69,6 +71,7 @@ describe("Agent 量化工坊工具入口", () => {
       "discovery.promote",
       "backtest.run",
       "backtest.walk_forward",
+      "backtest.final_holdout",
       "code.run_python",
     ]) {
       expect(names).toContain(t);
@@ -132,9 +135,15 @@ describe("Agent 量化工坊工具入口", () => {
       end_date: "2026-04-30",
       horizon_days: 5,
       top_k: 3,
-    })) as { id: string; candidates: Array<{ id: string; expr: string; error?: string }> };
+    })) as {
+      id: string;
+      candidates: Array<{ id: string; expr: string; error?: string }>;
+      multipleTesting: { method: string; hypothesisCount: number } | null;
+    };
     expect(job.id).toBeDefined();
     expect(job.candidates.length).toBeGreaterThan(0);
+    expect(job.multipleTesting?.method).toBe("benjamini_hochberg");
+    expect(job.multipleTesting?.hypothesisCount).toBeGreaterThanOrEqual(job.candidates.length);
 
     // 过滤掉 error 候选
     const good = job.candidates.find((c) => !c.error);
@@ -186,6 +195,15 @@ describe("Agent 量化工坊工具入口", () => {
         purge_days: 5,
       })
     ).rejects.toThrow(/backtest_run_id/);
+  });
+
+  test("backtest.final_holdout 缺参数 → 抛错", async () => {
+    const ctx = buildCtx();
+    await expect(
+      dispatchBuiltinTool("backtest.final_holdout", ctx as never, {
+        backtest_run_id: "run_1",
+      })
+    ).rejects.toThrow(/train_end/);
   });
 
   test("factor.autoEvaluate 必填校验", async () => {

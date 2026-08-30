@@ -4,7 +4,7 @@
  * 历史问题：`workflow_run.status` 在 25 处分散直写（execute-agent-react、
  * graph-factory、a2a-loop-driver、cli-loop-driver、hitl-service、
  * research-team-execute、restore-running-workflows、handlers/role-handlers、
- * routes/workflow、routes/analyst、msa/analyst-team、trader-workflow、
+ * routes/workflow、research-artifacts、trader-workflow、
  * compensation-queue …），导致：
  *   - 没人能稳定回答"现在合法的迁移是什么"
  *   - HITL approve 后偶发 "running → awaiting_approval → running" 的违规

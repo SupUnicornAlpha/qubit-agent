@@ -9,6 +9,7 @@ import {
   workflowRun,
 } from "../../db/sqlite/schema";
 import { ensureStrategyVersionForScript } from "../strategy/strategy-version-resolver";
+import { readStrategyComparisonCohortId } from "./strategy-comparison-cohort";
 
 export interface PaperEvaluation {
   id: string;
@@ -54,6 +55,27 @@ export class PaperEvaluationService {
       .from(strategyPnlSnapshot)
       .where(eq(strategyPnlSnapshot.strategyRuntimeId, strategyRuntimeId));
     const params = (runtime.paramsJson as Record<string, unknown>) ?? {};
+    const configuredCohort = params.comparisonCohortId;
+    const comparisonCohortId = readStrategyComparisonCohortId({
+      comparisonCohort: { id: configuredCohort },
+    });
+    if (configuredCohort !== undefined && !comparisonCohortId) {
+      throw new Error("paper_comparison_cohort_id_invalid");
+    }
+    if (comparisonCohortId) {
+      const evaluations = await db
+        .select({ evalKind: strategyEvalRun.evalKind, metricsJson: strategyEvalRun.metricsJson })
+        .from(strategyEvalRun)
+        .where(eq(strategyEvalRun.strategyVersionId, strategyVersionId));
+      const supportedKinds = new Set(
+        evaluations
+          .filter((row) => readStrategyComparisonCohortId(row.metricsJson) === comparisonCohortId)
+          .map((row) => row.evalKind)
+      );
+      if (!supportedKinds.has("backtest") || !supportedKinds.has("walk_forward")) {
+        throw new Error("paper_comparison_cohort_not_verified_for_strategy");
+      }
+    }
     const capital = finitePositive(params.paperCapital) ?? 10_000;
     const daily = new Map<string, { pnl: number; turnover: number }>();
     for (const snapshot of snapshots) {
@@ -82,6 +104,7 @@ export class PaperEvaluationService {
       maxDrawdown,
       turnover,
       pass,
+      comparisonCohortId,
     });
     return {
       id,
@@ -99,7 +122,11 @@ export class PaperEvaluationService {
 
   private async persist(
     db: DbClient,
-    input: Omit<PaperEvaluation, "id"> & { projectId: string; workflowRunId: string }
+    input: Omit<PaperEvaluation, "id"> & {
+      projectId: string;
+      workflowRunId: string;
+      comparisonCohortId: string | null;
+    }
   ) {
     const rows = await db
       .select()
@@ -123,6 +150,9 @@ export class PaperEvaluationService {
       sharpe: input.sharpe,
       maxDrawdown: input.maxDrawdown,
       turnover: input.turnover,
+      ...(input.comparisonCohortId
+        ? { comparisonCohort: { id: input.comparisonCohortId } }
+        : {}),
       gateVersion: "paper-gate-v1",
     };
     if (existing) {

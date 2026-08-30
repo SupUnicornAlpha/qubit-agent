@@ -1,13 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { A2AMessageEnvelope, TaskAssignPayload, TaskProgressPayload } from "../../types/a2a";
+import { stepStreamBus } from "../host/event-stream";
 import { onWorkflowTerminal } from "../monitor/observability-hook";
 import { resolveTopologyTaskHeartbeatMs } from "../orchestration/topology-dispatch";
 import { resolveCoreBackend } from "../prime/core-runtime";
 import { runOrchestratorTaskViaCore } from "../prime/run-orchestrator-via-core";
 import { reasonSpecialistViaCore, resolveCalleeSpecId } from "../prime/run-specialist-via-core";
-import { stepStreamBus } from "../react/event-stream";
-import { executeAgentReact } from "../react/execute-agent-react";
-import type { AgentGraphState } from "../react/state";
 import type { RuntimeHandlerContext } from "../types";
 import {
   clearA2ATaskCancellation,
@@ -64,9 +62,13 @@ export type TopologyTaskEvidence = {
   result: unknown;
 };
 
+/** Evidence extract from Host-projected tool/observation tails (Core / bridge). */
 export function extractTopologyTaskEvidence(
   role: string,
-  state: Pick<AgentGraphState, "toolCalls" | "observations">
+  state: {
+    toolCalls: Array<Record<string, unknown>>;
+    observations: Array<Record<string, unknown>>;
+  }
 ): TopologyTaskEvidence | null {
   const successfulTools = [...state.toolCalls]
     .reverse()
@@ -152,26 +154,15 @@ export function extractTopologyTaskEvidence(
   return null;
 }
 
-/**
- * Run the shared ReAct loop for an A2A TASK_ASSIGN, then reply with TASK_RESULT.
- */
 export function resolveA2aExecutionRunId(payload: TaskAssignPayload): string {
   return payload.executionRunId?.trim() || randomUUID();
 }
 
 export function resolveA2aSpecialistMaxIterations(configured: number): number {
   // 专家任务需要完成“检查数据源 → 解析标的 → 拉数据 → 降级重试 → 交叉验证 → 总结”。
-  // 8 轮会在正常恢复链路尚未产出结论时截断。墙钟 deadline、可取消任务和 sandbox
-  // policy 已是独立护栏，因此这里提供可完成研究的执行预算，而不是第二个失败阈值。
   return Math.min(Math.max(24, configured), 32);
 }
 
-/**
- * The workflow's loopOptionsJson is the authoritative orchestration budget.
- * Do not turn every A2A orchestration into 64 turns: that masks missing stop
- * conditions and multiplies stale tool proposals.  Callers that genuinely
- * need a larger budget set it explicitly on the workflow.
- */
 export function resolveA2aOrchestratorMaxIterations(configured: number): number {
   return Math.max(1, Math.floor(configured));
 }
@@ -180,58 +171,46 @@ async function sendTaskProgress(
   ctx: RuntimeHandlerContext,
   msg: A2AMessageEnvelope,
   payload: TaskAssignPayload,
-  event: {
-    phase: TaskProgressPayload["phase"];
-    iteration?: number;
-    detail?: string;
-  }
+  event: { phase: TaskProgressPayload["phase"]; iteration?: number; detail?: string }
 ): Promise<void> {
-  // Topology children report lease health back to the assigner; primary workflow
-  // owners (non-topology) have no gather waiter to renew.
-  if (ownsWorkflowTerminalState(payload)) return;
-  try {
-    await ctx.send({
-      workflowId: msg.workflowId,
-      traceId: msg.traceId,
-      receiverAgent: msg.senderAgent,
-      messageType: "TASK_PROGRESS",
-      payload: {
-        taskId: payload.taskId,
-        phase: event.phase,
-        ...(event.iteration !== undefined ? { iteration: Math.max(0, event.iteration) } : {}),
-        role: ctx.definition.role,
-        ...(event.detail ? { detail: event.detail.slice(0, 500) } : {}),
-        ts: new Date().toISOString(),
-      } satisfies TaskProgressPayload,
-      priority: 20,
-    });
-  } catch (err) {
-    console.warn(
-      `[a2a-react-task] TASK_PROGRESS failed: ${err instanceof Error ? err.message : String(err)}`
-    );
-  }
+  const progress: TaskProgressPayload = {
+    taskId: payload.taskId,
+    phase: event.phase,
+    ...(event.iteration !== undefined ? { iteration: Math.max(0, event.iteration) } : {}),
+    role: ctx.definition.role,
+    ...(event.detail ? { detail: event.detail.slice(0, 500) } : {}),
+    ts: new Date().toISOString(),
+  };
+  await ctx.send({
+    workflowId: msg.workflowId,
+    traceId: msg.traceId,
+    receiverAgent: msg.senderAgent,
+    messageType: "TASK_PROGRESS",
+    payload: progress,
+    priority: msg.priority,
+  });
 }
 
+/**
+ * A2A TASK_ASSIGN → **Rust Core only** (Phase B).
+ * Bun Host remains the A2A / SSE / persistence adapter — not a second Agent runtime.
+ */
 export async function runA2aReactTaskAssign(
   ctx: RuntimeHandlerContext,
-  msg: A2AMessageEnvelope
-): Promise<
-  | {
-      finalResponse: Record<string, unknown>;
-      terminalStatus: "completed" | "partial" | "failed" | "awaiting_approval";
-    }
-  | undefined
-> {
-  const payload = msg.payload as TaskAssignPayload;
-  /**
-   * `dispatchTaskToRole` 会把这个 ID 先返回给 HTTP 调用方，前端随即订阅对应 SSE。
-   * 必须复用 payload 中的 executionRunId；历史上这里再次 randomUUID，导致调用方
-   * 永远订阅到一条没有 token 的空流，只能等最终落库后一次性看到完整答案。
-   */
-  const runId = resolveA2aExecutionRunId(payload);
-  const traceId = msg.traceId;
+  msg: A2AMessageEnvelope,
+  payload: TaskAssignPayload
+): Promise<{ finalResponse: Record<string, unknown>; terminalStatus: string } | void> {
+  if (resolveCoreBackend() !== "rust") {
+    throw new Error(
+      "A2A task assign requires QUBIT_CORE_BACKEND=rust (Phase B: TS Agent runtime removed). " +
+        "Start qubit-app-server and attach Prime Core."
+    );
+  }
+
   const workflowId = msg.workflowId;
+  const traceId = msg.traceId;
   const ownsTerminalState = ownsWorkflowTerminalState(payload);
+  const runId = resolveA2aExecutionRunId(payload);
   const definition = {
     ...ctx.definition,
     maxIterations:
@@ -241,14 +220,6 @@ export async function runA2aReactTaskAssign(
           ? ctx.definition.maxIterations
           : resolveA2aSpecialistMaxIterations(ctx.definition.maxIterations),
   };
-
-  /**
-   * 自研 snapshot 续跑：workflow_resume 的 payload.params.resume=true 时，
-   * executeAgentReact 会按 workflowId 取最近一份 agent_checkpoint_snapshot 还原运行态
-   * 并从下一轮 reason 重入（进程重启恢复 / sweep 续跑走这条线）。HITL approve 重派
-   * 不带 resume —— 让 orchestrator 重跑 ReAct，由 hitlApproval 自然进入上下文。
-   */
-  const resume = (payload.params as Record<string, unknown> | undefined)?.resume === true;
   const startedAt = Date.now();
   const heartbeatMs = resolveTopologyTaskHeartbeatMs();
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -266,17 +237,12 @@ export async function runA2aReactTaskAssign(
       ...(event.detail ? { detail: event.detail.slice(0, 500) } : {}),
       ts: new Date().toISOString(),
     };
-    // The durable A2A event is authoritative; a transient local bus failure
-    // must not erase progress or make a restarted parent lose the task.
     await recordA2ATaskProgress(payload.taskId, progress);
     await sendTaskProgress(ctx, msg, payload, event);
   };
 
   const cancelOpenChildrenForTerminal = async (status: "completed" | "partial" | "failed") => {
     if (!ownsTerminalState) return;
-    // A terminal parent must not leave specialists consuming tools in the
-    // background. The interrupt is cooperative in-process and the task state
-    // is persisted for reconnect/recovery.
     const openChildren = await listOpenChildA2ATasks(workflowId, payload.taskId);
     await Promise.all(
       openChildren.map((task) =>
@@ -286,213 +252,103 @@ export async function runA2aReactTaskAssign(
   };
 
   try {
-    // Prime Core valve: orchestrator → turn.start；专家 role → agent.invoke。
-    // 避免在 rust 后端再进 executeAgentReact（为裁剪 TS ReAct 铺路）。
-    if (resolveCoreBackend() === "rust") {
-      if (ctx.definition.role === "orchestrator") {
-        return runOrchestratorTaskViaCore(ctx, msg, payload);
-      }
-
-      await markA2ATaskWorking(payload.taskId);
-      await emitProgress({ phase: "start", iteration: 0, detail: "prime_core_invoke" });
-      if (!ownsTerminalState) {
-        heartbeatTimer = setInterval(() => {
-          void emitProgress({ phase: "heartbeat", detail: "prime_core_invoke" });
-        }, heartbeatMs);
-        (heartbeatTimer as { unref?: () => void }).unref?.();
-      }
-      const params = (payload.params ?? {}) as Record<string, unknown>;
-      const goal =
-        (typeof params.goal === "string" && params.goal.trim()) ||
-        (typeof params.context === "string" && params.context.trim()) ||
-        `A2A task ${payload.taskType} for ${ctx.definition.role}`;
-      const context =
-        typeof params.context === "string" && params.context !== goal ? params.context : undefined;
-
-      const out = await reasonSpecialistViaCore({
-        workflowRunId: workflowId,
-        runId,
-        traceId: msg.traceId,
-        calleeSpecId: resolveCalleeSpecId({
-          definitionId: definition.id,
-          role: ctx.definition.role,
-        }),
-        role: ctx.definition.role,
-        goal,
-        ...(context ? { context } : {}),
-        maxIterations: definition.maxIterations,
-      });
-
-      const failed =
-        out.state === "failed" || out.state === "cancelled" || out.state === "timed_out";
-      const partial =
-        !failed &&
-        (out.state !== "completed" ||
-          out.deliveryStatus === "partial" ||
-          out.deliveryStatus === "delivered_with_gaps" ||
-          out.deliveryStatus === "failed" ||
-          out.deliveryStatus === "cancelled");
-      const terminalStatus: "completed" | "partial" | "failed" = failed
-        ? "failed"
-        : partial
-          ? "partial"
-          : "completed";
-      const finalResponse: Record<string, unknown> = {
-        answerText: out.text,
-        reasonText: out.text,
-        status: terminalStatus,
-        backend: "rust",
-        invocationId: out.invocationId,
-        childSessionId: out.childSessionId,
-      };
-
-      stepStreamBus.publish({
-        runId,
-        workflowId,
-        traceId,
-        role: ctx.definition.role,
-        type: terminalStatus === "failed" ? "error" : "final",
-        stepIndex: 0,
-        ts: Date.now(),
-        payload:
-          terminalStatus === "failed"
-            ? { error: out.text, backend: "rust" }
-            : { answerText: out.text, backend: "rust" },
-        loopKind: "native",
-        source: "a2a",
-      });
-
-      if (ownsTerminalState) {
-        await cancelOpenChildrenForTerminal(terminalStatus);
-        onWorkflowTerminal(workflowId, terminalStatus);
-      }
-
-      const failure =
-        terminalStatus !== "completed"
-          ? {
-              status: terminalStatus,
-              errorCode: "prime_core_invoke",
-              errorMessage: out.text.slice(0, 500),
-            }
-          : null;
-      const taskResultPayload = buildTaskResult(payload.taskId, ctx.definition.role, {
-        status: failure?.status ?? "completed",
-        success: terminalStatus === "completed",
-        result: finalResponse,
-        ...(failure ? { errorCode: failure.errorCode, errorMessage: failure.errorMessage } : {}),
-        summary: out.text.slice(0, 500),
-        durationMs: Date.now() - startedAt,
-      });
-      await completeA2ATask(payload.taskId, taskResultPayload);
-      await ctx.send({
-        workflowId,
-        traceId,
-        receiverAgent: msg.senderAgent,
-        messageType: "TASK_RESULT",
-        payload: taskResultPayload,
-        priority: msg.priority,
-      });
-      return { finalResponse, terminalStatus };
+    if (ctx.definition.role === "orchestrator") {
+      return runOrchestratorTaskViaCore(ctx, msg, payload);
     }
 
     await markA2ATaskWorking(payload.taskId);
-    await emitProgress({ phase: "start", iteration: 0 });
-    if (!ownsWorkflowTerminalState(payload)) {
+    await emitProgress({ phase: "start", iteration: 0, detail: "prime_core_invoke" });
+    if (!ownsTerminalState) {
       heartbeatTimer = setInterval(() => {
-        void emitProgress({ phase: "heartbeat" });
+        void emitProgress({ phase: "heartbeat", detail: "prime_core_invoke" });
       }, heartbeatMs);
       (heartbeatTimer as { unref?: () => void }).unref?.();
     }
 
-    const { finalState, finalResponse, terminalStatus } = await executeAgentReact({
+    if (isA2ATaskCancellationRequested(payload.taskId)) {
+      throw new Error("a2a_task_cancelled");
+    }
+
+    const params = (payload.params ?? {}) as Record<string, unknown>;
+    const goal =
+      (typeof params.goal === "string" && params.goal.trim()) ||
+      (typeof params.context === "string" && params.context.trim()) ||
+      `A2A task ${payload.taskType} for ${ctx.definition.role}`;
+    const context =
+      typeof params.context === "string" && params.context !== goal ? params.context : undefined;
+
+    const out = await reasonSpecialistViaCore({
+      workflowRunId: workflowId,
+      runId,
+      traceId: msg.traceId,
+      calleeSpecId: resolveCalleeSpecId({
+        definitionId: definition.id,
+        role: ctx.definition.role,
+      }),
+      role: ctx.definition.role,
+      goal,
+      ...(context ? { context } : {}),
+      maxIterations: definition.maxIterations,
+    });
+
+    const failed =
+      out.state === "failed" || out.state === "cancelled" || out.state === "timed_out";
+    const partial =
+      !failed &&
+      (out.state !== "completed" ||
+        out.deliveryStatus === "partial" ||
+        out.deliveryStatus === "delivered_with_gaps" ||
+        out.deliveryStatus === "failed" ||
+        out.deliveryStatus === "cancelled");
+    const terminalStatus: "completed" | "partial" | "failed" = failed
+      ? "failed"
+      : partial
+        ? "partial"
+        : "completed";
+    const finalResponse: Record<string, unknown> = {
+      answerText: out.text,
+      reasonText: out.text,
+      status: terminalStatus,
+      backend: "rust",
+      invocationId: out.invocationId,
+      childSessionId: out.childSessionId,
+    };
+
+    stepStreamBus.publish({
       runId,
       workflowId,
       traceId,
-      def: definition,
-      payload,
-      receiverAgent: ctx.instance.instanceId,
-      streamLoopKind: "native",
-      streamSource: "a2a",
-      updateWorkflowStatus: ownsTerminalState,
-      resume,
-      isTaskCancellationRequested: () => isA2ATaskCancellationRequested(payload.taskId),
-      onTaskProgress: (event) => emitProgress(event),
+      role: ctx.definition.role,
+      type: terminalStatus === "failed" ? "error" : "final",
+      stepIndex: 0,
+      ts: Date.now(),
+      payload:
+        terminalStatus === "failed"
+          ? { error: out.text, backend: "rust" }
+          : { answerText: out.text, backend: "rust" },
+      loopKind: "native",
+      source: "a2a",
     });
-
-    /**
-     * P0-3 R4：awaiting_approval 不是终态，不能调 onWorkflowTerminal —— 之前那样调
-     * 会把"等审批"的工作流跑进 quality snapshot / alert 评估，污染监控指标，
-     * 而且类型上 onWorkflowTerminal 只接受 completed/failed，是借 union 宽度蒙混过的。
-     *
-     * P0-3 R5：不能发 TASK_RESULT(success=true)。但 V2 会发可观察的
-     * awaiting_approval receipt，避免上游 Gather 无期限等到自己的 timeout。
-     */
-    if (terminalStatus === "awaiting_approval") {
-      const taskResultPayload = buildTaskResult(payload.taskId, ctx.definition.role, {
-        status: "awaiting_approval",
-        errorCode: "awaiting_approval",
-        errorMessage: "专家子任务正在等待人工审批",
-        result: finalResponse,
-        ...(taskSummary(finalResponse) ? { summary: taskSummary(finalResponse) } : {}),
-        durationMs: Date.now() - startedAt,
-      });
-      await completeA2ATask(payload.taskId, taskResultPayload);
-      await ctx.send({
-        workflowId,
-        traceId,
-        receiverAgent: msg.senderAgent,
-        messageType: "TASK_RESULT",
-        payload: taskResultPayload,
-        priority: msg.priority,
-      });
-      return;
-    }
 
     if (ownsTerminalState) {
       await cancelOpenChildrenForTerminal(terminalStatus);
       onWorkflowTerminal(workflowId, terminalStatus);
     }
 
-    const taskEvidence = ownsTerminalState
-      ? null
-      : extractTopologyTaskEvidence(ctx.definition.role, finalState);
-    const taskResult = taskEvidence
-      ? {
-          ...finalResponse,
-          taskEvidence,
-          originalTerminalStatus: terminalStatus,
-          // Evidence remains useful to the parent, but never upgrades a
-          // failed/exhausted child into a successful task.
-          ...(terminalStatus === "failed" || terminalStatus === "partial"
-            ? { status: "failed_with_partial_evidence" }
-            : {}),
-        }
-      : finalResponse;
-
     const failure =
-      terminalStatus === "failed" || terminalStatus === "partial"
-        ? taskFailureDetails(finalResponse)
+      terminalStatus !== "completed"
+        ? {
+            status: terminalStatus,
+            errorCode: "prime_core_invoke",
+            errorMessage: out.text.slice(0, 500),
+          }
         : null;
     const taskResultPayload = buildTaskResult(payload.taskId, ctx.definition.role, {
       status: failure?.status ?? "completed",
       success: terminalStatus === "completed",
-      result: taskResult,
+      result: finalResponse,
       ...(failure ? { errorCode: failure.errorCode, errorMessage: failure.errorMessage } : {}),
-      ...(taskEvidence
-        ? {
-            evidence: {
-              kind: taskEvidence.kind,
-              verified: taskEvidence.verified,
-              detail: {
-                sourceTool: taskEvidence.sourceTool,
-                ...(taskEvidence.result && typeof taskEvidence.result === "object"
-                  ? (taskEvidence.result as Record<string, unknown>)
-                  : {}),
-              },
-            },
-          }
-        : {}),
-      ...(taskSummary(finalResponse) ? { summary: taskSummary(finalResponse) } : {}),
+      summary: out.text.slice(0, 500),
       durationMs: Date.now() - startedAt,
     });
     await completeA2ATask(payload.taskId, taskResultPayload);
@@ -504,31 +360,24 @@ export async function runA2aReactTaskAssign(
       payload: taskResultPayload,
       priority: msg.priority,
     });
-
-    // 返回 finalResponse 供 caller（如 orchestrator_chat handler）把最终答复落库为
-    // orchestrator→user 交互；其它 caller 忽略返回值即可（行为不变）。
     return { finalResponse, terminalStatus };
   } catch (err) {
-    /**
-     * P0-C：error 帧 + workflow_run.status='failed' + agent_instance.status='error' 现在
-     * 全部由 executeAgentReact 内部统一负责。这里只保留 A2A 协议层副作用：
-     *   - onWorkflowTerminal(failed)：监控/告警 hook（workflow-level）
-     *   - TASK_RESULT(success=false)：A2A 上游 handler 需要的失败回执
-     */
     const message = err instanceof Error ? err.message : String(err);
+    const details = taskFailureDetails({ error: message, reason: message });
     if (ownsTerminalState) {
       await cancelOpenChildrenForTerminal("failed");
       onWorkflowTerminal(workflowId, "failed");
     }
     const taskResultPayload = buildTaskResult(payload.taskId, ctx.definition.role, {
-      status: "failed",
-      errorCode: "a2a_task_execution_error",
-      result: { error: message },
-      errorMessage: message,
+      status: details.status,
+      success: false,
+      errorCode: details.errorCode,
+      errorMessage: details.errorMessage,
+      result: { error: message, backend: "rust" },
+      ...(taskSummary({ error: message }) ? { summary: taskSummary({ error: message }) } : {}),
       durationMs: Date.now() - startedAt,
     });
     await completeA2ATask(payload.taskId, taskResultPayload);
-
     await ctx.send({
       workflowId,
       traceId,
@@ -537,10 +386,10 @@ export async function runA2aReactTaskAssign(
       payload: taskResultPayload,
       priority: msg.priority,
     });
-    return undefined;
+    throw err;
   } finally {
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     clearA2ATaskCancellation(payload.taskId);
-    setTimeout(() => stepStreamBus.close(runId), 250);
+    stepStreamBus.close(runId);
   }
 }

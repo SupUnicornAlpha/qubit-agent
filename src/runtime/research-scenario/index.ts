@@ -4,7 +4,7 @@ export { researchScenarioService, ResearchScenarioService } from "./service";
 export { bootstrapResearchScenarios } from "./bootstrap";
 export {
   BUILTIN_RESEARCH_SCENARIOS,
-  ANALYST_DEBATE_SCENARIO,
+  CONVERSATIONAL_RESEARCH_SCENARIO,
   STRATEGY_AUTHORING_SCENARIO,
   FACTOR_RESEARCH_SCENARIO,
   RULE_RESEARCH_SCENARIO,

@@ -322,13 +322,23 @@ async function runSensitivityChecks(input: {
 }): Promise<MathVerificationCheck[]> {
   const results: MathVerificationCheck[] = [];
   for (const check of input.checks) {
+    const variableValue = check.variables[check.variable];
+    if (variableValue === undefined) {
+      results.push({
+        id: check.id,
+        category: "sensitivity",
+        status: "fail",
+        detail: `${check.label}: 未提供受扰动变量 ${check.variable} 的基准值`,
+      });
+      continue;
+    }
     const baseline = await input.evaluator.evaluate({
       expression: check.expression,
       variables: check.variables,
     });
     const shiftedVariables = {
       ...check.variables,
-      [check.variable]: check.variables[check.variable] + check.delta,
+      [check.variable]: variableValue + check.delta,
     };
     const shifted = await input.evaluator.evaluate({
       expression: check.expression,

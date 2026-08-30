@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use qubit_tool_host::ToolDefinition;
 use serde_json::Value;
 
 use crate::cancel::CancelToken;
@@ -10,7 +11,9 @@ pub struct SampleRequest {
     pub user: String,
     /// Validated image data URLs sent as OpenAI-compatible `image_url` content blocks.
     pub image_urls: Vec<String>,
-    pub tools: Vec<String>,
+    /// Provider-neutral definitions loaded from ToolHost. The model adapter
+    /// must not contain business-tool descriptions or schemas.
+    pub tools: Vec<ToolDefinition>,
     /// Prior assistant/tool turns after the initial system+user (OpenAI chat format).
     pub history: Vec<Value>,
 }
@@ -21,7 +24,7 @@ impl SampleRequest {
             system: system.into(),
             user: user.into(),
             image_urls: vec![],
-            tools,
+            tools: tools.into_iter().map(ToolDefinition::generic).collect(),
             history: vec![],
         }
     }

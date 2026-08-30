@@ -10,7 +10,7 @@ import {
 import { getTurnBindingByWorkflow, registerTurnRunBinding } from "../../conversation/turn-binding";
 import { resolveTurnMode } from "../../conversation/turn-mode";
 import { InMemoryExperienceStore } from "../../experience/experience-store";
-import type { StepStreamEvent } from "../../react/state";
+import type { StepStreamEvent } from "../../host/step-stream-types";
 import { assembleContextEnvelope } from "../assemble-context-prompt";
 import { applyDecisionOutcome, brierContribution } from "../decision-outcome";
 
@@ -193,10 +193,10 @@ describe("DecisionRecord outcome P2", () => {
     expect(wFail).toBeLessThan(0.4);
   });
 
-  test("applyRecommendationOutcomeToExperiences 按 symbol 写回", async () => {
+  test("applyRecommendationOutcomeToExperiences only writes the causally linked workflow and dedupes replay", async () => {
     const { applyRecommendationOutcomeToExperiences } = await import("../decision-outcome");
     const store = new InMemoryExperienceStore();
-    await store.insert({
+    const linked = await store.insert({
       kind: "semantic",
       subKind: "research_conclusion",
       scope: "project",
@@ -211,10 +211,23 @@ describe("DecisionRecord outcome P2", () => {
       validFrom: "2026-07-01T00:00:00.000Z",
       sourceRunId: "wf1",
     });
+    const unrelated = await store.insert({
+      kind: "semantic",
+      subKind: "research_conclusion",
+      scope: "project",
+      scopeId: "p1",
+      contentJson: { thesis: "old bull" },
+      metadataJson: { symbols: ["AAPL"], workflowRunId: "wf-old" },
+      tagsJson: ["symbol:AAPL"],
+      validFrom: "2026-06-01T00:00:00.000Z",
+      sourceRunId: "wf-old",
+    });
     const n = await applyRecommendationOutcomeToExperiences({
       store,
       projectId: "p1",
       workflowRunId: "wf1",
+      recommendationId: "rec-1",
+      horizonDays: 5,
       symbol: "AAPL",
       confidence: 0.7,
       tradeOutcome: "win",
@@ -222,6 +235,20 @@ describe("DecisionRecord outcome P2", () => {
       scoredAt: "2026-07-30T00:00:00.000Z",
     });
     expect(n).toBe(1);
+    await applyRecommendationOutcomeToExperiences({
+      store,
+      projectId: "p1",
+      workflowRunId: "wf1",
+      recommendationId: "rec-1",
+      horizonDays: 5,
+      symbol: "AAPL",
+      confidence: 0.7,
+      tradeOutcome: "win",
+      returnPct: 5,
+      scoredAt: "2026-07-30T00:00:00.000Z",
+    });
+    expect((await store.findById(linked.id))?.successCount).toBe(1);
+    expect((await store.findById(unrelated.id))?.successCount).toBe(0);
   });
 });
 

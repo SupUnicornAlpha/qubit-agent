@@ -55,6 +55,8 @@ describe("evidence binding (D5)", () => {
           direction: "long",
           horizon: "5d",
           confidence: 0.5,
+          claims: [{ claim: "fixture claim", evidenceRefs: ["obs_fixture"] }],
+          invalidation: [{ condition: "fixture breaks", observable: "bar.close" }],
           modelAndPromptVersion: "t/v1",
         },
         { dataDir }
@@ -80,6 +82,33 @@ describe("evidence binding (D5)", () => {
       );
       expect(mismatch.ok).toBe(false);
       if (!mismatch.ok) expect(mismatch.code).toBe("snapshot_thesis_mismatch");
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  test("live rejects a thesis that has no evidence-backed falsifiable research", async () => {
+    process.env.QUBIT_ORDER_REQUIRE_THESIS = "1";
+    process.env.QUBIT_MARKET_QUALITY_GATE = "0";
+    const dataDir = await mkdtemp(join(tmpdir(), "qb-bind-empty-"));
+    try {
+      const written = await writeResearchThesis(
+        {
+          snapshotId: "mkt_snapshot_empty",
+          instrumentScope: ["US:AAPL"],
+          direction: "long",
+          horizon: "5d",
+          confidence: 0.5,
+          modelAndPromptVersion: "t/v1",
+        },
+        { dataDir }
+      );
+      const result = await resolveExecutionEvidenceBinding(
+        { dispatchMode: "live", thesisId: written.thesisId },
+        { dataDir }
+      );
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.code).toBe("thesis_not_auditable");
     } finally {
       await rm(dataDir, { recursive: true, force: true });
     }

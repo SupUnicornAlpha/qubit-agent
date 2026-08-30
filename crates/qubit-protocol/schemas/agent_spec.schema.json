@@ -75,6 +75,14 @@
         "null"
       ]
     },
+    "tools": {
+      "description": "Exact configured tool surface used by Core for per-agent schema loading.",
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "tool_surface_ref": {
       "type": "string"
     },

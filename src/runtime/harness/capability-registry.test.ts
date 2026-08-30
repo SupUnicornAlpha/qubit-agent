@@ -54,6 +54,21 @@ describe("CapabilityRegistry", () => {
     expect(registry.resolve("financial-research").capabilityIds).not.toContain("math.reasoning");
   });
 
+  test("loads quant integrity as a product-owned overlay and makes paper inherit it", () => {
+    const registry = createBuiltinFinancialHarnessRegistry();
+
+    expect(registry.resolve("quant-research-integrity").capabilityIds).toEqual([
+      "market.core",
+      "market.ide-subscription",
+      "research.core",
+      "quant.research-integrity",
+    ]);
+    expect(registry.resolve("paper-trading").capabilityIds).toContain("quant.research-integrity");
+    expect(registry.resolve("financial-research").capabilityIds).not.toContain(
+      "quant.research-integrity"
+    );
+  });
+
   test("rejects a disabled dependency before any capability activates", () => {
     const registry = new CapabilityRegistry()
       .register(plugin("market.core"))

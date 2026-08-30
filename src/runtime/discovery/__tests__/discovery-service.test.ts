@@ -69,11 +69,23 @@ describe("DiscoveryService", () => {
     expect(job.status).toBe("succeeded");
     expect(job.candidates.length).toBeGreaterThan(0);
     expect(job.candidates.length).toBeLessThanOrEqual(5);
-    // top K 应当按 |IC| 降序
+    expect(job.candidateAudit.length).toBeGreaterThanOrEqual(job.candidates.length);
+    expect(job.candidateAudit.every((candidate) => candidate.discoveryDecision)).toBe(true);
+    // FDR 结果必须与候选一同返回；通过校正的候选优先，其余再按 |IC| 排序。
+    expect(job.multipleTesting?.method).toBe("benjamini_hochberg");
+    expect(job.multipleTesting?.hypothesisCount).toBeGreaterThanOrEqual(job.candidates.length);
     for (let i = 1; i < job.candidates.length; i++) {
-      expect(job.candidates[i - 1]?.metrics.score).toBeGreaterThanOrEqual(
-        job.candidates[i]?.metrics.score
+      const previous = job.candidates[i - 1]!;
+      const current = job.candidates[i]!;
+      expect(Number((previous.metrics.adjustedPValue ?? 1) <= 0.05)).toBeGreaterThanOrEqual(
+        Number((current.metrics.adjustedPValue ?? 1) <= 0.05)
       );
+      if (
+        Number((previous.metrics.adjustedPValue ?? 1) <= 0.05) ===
+        Number((current.metrics.adjustedPValue ?? 1) <= 0.05)
+      ) {
+        expect(previous.metrics.score).toBeGreaterThanOrEqual(current.metrics.score);
+      }
     }
     // 所有候选都有 sampleSize > 0
     for (const c of job.candidates) {
@@ -190,6 +202,9 @@ describe("DiscoveryService", () => {
     expect(job.status).toBe("succeeded");
     // run() 里 sorted 把 error 过滤了 → topK 中只剩 1 个有效
     expect(job.candidates.every((c) => !c.error)).toBe(true);
+    expect(job.candidateAudit.some((c) => c.error && c.discoveryDecision?.status === "rejected")).toBe(
+      true
+    );
   });
 
   test("list 按 projectId 过滤", async () => {

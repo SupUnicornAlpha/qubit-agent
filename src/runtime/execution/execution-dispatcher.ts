@@ -15,6 +15,7 @@ import type { BrokerProvider } from "../../types/broker";
 import { executeWithPolicy } from "../external-call/policy";
 import { connectorForAccount, resolveBrokerAccount } from "./broker/broker-service";
 import { type DispatchMode, assertBrokerDispatchAllowed } from "./live-trading-gate";
+import { assertTradingModuleEnabled } from "../trader/trading-module-control";
 
 export type { DispatchMode };
 
@@ -286,6 +287,10 @@ export async function dispatchExecutionTask(
     .limit(1);
   const intent = intents[0];
   if (!intent) throw new Error("order_intent_missing");
+  await assertTradingModuleEnabled(db, {
+    ...(input.brokerAccountId ? { brokerAccountId: input.brokerAccountId } : {}),
+    ...(intent.strategyRuntimeId ? { strategyRuntimeId: intent.strategyRuntimeId } : {}),
+  });
   const effectiveOrderType = resolveEffectiveOrderType(intent.orderType, intent.activationStatus);
 
   let fillPrice = intent.price;

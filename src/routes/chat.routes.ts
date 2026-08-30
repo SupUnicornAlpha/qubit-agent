@@ -11,12 +11,12 @@ import {
   workspace,
 } from "../db/sqlite/schema";
 import { createConversationTurn } from "../runtime/conversation/conversation-turn-service";
-import { ensureChatSessionWorkflow } from "../runtime/conversation/session-workflow";
 import {
   type ChatImageAttachment,
   parseChatImageAttachments,
   readChatImageAttachments,
 } from "../runtime/conversation/image-attachments";
+import { ensureChatSessionWorkflow } from "../runtime/conversation/session-workflow";
 import { exportStrategyScriptToWorkflowDir } from "../runtime/strategy/strategy-script-files";
 import { hardDeleteChatSession } from "../runtime/workflow/hard-delete";
 import {
@@ -128,7 +128,11 @@ chatRouter.get("/sessions/:sessionId/workflow", async (c) => {
     goal: sessions[0].title,
     mode: "research",
   });
-  const rows = await db.select().from(workflowRun).where(eq(workflowRun.id, workflowRunId)).limit(1);
+  const rows = await db
+    .select()
+    .from(workflowRun)
+    .where(eq(workflowRun.id, workflowRunId))
+    .limit(1);
   if (!rows[0]) return c.json({ error: "workflow not found" }, 404);
   return c.json({ data: rows[0] });
 });
@@ -152,6 +156,9 @@ chatRouter.post("/sessions/:sessionId/turns", async (c) => {
     agentMode?: AgentControlMode;
     processConfig?: WorkflowProcessConfig;
     preserveGoal?: boolean;
+    /** 场景元数据只用于标记本次对话；Agent 仍从 chat turn 进入。 */
+    researchScenarioId?: string;
+    loopOptionsJson?: Record<string, unknown>;
     fsWorkspaceId?: string;
     attachments?: unknown;
   };
@@ -210,6 +217,10 @@ chatRouter.post("/sessions/:sessionId/turns", async (c) => {
       ...(agentMode.success ? { agentMode: agentMode.data } : {}),
       ...(processConfig.success ? { processConfig: processConfig.data } : {}),
       ...(body.preserveGoal === true ? { preserveGoal: true } : {}),
+      ...(body.researchScenarioId?.trim()
+        ? { researchScenarioId: body.researchScenarioId.trim() }
+        : {}),
+      ...(body.loopOptionsJson ? { loopOptionsJson: body.loopOptionsJson } : {}),
       ...(body.fsWorkspaceId?.trim() ? { fsWorkspaceId: body.fsWorkspaceId.trim() } : {}),
       ...(attachments.length ? { attachments } : {}),
     });
@@ -470,66 +481,6 @@ chatRouter.get("/sessions/:id/messages", async (c) => {
       workflowRunIds: linkByMessage.get(item.id) ?? [],
     })),
   });
-});
-
-chatRouter.post("/sessions/:id/messages", async (c) => {
-  const sessionId = c.req.param("id");
-  const body = await c.req.json<{
-    role: "user" | "assistant" | "system";
-    sender?: "user" | "orchestrator" | "agent" | "system";
-    content: string;
-    status?: "queued" | "running" | "completed" | "failed" | "awaiting_approval";
-    workflowRunIds?: string[];
-  }>();
-  const db = await getDb();
-  const sessionRows = await db
-    .select()
-    .from(chatSession)
-    .where(eq(chatSession.id, sessionId))
-    .limit(1);
-  if (!sessionRows[0]) return c.json({ error: "session not found", sessionId }, 404);
-  const id = crypto.randomUUID();
-  await db.insert(chatMessage).values({
-    id,
-    sessionId,
-    role: body.role,
-    sender: body.sender ?? (body.role === "user" ? "user" : "orchestrator"),
-    content: body.content,
-    status: body.status ?? "queued",
-  });
-  if (body.workflowRunIds?.length) {
-    for (const workflowRunId of body.workflowRunIds) {
-      const runRows = await db
-        .select({ id: workflowRun.id })
-        .from(workflowRun)
-        .where(eq(workflowRun.id, workflowRunId))
-        .limit(1);
-      if (!runRows[0]) continue;
-      const existing = await db
-        .select()
-        .from(chatMessageWorkflowLink)
-        .where(
-          and(
-            eq(chatMessageWorkflowLink.chatMessageId, id),
-            eq(chatMessageWorkflowLink.workflowRunId, workflowRunId)
-          )
-        )
-        .limit(1);
-      if (existing[0]) continue;
-      await db.insert(chatMessageWorkflowLink).values({
-        id: crypto.randomUUID(),
-        chatMessageId: id,
-        workflowRunId,
-        traceId: crypto.randomUUID(),
-      });
-    }
-  }
-  await db
-    .update(chatSession)
-    .set({ lastActivityAt: new Date().toISOString(), updatedAt: new Date().toISOString() })
-    .where(eq(chatSession.id, sessionId));
-  const created = await db.select().from(chatMessage).where(eq(chatMessage.id, id)).limit(1);
-  return c.json({ data: created[0] }, 201);
 });
 
 /**

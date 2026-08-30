@@ -2,7 +2,7 @@
  * 共享 HITL 自评提示（`hitlHint`）解析。
  *
  * 由两条路径使用：
- *   1. **研究团队 orchestrator plan**（`analyst-team-pipeline.ts#runOrchestratorPlanning`）
+ *   1. **研究对话 orchestrator plan**（由 Rust Core 生成）
  *   2. **对话 orchestrator reason**（`react/nodes/hitl-gate.ts`）
  *
  * 2026-08：扩展 form 填空、allowFreeText、独立提问（可无 TOOL_CALL）。

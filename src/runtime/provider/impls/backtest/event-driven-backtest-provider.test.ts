@@ -177,7 +177,7 @@ describe("EventDrivenBacktestProvider", () => {
     expect(result.meta.assetLifecycleReport?.status).toBe("invalid");
   });
 
-  test("rejects intraday snapshots instead of collapsing multiple bars into one daily event", async () => {
+  test("fails closed when an intraday snapshot has no frozen session windows", async () => {
     const request: BacktestRequest = {
       strategyVersionId: "strategy-intraday",
       dataset: {
@@ -227,8 +227,91 @@ describe("EventDrivenBacktestProvider", () => {
 
     const result = await new EventDrivenBacktestProvider().run(request);
 
-    expect(result.error).toBe("intraday_timeframe_not_supported:5m");
+    expect(result.error).toBe(
+      "intraday_session_window_unverified:AAA:2026-01-05T14:30:00.000Z:intraday_session_windows_missing"
+    );
     expect(result.trades).toEqual([]);
     expect(result.equityCurve).toEqual([]);
+  });
+
+  test("executes every intraday timestamp and annualizes from frozen session windows", async () => {
+    const request: BacktestRequest = {
+      strategyVersionId: "strategy-intraday-windowed",
+      dataset: {
+        snapshotId: "mkt_snapshot_intraday_windowed_fixture",
+        dataRef: "obs_intraday_windowed_fixture",
+        asOf: "2026-01-05T22:00:00.000Z",
+        timeframe: "5m",
+        sourceIds: ["fixture"],
+        qualification: {
+          useClass: "research_only",
+          universeHistory: "not_verified",
+          corporateActions: "raw_unadjusted",
+          pointInTime: "verified",
+          limitations: ["fixture"],
+        },
+        barsBySymbol: {
+          AAA: [
+            {
+              timestamp: "2026-01-05T14:30:00.000Z",
+              open: 100,
+              high: 101,
+              low: 99,
+              close: 100,
+              volume: 1_000,
+              turnover: 100_000,
+            },
+            {
+              timestamp: "2026-01-05T14:35:00.000Z",
+              open: 101,
+              high: 102,
+              low: 100,
+              close: 101,
+              volume: 1_000,
+              turnover: 101_000,
+            },
+            {
+              timestamp: "2026-01-05T14:40:00.000Z",
+              open: 102,
+              high: 103,
+              low: 101,
+              close: 102,
+              volume: 1_000,
+              turnover: 102_000,
+            },
+          ],
+        },
+        tradingCalendar: {
+          version: "NYSE-2026.1",
+          timezone: "America/New_York",
+          sessionWindowsBySymbol: {
+            AAA: {
+              "2026-01-05": [
+                { openAt: "2026-01-05T14:30:00.000Z", closeAt: "2026-01-05T21:00:00.000Z" },
+              ],
+            },
+          },
+        },
+      },
+      signals: { kind: "factor_score", expr: "close", lang: "qlib_expr" },
+      universe: "US",
+      symbols: ["AAA"],
+      startDate: "2026-01-01",
+      endDate: "2026-01-31",
+      capital: 100_000,
+      costs: { commissionBps: 0, slippageBps: 0 },
+    };
+
+    const result = await new EventDrivenBacktestProvider().run(request);
+
+    expect(result.error).toBeUndefined();
+    expect(result.equityCurve.map((point) => point.date)).toEqual([
+      "2026-01-05T14:30:00.000Z",
+      "2026-01-05T14:35:00.000Z",
+      "2026-01-05T14:40:00.000Z",
+    ]);
+    expect(result.meta.periodsPerYear).toBe(19_656);
+    expect(result.meta.executionTimeframe).toBe("5m");
+    expect(result.meta.statisticalValidationReport?.periodsPerYear).toBe(19_656);
   });
 });

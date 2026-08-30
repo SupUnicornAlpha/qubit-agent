@@ -48,6 +48,16 @@ describe("dataset snapshot calendar binding", () => {
         timezone: "America/New_York",
         calendarVersion: "NYSE-2026.1",
         calendarSessionsByVenue: { US: { "2026-01-02": "open", "2026-01-03": "closed" } },
+        calendarSessionWindowsByVenue: {
+          US: {
+            "2026-01-02": [
+              {
+                openAt: "2026-01-02T14:30:00.000Z",
+                closeAt: "2026-01-02T21:00:00.000Z",
+              },
+            ],
+          },
+        },
       });
       const root = join(dataDir, "market-snapshots");
       await mkdir(root, { recursive: true });
@@ -64,6 +74,16 @@ describe("dataset snapshot calendar binding", () => {
         version: "NYSE-2026.1",
         timezone: "America/New_York",
         sessionsBySymbol: { AAPL: { "2026-01-02": "open", "2026-01-03": "closed" } },
+        sessionWindowsBySymbol: {
+          AAPL: {
+            "2026-01-02": [
+              {
+                openAt: "2026-01-02T14:30:00.000Z",
+                closeAt: "2026-01-02T21:00:00.000Z",
+              },
+            ],
+          },
+        },
       });
       expect(dataset.qualification.useClass).toBe("research_only");
       expect(dataset.qualification.limitations).toEqual(
@@ -153,6 +173,13 @@ describe("dataset snapshot calendar binding", () => {
             ],
           },
         },
+        derivativePricingLedger: {
+          version: "us-options-iv-2026.01",
+          source: "fixture_options_vendor",
+          asOf: "2026-01-03T00:00:00.000Z",
+          impliedVolatilityMethod: "market_quote",
+          riskFreeRateMethod: "zero_curve_interpolated",
+        },
       });
       const root = join(dataDir, "market-snapshots");
       await mkdir(root, { recursive: true });
@@ -175,6 +202,13 @@ describe("dataset snapshot calendar binding", () => {
         fundamentalLedgerRef: { version: "fundamentals-2026.01" },
       });
       expect(dataset.qualification.limitations).toEqual([]);
+      expect(dataset.derivativePricing).toEqual({
+        version: "us-options-iv-2026.01",
+        source: "fixture_options_vendor",
+        asOf: "2026-01-03T00:00:00.000Z",
+        impliedVolatilityMethod: "market_quote",
+        riskFreeRateMethod: "zero_curve_interpolated",
+      });
       expect(dataset.corporateActionEvents).toEqual([
         {
           symbol: "AAPL",

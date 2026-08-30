@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::error::ToolHostError;
+use crate::{error::ToolHostError, ToolDefinition};
 
 /// Default allowlisted builtins for M4+ grayscale (+ memory for Core RecallPort).
 /// Topology `call_team_*` are advertised dynamically via Bun `legacy.tools.list`.
@@ -29,6 +29,7 @@ pub const DEFAULT_BRIDGED_TOOLS: &[&str] = &[
     "skill.patch",
     "skill.archive",
     "workspace.memory.search",
+    "tool.catalog.search",
     // Research / strategy contracts
     "run_screener",
     "research.thesis.write",
@@ -51,14 +52,16 @@ pub const DEFAULT_BRIDGED_TOOLS: &[&str] = &[
     "factor.autoEvaluate",
     "factor.mine.llm",
     "factor.promote_backtest",
+    "model.publish_as_factor",
     "backtest.run",
     "backtest.walk_forward",
+    "backtest.final_holdout",
     "workspace.context.snapshot",
     "web.search",
     "web.fetch",
-    // Keep this fallback surface aligned with Bun's BRIDGED_TOOLS. Core does
-    // not resolve tools:// AgentSpec refs yet, so specialists need their
-    // domain tools here even when legacy.tools.list is temporarily unavailable.
+    // Keep this fallback capability inventory aligned with Bun's
+    // BRIDGED_TOOLS. AgentSpec.tools narrows it per agent; this list is used
+    // only when legacy.tools.list is temporarily unavailable.
     "fetch_klines",
     "fetch_quote",
     "fetch_ticks",
@@ -141,6 +144,26 @@ pub struct LegacyToolSpec {
     pub name: String,
     #[serde(default)]
     pub description: String,
+    #[serde(default = "default_tool_parameters")]
+    pub parameters: Value,
+}
+
+fn default_tool_parameters() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": true
+    })
+}
+
+impl From<LegacyToolSpec> for ToolDefinition {
+    fn from(spec: LegacyToolSpec) -> Self {
+        let mut definition = ToolDefinition::generic(spec.name);
+        definition.description = spec.description;
+        if !spec.parameters.is_null() {
+            definition.parameters = spec.parameters;
+        }
+        definition
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

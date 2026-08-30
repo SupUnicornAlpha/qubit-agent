@@ -108,34 +108,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
       "编排器自己用 web.search/web.fetch 做轻量联网检索，不要假装 fetch_klines/fetch_news。",
     category: "orchestration",
   },
-  run_analyst_team: {
-    description:
-      "[Deprecated] 兼容性团队批量研究入口。Prime D6 起退出 Orchestrator 默认表面；请用 assign_task / call_team_<role>，再走 snapshot→thesis→portfolio→intent。",
-    category: "orchestration",
-    lifecycle: "deprecated",
-    replacedBy: "assign_task",
-    deprecationReason:
-      "Prime D6：单 Agent 经 Tool Host 证据链收口；团队批量入口仅保留 handler 供旧桥对照，不透明 alias",
-    resolveAlias: false,
-  },
-  summarize_team_decision: {
-    description:
-      "[Deprecated] 对 run_analyst_team 结果做全局兜底总结。Prime D6 起退出默认表面；改由 Orchestrator 自行整合专家结论。",
-    category: "orchestration",
-    lifecycle: "deprecated",
-    replacedBy: "assign_task",
-    deprecationReason: "Prime D6：团队批量总结不再挂在单 Agent 表面",
-    resolveAlias: false,
-  },
-  fuse_signals: {
-    description:
-      "[Deprecated] 合并多分析师 buy/sell/hold 信号。Prime D6 起改用 research.thesis.write 结构化收口。",
-    category: "orchestration",
-    lifecycle: "deprecated",
-    replacedBy: "research.thesis.write",
-    deprecationReason: "Prime D6：信号融合由 thesis / portfolio 证据链替代",
-    resolveAlias: false,
-  },
+  // run_analyst_team / summarize_team_decision / fuse_signals：Phase A 退役，仅在 RETIRED_GLOBAL_TOOL_NAMES
   check_risk: {
     description: "编排链路中的风控检查（调用 qubit-risk）",
     category: "orchestration",
@@ -217,7 +190,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     description:
       "D2/D3：生成或复用不可变市场快照，返回 snapshotId / dataRef / qualityVerdict / asOf / warnings。" +
       "研究、回测应引用 snapshotId；下单前须保证 qualityVerdict.tradable=true（仅 L3 + trading_allowed + 质量门通过）。" +
-      "支持 symbols[] 或 symbol；可传 asOf/purpose/timeframe/limit/timezone/calendar_version/calendar_sessions_by_venue；也可只传 snapshotId 回放。会话表格式为 `{US:{'2026-01-01':'closed','2026-01-02':'open'}}`，会规范化后进入快照身份。回测若要获得验证级历史证据，还必须冻结 `universe_history:{universeId,version,source,asOf,membershipIntervals[]}` 与 `corporate_action_ledger:{version,source,asOf,adjustmentMethod,actionsBySymbol}`；成员区间必须覆盖每个实际回测 Bar，企业行为账本须为每个标的显式提供数组（可为空）且调整方法一致。涉及财报、估值或预期的因子还必须冻结 `fundamental_ledger:{version,source,asOf,observationsBySymbol}`；每条 observation 有 fiscalPeriodEnd 与 availableAt，不能用今天的修订值替换历史可得值。缺少日历、历史标的池或企业行为证据时只能用于研究；不得从缺失 K 线推断节假日、成分股或除权除息。" +
+      "支持 symbols[] 或 symbol；可传 asOf/purpose/timeframe/limit/timezone/calendar_version/calendar_sessions_by_venue/calendar_session_windows_by_venue/derivative_pricing_ledger；也可只传 snapshotId 回放。日线状态表格式为 `{US:{'2026-01-01':'closed','2026-01-02':'open'}}`；盘中窗口表为 `{US:{'2026-01-02':[{openAt:'2026-01-02T14:30:00Z',closeAt:'2026-01-02T21:00:00Z',label:'regular'}]}}`，可表达早收盘或分段会话，二者均进入快照身份。期权 Greeks 的 IV/无风险利率还应传 `derivative_pricing_ledger:{version,source,asOf,impliedVolatilityMethod,riskFreeRateMethod}`，否则只能作研究参考。回测若要获得验证级历史证据，还必须冻结 `universe_history:{universeId,version,source,asOf,membershipIntervals[]}` 与 `corporate_action_ledger:{version,source,asOf,adjustmentMethod,actionsBySymbol}`；成员区间必须覆盖每个实际回测 Bar，企业行为账本须为每个标的显式提供数组（可为空）且调整方法一致。涉及财报、估值或预期的因子还必须冻结 `fundamental_ledger:{version,source,asOf,observationsBySymbol}`；每条 observation 有 fiscalPeriodEnd 与 availableAt，不能用今天的修订值替换历史可得值。缺少日历、历史标的池或企业行为证据时只能用于研究；不得从缺失 K 线推断节假日、成分股或除权除息。" +
       "质量不足时仍返回快照但带 warnings（研究 fail transparent）；订单入口会 fail closed。",
     category: "market",
   },
@@ -227,14 +200,24 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
       "优先传 snapshotId（market.snapshot.get / evidence[].ref=mkt_snapshot_*）；缺省时会按 symbols 自动拉 snapshot，行情失败则用 unbound 占位并 warning。" +
       "必填：instrumentScope/symbols（也可从 narrative 推断如 600519.SH / AAPL）+ direction(long|short|neutral，中文看多/看空/震荡亦可，缺省从正文推断否则 neutral)。" +
       "confidence 用 0–1（也接受 low/medium/high 或 0–100 百分制）。" +
-      "可选：horizon、claims[]、invalidation[]、knownUnknowns、modelAndPromptVersion。" +
+      "可选：horizon、claims[]、invalidation[]、knownUnknowns、modelAndPromptVersion。命名 `framework` 时必须附 source-linked `framework_card`（原则、经济机制、可观测代理/阈值/权重、适用域、排除/失效条件及风险预算），不能把任何人物名或印象当作证据。" +
       "研究结论应走本工具，而不是只写 Markdown；后续归因用 research.forecast_book.*。",
+    category: "research",
+  },
+  "research.framework.assess": {
+    description:
+      "按 thesis 中已冻结的 InvestmentFrameworkCard 对候选股评分。必填 thesis_id + candidates[]；每个候选传 symbol/asset_class/market/regime，以及按 proxy key 提供 value 与 evidence_refs。缺数值或证据仅输出 research_only，适用域/regime 不匹配或评分低于阈值输出 rejected；返回 qualified 候选和该框架风险预算。",
     category: "research",
   },
   "research.forecast_book.get": {
     description:
       "读取 forecast book 条目（thesis ↔ 风险审批 / 订单 / 成交 / 持有期结果）。" +
       "传 thesisId、entryId 或 bookId（fb_*，即 thesis.write 返回的 forecastBookEntryId）。",
+    category: "research",
+  },
+  "research.recommendation.calibration": {
+    description:
+      "按项目汇总已评估推荐的方向×持有期校准：样本量、胜率、Brier、平均收益与超额收益。必填 project_id；样本少于 minimum_observations（默认30）明确标为 insufficient_data。仅用于反思和下一轮研究假设，不会自动修改策略、置信度或实盘仓位。",
     category: "research",
   },
   "research.forecast_book.link": {
@@ -572,7 +555,17 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   // M2：因子/规则/策略 三段式工具（详见 FACTOR_RULE_STRATEGY_DESIGN.md §6.1-6.3）
   "factor.register": {
     description:
-      "注册因子并返回 `factor_id`（落 factor_definition）。必填：`name`、`category`；表达式因子传 `expr` + `lang:'qlib_expr'|'python'`；模型因子传 `lang:'ml_score'` + `model_factor`/{adapterKey,modelId,modelVersion}（或用 model.publish_as_factor）。可选 `universe`/`horizon`/`dry_run:false`。后续 factor.compute 必须用返回的 factor_id。",
+      "注册因子并返回 `factor_id`（落 factor_definition）。必填：`name`、`category`；表达式因子传 `expr` + `lang:'qlib_expr'|'python'`；模型因子传 `lang:'ml_score'` + `model_factor`/{adapterKey,modelId,modelVersion}（或用 model.publish_as_factor）。若将来要通过 strategy.compose 进入策略，必须一并传 `research_contract`：经济机制、PIT 可得性、与 expr 完全一致的公式、预处理、适用域/失效条件和独立验证计划；还需有冻结快照上的 HAC 通过评估。可选 `universe`/`horizon`/`dry_run:false`。后续 factor.compute 必须用返回的 factor_id。",
+    category: "research",
+  },
+  "factor.set_research_contract": {
+    description:
+      "为已注册 draft 因子补写或更新 `research_contract`。必填 `factor_id` + 合同对象；合同必须包含经济机制、PIT 可得性、与原 expr 一致的公式、预处理、适用域、失效条件和独立验证计划。此操作不激活因子。",
+    category: "research",
+  },
+  "factor.activate": {
+    description:
+      "激活一个因子。必填 `factor_id`；仅当研究合同完整、最近评估绑定冻结快照、样本与日截面均≥60、且 HAC 统计通过时成功。否则 fail-closed 并返回缺失证据。",
     category: "research",
   },
   "model.publish_as_factor": {
@@ -616,6 +609,16 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
       "**必填顶层 `name`**（也接受 strategyName / strategy.name）；可选 style/description/universe/version_tag。" +
       "字段请平铺；若误包在 `arguments` 内也会自动展开。" +
       "顺序：① create_version → ② strategy.compose → ③ backtest.run / order.create_intent。",
+    category: "research",
+  },
+  "strategy.champion_challenger.compare": {
+    description:
+      "只读比较策略 challenger 与 champion；仅当 backtest、walk-forward 与 paper/shadow 都带相同、由冻结快照/窗口/标的池/成本生成的 comparison_cohort_id 时，才计算晋级分数。缺共同 cohort、数据资格、统计验证或 paper 证据均不能晋级；本工具绝不切换 live runtime，仍需人工审批。",
+    category: "research",
+  },
+  "strategy.candidate.review": {
+    description:
+      "写入策略候选墓地/准入记录，不会部署或切换策略。必填 strategy_version_id、comparison_cohort_id、decision(eligible|incomplete|rejected|retired)；非 eligible 必填 reason_codes。可带 duplicate_of_strategy_version_id、regime_evidence、capacity_evidence、correlation_evidence，避免已失败、重复、拥挤或容量不足的策略被重复发现。",
     category: "research",
   },
   "strategy.compose": {
@@ -711,14 +714,29 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
       "批量自动评估多个因子（≤30 个）：串行调 autoEvaluate，返回每个因子的 IC/RankIC/IR + 聚合 summary（mean RankIC、显著因子数、最佳/最差因子）。一次拿一组候选因子的 RankIC 排名时优先用这个，比循环调 autoEvaluate 节省工具调用轮数。",
     category: "research",
   },
+  "factor.correlation.diagnose": {
+    description:
+      "在同一不可变 `dataset_snapshot_id` 上计算多因子 signal 的逐观察 Pearson 相关性，输出每对的共同样本数、常量/缺失证据及超过 `max_abs_correlation`（默认 0.7）的组合。必填 `factor_ids[]`（至少 2 个）和 `dataset_snapshot_id`；先对每个因子执行同快照 `factor.compute`。这是组合独立性诊断，不是收益相关或因果证明。",
+    category: "research",
+  },
+  "factor.exposure.diagnose": {
+    description:
+      "在同一不可变 `dataset_snapshot_id` 上，以其余候选因子作为控制变量，计算每个因子的线性 R² 与 VIF（默认阈值 5）。必填 `factor_ids[]`（至少 2 个）和 `dataset_snapshot_id`；所有信号需先在同一快照 `factor.compute`。这是信号基底的共线性/暴露诊断，不是行业、风格或市场暴露；后者必须使用版本化的外部分类账。结果仅用于研究审查，当前不自动切换或部署策略。",
+    category: "research",
+  },
+  "factor.risk_exposure.regress": {
+    description:
+      "在 `dataset_snapshot_id` 冻结的 `risk_exposure_ledger` 上，对单个因子进行 PIT 横截面 OLS 暴露回归。必填 factor_id + dataset_snapshot_id；仅使用该 K 线日期前已 available 的行业/风格/市场暴露版本，返回 beta/R²/覆盖缺口。没有账本或覆盖不足时只返回不完整证据，不能声称中性。",
+    category: "research",
+  },
   "factor.promote_backtest": {
     description:
-      "P0 一键闭环：把已有 factor_ids 自动提升为 strategy_version + strategy_composition，并立即运行事件驱动回测（落 backtest_run + strategy_eval_run）。**必填**：factor_ids[] + start_date + end_date + dataset_snapshot_id（先用 market.snapshot.get 冻结同窗口数据）。必须声明 parameter_selection：fixed_before_run / full_sample_optimized / unknown，并用 candidate_trials 声明同一研究族实际查看过的候选总数；缺失证据时结果仅供研究。full_sample_optimized 会被反泄漏闸门拒绝。可选 symbols[]；不传时按因子 universe 使用默认样本。回测只消费该不可变快照，用于可审计复算。",
+      "P0 一键闭环：把已有 factor_ids 自动提升为 strategy_version + strategy_composition，并立即运行事件驱动回测（落 backtest_run + strategy_eval_run）。**必填**：factor_ids[] + start_date + end_date + dataset_snapshot_id（先用 market.snapshot.get 冻结同窗口数据）。多因子必须先在同一快照计算足够因子值，并通过 0.7 阈值的 pairwise correlation 与 VIF<5 的信号基底暴露诊断；数据重叠/方差不足、高相关或共线性均 fail-closed。必须声明 parameter_selection：fixed_before_run / full_sample_optimized / unknown，并用 candidate_trials 声明同一研究族实际查看过的候选总数；缺失证据时结果仅供研究。full_sample_optimized 会被反泄漏闸门拒绝。可选 symbols[]；不传时按因子 universe 使用默认样本。回测只消费该不可变快照，用于可审计复算。",
     category: "research",
   },
   "discovery.run": {
     description:
-      "提交并运行因子挖掘任务（factor_alpha101 模板 / factor_gp 符号回归 / 其他 kind），返回候选 + IC 评估",
+      "提交并运行因子挖掘任务（factor_alpha101 模板 / factor_gp 符号回归 / 其他 kind）。返回 top-K 研究短名单、完整 candidate_audit（含计算失败、FDR 未通过及排名淘汰原因）和多重检验证据；短名单不是已验证或可交易因子。",
     category: "research",
   },
   "factor.mine.llm": {
@@ -749,6 +767,11 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   "backtest.walk_forward": {
     description:
       "对一个已完成的 `backtest_run_id` 做扩展窗口 Walk-Forward 验证。默认 `purge_days=5`、`embargo_days=5`，在训练与 OOS 间形成可审计隔离带。传 `selection.candidates`（或 `selection_candidates`，2–20 个）时，每折只在训练窗比较 `top_n` / `rebalance` / `long_short`，按 sharpe / calmar / annual_return 选出胜者后冻结，再首次运行测试窗；候选族同时执行 Benjamini-Hochberg FDR 与同步区块重采样 White Reality Check，最终拼接 OOS 执行 block-bootstrap、Bonferroni 和 Deflated Sharpe。候选 Sharpe 分布缺失时 fail-closed。严禁把测试折用于选参。",
+    category: "research",
+  },
+  "backtest.final_holdout": {
+    description:
+      "执行一次性最终独立 Holdout。必填 `backtest_run_id`、`train_end`、`holdout_start`、`holdout_end`；`train_end` 必须等于源回测的结束日期，holdout 必须在训练之后并设置 purge/embargo（默认各 5 日）。系统只复用已冻结的策略、参数、成本和 dataset snapshot，不做选参；相同 source run 的窗口一经保留，不允许换窗口或重复查看。通过的 holdout 是 live 晋级的必需证据。",
     category: "research",
   },
 

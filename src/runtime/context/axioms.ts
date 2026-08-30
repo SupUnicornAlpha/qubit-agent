@@ -60,9 +60,12 @@ export function isWorkingMemorySummarizeEnabled(): boolean {
 
 /** 05 §4.2 默认槽位预算 */
 export const DEFAULT_SLOT_BUDGETS: Record<ContextSlotId, ContextSlotBudget> = {
-  identity: { maxChars: 8_000, compress: "truncate", priority: 100 },
+  // Identity is executable policy, not expendable background text. Core uses
+  // section-aware selection when a future prompt exceeds this ceiling.
+  identity: { maxChars: 16_000, compress: "truncate", priority: 100 },
   tools: { maxChars: 6_000, compress: "truncate", priority: 95 },
-  goal: { maxChars: 2_000, compress: "truncate", priority: 90 },
+  // The current user task is authoritative and must out-rank recall/history.
+  goal: { maxChars: 6_000, compress: "truncate", priority: 90 },
   slot: { maxChars: 6_000, compress: "truncate", priority: 85 },
   recall_finance: { maxChars: 4_000, compress: "truncate", priority: 80 },
   recall_skill: { maxChars: 3_500, compress: "truncate", priority: 75 },

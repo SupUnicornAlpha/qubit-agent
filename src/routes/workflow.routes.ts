@@ -7,10 +7,6 @@ import { parseAgentPlanSnapshot } from "../runtime/agent-control-mode";
 import { isBenchmarkNamespace } from "../runtime/benchmark/benchmark-namespace";
 import { computeWorkflowHeartbeat, heartbeatStreamBus } from "../runtime/heartbeat/agent-heartbeat";
 import { buildWorkflowLineage } from "../runtime/lineage/workflow-lineage-service";
-import {
-  failAnalystResearchJob,
-  findActiveAnalystJobsByWorkflow,
-} from "../runtime/msa/analyst-research-jobs";
 import { cancelActiveCoreTurnForWorkflow } from "../runtime/prime/cancel-active-turn";
 import { logResearchTeamInteraction } from "../runtime/research-team/interaction-log";
 import {
@@ -37,10 +33,8 @@ import {
 } from "../runtime/workflow/user-message-queue";
 import { requestWorkflowCancellation } from "../runtime/workflow/workflow-cancellation";
 import { requestInterrupt } from "../runtime/workflow/workflow-interrupt";
-import { createAndDispatchWorkflow } from "../runtime/workflow/workflow-service";
 import { setWorkflowState } from "../runtime/workflow/workflow-state-machine";
-import type { AgentExecutionPath } from "../types/execution-path";
-import type { AgentLoopKind, LoopOptionsJson } from "../types/loop";
+import type { LoopOptionsJson } from "../types/loop";
 
 export const workflowRouter = new Hono();
 
@@ -66,40 +60,6 @@ workflowRouter.get("/", async (c) => {
       ? rows
       : rows.filter((row) => !isBenchmarkNamespace(row.loopOptionsJson)),
   });
-});
-
-workflowRouter.post("/", async (c) => {
-  const body = await c.req.json<{
-    projectId: string;
-    goal: string;
-    mode: "research" | "backtest" | "simulation" | "live";
-    sessionId?: string;
-    source?: "chat" | "manual" | "api";
-    messageId?: string;
-    reuseSessionWorkflow?: boolean;
-    /** 为 true 时仅创建/复用 workflow_run，不向 orchestrator 派发 */
-    skipDispatch?: boolean;
-    loopKind?: AgentLoopKind;
-    loopOptionsJson?: LoopOptionsJson;
-    executionPath?: AgentExecutionPath;
-  }>();
-
-  const created = await createAndDispatchWorkflow({
-    projectId: body.projectId,
-    goal: body.goal,
-    mode: body.mode,
-    ...(body.sessionId !== undefined ? { sessionId: body.sessionId } : {}),
-    ...(body.source !== undefined ? { source: body.source } : {}),
-    ...(body.messageId !== undefined ? { messageId: body.messageId } : {}),
-    ...(body.reuseSessionWorkflow !== undefined
-      ? { reuseSessionWorkflow: body.reuseSessionWorkflow }
-      : {}),
-    skipDispatch: body.skipDispatch === true,
-    ...(body.loopKind !== undefined ? { loopKind: body.loopKind } : {}),
-    ...(body.loopOptionsJson !== undefined ? { loopOptionsJson: body.loopOptionsJson } : {}),
-    ...(body.executionPath !== undefined ? { executionPath: body.executionPath } : {}),
-  });
-  return c.json(created, 201);
 });
 
 workflowRouter.post("/compensation/enqueue", async (c) => {
@@ -464,27 +424,12 @@ workflowRouter.delete("/:id", async (c) => {
   // 先打断当前 LLM HTTP/SSE 请求；仅改 DB status 会让后台继续生成并消耗 token。
   requestWorkflowCancellation(id);
 
-  // Best-effort 终止 in-memory analyst job：避免软删 / 硬删后后台任务还在 spinning，
-  // 继续写 DB / 烧 token，并让前端轮询看到"任务还在跑"的错觉。
-  // 软删时尤其关键 —— 仅 update workflow_run.status='cancelled' 不会让 in-memory job 自己停。
-  // P0-2：DB 真相源后 findActiveAnalystJobsByWorkflow 也覆盖重启后 cache 还没回填的 job。
-  const activeJobIds = await findActiveAnalystJobsByWorkflow(id);
-  for (const jobId of activeJobIds) {
-    await failAnalystResearchJob(jobId, new Error("workflow cancelled / hard-deleted by user"));
-  }
-  if (activeJobIds.length > 0) {
-    console.log(
-      `[workflow.delete] aborted ${activeJobIds.length} in-memory analyst job(s) for workflow=${id} (hard=${isHard})`
-    );
-  }
-
   if (isHard) {
     const result = await hardDeleteWorkflowRun(id);
     return c.json({
       ok: true,
       id,
       hard: true,
-      abortedAnalystJobs: activeJobIds.length,
       ...result,
     });
   }
@@ -494,7 +439,6 @@ workflowRouter.delete("/:id", async (c) => {
     ok: true,
     id,
     hard: false,
-    abortedAnalystJobs: activeJobIds.length,
   });
 });
 

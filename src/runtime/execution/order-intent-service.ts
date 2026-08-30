@@ -93,7 +93,10 @@ export async function createOrderIntentWithExecution(
   db: DbClient,
   input: CreateOrderIntentInput
 ): Promise<CreateOrderIntentResult> {
-  assertTradingModuleEnabled();
+  await assertTradingModuleEnabled(db, {
+    ...(input.brokerAccountId ? { brokerAccountId: input.brokerAccountId } : {}),
+    ...(input.strategyRuntimeId ? { strategyRuntimeId: input.strategyRuntimeId } : {}),
+  });
   if (!Number.isFinite(input.qty) || input.qty <= 0) {
     throw new Error("order_quantity_must_be_positive");
   }

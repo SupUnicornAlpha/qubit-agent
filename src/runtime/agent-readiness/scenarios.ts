@@ -1,22 +1,19 @@
 /**
  * Agent 就绪度评估的 5 个场景配方。
  *
- * 评测必须复刻 UI 上「研究团队」启动方式的真实链路：
- *   1. POST /api/v1/workflows  (skipDispatch=true) — 仅创建 workflow_run 占位
- *   2. POST /api/v1/analyst/run { workflowRunId, ticker | scope }
- *      — 真正派发给 orchestrator，启动专家协作链路（task=research_team_execute）
+ * 评测必须复刻 UI 上的真实对话链路：
+ *   1. 创建 chat session；
+ *   2. POST /api/v1/chat/sessions/:sessionId/turns；
+ *   3. 通过对话上下文携带场景输入，等待 Rust Core 完成。
  *
- * 历史教训（Round 5）：之前直接走 POST /api/v1/workflows（无 skipDispatch）
- * 等于让单 Agent 裸跑，没启动分析师团队、回测 / risk agent，
- * A 类内容指标全垮（trace 显示 research 仅 10 step / 2 tool calls），跟 UI
- * 实际行为完全脱节。AGM v2 的 5 个场景必须按 UI 路径跑才有意义。
+ * 场景配方只描述对话目标、结构化参数和预算；不再维护第二套 analyst/job 启动协议。
  */
 
 import type { ResearchScopeInput } from "../../types/research-scope";
 import type { CreateAndDispatchWorkflowInput } from "../workflow/workflow-service";
 
-export interface AnalystRunPayload {
-  /** 单标的优先（research 类）；多标/概念类用 scope.kind=explore + theme */
+export interface ConversationContext {
+  /** 结构化上下文，最终由对话 turn 传给 Orchestrator。 */
   ticker?: string;
   scope?: ResearchScopeInput;
   context?: string;
@@ -57,10 +54,10 @@ export interface ScenarioRecipe {
   key: ScenarioKey;
   /** 给 reporter 用的 human-readable 名称 */
   displayName: string;
-  /** 第 1 步：传给 createAndDispatchWorkflow 的 workflow 占位入参（建议 skipDispatch=true） */
+  /** 评测 workflow 的默认标签/预算；真正执行由 chat turn 触发。 */
   workflow: Omit<CreateAndDispatchWorkflowInput, "projectId">;
-  /** 第 2 步：传给 /api/v1/analyst/run 的上下文 */
-  analystRun: AnalystRunPayload;
+  /** 研究问题的结构化上下文（不再对应独立 HTTP 启动接口）。 */
+  conversationContext: ConversationContext;
   /** 统一 research-scenario 生产入口需要的结构化输入；不得从旧 analyst payload 猜测。 */
   scenarioInputParams: Record<string, unknown>;
   /**
@@ -81,12 +78,8 @@ const DEFAULT_TERMINAL: ReadonlyArray<
 /**
  * 5 场景配方
  *
- * UI 链路约束：「新建工作流」+「启动研究团队」对应 mode 必须是 'research'，
- * orchestrator 的 research_team_execute 任务只在 research mode 下分发。所以
- * live_trading 场景虽然 goal 是实盘下单，本评测里也用 mode=research 起团队，
- * 让分析师团队"先做研究输出 order_intent 建议"，更贴合 UI 上"研究团队 → 实盘助手"
- * 这类玩法（实盘场景在 UI 上没有直接的"研究团队"启动入口；目前只能通过
- * 研究团队 + 模拟下单 group 间接驱动，待 P5 直接接入 trader-workflow）。
+ * 场景统一使用 research workflow；live_trading 也先由对话 Orchestrator 完成研究，
+ * 后续是否进入交易由对话中的显式工具调用和风控/HITL 决定。
  */
 export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
   research: {
@@ -100,7 +93,7 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       loopKind: "native",
       loopOptionsJson: { maxIterations: 6 },
     },
-    analystRun: {
+    conversationContext: {
       ticker: "AAPL",
       context:
         "评测目标：以 AAPL 为唯一标的做单只深度研究，覆盖估值/财报/技术/宏观/同业对比；分析师团队应充分调用 quote、news、fundamentals、screener 等工具，输出 3 条具体交易级见解。",
@@ -120,7 +113,7 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       loopKind: "native",
       loopOptionsJson: { maxIterations: 8 },
     },
-    analystRun: {
+    conversationContext: {
       scope: {
         kind: "explore",
         theme: "NVDA / AMD / INTC 半导体三家横向对比 · AI 算力主题",
@@ -147,7 +140,7 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       loopKind: "native",
       loopOptionsJson: { maxIterations: 8 },
     },
-    analystRun: {
+    conversationContext: {
       scope: {
         kind: "explore",
         theme: "AI 算力基础设施主题研究 · 自主识别 3 个细分赛道 + 各 1 只龙头",
@@ -170,7 +163,7 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       loopKind: "native",
       loopOptionsJson: { maxIterations: 8 },
     },
-    analystRun: {
+    conversationContext: {
       scope: { kind: "explore", theme: "美股大盘 momentum + 估值 + 新闻情绪 long 选股" },
       context:
         "评测目标：从美股大盘筛 5 只 long 候选，需结合 30 天动量、估值、新闻情绪。请先用 run_screener / fetch_klines 验证候选，再逐只调用 recommendation.record；至少 2 只必须填写 entry_low/entry_high、stop_loss、take_profit、position_size_pct、invalidation_conditions[] 与 evidence[]。",
@@ -190,7 +183,7 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       loopKind: "native",
       loopOptionsJson: { maxIterations: 8 },
     },
-    analystRun: {
+    conversationContext: {
       scope: {
         kind: "explore",
         theme: "美股大盘做空候选：高估值 + 业绩或动量恶化 + 风险评估",
@@ -213,7 +206,7 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       loopKind: "native",
       loopOptionsJson: { maxIterations: 8 },
     },
-    analystRun: {
+    conversationContext: {
       scope: { kind: "explore", theme: "新 alpha 因子设计 + 60 日 IC/IR 评估" },
       context:
         "评测目标：提出一个 alpha 因子（公式 + 经济学解释 + 60 日 IC/IR 模拟）。落库要求：factor_definition + factor_evaluation 各至少一条；评估指标必须有数值（IC / Rank IC / IR）。",
@@ -239,7 +232,7 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       loopKind: "native",
       loopOptionsJson: { maxIterations: 8 },
     },
-    analystRun: {
+    conversationContext: {
       scope: { kind: "explore", theme: "long-only 因子组合策略草稿 + universe + 持仓周期" },
       context:
         "评测目标：组合 2-3 个已有因子产出 long-only 策略草稿，落 strategy + strategy_version + strategy_composition；包含 universe / 持仓周期 / 仓位规则。",
@@ -263,7 +256,7 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       loopKind: "native",
       loopOptionsJson: { maxIterations: 10 },
     },
-    analystRun: {
+    conversationContext: {
       scope: {
         kind: "explore",
         theme: "多空配对策略草稿：long/short 因子组合 + 配对方式 + 仓位约束",
@@ -290,7 +283,7 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       loopKind: "native",
       loopOptionsJson: { maxIterations: 6 },
     },
-    analystRun: {
+    conversationContext: {
       scope: { kind: "explore", theme: "基于最新策略版本的做多下单意图" },
       context:
         "评测目标：先 SELECT 最新 strategy_version，再针对当前市场状态产出至少 1 条 **side=buy** 的 order_intent + risk_decision；reasoning 中说明加仓理由（动量/估值/事件）。",
@@ -314,7 +307,7 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       loopKind: "native",
       loopOptionsJson: { maxIterations: 6 },
     },
-    analystRun: {
+    conversationContext: {
       scope: {
         kind: "explore",
         theme: "基于最新策略版本的做空下单意图 + 严格风控",

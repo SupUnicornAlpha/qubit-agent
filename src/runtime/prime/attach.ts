@@ -1,9 +1,9 @@
 /**
  * Boot-time Prime Core attach: probe → activate rust.
  *
- * mode=rust never falls back to TS (debug/default). Only mode=auto may use ts
- * when Core is unreachable. Set QUBIT_CORE_STRICT=0 to allow rust→ts fallback
- * (escape hatch; not recommended for Core debugging).
+ * mode=rust never falls back to TS (production default). Only mode=auto may use ts
+ * when Core is unreachable. Explicit mode=ts is emergency-only (legacy Bun ReAct).
+ * QUBIT_CORE_STRICT=0 does not revive TS ReAct under rust — use mode=ts explicitly.
  */
 
 import { syncPrimeSpecsToRustCore } from "./bootstrap";

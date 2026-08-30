@@ -315,7 +315,7 @@ Core 不订阅 tick，也不理解 `SSE`、`Wind` 或 `order book`。它只看�
 | `src/runtime/market/point-in-time-contract.ts` | OUT 数据质量服务 | 升级为 snapshot-level verdict；保留基础 OHLC 校验 |
 | `src/runtime/market/market-data-health.ts` | OUT 质量与观测 | 从健康检查扩到 freshness/gap/divergence |
 | `src/runtime/execution/*` | OUT 执行服务 | intent / risk report 强制引用 snapshot 与质量 verdict |
-| `src/runtime/msa/*`、`orchestration/*` | OUT 旧桥 | 产出/消费 `ResearchThesis`，暂不迁 Core |
+| `src/runtime/conversation/*`、`src/runtime/prime/*` | IN 对话与 Core 适配 | 研究只由 conversational turn 触发；Rust Core 负责编排、执行与恢复 |
 | `src/runtime/experience/*` | OUT 评测与经验层 | 建 forecast book 与归因，不写入 Core checkpoint |
 | `crates/qubit-tool-host`（规划） | HOST | 暴露 snapshot / thesis / portfolio / intent ToolSpec |
 | `crates/qubit-runtime`（规划） | IN | 只记录工具 effect/evidence ref、HITL 与恢复 |
@@ -332,7 +332,7 @@ Core 不订阅 tick，也不理解 `SSE`、`Wind` 或 `order book`。它只看�
 
 ## 11. 参考实现与设计来源
 
-- [TradingAgents](https://github.com/TauricResearch/TradingAgents)：角色分工、辩论、结构化决策、checkpoint 与决策记忆；借鉴研究闭环，不引入其拓扑到 Core。
+- [TradingAgents](https://github.com/TauricResearch/TradingAgents)：仅作为历史研究闭环参考；不引入其 MSA、辩论拓扑或批量启动接口。
 - [FinRobot](https://github.com/AI4Finance-Foundation/FinRobot)：多数据源与确定性金融计算；借鉴 LLM/计算边界。
 - [Qlib / Qlib-Server](https://github.com/microsoft/qlib)：在线数据服务、共享缓存、研究到执行的分层；借鉴 snapshot/catalog 方向。
 - [QuantConnect LEAN](https://github.com/QuantConnect/Lean)、[vn.py](https://github.com/vnpy/vnpy)、[NautilusTrader](https://github.com/nautechsystems/nautilus_trader)：事件驱动行情与执行边界；借鉴 adapter、回放与实盘同构原则。

@@ -60,5 +60,6 @@ describe("QlibExprFactorProvider point-in-time fundamentals", () => {
 
     expect(result.rows.map((row) => row.value)).toEqual([null, 100]);
     expect(result.meta.fundamentalAvailabilityPolicy).toBe("first_bar_strictly_after_available_at");
+    expect(result.meta.fundamentalFields).toEqual(["fund_revenue_ttm"]);
   });
 });

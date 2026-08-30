@@ -27,59 +27,34 @@ const FACTOR_CATEGORY_ENUM = [
   { value: "macro", label: "宏观" },
 ] as const;
 
-// ─── 1. 分析辩论（保留已有行为） ─────────────────────────────────────────────
-export const ANALYST_DEBATE_SCENARIO: ResearchScenarioSpec = {
-  key: "analyst_debate",
-  displayName: "分析辩论（MSA + 多空）",
-  description: "四维分析师 MSA 融合 + 多空辩论；产出综合信号。",
+// ─── 1. 通用研究对话 ─────────────────────────────────────────────────────────
+export const CONVERSATIONAL_RESEARCH_SCENARIO: ResearchScenarioSpec = {
+  key: "conversational_research",
+  displayName: "对话研究",
+  description: "通过对话 turn 组织按需研究，并由 Rust Core 调用所需 Agent 与工具。",
   inputSchema: {
     ticker: {
       type: "string",
-      required: true,
-      description: "标的代码（单标的或逗号分隔多标的）",
+      description: "标的代码（可选；也可直接在对话中说明研究对象）",
       group: "basic",
     },
-    instrument: {
-      type: "enum",
-      values: [
-        { value: "equity", label: "现货" },
-        { value: "option", label: "期权" },
-      ],
-      default: "equity",
+    researchQuestion: {
+      type: "string",
+      description: "研究问题（可选；优先使用对话中的自然语言）",
       group: "basic",
-    },
-    positionSide: {
-      type: "enum",
-      values: [
-        { value: "long", label: "多头" },
-        { value: "short", label: "做空" },
-      ],
-      default: "long",
-      group: "basic",
-    },
-    debateRounds: {
-      type: "number",
-      default: 1,
-      min: 0,
-      max: 5,
-      description: "多空辩论轮数（0=跳过）",
-      group: "advanced",
     },
   },
   outputContract: {
-    primary: "analyst_signal_fusion",
-    secondary: ["debate_transcript"],
+    primary: "research_report",
+    secondary: ["evidence_refs", "risk_notes"],
   },
   requiredCapabilities: [],
   toolPreset: {
     builtinTools: [
       "update_plan",
       "agent.invoke",
-      "market.ide_subscription.get",
-      "market.broker_quote.get",
       "market.snapshot.get",
       "research.thesis.write",
-      "portfolio.construct",
       "fetch_klines",
       "fetch_news",
     ],
@@ -87,12 +62,7 @@ export const ANALYST_DEBATE_SCENARIO: ResearchScenarioSpec = {
     mcpServers: [],
     defaultParams: {},
   },
-  loopDefaults: {
-    maxIterations: 4,
-    reactLoop: true,
-    requireDebate: true,
-    requireRiskVeto: false,
-  },
+  loopDefaults: { maxIterations: 8, reactLoop: true },
   status: "enabled",
   sortOrder: 10,
   isBuiltin: true,
@@ -701,7 +671,7 @@ export const NEWS_EVENT_RADAR_SCENARIO: ResearchScenarioSpec = {
 
 // ─── 全部内置场景 ──────────────────────────────────────────────────────────
 export const BUILTIN_RESEARCH_SCENARIOS: readonly ResearchScenarioSpec[] = [
-  ANALYST_DEBATE_SCENARIO,
+  CONVERSATIONAL_RESEARCH_SCENARIO,
   STRATEGY_AUTHORING_SCENARIO,
   FACTOR_RESEARCH_SCENARIO,
   RULE_RESEARCH_SCENARIO,

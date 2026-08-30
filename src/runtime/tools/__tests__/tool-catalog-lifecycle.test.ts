@@ -15,7 +15,7 @@ describe("tool-catalog lifecycle metadata", () => {
     expect(find("evaluate_risk").lifecycle).toBeUndefined();
   });
 
-  test("Prime D6 team-compat tools are absent from the global catalog", () => {
+  test("Prime D6 / Phase A team-compat tools are absent from the global catalog", () => {
     for (const name of ["run_analyst_team", "summarize_team_decision", "fuse_signals"]) {
       expect(buildToolCatalog().some((entry) => entry.name === name)).toBe(false);
       expect(resolveToolAlias(name).aliased).toBe(false);

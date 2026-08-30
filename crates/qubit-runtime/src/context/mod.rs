@@ -4,6 +4,7 @@ mod assemble;
 mod bridge_recall;
 mod bridge_workspace;
 mod ports;
+mod prompt_budget;
 
 pub use assemble::{ContextAssembler, DefaultContextAssembler, SlotAssembleInput};
 pub use bridge_recall::BridgeRecallPort;

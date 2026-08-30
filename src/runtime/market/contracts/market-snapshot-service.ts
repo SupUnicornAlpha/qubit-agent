@@ -18,11 +18,14 @@ import {
   MARKET_EVENT_SCHEMA_VERSION,
   type MarketAssetClass,
   type MarketCalendarSessionsByVenue,
+  type MarketCalendarSessionWindowsByVenue,
   type MarketCorporateActionLedger,
+  type MarketDerivativePricingLedger,
   type MarketEventSource,
   type MarketFeedClass,
   type MarketFundamentalLedger,
   type MarketLicenseUse,
+  type MarketRiskExposureLedger,
   type MarketSnapshot,
   type MarketUniverseHistory,
   MarketSnapshotSchema,
@@ -33,7 +36,8 @@ import {
 export type SnapshotPurpose = MarketSnapshot["purpose"];
 
 export type MarketSnapshotGetParams = {
-  symbols: string[];
+  /** Optional only when replaying an existing immutable snapshotId. */
+  symbols?: string[];
   exchange?: string;
   asOf?: string;
   purpose?: SnapshotPurpose;
@@ -45,12 +49,17 @@ export type MarketSnapshotGetParams = {
   calendarVersion?: string;
   /** Explicit daily session states, keyed by venue then YYYY-MM-DD. */
   calendarSessionsByVenue?: MarketCalendarSessionsByVenue;
+  /** Explicit intraday windows keyed by venue then session date. */
+  calendarSessionWindowsByVenue?: MarketCalendarSessionWindowsByVenue;
   /** Versioned membership intervals for the historical universe. */
   universeHistory?: MarketUniverseHistory;
   /** Versioned point-in-time corporate-action ledger. */
   corporateActionLedger?: MarketCorporateActionLedger;
   /** Versioned point-in-time financial-statement / estimate revisions. */
   fundamentalLedger?: MarketFundamentalLedger;
+  riskExposureLedger?: MarketRiskExposureLedger;
+  /** Versioned IV/rate-curve provenance used for derivative risk audit. */
+  derivativePricingLedger?: MarketDerivativePricingLedger;
   /** Retrieve an existing immutable snapshot without refetching. */
   snapshotId?: string;
 };
@@ -187,6 +196,52 @@ export function canonicalCalendarSessions(
   return Object.keys(out).length > 0 ? out : null;
 }
 
+/** Stable, validated shape for open/close windows; missing windows are never inferred. */
+export function canonicalCalendarSessionWindows(
+  windows?: unknown
+): MarketCalendarSessionWindowsByVenue | null {
+  if (!windows || typeof windows !== "object" || Array.isArray(windows)) return null;
+  const out: MarketCalendarSessionWindowsByVenue = {};
+  for (const venue of Object.keys(windows).sort()) {
+    const days = (windows as Record<string, unknown>)[venue];
+    if (!days || typeof days !== "object" || Array.isArray(days)) continue;
+    const normalizedDays: Record<
+      string,
+      Array<{ openAt: string; closeAt: string; label?: string }>
+    > = {};
+    for (const date of Object.keys(days).sort()) {
+      const rawWindows = (days as Record<string, unknown>)[date];
+      if (!Array.isArray(rawWindows)) continue;
+      const normalized = rawWindows
+        .filter((window): window is { openAt: string; closeAt: string; label?: string } => {
+          if (!window || typeof window !== "object") return false;
+          const raw = window as Record<string, unknown>;
+          return (
+            typeof raw.openAt === "string" &&
+            typeof raw.closeAt === "string" &&
+            Number.isFinite(Date.parse(raw.openAt)) &&
+            Number.isFinite(Date.parse(raw.closeAt)) &&
+            Date.parse(raw.openAt) < Date.parse(raw.closeAt)
+          );
+        })
+        .map((window) => ({
+          openAt: window.openAt,
+          closeAt: window.closeAt,
+          ...(typeof window.label === "string" && window.label.trim()
+            ? { label: window.label.trim() }
+            : {}),
+        }))
+        .sort(
+          (left, right) =>
+            left.openAt.localeCompare(right.openAt) || left.closeAt.localeCompare(right.closeAt)
+        );
+      if (normalized.length > 0) normalizedDays[date] = normalized;
+    }
+    if (Object.keys(normalizedDays).length > 0) out[venue] = normalizedDays;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
 /** Stable, sorted shape for historical membership evidence in the snapshot fingerprint. */
 export function canonicalUniverseHistory(
   history?: MarketUniverseHistory
@@ -233,7 +288,7 @@ export function canonicalCorporateActionLedger(
               left.kind.localeCompare(right.kind)
           ),
         ])
-        .sort(([left], [right]) => left.localeCompare(right))
+        .sort((left, right) => String(left[0]).localeCompare(String(right[0])))
     ),
   };
 }
@@ -248,7 +303,9 @@ export function canonicalFundamentalLedger(
     source: ledger.source.trim(),
     asOf: ledger.asOf,
     observationsBySymbol: Object.fromEntries(
-      Object.entries(ledger.observationsBySymbol)
+      (Object.entries(ledger.observationsBySymbol) as Array<
+        [string, MarketFundamentalLedger["observationsBySymbol"][string]]
+      >)
         .map(([symbol, observations]) => [
           symbol.trim().toUpperCase(),
           [...observations].sort(
@@ -259,8 +316,50 @@ export function canonicalFundamentalLedger(
               (left.revisionId ?? "").localeCompare(right.revisionId ?? "")
           ),
         ])
-        .sort(([left], [right]) => left.localeCompare(right))
+        .sort((left, right) => String(left[0]).localeCompare(String(right[0])))
     ),
+  };
+}
+
+/** Stable shape for external industry/style/market exposure revisions. */
+export function canonicalRiskExposureLedger(
+  ledger?: MarketRiskExposureLedger
+): MarketRiskExposureLedger | undefined {
+  if (!ledger) return undefined;
+  return {
+    version: ledger.version.trim(),
+    source: ledger.source.trim(),
+    asOf: ledger.asOf,
+    model: ledger.model.trim(),
+    observationsBySymbol: Object.fromEntries(
+      (Object.entries(ledger.observationsBySymbol) as Array<
+        [string, MarketRiskExposureLedger["observationsBySymbol"][string]]
+      >)
+        .map(([symbol, observations]) => [
+          symbol.trim().toUpperCase(),
+          [...observations].sort(
+            (left, right) =>
+              left.availableAt.localeCompare(right.availableAt) ||
+              left.effectiveDate.localeCompare(right.effectiveDate) ||
+              (left.revisionId ?? "").localeCompare(right.revisionId ?? "")
+          ),
+        ])
+        .sort((left, right) => String(left[0]).localeCompare(String(right[0])))
+    ),
+  };
+}
+
+/** Stable shape for the curve/quote release that supplied derivative risk inputs. */
+export function canonicalDerivativePricingLedger(
+  ledger?: MarketDerivativePricingLedger
+): MarketDerivativePricingLedger | undefined {
+  if (!ledger) return undefined;
+  return {
+    version: ledger.version.trim(),
+    source: ledger.source.trim(),
+    asOf: ledger.asOf,
+    impliedVolatilityMethod: ledger.impliedVolatilityMethod,
+    riskFreeRateMethod: ledger.riskFreeRateMethod,
   };
 }
 
@@ -275,9 +374,12 @@ function canonicalFingerprint(input: {
   timezone: string;
   calendarVersion?: string;
   calendarSessionsByVenue?: MarketCalendarSessionsByVenue;
+  calendarSessionWindowsByVenue?: MarketCalendarSessionWindowsByVenue;
   universeHistory?: MarketUniverseHistory;
   corporateActionLedger?: MarketCorporateActionLedger;
   fundamentalLedger?: MarketFundamentalLedger;
+  riskExposureLedger?: MarketRiskExposureLedger;
+  derivativePricingLedger?: MarketDerivativePricingLedger;
   barDigests: Record<string, string>;
   timeframe: string;
   limit: number;
@@ -293,9 +395,15 @@ function canonicalFingerprint(input: {
     timezone: input.timezone,
     calendarVersion: input.calendarVersion ?? null,
     calendarSessionsByVenue: canonicalCalendarSessions(input.calendarSessionsByVenue),
+    calendarSessionWindowsByVenue: canonicalCalendarSessionWindows(
+      input.calendarSessionWindowsByVenue
+    ),
     universeHistory: canonicalUniverseHistory(input.universeHistory) ?? null,
     corporateActionLedger: canonicalCorporateActionLedger(input.corporateActionLedger) ?? null,
     fundamentalLedger: canonicalFundamentalLedger(input.fundamentalLedger) ?? null,
+    riskExposureLedger: canonicalRiskExposureLedger(input.riskExposureLedger) ?? null,
+    derivativePricingLedger:
+      canonicalDerivativePricingLedger(input.derivativePricingLedger) ?? null,
     barDigests: Object.fromEntries(
       Object.entries(input.barDigests).sort(([a], [b]) => a.localeCompare(b))
     ),
@@ -406,9 +514,12 @@ export function buildMarketSnapshotRecord(input: {
   timezone?: string;
   calendarVersion?: string;
   calendarSessionsByVenue?: MarketCalendarSessionsByVenue;
+  calendarSessionWindowsByVenue?: MarketCalendarSessionWindowsByVenue;
   universeHistory?: MarketUniverseHistory;
   corporateActionLedger?: MarketCorporateActionLedger;
   fundamentalLedger?: MarketFundamentalLedger;
+  riskExposureLedger?: MarketRiskExposureLedger;
+  derivativePricingLedger?: MarketDerivativePricingLedger;
   createdAt?: string;
   peerCloses?: Array<{ upstreamFamily: string; price: number }>;
 }): MarketSnapshotRecord {
@@ -421,9 +532,13 @@ export function buildMarketSnapshotRecord(input: {
   const timezone = input.timezone ?? "UTC";
   const calendarSessionsByVenue =
     canonicalCalendarSessions(input.calendarSessionsByVenue) ?? undefined;
+  const calendarSessionWindowsByVenue =
+    canonicalCalendarSessionWindows(input.calendarSessionWindowsByVenue) ?? undefined;
   const universeHistory = canonicalUniverseHistory(input.universeHistory);
   const corporateActionLedger = canonicalCorporateActionLedger(input.corporateActionLedger);
   const fundamentalLedger = canonicalFundamentalLedger(input.fundamentalLedger);
+  const riskExposureLedger = canonicalRiskExposureLedger(input.riskExposureLedger);
+  const derivativePricingLedger = canonicalDerivativePricingLedger(input.derivativePricingLedger);
   const canonical = canonicalFingerprint({
     asOf: input.asOf,
     purpose: input.purpose,
@@ -435,9 +550,12 @@ export function buildMarketSnapshotRecord(input: {
     timezone,
     calendarVersion: input.calendarVersion,
     calendarSessionsByVenue,
+    calendarSessionWindowsByVenue,
     universeHistory,
     corporateActionLedger,
     fundamentalLedger,
+    riskExposureLedger,
+    derivativePricingLedger,
     barDigests,
     timeframe: input.timeframe,
     limit: input.limit,
@@ -468,9 +586,12 @@ export function buildMarketSnapshotRecord(input: {
     universeHistory,
     corporateActionLedger,
     fundamentalLedger,
+    riskExposureLedger,
+    derivativePricingLedger,
     timezone,
     calendarVersion: input.calendarVersion,
     calendarSessionsByVenue,
+    calendarSessionWindowsByVenue,
     eventRefs: [],
     createdAt: input.createdAt ?? new Date().toISOString(),
     schemaVersion: MARKET_EVENT_SCHEMA_VERSION,
@@ -537,7 +658,7 @@ export async function getOrCreateMarketSnapshot(
     return toToolResult(existing, true);
   }
 
-  const symbols = [...new Set(params.symbols.map((s) => s.trim()).filter(Boolean))];
+  const symbols = [...new Set((params.symbols ?? []).map((s) => s.trim()).filter(Boolean))];
   if (symbols.length === 0) throw new Error("missing_symbol: market.snapshot.get requires symbols");
 
   const purpose: SnapshotPurpose = params.purpose ?? "research";
@@ -621,9 +742,12 @@ export async function getOrCreateMarketSnapshot(
     timezone: params.timezone ?? "UTC",
     calendarVersion: params.calendarVersion,
     calendarSessionsByVenue: params.calendarSessionsByVenue,
+    calendarSessionWindowsByVenue: params.calendarSessionWindowsByVenue,
     universeHistory: params.universeHistory,
     corporateActionLedger: params.corporateActionLedger,
     fundamentalLedger: params.fundamentalLedger,
+    riskExposureLedger: params.riskExposureLedger,
+    derivativePricingLedger: params.derivativePricingLedger,
   });
 
   const existing = await getMarketSnapshotById(record.snapshot.snapshotId, options?.dataDir);

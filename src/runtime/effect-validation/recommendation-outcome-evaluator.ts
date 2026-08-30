@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { BarData } from "../../connectors/data/data.connector";
 import { getDb } from "../../db/sqlite/client";
@@ -97,7 +98,14 @@ export function evaluateDecisionSignal(
   let maxFavorableExcursionPct = 0;
   let maxAdverseExcursionPct = 0;
 
-  for (const bar of observed) {
+  // A market recommendation without an entry range is filled at the first
+  // eligible bar's close. Its high/low was already known by that moment, so
+  // using that same candle to trigger a stop or target would introduce an
+  // intrabar look-ahead. A range/limit entry is different: its fill and
+  // subsequent intrabar ambiguity are deliberately handled conservatively.
+  const mayUseEntryBarRange = signal.entryLow != null || signal.entryHigh != null;
+  const exitEligibleBars = mayUseEntryBarRange ? observed : observed.slice(1);
+  for (const bar of exitEligibleBars) {
     const favorable = excursionPct(signal.side, entryPrice, bar.high, bar.low, true);
     const adverse = excursionPct(signal.side, entryPrice, bar.high, bar.low, false);
     maxFavorableExcursionPct = Math.max(maxFavorableExcursionPct, favorable);
@@ -234,6 +242,13 @@ export async function evaluateRecommendationOutcomes(
         const benchmarkReturnPct = returnBetween(benchmarkBars, result.entryAt, result.exitAt);
         const excessReturnPct =
           benchmarkReturnPct == null ? null : result.returnPct - benchmarkReturnPct;
+        const marketDataEvidence = buildOutcomeMarketDataEvidence({
+          signal,
+          result,
+          bars,
+          benchmarkBars,
+          benchmarkSymbol: signal.benchmarkSymbol || defaultBenchmarkForMarket(signal.market),
+        });
         await recommendationService.recordOutcome({
           recommendationId: signal.id,
           horizonDays,
@@ -243,6 +258,7 @@ export async function evaluateRecommendationOutcomes(
           hit: result.outcome === "win",
           evaluatedAt: now.toISOString(),
           evaluationError: null,
+          marketDataEvidence,
         });
         // P2 A3/A4：后验写回 research_conclusion DecisionRecord（失败不阻断评估）
         try {
@@ -252,6 +268,8 @@ export async function evaluateRecommendationOutcomes(
           await applyRecommendationOutcomeToExperiences({
             projectId: signal.projectId,
             workflowRunId: signal.workflowRunId,
+            recommendationId: signal.id,
+            horizonDays,
             symbol: signal.symbol,
             confidence: signal.confidence,
             tradeOutcome: result.outcome,
@@ -410,4 +428,92 @@ function returnBetween(bars: BarData[], startAt: string, endAt: string): number 
   const end = sorted[sorted.length - 1]?.close;
   if (start == null || end == null || start <= 0) return null;
   return ((end - start) / start) * 100;
+}
+
+export type RecommendationOutcomeMarketDataEvidence = {
+  version: "recommendation-outcome-market-v1";
+  target: MarketDataEvidenceSeries;
+  benchmark: MarketDataEvidenceSeries | null;
+};
+
+type MarketDataEvidenceSeries = {
+  symbol: string;
+  market: string;
+  period: "1d";
+  startAt: string;
+  endAt: string;
+  bars: Array<
+    Pick<BarData, "timestamp" | "open" | "high" | "low" | "close" | "volume" | "turnover">
+  >;
+  fingerprint: string;
+};
+
+/**
+ * Save the exact finite market slice consumed by outcome scoring. Data feeds
+ * can revise historical bars, so a timestamp alone cannot reproduce an old
+ * reflection. The raw bars plus a deterministic digest make that revision
+ * visible without treating the current feed as historical truth.
+ */
+export function buildOutcomeMarketDataEvidence(input: {
+  signal: Pick<DecisionSignalForEvaluation, "symbol" | "market">;
+  result: Extract<EvaluationResult, { kind: "evaluated" }>;
+  bars: BarData[];
+  benchmarkBars: BarData[];
+  benchmarkSymbol: string | null;
+}): RecommendationOutcomeMarketDataEvidence {
+  return {
+    version: "recommendation-outcome-market-v1",
+    target: marketDataEvidenceSeries({
+      symbol: input.signal.symbol,
+      market: input.signal.market,
+      startAt: input.result.entryAt,
+      endAt: input.result.exitAt,
+      bars: input.bars,
+    }),
+    benchmark: input.benchmarkSymbol
+      ? marketDataEvidenceSeries({
+          symbol: input.benchmarkSymbol,
+          market: input.signal.market,
+          startAt: input.result.entryAt,
+          endAt: input.result.exitAt,
+          bars: input.benchmarkBars,
+        })
+      : null,
+  };
+}
+
+function marketDataEvidenceSeries(input: {
+  symbol: string;
+  market: string;
+  startAt: string;
+  endAt: string;
+  bars: BarData[];
+}): MarketDataEvidenceSeries {
+  const bars = input.bars
+    .filter((bar) => bar.timestamp >= input.startAt && bar.timestamp <= input.endAt)
+    .sort((left, right) => left.timestamp.localeCompare(right.timestamp))
+    .map(({ timestamp, open, high, low, close, volume, turnover }) => ({
+      timestamp,
+      open,
+      high,
+      low,
+      close,
+      volume,
+      turnover,
+    }));
+  const unsigned = {
+    symbol: input.symbol.trim().toUpperCase(),
+    market: input.market.trim().toUpperCase(),
+    period: "1d" as const,
+    startAt: input.startAt,
+    endAt: input.endAt,
+    bars,
+  };
+  return {
+    ...unsigned,
+    fingerprint: `outcome_market_${createHash("sha256")
+      .update(JSON.stringify(unsigned))
+      .digest("hex")
+      .slice(0, 24)}`,
+  };
 }

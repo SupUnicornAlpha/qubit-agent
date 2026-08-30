@@ -1,6 +1,6 @@
 /**
- * Emitter port — tools publish step events without importing react/event-stream.
- * Wired at boot; lazy default binds the react bus on first use.
+ * Emitter port — tools publish step events without importing host/event-stream.
+ * Wired at boot; lazy default binds the Host bus on first use.
  */
 
 export type StepStreamPublishEvent = {
@@ -28,7 +28,7 @@ export function getStepStreamPorts(): StepStreamPorts {
   if (_ports) return _ports;
   const ports: StepStreamPorts = {
     publish(event) {
-      void import("../react/event-stream")
+      void import("../host/event-stream")
         .then(({ stepStreamBus }) => {
           stepStreamBus.publish(event as never);
         })

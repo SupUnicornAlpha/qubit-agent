@@ -26,7 +26,6 @@ export {
   projectCoreInvocationsFromSnapshot,
   projectCoreTurnResult,
   projectCoreUserMessage,
-  projectTeamResearchEdges,
   sanitizeCoreAnswerText,
 } from "./project-core-to-graph";
 export type { CoreInvocationWire } from "./project-core-to-graph";

@@ -120,7 +120,9 @@ export function buildBacktestIntegrityReport(
     check(
       "oos_isolation",
       context.oos
-        ? context.oos.foldCount >= 2 && context.oos.purgeDays > 0
+        ? (context.oos.mode === "holdout"
+            ? context.oos.foldCount === 1
+            : context.oos.foldCount >= 2) && context.oos.purgeDays > 0
           ? "pass"
           : "fail"
         : "unknown",

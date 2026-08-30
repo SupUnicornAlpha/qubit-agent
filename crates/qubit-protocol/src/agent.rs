@@ -77,6 +77,11 @@ pub struct AgentSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_recipe_id: Option<String>,
     pub tool_surface_ref: String,
+    /// Exact per-agent tool surface. Core advertises only this configured
+    /// subset (plus L0 control tools), so schemas are loaded on demand rather
+    /// than for every bridge capability.
+    #[serde(default)]
+    pub tools: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_ref: Option<String>,
     pub max_iterations: u32,

@@ -81,6 +81,7 @@ async fn subagent_rejected_for_user_session() {
         system_prompt: None,
         default_recipe_id: None,
         tool_surface_ref: "surfaces/sub".into(),
+        tools: vec![],
         model_ref: None,
         max_iterations: 4,
         hitl_profile_ref: None,

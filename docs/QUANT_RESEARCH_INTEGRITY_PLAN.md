@@ -21,17 +21,38 @@
 
 文字回答、模型偏好或单次回测曲线都不能替代上述产物。
 
+## Harness 装配边界
+
+闭环的具体证据与闸门仍分别由 `src/runtime/backtest`、`src/runtime/factor`、
+`src/runtime/effect-validation` 和 `src/runtime/strategy` 持有；它们不是另一套
+可替换的执行引擎。`src/runtime/harness/quant-research-integrity.ts` 是产品自有、无
+I/O 的编排层：它把已有快照、反泄漏、因子风险暴露、Walk-Forward、paper 和人工
+批准证据归为同一审计结果。`quant-research-integrity` profile 可在 workflow 范围组合
+或撤销；`paper-trading` 默认继承它。研究任务只得到 advisory 缺口报告，不能由 profile
+配置获得执行权限；paper/live 的 required gate 仍在宿主服务内执行，因此卸载 profile
+不会削弱实盘准入。最终独立 holdout 由 `backtest.final_holdout` 创建不可变合同后只执行
+一次，单独写入 `strategy_eval_run.eval_kind='holdout'`；同一 source backtest 不能换窗口或
+重复查看。live promotion 必须绑定同一 `backtest_run_id`、strategy version 与 dataset snapshot
+的通过 holdout 记录。
+人工 `approve-live` 也只能在 holdout 已通过后写入，不能先批准、后补测试；因此旧批准
+不会因之后补跑保留集而自动变成有效实盘授权。
+
+`math-audit` 是另一条独立、按任务加载的 Harness：只有显式 `math_mode`，或由结构化
+workflow metadata 标记为高保证的数学决策任务，才会在 Prompt 和 `math.derivation.verify`
+执行边界同时启用；普通对话中的公式文本不会触发。其 handler 仅精确导入数学验证组件，
+不依赖全量 Harness barrel 或工具注册表，因此可单独加载、测试和撤销。
+
 ## 当前基线与必须修复的断点
 
 | 已落地基础 | 仍然缺失的生产级约束 |
 | --- | --- |
-| `market.snapshot.get` 可以生成不可变市场快照；BacktestJobService 强制写入并消费非空 `dataset_snapshot_id` | 历史标的池成分、退市样本和企业行为版本仍未进入快照协议，因此当前回测只能标为 `research_only` |
-| 事件驱动回测只从绑定快照读取行情，具备下一根 open 成交、手续费、滑点/平方根冲击、成交量参与率、借券成本、真实多空和平仓语义；`asset-lifecycle-v2` 已支持合约乘数/整手、欧式现金结算期权到期、按冻结标的/IV/利率审计的 Black–Scholes Greeks、期货逐日盯市/初始与维持保证金/追保/强平、显式换月的平旧开新、币永续资金费，以及快照显式停牌/不可交易/涨跌停与显式闭市会话的方向性未成交约束；交易日历版本、时区和逐交易所会话表均进入快照血缘 | 官方交易日历的自动接入、半日市/盘中 session、交易所参数曲线、美式期权提前行权、波动率曲面与按资产/券商校准的成本与容量参数仍需完善；快照未提供可交易性字段、日历版本或会话表时必须标为 `research_only` |
-| 因子值按 `dataset_snapshot_id` 隔离存储；因子评估表携带快照血缘，IC/IR 权重只能读取同快照评估 | 财务数据修订、行业分类历史与因子预处理规格仍未版本化 |
+| `market.snapshot.get` 可以生成不可变市场快照；BacktestJobService 强制写入并消费非空 `dataset_snapshot_id`；历史标的池、企业行为和 PIT 基本面账本都进入快照指纹 | 行业分类历史、因子预处理规格与官方源的持续版本治理仍待补齐；证据不完整时仍只能标为 `research_only` |
+| 事件驱动回测只从绑定快照读取行情，具备下一根 open 成交、手续费、滑点/平方根冲击、成交量参与率、借券成本、真实多空和平仓语义；`asset-lifecycle-v2` 已支持合约乘数/整手、欧式现金结算期权到期、按冻结标的/IV/利率审计的 Black–Scholes Greeks、期货逐日盯市/初始与维持保证金/追保/强平、显式换月的平旧开新、币永续资金费，以及快照显式停牌/不可交易/涨跌停与显式闭市会话的方向性未成交约束。事件键为完整 UTC 时间戳，盘中年化频率仅由冻结会话窗口推导；交易日历版本、时区和逐交易所会话表均进入快照血缘 | 官方交易日历的自动接入、交易所参数曲线、美式期权提前行权、波动率曲面与按资产/券商校准的成本与容量参数仍需完善；快照未提供可交易性字段、日历版本、会话表或盘中窗口时必须标为 `research_only` 或直接拒绝盘中执行 |
+| 因子值按 `dataset_snapshot_id` 隔离存储；因子评估表携带快照血缘，内置评估器输出并持久化 Newey–West HAC 的 IC/Rank IC 推断，发现任务输出 Benjamini–Hochberg FDR 证据 | 横截面回归、bootstrap、因子相关/VIF 与行业/风格/市场暴露仍未形成完整研究合同 |
 | Walk-forward 支持扩展窗口、purge + pre-OOS embargo、regime 门槛及每折训练窗独立选参；胜者冻结后才首次进入测试窗。训练候选族执行 Benjamini–Hochberg FDR + White Reality Check，最终拼接 OOS 执行 block-bootstrap + Bonferroni + Deflated Sharpe。PIT、anti-leakage 与统计置信报告均为机器可读且 fail-closed | 完整的资产类别可成交性模型仍未形成硬门 |
-| Math Harness 有数值、反例、量纲、敏感性和符号检查 | 尚未覆盖因子统计、回归诊断、bootstrap、暴露与多重假设校正 |
-| Order intent、风险签名、券商桥和 kill switch 已存在；直接 intent 与 runtime 两条 live 路径均要求验证级快照、回测、walk-forward、paper 和人工批准 | 交易开关尚是进程内状态；实盘仍需持久化、多进程一致、可审计的风险与暂停机制 |
-| recommendation outcome、reflection 和 Skill outcome 已存在 | 还未形成对策略/模型/数据源升级的 champion–challenger 与因果归因闭环 |
+| Math Harness 有数值、反例、量纲、敏感性和符号检查；Quant Stats 已具备 HAC 因子显著性与 FDR 候选族校正 | 尚未覆盖完整的回归诊断、bootstrap、暴露和共线性检查 |
+| Order intent、风险签名、券商桥和环境级 kill switch 已存在；`trading_module_control` 提供持久化、版本化的全局暂停状态，直接 intent、策略运行时、execution worker 和 dispatcher 共享检查，执行监控会同时显示环境开关与持久化暂停 | 仍需按账户/策略细分的持久化暂停、跨服务原子租约、已被券商确认订单的撤单编排与外部风控服务高可用 |
+| recommendation outcome 可生成保守的 confirmed / invalidated / inconclusive reflection，并明确非因果归因限制 | 还未形成对策略/模型/数据源升级的 champion–challenger、策略归因与因果归因闭环 |
 
 ### 实施进展（2026-08-27）
 
@@ -44,12 +65,28 @@
 - 已完成：`backtest.walk_forward` Agent 工具；支持 2–20 个候选在每折训练窗内按 Sharpe/Calmar/年化收益选优，冻结后运行测试窗，并返回逐折榜单、拼接 OOS 统计与可审计泄漏报告。固定参数模式保留原始参数选择证据，不会被自动升级为“预先冻结”。
 - 已完成：`anti-leakage-v2` 将 embargo 作为独立必备证据；默认在每折训练与 OOS 间设置 5 日 purge + 5 日 pre-OOS embargo，并记录两段隔离日期。`statistical-validation-v2` 增加中心化 block-bootstrap 单侧 p 值和 Bonferroni adjusted p；训练候选族缺少足够样本或未通过 Benjamini–Hochberg FDR 时，Walk-Forward 晋级 fail-closed。
 - 已完成：训练窗候选收益按共同日期对齐，并用同步 moving-block bootstrap 执行 `white-reality-check-v1`，保留候选间依赖；`statistical-validation-v3` 根据完整候选 Sharpe 分布、独立试验数、OOS 样本长度、偏度和峰度计算 Deflated Sharpe。候选分布缺失、Reality Check 或 DSR 未通过时不允许晋级。
-- 已完成：可卸载的 `asset-lifecycle-v2` 合约适配层。`backtest.run` 可接收 point-in-time `instruments`；合约乘数与最小交易单位贯穿目标仓位、成交和估值，现金结算欧式期权/期货在到期日使用快照 `settlementPrice` 强制结算，币永续按每根 Bar 的 `fundingRateBps` 计提。期货要求冻结 initial/maintenance margin 与目标杠杆，收盘逐日盯市；跌破维持保证金会从可用现金补缴，现金不足按结算价强平。显式 `future_roll:{roll_date,successor_symbol}` 会在冻结日期按快照 open 平旧合约、按合约乘数换算整手后开新合约；新合约必须同时出现在冻结合约表与回测标的集，换月链不得成环；缺 successor、换月日在到期后或新旧任一换月 Bar 缺失时均 fail-closed/审计，不会从连续代码猜测。期权在同一不可变快照同时提供标的价格、IV 与无风险利率时，以 Black–Scholes 计算逐期 Delta/Gamma/Theta/Vega，只做风险审计且绝不以理论价替换成交价；缺数据会明确降级。普通资产与期货在开盘撮合前检查快照的 `tradable`/`suspended`/`priceLimitUp`/`priceLimitDown`：停牌、不可交易、涨停买入和跌停卖出均不成交，并留下原因审计事件。若快照完全不含可交易性字段，生命周期报告显式标记 `tradability_flags_missing`，结果保持 `research_only`。衍生品字段缺失、实物交割或美式提前行权均 fail-closed；交易所参数曲线与期权波动率曲面未建模，因此结果保持 `research_only`。
+- 已完成：可卸载的 `asset-lifecycle-v2` 合约适配层。`backtest.run` 可接收 point-in-time `instruments`；合约乘数与最小交易单位贯穿目标仓位、成交和估值，现金结算欧式期权/期货在到期日使用快照 `settlementPrice` 强制结算，币永续按每根 Bar 的 `fundingRateBps` 计提。期货要求冻结 initial/maintenance margin 与目标杠杆，收盘逐日盯市；跌破维持保证金会从可用现金补缴，现金不足按结算价强平。显式 `future_roll:{roll_date,successor_symbol}` 会在冻结日期按快照 open 平旧合约、按合约乘数换算整手后开新合约；新合约必须同时出现在冻结合约表与回测标的集，换月链不得成环；缺 successor、换月日在到期后或新旧任一换月 Bar 缺失时均 fail-closed/审计，不会从连续代码猜测。期权在同一不可变快照同时提供标的价格、IV 与无风险利率时，以 Black–Scholes 计算逐期 Delta/Gamma/Theta/Vega，只做风险审计且绝不以理论价替换成交价；`derivative_pricing_ledger` 会冻结 IV 报价/曲面及利率曲线的版本、来源、时点和方法，缺失或晚于快照会明确降级。普通资产与期货在开盘撮合前检查快照的 `tradable`/`suspended`/`priceLimitUp`/`priceLimitDown`：停牌、不可交易、涨停买入和跌停卖出均不成交，并留下原因审计事件。若快照完全不含可交易性字段，生命周期报告显式标记 `tradability_flags_missing`，结果保持 `research_only`。衍生品字段缺失、实物交割或美式提前行权均 fail-closed；实际曲面插值模型与交易所保证金参数曲线仍未建模，因此结果保持 `research_only`。
 - 已完成：交易日历血缘与闭市撮合约束。`market.snapshot.get` 接收 `calendar_version` / `timezone` / `calendar_sessions_by_venue` 并将规范化后的会话表写入不可变快照指纹；绑定到回测的数据集时按 symbol 映射对应交易所会话。生命周期校验不从缺失 Bar 猜节假日或开市：日历版本、合法 IANA 时区或逐标的会话表缺失时加入 `calendar_*` 限制并保持 `research_only`。当某 Bar 日期被显式标为 `closed`，普通资产和期货均不会在 open 撮合，输出 `order_unfilled_tradability/calendar_closed` 审计事件。会话表必须是外部冻结输入；当前不自动编造官方节假日、半日市或盘中 session。
-- 已完成：盘中快照防伪日线保护。当前 event-driven 引擎的执行与年化语义是日线级；它会直接拒绝非 `1d` 快照，避免把同一交易日的多根盘中 K 线覆盖、合并并错误地按日频年化。半日市和盘中 session 将与真实盘中执行键、频率化指标和冻结交易所会话表一起引入，不能以当前日线模型模拟。
+- 已完成：盘中会话窗口与执行频率。`calendar_session_windows_by_venue` 可冻结每日一个或多个 ISO `openAt/closeAt` 区间（含早收盘或分段交易标签），并进入快照指纹后按 symbol 投影到数据集；无效、倒置或缺失的窗口不会被推断为开市。`event_driven` 对盘中数据以完整 UTC 时间戳而非自然日作为执行键，信号生成和成交始终隔开至少一根 Bar，实际调仓仍遵从策略声明的 `rebalance` 频率；年化周期由冻结窗口的平均时长和 K 线频率推导，并同时进入绩效与统计验证报告。任一盘中 Bar 没有窗口、落在午间休市/收市边界外或无法得出周期时 fail-closed，绝不把盘中收益伪装为日收益。
 - 已完成：交易成本证据门。`costs` 现可冻结佣金、滑点、最小佣金、冲击、容量参与率、借券和禁空标的，以及 `cost_model_version` / `cost_model_source` / `cost_model_as_of`；工具层不得再静默丢弃高级成本字段。缺少三项成本血缘、或使用内置 5bp 默认值时，反泄漏报告中的 `transaction_costs` 必须为 `unknown`，结果不得作为验证级交易成本证据。
-- 进行中：Phase 1 的历史 universe、退市样本、企业行为与 PIT 基本面证据；未完成前不会把数据标记成 `strategy_validation`。
-- 下一硬门：Phase 2 的官方交易日历自动接入、半日市/盘中会话、交易所参数曲线，以及期权提前行权与波动率曲面。
+- 已完成：因子统计与准入最小闭环。`FactorResearchContract` 以轻量、可卸载的 `definition_json.researchContract` 保存经济机制、PIT 可得性、与可执行表达式一致的公式、预处理、适用域、失效条件及独立验证计划。内置因子评估按日横截面输出 Newey–West HAC 标准误、t 值、p 值与正 IC 比例；至少 60 个日截面且 IC 或 Rank IC 显著才可通过。报告作为 `factor_evaluation.statistical_report_json` 持久化，因子发现对完整候选族做 Benjamini–Hochberg FDR 校正，并把方法、候选数、发现数及逐候选 adjusted p-value 一同返回。`strategy.compose` 的显式选因子和自动补全，以及 `factor.promote_backtest` 的快捷路径，都会拒绝缺合同、未通过 HAC、未绑定冻结快照或（回测时）快照不匹配的因子；未经校正的 IC 排名不可伪装成验证结论。
+- 已完成：多因子独立性最小闸门。`factor.correlation.diagnose` 仅在同一冻结快照中逐 `(date,symbol)` 对齐因子值，输出每一对的共同样本数、Pearson signal correlation、常量/缺失状态与超阈值 pair；它不以收益相关冒充因子独立性。多因子 `factor.promote_backtest` 要求所有 pair 至少 60 个共同、非恒定观测，且绝对相关小于 0.7，否则停止在验证级回测之前。该轻量诊断尚不等同于完整多因子横截面回归、行业/风格暴露或边际组合风险模型。
+- 已完成：信号基底暴露与共线性诊断。`factor.exposure.diagnose` 在同一冻结快照的共同 `(date,symbol)` 观测上，以其余候选因子作控制变量，输出每个因子的 OLS R²、VIF、样本数和秩/方差不足原因；默认 VIF ≥ 5 明确失败。多因子 `factor.promote_backtest` 将其作为与 pairwise correlation 并列的准入门；它不把内部信号回归误称为行业、风格或市场暴露：后者仍必须引入版本化外部分类/风险暴露账本。
+- 已完成：外部风险暴露账本的快照血缘。`market.snapshot.get` 可接收 `risk_exposure_ledger:{version,source,asOf,model,observationsBySymbol}`；每条 observation 带 `effectiveDate`、`availableAt`、风险暴露向量及可选 revision/reference，所有修订均进入不可变快照指纹。该基础协议防止事后风险模型覆盖历史可得暴露；横截面回归与行业/风格中性结论仍只能在此账本真正提供足够 PIT 覆盖时生成。
+- 已完成：因子外部风险回归与 live 闭环。`factor.risk_exposure.regress` 对同一快照的单因子值，仅匹配决策时间前已发布的外部暴露，输出每个行业/风格/市场维度的横截面 OLS beta、R² 与覆盖缺口。因子组合的 backtest evaluation 会持久化 `factorRiskExposure`；若它声明 `required=true`，Champion–Challenger 与 live promotion 都必须读取 `status=passed`，否则不得晋级。非因子/历史记录不被追溯性阻断。
+- 已完成：受控发现的候选墓地。每个 `discovery_job` 除 top-K 短名单外持久化完整 `candidateAudit`，逐条记录计算错误、统计证据缺失、FDR 未通过或排名淘汰的原因；短名单也保留“尚未通过 FDR”的事实。Agent 不能再把 top-K 截断当作删除其余假设，也必须把同一搜索预算内的完整候选数计入后续 `candidate_trials`。`discovery.promote` 只创建 draft；可通过 `factor.set_research_contract` 补齐合同，完成同一冻结快照评估后再由 `factor.activate` 进行 fail-closed 激活。
+- 已完成：持久化交易模块暂停。`trading_module_control` 单例记录 enabled、reason、changedBy、revision 与 changedAt，服务重启后仍可恢复相同状态；环境变量关闭优先级更高。创建 order intent、创建/启动 strategy runtime、execution worker 和 dispatcher 都在派发前检查该状态。关闭模块时，路由会停止 running runtime，并只取消尚未派发的 pending/held/conditional/awaiting-review task，写入取消事件；已获券商确认的订单不会被伪装成“已取消”，仍交给对账/撤单流程。`execution.kill_switch.status` 同时输出环境级和数据库级停机原因。
+- 已完成：框架化选股的可审计执行。命名 `ResearchThesis.framework` 现在必须绑定版本化 `InvestmentFrameworkCard`：来源、原则、经济机制、可观测代理及阈值/权重、适用资产/市场/regime、排除/失效条件和风险预算。`research.framework.assess` 依据冻结卡片作确定性评估；每个代理数值均需 evidence ref，缺数据或引用只能为 `research_only`，适用域不匹配或分数低于阈值即为 `rejected`。这避免把“像某个投资流派”的自由文本直接升级为可交易建议。
+- 已完成：策略 Champion–Challenger 的同 cohort 比较门。backtest 与 walk-forward 会写入由冻结 snapshot、时框、标的池、universe、benchmark 和成本模型生成的 `strategy_cohort_*`；paper/shadow 只能在同一策略已具备该 backtest + walk-forward 证据时引用该 ID。`strategy.champion_challenger.compare` 仅在 backtest、walk-forward、paper 三者均共享同 cohort 时计算分数，缺失/歧义/不匹配时明确返回不可比较，绝不自动切换 live runtime。
+- 已完成：最终独立 Holdout。`backtest.final_holdout` 要求 `train_end` 精确等于源 backtest 的结束日，并用同一不可变 snapshot、代码、参数和成本在后续保留区间执行一次；它会从该 snapshot **重新绑定** Holdout 窗口，而不会复用源回测的训练期 dataset binding，快照窗口或标的 K 线未覆盖保留区间时明确 fail-closed，provider 不得回退到运行时行情。合同固定 `purge_days` / `embargo_days` 与指纹；晋级评分和 execution admission 会重算该指纹，并核验同一 strategy version、source backtest 与 dataset snapshot。相同 source run 的相同合同不能重复读取，不同窗口也会被拒绝，防止在最终测试集上反复挑窗。结果以独立 `holdout` evaluation 写入，完整性报告按单一保留集（而非伪装成多折 Walk-Forward）审计；live promotion 与 execution admission 都要求该 holdout 针对当前 base backtest 通过。
+- 已完成：策略候选墓地。`strategy_candidate_review` 以 project + strategy version + frozen/review cohort 幂等保存 `eligible`、`incomplete`、`rejected`、`retired` 结论和明确 reason codes；可附结构重复指向、regime、容量、相关性证据。每次 Champion–Challenger 比较都会沉淀最低限度的评审记录，Agent 可通过 `strategy.candidate.review` 补齐证据；同项目内完全一致的脚本标识或组合内核会被保守地自动标记为结构重复，而“输给 champion”只代表相对表现，不会被错误标记为重复。
+- 已完成：三级持久化交易暂停。`trading_module_control` 的记录键可表达 `global`、`broker_account:<id>` 与 `strategy_runtime:<id>`；环境级关闭仍优先于全部数据库状态。下单意图、策略 runtime 启动、dispatcher 都按当前账户/运行时求交集并 fail-closed；暂停路由只停止匹配 runtime、只取消尚未派发的匹配任务，返回真实取消列表，不会把已被 worker 获取或已获券商确认的订单误报为已取消。
+- 已完成：推荐 outcome 的因果边界与幂等反思。推荐结果只回写同一 workflow 的 `research_conclusion`，或 metadata 中显式绑定同一 recommendation 的结论；不再因“同一个 symbol”把新结果归因给旧 thesis。每个 `recommendationId + horizonDays` 形成 outcome 去重键，worker 重放不会重复增加 experience 的 success/fail 计数；该经验更新只表示预测校准/关联证据，仍不构成单次结果的因果验证。
+- 已完成：推荐 outcome 的成交时点防前视。无 entry range 的推荐在首个可用日线的 close 才建仓，止盈/止损、MFE/MAE 和退出判定从下一根 K 线开始；带 entry range 的同根 K 线触发仍以 stop-first 保守处理。结果不会把已知收盘前的 high/low 伪装成可执行的同根交易。
+- 已完成：推荐 outcome 的行情证据冻结。成熟 outcome 持久化本次评分实际消费的目标和基准 OHLCV 片段、窗口、市场、版本及 SHA-256 指纹，并在审计日志留下目标指纹；之后数据源修订不会被误写为原始反思事实。该证据仅说明历史评分输入，尚不构成推荐或策略的因果证明。
+- 已完成：推荐校准的只读审计摘要。`research.recommendation.calibration` 按 recommendation 的方向与持有期，从已结算的 `win/loss/flat` outcome 汇总样本量、命中率、Brier、平均收益与平均超额收益；`flat` 明确计为非 win，默认少于 30 个样本只标为 `insufficient_evidence`。它是供研究 Agent 复盘的描述性证据，不会自动调整策略参数、仓位或模型置信度。
+- 已完成：投资框架与执行证据的最小闭环。Research thesis 可登记 `quality_growth`、`value_margin_of_safety`、`growth_at_reasonable_price`、`trend_following`、`event_driven`、`macro_regime`、`market_neutral_factor` 或 `custom`；命名框架必须有可引用 claim 和可观测 invalidation。live evidence binding 会拒绝缺证据、不可证伪的 thesis。终态推荐 outcome 会生成保守 reflection，且明确单次结果不验证框架、不是因果归因。
+- 下一硬门：官方交易日历自动接入、半日市/盘中会话的持续治理、交易所参数曲线，以及期权提前行权与可复现波动率曲面；因子端还需补齐回归诊断、暴露与独立验证集。
 
 ## Phase 1 — 研究可信度与证据血缘
 

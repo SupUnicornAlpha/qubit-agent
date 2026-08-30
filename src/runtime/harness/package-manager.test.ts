@@ -81,6 +81,26 @@ function first<T>(items: readonly T[]): T {
 }
 
 describe("declarative Harness package manager", () => {
+  test("activates and removes the built-in quant integrity profile without a package install", async () => {
+    const profileDataDir = await mkdtemp(join(tmpdir(), "qubit-harness-builtin-profile-"));
+    try {
+      const enabled = await setActiveHarnessPackageProfiles({
+        profileIds: ["quant-research-integrity"],
+        dataDir: profileDataDir,
+      });
+      expect(enabled.activeProfileIds).toEqual(["quant-research-integrity"]);
+
+      const disabled = await setActiveHarnessPackageProfiles({
+        profileIds: [],
+        dataDir: profileDataDir,
+      });
+      expect(disabled.activeProfileIds).toEqual([]);
+    } finally {
+      await rm(profileDataDir, { recursive: true, force: true });
+      await refreshHarnessPackageRuntime({ dataDir });
+    }
+  });
+
   test("verifies a trusted Ed25519 package with a stable content digest", () => {
     const pack = signedPackage();
     expect(verifyHarnessPackage(pack, { "test-root": publicKey })).toEqual({

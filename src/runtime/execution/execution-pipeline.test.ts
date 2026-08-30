@@ -9,6 +9,7 @@ import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import * as schema from "../../db/sqlite/schema";
 import { processExecutionTasks } from "./execution-worker";
 import { createOrderIntentWithExecution } from "./order-intent-service";
+import { setTradingModuleEnabled } from "../trader/trading-module-control";
 
 describe("execution pipeline (memory sqlite)", () => {
   test("allows intent and paper-fills through worker", async () => {
@@ -101,6 +102,15 @@ describe("execution pipeline (memory sqlite)", () => {
     expect(riskChecked[0]?.lifecycleStatus).toBe("risk_checked");
     expect(riskChecked[0]?.clientOrderId).toBe(created.orderIntentId);
 
+    await setTradingModuleEnabled(false, { reason: "test_worker_pause", db });
+    await processExecutionTasks(db);
+    const pausedTasks = await db
+      .select()
+      .from(schema.executionTask)
+      .where(eq(schema.executionTask.id, created.executionTaskId!));
+    expect(pausedTasks[0]?.status).toBe("pending");
+
+    await setTradingModuleEnabled(true, { reason: "test_worker_resume", db });
     await processExecutionTasks(db);
 
     const tasks = await db
@@ -120,6 +130,50 @@ describe("execution pipeline (memory sqlite)", () => {
       .from(schema.orderIntent)
       .where(eq(schema.orderIntent.id, created.orderIntentId));
     expect(filledIntent[0]?.lifecycleStatus).toBe("filled");
+
+    const pausedBrokerAccountId = randomUUID();
+    await db.insert(schema.brokerAccount).values({
+      id: pausedBrokerAccountId,
+      provider: "futu",
+      accountRef: "scoped-pause-account",
+      mode: "sandbox",
+      enabled: true,
+    });
+    const scopedCreated = await createOrderIntentWithExecution(db, {
+      workflowRunId: wrid,
+      strategyVersionId: svid,
+      instrumentId: iid,
+      side: "buy",
+      qty: 1,
+      orderType: "limit",
+      price: 100,
+      timeInForce: "day",
+      brokerAccountId: pausedBrokerAccountId,
+    });
+    await setTradingModuleEnabled(false, {
+      reason: "broker_maintenance",
+      db,
+      scope: { brokerAccountId: pausedBrokerAccountId },
+    });
+    await processExecutionTasks(db);
+    const scopedTask = await db
+      .select()
+      .from(schema.executionTask)
+      .where(eq(schema.executionTask.id, scopedCreated.executionTaskId!));
+    expect(scopedTask[0]?.status).toBe("cancelled");
+    await expect(
+      createOrderIntentWithExecution(db, {
+        workflowRunId: wrid,
+        strategyVersionId: svid,
+        instrumentId: iid,
+        side: "buy",
+        qty: 1,
+        orderType: "limit",
+        price: 100,
+        timeInForce: "day",
+        brokerAccountId: pausedBrokerAccountId,
+      })
+    ).rejects.toThrow(`trading_module_paused:broker_account:${pausedBrokerAccountId}`);
   });
 
   test("blocks when notional exceeds max_notional", async () => {

@@ -33,7 +33,7 @@ export interface AgentLlmConfig {
 /**
  * 角色产出能力声明（migration 0073）。
  *
- * Dispatcher（analyst-team.ts 等）按这组标签把 slot 输出分桶进对应聚合通道：
+ * Rust Core dispatcher 按这组标签把 Agent 输出分桶进对应聚合通道：
  *   - 'signal'             → MSA fusion 投票（hold/buy/sell + confidence）
  *   - 'report'             → 报告聚合（Markdown 章节）
  *   - 'events'             → 事件 / 催化剂列表

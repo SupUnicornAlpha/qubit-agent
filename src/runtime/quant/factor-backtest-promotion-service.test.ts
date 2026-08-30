@@ -60,6 +60,34 @@ let projectId = "";
 let workflowRunId = "";
 let datasetSnapshotId = "";
 
+function researchContract(expression: string) {
+  return {
+    version: "factor-research-contract-v1",
+    economicMechanism: "Relative trend persists while information diffuses into prices.",
+    dataAvailability: {
+      sourceFields: ["close"],
+      availableAtRule: "Use finalized daily close after the session.",
+      pointInTime: true,
+    },
+    formula: { expression, frequency: "1d", expectedDirection: "higher_is_bullish" },
+    preprocessing: {
+      missingValuePolicy: "drop",
+      winsorization: "1%/99%",
+      standardization: "z-score",
+      neutralization: "sector neutral",
+    },
+    applicability: {
+      universes: ["US"],
+      horizonsDays: [5],
+      invalidationConditions: ["HAC Rank IC loses significance in OOS."],
+    },
+    validation: {
+      independentValidationPlan: "Evaluate fixed parameters on a frozen OOS snapshot.",
+      minimumDailyObservations: 60,
+    },
+  };
+}
+
 beforeAll(async () => {
   await runMigrations();
   _resetBootstrapForTests();
@@ -103,8 +131,24 @@ beforeAll(async () => {
       ["AAPL", "MSFT"].map((symbol, index) => [
         `US:${symbol}`,
         [
-          { timestamp: "2026-01-02T00:00:00.000Z", open: 100 + index, high: 102 + index, low: 99 + index, close: 101 + index, volume: 1000, turnover: 101000 },
-          { timestamp: "2026-01-30T00:00:00.000Z", open: 101 + index, high: 103 + index, low: 100 + index, close: 102 + index, volume: 1100, turnover: 112200 },
+          {
+            timestamp: "2026-01-02T00:00:00.000Z",
+            open: 100 + index,
+            high: 102 + index,
+            low: 99 + index,
+            close: 101 + index,
+            volume: 1000,
+            turnover: 101000,
+          },
+          {
+            timestamp: "2026-01-30T00:00:00.000Z",
+            open: 101 + index,
+            high: 103 + index,
+            low: 100 + index,
+            close: 102 + index,
+            volume: 1100,
+            turnover: 112200,
+          },
         ],
       ])
     ),
@@ -119,15 +163,32 @@ beforeAll(async () => {
 
 describe("FactorBacktestPromotionService", () => {
   test("promotes factors into strategy composition and runs observable backtest", async () => {
+    const expr = "Mean(close, 20) - Mean(close, 60)";
     const factor = await factorService.register({
       projectId,
       name: `promo_factor_${randomUUID().slice(0, 6)}`,
       category: "momentum",
-      expr: "Mean(close, 20) - Mean(close, 60)",
+      expr,
       lang: "qlib_expr",
       universe: "US",
       workflowRunId,
       createdBy: "agent",
+      definition: { researchContract: researchContract(expr) },
+    });
+    const db = await getDb();
+    await db.insert(schema.factorEvaluation).values({
+      id: randomUUID(),
+      factorId: factor.id,
+      asof: "2026-01-31",
+      universe: "US",
+      datasetSnapshotId,
+      sampleSize: 120,
+      latencyMs: 1,
+      statisticalReportJson: {
+        version: "factor-statistical-validation-v1",
+        dailyObservations: 120,
+        status: "passed",
+      } as never,
     });
 
     const result = await factorBacktestPromotionService.promoteAndBacktest({
@@ -152,7 +213,6 @@ describe("FactorBacktestPromotionService", () => {
     expect(result.backtest.config.experiment).toEqual({ parameterSelection: "unknown" });
     expect(result.backtest.result?.metrics.totalReturn).toBe(0.03);
 
-    const db = await getDb();
     const evalRows = await db
       .select()
       .from(schema.strategyEvalRun)
@@ -165,5 +225,172 @@ describe("FactorBacktestPromotionService", () => {
       m.backtestJobService.list({ projectId, workflowRunId })
     );
     expect(byProject.some((row) => row.id === result.backtest.id)).toBe(true);
+  });
+
+  test("rejects auto-promotion when the factor evidence belongs to another snapshot", async () => {
+    const expr = "close / Ref(close, 5) - 1";
+    const factor = await factorService.register({
+      projectId,
+      name: `promo_wrong_snapshot_${randomUUID().slice(0, 6)}`,
+      category: "momentum",
+      expr,
+      lang: "qlib_expr",
+      universe: "US",
+      definition: { researchContract: researchContract(expr) },
+    });
+    const db = await getDb();
+    await db.insert(schema.factorEvaluation).values({
+      id: randomUUID(),
+      factorId: factor.id,
+      asof: "2026-01-31",
+      universe: "US",
+      datasetSnapshotId: "different-frozen-snapshot",
+      sampleSize: 120,
+      latencyMs: 1,
+      statisticalReportJson: {
+        version: "factor-statistical-validation-v1",
+        dailyObservations: 120,
+        status: "passed",
+      } as never,
+    });
+    await expect(
+      factorBacktestPromotionService.promoteAndBacktest({
+        projectId,
+        factorIds: [factor.id],
+        symbols: ["AAPL", "MSFT"],
+        universe: "US",
+        startDate: "2026-01-01",
+        endDate: "2026-01-31",
+        datasetSnapshotId,
+      })
+    ).rejects.toThrow(/factor_evaluation_snapshot_mismatch/);
+  });
+
+  test("does not backtest a multi-factor bundle without independent signal evidence", async () => {
+    const db = await getDb();
+    const factorIds: string[] = [];
+    for (const suffix of ["a", "b"]) {
+      const expr = suffix === "a" ? "close" : "Ref(close, 1)";
+      const factor = await factorService.register({
+        projectId,
+        name: `promo_correlation_${suffix}_${randomUUID().slice(0, 6)}`,
+        category: "momentum",
+        expr,
+        lang: "qlib_expr",
+        universe: "US",
+        definition: { researchContract: researchContract(expr) },
+      });
+      factorIds.push(factor.id);
+      await db.insert(schema.factorEvaluation).values({
+        id: randomUUID(),
+        factorId: factor.id,
+        asof: "2026-01-31",
+        universe: "US",
+        datasetSnapshotId,
+        sampleSize: 120,
+        latencyMs: 1,
+        statisticalReportJson: {
+          version: "factor-statistical-validation-v1",
+          dailyObservations: 120,
+          status: "passed",
+        } as never,
+      });
+    }
+    const originalDiagnoseCorrelation = factorService.diagnoseCorrelation.bind(factorService);
+    factorService.diagnoseCorrelation = (async () => ({
+      version: "factor-correlation-diagnostics-v1",
+      status: "failed",
+      maxAbsCorrelation: 0.7,
+      minimumObservations: 60,
+      pairs: [],
+      highCorrelationPairs: [],
+      missingFactorIds: [],
+      reasons: ["factor_pair_correlation_too_high"],
+    })) as typeof factorService.diagnoseCorrelation;
+    try {
+      await expect(
+        factorBacktestPromotionService.promoteAndBacktest({
+          projectId,
+          factorIds,
+          symbols: ["AAPL", "MSFT"],
+          universe: "US",
+          startDate: "2026-01-01",
+          endDate: "2026-01-31",
+          datasetSnapshotId,
+        })
+      ).rejects.toThrow(/factor_correlation_admission_failed.*factor_pair_correlation_too_high/);
+    } finally {
+      factorService.diagnoseCorrelation = originalDiagnoseCorrelation;
+    }
+  });
+
+  test("does not backtest a multi-factor bundle with redundant linear signal exposure", async () => {
+    const db = await getDb();
+    const factorIds: string[] = [];
+    for (const suffix of ["a", "b"]) {
+      const expr = suffix === "a" ? "close" : "Ref(close, 1)";
+      const factor = await factorService.register({
+        projectId,
+        name: `promo_exposure_${suffix}_${randomUUID().slice(0, 6)}`,
+        category: "momentum",
+        expr,
+        lang: "qlib_expr",
+        universe: "US",
+        definition: { researchContract: researchContract(expr) },
+      });
+      factorIds.push(factor.id);
+      await db.insert(schema.factorEvaluation).values({
+        id: randomUUID(),
+        factorId: factor.id,
+        asof: "2026-01-31",
+        universe: "US",
+        datasetSnapshotId,
+        sampleSize: 120,
+        latencyMs: 1,
+        statisticalReportJson: {
+          version: "factor-statistical-validation-v1",
+          dailyObservations: 120,
+          status: "passed",
+        } as never,
+      });
+    }
+    const originalDiagnoseCorrelation = factorService.diagnoseCorrelation.bind(factorService);
+    const originalDiagnoseExposure = factorService.diagnoseExposure.bind(factorService);
+    factorService.diagnoseCorrelation = (async () => ({
+      version: "factor-correlation-diagnostics-v1",
+      status: "passed",
+      maxAbsCorrelation: 0.7,
+      minimumObservations: 60,
+      pairs: [],
+      highCorrelationPairs: [],
+      missingFactorIds: [],
+      reasons: [],
+    })) as typeof factorService.diagnoseCorrelation;
+    factorService.diagnoseExposure = (async () => ({
+      version: "factor-exposure-diagnostics-v1",
+      status: "failed",
+      maximumVif: 5,
+      minimumObservations: 60,
+      rows: [],
+      highVifFactorIds: [factorIds[0]!],
+      missingFactorIds: [],
+      reasons: ["factor_vif_too_high"],
+    })) as typeof factorService.diagnoseExposure;
+    try {
+      await expect(
+        factorBacktestPromotionService.promoteAndBacktest({
+          projectId,
+          factorIds,
+          symbols: ["AAPL", "MSFT"],
+          universe: "US",
+          startDate: "2026-01-01",
+          endDate: "2026-01-31",
+          datasetSnapshotId,
+        })
+      ).rejects.toThrow(/factor_exposure_admission_failed.*factor_vif_too_high/);
+    } finally {
+      factorService.diagnoseCorrelation = originalDiagnoseCorrelation;
+      factorService.diagnoseExposure = originalDiagnoseExposure;
+    }
   });
 });

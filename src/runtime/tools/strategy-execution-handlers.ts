@@ -10,6 +10,8 @@ import {
 } from "../../db/sqlite/schema";
 import type { OrderSide, OrderType, TimeInForce } from "../../types/entities";
 import { recommendationService } from "../effect-validation/recommendation-service";
+import { strategyPromotionService } from "../effect-validation/strategy-promotion-service";
+import { strategyCandidateReviewService } from "../effect-validation/strategy-candidate-review-service";
 import { createOrderIntentWithExecution } from "../execution/order-intent-service";
 import { factorService } from "../factor/factor-service";
 import { isLikelyProjectIdFormat } from "./context-params";
@@ -42,6 +44,80 @@ async function resolveProjectIdForWorkflow(ctx: BuiltinToolContext): Promise<str
 }
 
 export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
+  /** Read-only gate; never switches a runtime or approves a live strategy. */
+  "strategy.champion_challenger.compare": async (ctx, paramsIn) => {
+    const params = unwrapToolArgs(paramsIn);
+    const requestedProjectId = String(params.project_id ?? params.projectId ?? "").trim();
+    const projectId =
+      ctx.projectId || (isLikelyProjectIdFormat(requestedProjectId) ? requestedProjectId : "");
+    if (!projectId) {
+      throw new Error("strategy.champion_challenger.compare: project_id is required");
+    }
+    const challengerStrategyVersionId = String(
+      params.challenger_strategy_version_id ?? params.challengerStrategyVersionId ?? ""
+    ).trim();
+    const comparisonCohortId = String(
+      params.comparison_cohort_id ?? params.comparisonCohortId ?? ""
+    ).trim();
+    const minimumScoreUplift = optionalFiniteNumber(
+      params.minimum_score_uplift ?? params.minimumScoreUplift
+    );
+    if (minimumScoreUplift !== null && minimumScoreUplift < 0) {
+      throw new Error("strategy.champion_challenger.compare: minimum_score_uplift must be >= 0");
+    }
+    return strategyPromotionService.compareVersions({
+      projectId,
+      ...(challengerStrategyVersionId ? { challengerStrategyVersionId } : {}),
+      ...(comparisonCohortId ? { comparisonCohortId } : {}),
+      ...(minimumScoreUplift !== null ? { minimumScoreUplift } : {}),
+    });
+  },
+
+  /** Writes the strategy graveyard/admission record; never changes live state. */
+  "strategy.candidate.review": async (ctx, paramsIn) => {
+    const params = unwrapToolArgs(paramsIn);
+    const requestedProjectId = String(params.project_id ?? params.projectId ?? "").trim();
+    const projectId =
+      ctx.projectId || (isLikelyProjectIdFormat(requestedProjectId) ? requestedProjectId : "");
+    if (!projectId) throw new Error("strategy.candidate.review: project_id is required");
+    const strategyVersionId = String(params.strategy_version_id ?? params.strategyVersionId ?? "").trim();
+    const comparisonCohortId = String(
+      params.comparison_cohort_id ?? params.comparisonCohortId ?? ""
+    ).trim();
+    const decision = String(params.decision ?? "").trim();
+    if (!strategyVersionId || !comparisonCohortId) {
+      throw new Error("strategy.candidate.review: strategy_version_id and comparison_cohort_id are required");
+    }
+    if (!["eligible", "incomplete", "rejected", "retired"].includes(decision)) {
+      throw new Error("strategy.candidate.review: decision is invalid");
+    }
+    const reasonCodes = Array.isArray(params.reason_codes ?? params.reasonCodes)
+      ? (params.reason_codes ?? params.reasonCodes as unknown[]).map(String)
+      : [];
+    const asObject = (value: unknown): Record<string, unknown> =>
+      value && typeof value === "object" && !Array.isArray(value)
+        ? (value as Record<string, unknown>)
+        : {};
+    const regimeEvidence = Array.isArray(params.regime_evidence ?? params.regimeEvidence)
+      ? (params.regime_evidence ?? params.regimeEvidence as unknown[])
+          .filter((value): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value)))
+      : [];
+    return strategyCandidateReviewService.record({
+      projectId,
+      strategyVersionId,
+      comparisonCohortId,
+      decision: decision as "eligible" | "incomplete" | "rejected" | "retired",
+      reasonCodes,
+      duplicateOfStrategyVersionId: String(
+        params.duplicate_of_strategy_version_id ?? params.duplicateOfStrategyVersionId ?? ""
+      ).trim() || null,
+      regimeEvidence,
+      capacityEvidence: asObject(params.capacity_evidence ?? params.capacityEvidence),
+      correlationEvidence: asObject(params.correlation_evidence ?? params.correlationEvidence),
+      createdBy: ctx.definition.role,
+    });
+  },
+
   /**
    * P0-1.b（Round 6 复盘新增 2026-06-08）：让 strategy 场景的多 agent 团队能"落最后一公里"。
    *
@@ -569,7 +645,16 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
             pool = await factorService.list({ projectId, status: "active" });
           }
           if (pool.length > 0) {
-            factorIds = pool.slice(0, 3).map((f) => f.id);
+            const eligibility = await factorService.assessStrategyEligibility(
+              pool.map((factor) => factor.id)
+            );
+            const eligibleIds = new Set(
+              eligibility.filter((item) => item.eligible).map((item) => item.factorId)
+            );
+            factorIds = pool
+              .filter((factor) => eligibleIds.has(factor.id))
+              .slice(0, 3)
+              .map((factor) => factor.id);
           }
         }
       } catch (e) {
@@ -585,6 +670,17 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
       weightsRaw && typeof weightsRaw === "object" && !Array.isArray(weightsRaw)
         ? (weightsRaw as Record<string, number>)
         : undefined;
+    if ((kind === "factor_score" || kind === "hybrid") && factorIds && factorIds.length > 0) {
+      const eligibility = await factorService.assessStrategyEligibility(factorIds);
+      const rejected = eligibility.filter((item) => !item.eligible);
+      if (rejected.length > 0) {
+        throw new Error(
+          `strategy.compose: factor_research_admission_failed: ${rejected
+            .map((item) => `${item.factorId}[${item.reasons.join(",")}]`)
+            .join("; ")}`
+        );
+      }
+    }
     const paramsRaw = params.params;
     const extraParams =
       paramsRaw && typeof paramsRaw === "object" && !Array.isArray(paramsRaw)

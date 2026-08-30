@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { buildFocusedResearchScenarioPrompt } from "../react/nodes/reason";
 import { buildRequiredToolNextActionHint } from "../tools/required-tool-gate";
+import { buildFocusedResearchScenarioPrompt } from "./focused-prompt";
 import {
   REQUIRED_CAPABILITY_PRIMARY_TOOL,
   resolveRegistryScenarioKey,
@@ -72,6 +72,9 @@ describe("scenario harness routing for bench recipe keys", () => {
         },
       ],
     });
-    expect(hint).toContain(REQUIRED_CAPABILITY_PRIMARY_TOOL.factor!);
+    const factorTool = REQUIRED_CAPABILITY_PRIMARY_TOOL.factor;
+    expect(factorTool).toBeDefined();
+    if (!factorTool) return;
+    expect(hint).toContain(factorTool);
   });
 });

@@ -122,31 +122,23 @@ export function resolveSeedMcpServers(role: AgentRole, base: string[]): string[]
 /**
  * 编组的 dispatch 模式（migration 0073）。
  *
- * Dispatcher（src/runtime/msa/analyst-team.ts 及未来同类 runner）按这个枚举决定
+ * Rust Core / topology dispatcher 按这个枚举决定
  * 如何编排 memberRoles 的产出。**新增 group 时必须显式指定**——避免再次落入
  * "硬编码 isMsAnalystRole 把非 4 类 analyst_* 偷偷丢弃" 的历史坑。
  *
- *   - 'msa_fusion'           Orchestrator + 4 类 analyst_* → MSA 信号融合 →
- *                            可选 aux post-fusion（research/backtest/risk）。
- *                            **当前默认行为**；适合单标 / 篮子的多视角共识。
- *
- *   - 'sequential_research'  按 memberRoles 顺序串行执行，无 MSA 投票。
+ *   - 'sequential_research'  按 memberRoles 顺序串行执行。
  *                            适合：strategy_pipeline (research→backtest→risk)、
  *                            postmortem (research+macro 归因)、
  *                            screening (research+2 分析师选股) 等无需信号汇总的链条。
  *
  *   - 'event_radar'          events 角色（news_event）主导扫描，signal 角色
  *                            （analyst_sentiment）辅助评估市场情绪。
- *                            产出 events[] + report，不参与 MSA fusion。
+ *                            产出 events[] + report。
  *
  *   - 'factor_discovery'     research → factor_candidates → backtest_results
  *                            的特化串行；包含 walk-forward 验证师把关。
  */
-export type AgentGroupPipelineKind =
-  | "msa_fusion"
-  | "sequential_research"
-  | "event_radar"
-  | "factor_discovery";
+export type AgentGroupPipelineKind = "sequential_research" | "event_radar" | "factor_discovery";
 
 export type BuiltinAgentGroupSpec = {
   id: string;
@@ -161,62 +153,7 @@ export type BuiltinAgentGroupSpec = {
   pipelineKind: AgentGroupPipelineKind;
 };
 
-/** 默认编排团队（10 成员 = Orchestrator + 9 专家） */
-export const DEFAULT_ORCHESTRATION_GROUP: BuiltinAgentGroupSpec = {
-  id: "grp-default-analyst-team",
-  name: "默认编排团队（10 Agent）",
-  description: "Orchestrator 统筹：数据层 → 四维分析师 MSA → 策略/回测 → 统一风控（规则+组合）。",
-  memberDefinitionIds: [
-    "def-orchestrator",
-    "def-market-data",
-    "def-news-event",
-    "def-analyst-fundamental",
-    "def-analyst-technical",
-    "def-analyst-sentiment",
-    "def-analyst-macro",
-    "def-research",
-    "def-backtest",
-    "def-risk",
-  ],
-  memberRoles: [
-    "orchestrator",
-    "market_data",
-    "news_event",
-    "analyst_fundamental",
-    "analyst_technical",
-    "analyst_sentiment",
-    "analyst_macro",
-    "research",
-    "backtest",
-    "risk",
-  ],
-  pipelineKind: "msa_fusion",
-};
-
-/** 全分析师编组：四维 MSA + 多空博弈，不进入策略/回测 */
-export const FULL_ANALYST_GROUP: BuiltinAgentGroupSpec = {
-  id: "grp-full-analyst-team",
-  name: "全分析师（MSA + 辩论）",
-  description:
-    "Orchestrator + 四维分析师：宏观→基本面→技术面→情绪面串行加深，MSA 融合与多空辩论；不含策略撰写。完成后再选「策略撰写」编组接续。",
-  memberDefinitionIds: [
-    "def-orchestrator",
-    "def-analyst-fundamental",
-    "def-analyst-technical",
-    "def-analyst-sentiment",
-    "def-analyst-macro",
-  ],
-  memberRoles: [
-    "orchestrator",
-    "analyst_fundamental",
-    "analyst_technical",
-    "analyst_sentiment",
-    "analyst_macro",
-  ],
-  pipelineKind: "msa_fusion",
-};
-
-/** 策略撰写编组：MSA/辩论之后专门产出可回测策略 */
+/** 策略撰写编组：通过对话按需串联研究、回测与风控 */
 export const STRATEGY_PIPELINE_GROUP: BuiltinAgentGroupSpec = {
   id: "grp-strategy-pipeline",
   name: "策略撰写（研究→回测→风控）",
@@ -384,8 +321,6 @@ export const NEWS_EVENT_RADAR_GROUP: BuiltinAgentGroupSpec = {
 };
 
 export const BUILTIN_AGENT_GROUPS: readonly BuiltinAgentGroupSpec[] = [
-  DEFAULT_ORCHESTRATION_GROUP,
-  FULL_ANALYST_GROUP,
   STRATEGY_PIPELINE_GROUP,
   // M1 新增 9 个场景化编组
   FACTOR_RESEARCH_GROUP,
@@ -532,7 +467,7 @@ export const ROLE_CONNECTOR_MCPS: Partial<Record<AgentRole, string[]>> = {
 /**
  * 角色产出能力默认映射（migration 0073）。
  *
- * Dispatcher（src/runtime/msa/analyst-team.ts 等）按 def.outputs 分桶——取代
+ * Dispatcher 按 def.outputs 分桶——取代
  * 三套硬编码 set（RESEARCH_TEAM_SLOT_SET / isMsAnalystRole / POST_FUSION_AUX_ROLES）。
  *
  * 单个 def 在 `seed-agent-definitions-data.ts` 中如果未显式传 outputs，

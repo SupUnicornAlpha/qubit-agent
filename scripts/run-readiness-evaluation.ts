@@ -25,7 +25,10 @@ import {
   renderHealthMarkdown,
 } from "../src/runtime/agent-readiness/health-aggregator";
 import { writeHealthCanvas } from "../src/runtime/agent-readiness/health-canvas";
-import { DEFAULT_USER_PROJECT_ID } from "../src/runtime/bootstrap/ensure-default-workspace";
+import {
+  DEFAULT_USER_PROJECT_ID,
+  DEFAULT_USER_WORKSPACE_ID,
+} from "../src/runtime/bootstrap/ensure-default-workspace";
 
 const DEV_SERVER = process.env["QUBIT_DEV_SERVER"] ?? "http://127.0.0.1:17385";
 const PROJECT_ID = process.env["QUBIT_READINESS_PROJECT_ID"] ?? DEFAULT_USER_PROJECT_ID;
@@ -112,43 +115,55 @@ interface ScenarioResult {
   startError?: string;
 }
 
-/**
- * 通过统一 Scenario Harness 启动：
- *
- *   POST /api/v1/research-scenarios/:key/launch
- *
- * 该入口内部负责 create workflow、tag research_scenario_id、启动研究团队。
- * 评测脚本不再手写「create workflow + analyst/run」两步，避免 UI / harness 漂移。
- */
+/** 通过标准 chat session + turn 启动，和前端研究入口保持同一条链路。 */
 async function startWorkflowViaUiPath(recipe: ScenarioRecipe): Promise<string> {
   const inputParams: Record<string, unknown> = { ...recipe.scenarioInputParams };
   if (recipe.key === "live_trading" || recipe.key === "live_trading_short") {
     Object.assign(inputParams, await ensureExecutionBenchmarkPrerequisites());
   }
-  const launchPayload = {
-    projectId: PROJECT_ID,
-    goal: recipe.workflow.goal,
-    inputParams,
-    agentGroupId: recipe.analystRun.agentGroupId,
-    loopOverrides: recipe.workflow.loopOptionsJson,
-  };
-  const launchRes = await fetch(`${DEV_SERVER}/api/v1/research-scenarios/${recipe.key}/launch`, {
+  const sessionRes = await fetch(`${DEV_SERVER}/api/v1/chat/sessions`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(launchPayload),
+    body: JSON.stringify({
+      workspaceId: DEFAULT_USER_WORKSPACE_ID,
+      projectId: PROJECT_ID,
+      title: recipe.workflow.goal,
+      createdBy: "agent-readiness",
+    }),
   });
-  if (!launchRes.ok) {
-    const text = await launchRes.text().catch(() => "");
+  const sessionJson = (await sessionRes.json().catch(() => ({}))) as {
+    data?: { id?: string };
+    error?: string;
+  };
+  const sessionId = sessionJson.data?.id;
+  if (!sessionRes.ok || !sessionId) {
     throw new Error(
-      `POST /research-scenarios/${recipe.key}/launch ${launchRes.status}: ${text.slice(0, 300)} (group=${recipe.analystRun.agentGroupId})`
+      `POST /chat/sessions ${sessionRes.status}: ${sessionJson.error ?? "missing session id"}`
     );
   }
-  const launchJson = (await launchRes.json()) as {
-    data?: { workflowRunId?: string };
+  const turnRes = await fetch(`${DEV_SERVER}/api/v1/chat/sessions/${sessionId}/turns`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      projectId: PROJECT_ID,
+      message: `${recipe.workflow.goal}\n研究场景参数：${JSON.stringify(inputParams)}`,
+      researchScenarioId: recipe.key,
+      loopOptionsJson: {
+        ...(recipe.workflow.loopOptionsJson as Record<string, unknown>),
+        benchmarkNamespace: true,
+      },
+      agentMode: "agent",
+    }),
+  });
+  const turnJson = (await turnRes.json().catch(() => ({}))) as {
+    data?: { workflowRunId?: string; runId?: string };
+    error?: string;
   };
-  const workflowRunId = launchJson.data?.workflowRunId;
-  if (!workflowRunId) {
-    throw new Error(`unexpected launch response: ${JSON.stringify(launchJson).slice(0, 300)}`);
+  const workflowRunId = turnJson.data?.workflowRunId ?? turnJson.data?.runId;
+  if (!turnRes.ok || !workflowRunId) {
+    throw new Error(
+      `POST /chat/sessions/${sessionId}/turns ${turnRes.status}: ${turnJson.error ?? "missing workflow id"}`
+    );
   }
 
   return workflowRunId;

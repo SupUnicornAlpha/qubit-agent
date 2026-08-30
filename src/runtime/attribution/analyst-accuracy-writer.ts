@@ -4,7 +4,7 @@
  * 补回 analyst_accuracy_log 的 writer（仓库历史遗留：表存在但 0 writer，导致
  * signal-fusion.ts 的 loadDynamicWeights 读到的 row 永远空，动态权重退化为 1.0）。
  *
- * 设计：两阶段、不侵入 hot path（不改 signal-fusion / analyst-team）。
+ * 设计：两阶段、不侵入 hot path（只记录历史评测结果，不参与对话执行）。
  *
  *   阶段 A: syncPlaceholders(lookbackDays)
  *     从最近 N 天的 analyst_signal 同步占位行到 analyst_accuracy_log

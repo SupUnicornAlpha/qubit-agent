@@ -22,6 +22,11 @@ import {
 } from "../../../backtest/fundamental-pit-series";
 import { verifyPointInTimeIntegrity } from "../../../backtest/pit-verifier";
 import { buildStatisticalValidationReport } from "../../../backtest/statistical-validation-report";
+import {
+  assessIntradaySessionCoverage,
+  inferIntradayPeriodsPerYear,
+  isIntradayTimeframe,
+} from "../../../backtest/intraday-session-model";
 import { type BarPoint, type EngineInput, runEventEngine } from "./event-engine";
 import { ExprEvalError, type PriceSeries, evalExpr } from "../factor/qlib-expr/evaluator";
 import { type Ast, parse } from "../factor/qlib-expr/parser";
@@ -75,15 +80,27 @@ export class EventDrivenBacktestProvider implements BacktestProvider {
       return this.errorResult(t0, "symbols_required");
     }
 
-    // The event engine currently uses one execution event per exchange date. Accepting an
-    // intraday snapshot here would overwrite earlier bars that share a date and annualize the
-    // resulting return series as daily data. Reject rather than manufacture a misleading result
-    // until the intraday/session-window engine is implemented.
-    if (!isDailyTimeframe(input.dataset.timeframe)) {
+    const dailyTimeframe = isDailyTimeframe(input.dataset.timeframe);
+    const intradayTimeframe = isIntradayTimeframe(input.dataset.timeframe);
+    if (!dailyTimeframe && !intradayTimeframe) {
       return this.errorResult(
         t0,
-        `intraday_timeframe_not_supported:${input.dataset.timeframe || "unknown"}`
+        `timeframe_not_supported:${input.dataset.timeframe || "unknown"}`
       );
+    }
+    const periodsPerYear = dailyTimeframe ? 252 : inferIntradayPeriodsPerYear(input.dataset);
+    if (!dailyTimeframe) {
+      const coverage = assessIntradaySessionCoverage(input.dataset);
+      if (coverage.length > 0) {
+        const first = coverage[0]!;
+        return this.errorResult(
+          t0,
+          `intraday_session_window_unverified:${first.symbol}:${first.timestamp}:${first.code}`
+        );
+      }
+      if (!periodsPerYear) {
+        return this.errorResult(t0, "intraday_annualization_unverified");
+      }
     }
 
     const assetLifecycleReport = buildAssetLifecycleReport(input);
@@ -109,12 +126,13 @@ export class EventDrivenBacktestProvider implements BacktestProvider {
         return this.errorResult(t0, `dataset_missing_bars:${symbol}`);
       }
       for (const b of bars) {
-        const d = b.timestamp.slice(0, 10);
-        datesSet.add(d);
-        let byDate = barsByDate.get(d);
+        const timestamp = b.timestamp;
+        const sessionDate = timestamp.slice(0, 10);
+        datesSet.add(timestamp);
+        let byDate = barsByDate.get(timestamp);
         if (!byDate) {
           byDate = new Map();
-          barsByDate.set(d, byDate);
+          barsByDate.set(timestamp, byDate);
         }
         byDate.set(symbol, {
           open: b.open,
@@ -132,8 +150,11 @@ export class EventDrivenBacktestProvider implements BacktestProvider {
           ...(b.suspended !== undefined ? { suspended: b.suspended } : {}),
           ...(b.priceLimitUp !== undefined ? { priceLimitUp: b.priceLimitUp } : {}),
           ...(b.priceLimitDown !== undefined ? { priceLimitDown: b.priceLimitDown } : {}),
-          ...(input.dataset.tradingCalendar?.sessionsBySymbol?.[symbol]?.[d]
-            ? { calendarSession: input.dataset.tradingCalendar.sessionsBySymbol[symbol]![d] }
+          ...(input.dataset.tradingCalendar?.sessionsBySymbol?.[symbol]?.[sessionDate]
+            ? {
+                calendarSession:
+                  input.dataset.tradingCalendar.sessionsBySymbol[symbol]![sessionDate],
+              }
             : {}),
         });
       }
@@ -188,6 +209,7 @@ export class EventDrivenBacktestProvider implements BacktestProvider {
       rebalance: input.rebalance ?? "daily",
       longShort: input.longShort ?? false,
       reverse: input.signals.kind === "factor_score" ? (input.signals.reverse ?? false) : false,
+      periodsPerYear,
       ...(typeof input.topN === "number" && input.topN > 0 ? { topN: input.topN } : {}),
       ...(input.instruments ? { instruments: input.instruments } : {}),
       ...(delistings.length > 0 ? { delistings } : {}),
@@ -201,7 +223,7 @@ export class EventDrivenBacktestProvider implements BacktestProvider {
       });
       if (bench) {
         engineInput.benchmarkSeries = bench.map((b) => ({
-          date: b.timestamp.slice(0, 10),
+          date: b.timestamp,
           close: b.close,
         }));
       }
@@ -213,7 +235,13 @@ export class EventDrivenBacktestProvider implements BacktestProvider {
       runtimeDataIsolated: true,
       nextBarExecution: true,
     });
-    const statisticalValidationReport = buildStatisticalValidationReport(input, result.equityCurve);
+    const statisticalValidationReport = buildStatisticalValidationReport(
+      input,
+      result.equityCurve,
+      {
+        periodsPerYear,
+      }
+    );
     const fundamentalFields = [
       ...new Set(
         (input.dataset.fundamentalObservations ?? []).map((observation) =>
@@ -227,6 +255,7 @@ export class EventDrivenBacktestProvider implements BacktestProvider {
         ...result.meta,
         latencyMs: Date.now() - t0,
         datasetQualification: input.dataset.qualification,
+        executionTimeframe: input.dataset.timeframe,
         antiLeakageReport,
         pitReport,
         ...(fundamentalFields.length > 0
@@ -360,10 +389,10 @@ function computeOneFactorSnapshot(
       throw error;
     }
     for (let index = 0; index < bars.length; index += 1) {
-      const date = bars[index]!.timestamp.slice(0, 10);
-      const byDate = signals.get(date) ?? new Map<string, number | null>();
+      const timestamp = bars[index]!.timestamp;
+      const byDate = signals.get(timestamp) ?? new Map<string, number | null>();
       byDate.set(symbol, values[index] ?? null);
-      signals.set(date, byDate);
+      signals.set(timestamp, byDate);
     }
   }
   return signals;

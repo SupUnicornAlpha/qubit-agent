@@ -27,10 +27,27 @@ export const builtinFinancialProfiles: CapabilityProfile[] = [
     enable: ["market.us-options"],
   },
   {
+    id: "quant-research-integrity",
+    title: "量化研究完整性",
+    description:
+      "按工作流组合 QUBIT 的量化完整性证据链。研究仅提示缺口；paper/live 的实际准入仍由宿主侧不可绕过的闸门执行。",
+    extends: ["financial-research"],
+    enable: ["quant.research-integrity"],
+    parameters: {
+      researchReport: {
+        type: "enum",
+        title: "研究阶段报告",
+        description: "仅影响研究缺口的呈现粒度，不能降低 paper 或 live 的准入条件。",
+        default: "summary",
+        values: ["summary", "full"],
+      },
+    },
+  },
+  {
     id: "paper-trading",
     title: "模拟交易",
     description: "在金融研究基础上附加回测/纸面交易。",
-    extends: ["financial-research"],
+    extends: ["quant-research-integrity"],
     enable: ["execution.paper"],
   },
   {

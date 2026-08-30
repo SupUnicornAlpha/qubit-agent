@@ -100,7 +100,7 @@ export interface ScenarioValidateResult {
   invalidInputs?: Array<{ field: string; error: string }>;
 }
 
-export interface ScenarioLaunchInput {
+export interface ScenarioConversationInput {
   scenarioKey: string;
   projectId: string;
   goal?: string;

@@ -174,8 +174,8 @@ export default function AgentReadinessCanvas() {
       </Row>
 
       <Callout tone="info" title="评测路径">
-        通过 dev server HTTP API（POST /api/v1/workflows + /api/v1/analyst/run，
-        与 UI 路径一致），由 orchestrator LangGraph 主链路派发。报告目录：
+        通过 dev server HTTP API（创建 chat session + POST /api/v1/chat/sessions/:id/turns，
+        与 UI 路径一致），由 Rust Core 主链路派发。报告目录：
         <Text mono>{DATA.reportDir}</Text>
       </Callout>
 

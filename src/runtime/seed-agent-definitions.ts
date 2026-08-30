@@ -25,8 +25,6 @@ import { syncOrchestratorTopologyToolsForGroup } from "./orchestration/sync-orch
 import {
   BUILTIN_AGENT_GROUPS,
   type BuiltinAgentGroupSpec,
-  DEFAULT_ORCHESTRATION_GROUP,
-  FULL_ANALYST_GROUP,
   STRATEGY_PIPELINE_GROUP,
 } from "./seed-agent-catalog";
 import { SEED_AGENT_DEFINITIONS } from "./seed-agent-definitions-data";
@@ -382,18 +380,24 @@ function buildBuiltinGroupRelationsJson(
   for (const from of others) edges.push({ from, to: "orchestrator", edgeKind: "unicast" });
   if (layout.analystChain) {
     for (let i = 1; i < layout.analystChain.length; i++) {
+      const from = layout.analystChain[i - 1];
+      const to = layout.analystChain[i];
+      if (!from || !to) continue;
       edges.push({
-        from: layout.analystChain[i - 1]!,
-        to: layout.analystChain[i]!,
+        from,
+        to,
         edgeKind: "unicast",
       });
     }
   }
   if (layout.auxChain) {
     for (let i = 1; i < layout.auxChain.length; i++) {
+      const from = layout.auxChain[i - 1];
+      const to = layout.auxChain[i];
+      if (!from || !to) continue;
       edges.push({
-        from: layout.auxChain[i - 1]!,
-        to: layout.auxChain[i]!,
+        from,
+        to,
         edgeKind: "unicast",
       });
     }
@@ -423,55 +427,6 @@ function relationsNeedsRefresh(
 }
 
 export const BUILTIN_GROUP_LAYOUTS: Record<string, GroupRelationsLayout> = {
-  [DEFAULT_ORCHESTRATION_GROUP.id]: {
-    nodePositions: {
-      orchestrator: { x: 420, y: 60 },
-      market_data: { x: 180, y: 160 },
-      news_event: { x: 660, y: 160 },
-      analyst_fundamental: { x: 120, y: 280 },
-      analyst_technical: { x: 280, y: 320 },
-      analyst_sentiment: { x: 560, y: 320 },
-      analyst_macro: { x: 720, y: 280 },
-      research: { x: 240, y: 400 },
-      backtest: { x: 400, y: 400 },
-      risk: { x: 600, y: 400 },
-    },
-    phases: [
-      { id: "clarify", label: "澄清目标", roles: ["orchestrator"] },
-      { id: "data", label: "数据层", roles: ["market_data", "news_event"] },
-      {
-        id: "msa",
-        label: "四维分析",
-        roles: ["analyst_fundamental", "analyst_technical", "analyst_sentiment", "analyst_macro"],
-      },
-      { id: "deepen", label: "策略深化", roles: ["research", "backtest"] },
-      { id: "risk", label: "风控闸门", roles: ["risk"] },
-    ],
-    auxChain: ["research", "backtest", "risk"],
-  },
-  [FULL_ANALYST_GROUP.id]: {
-    nodePositions: {
-      orchestrator: { x: 420, y: 60 },
-      analyst_macro: { x: 120, y: 220 },
-      analyst_fundamental: { x: 280, y: 260 },
-      analyst_technical: { x: 440, y: 300 },
-      analyst_sentiment: { x: 600, y: 260 },
-    },
-    phases: [
-      { id: "clarify", label: "澄清目标", roles: ["orchestrator"] },
-      {
-        id: "msa",
-        label: "四维分析",
-        roles: ["analyst_macro", "analyst_fundamental", "analyst_technical", "analyst_sentiment"],
-      },
-    ],
-    analystChain: [
-      "analyst_macro",
-      "analyst_fundamental",
-      "analyst_technical",
-      "analyst_sentiment",
-    ],
-  },
   [STRATEGY_PIPELINE_GROUP.id]: {
     nodePositions: {
       orchestrator: { x: 420, y: 80 },

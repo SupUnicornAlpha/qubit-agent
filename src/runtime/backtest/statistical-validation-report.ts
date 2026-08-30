@@ -11,6 +11,7 @@ export interface BacktestStatisticalValidationReport {
   simulations: number;
   blockSize: number;
   seed: number;
+  periodsPerYear: number;
   observedSharpe: number;
   sharpeConfidenceInterval: { lower: number; upper: number } | null;
   probabilitySharpePositive: number | null;
@@ -28,7 +29,7 @@ export interface BacktestStatisticalValidationReport {
     trialDistributionCount: number;
     assumptions: [
       "candidate_trials_treated_as_independent",
-      "psr_moment_approximation_uses_iid_returns"
+      "psr_moment_approximation_uses_iid_returns",
     ];
   } | null;
   checks: Array<{
@@ -50,6 +51,7 @@ export function buildStatisticalValidationReport(
     simulations?: number;
     familyWiseAlpha?: number;
     trialAnnualizedSharpes?: number[];
+    periodsPerYear?: number;
   } = {}
 ): BacktestStatisticalValidationReport {
   const returns = equityReturns(equityCurve);
@@ -58,24 +60,27 @@ export function buildStatisticalValidationReport(
   const familyWiseAlpha = clamp(options.familyWiseAlpha ?? 0.05, 0.001, 0.2);
   const adjustedAlpha = candidateTrials ? familyWiseAlpha / candidateTrials : null;
   const simulations = Math.max(200, Math.min(10_000, Math.floor(options.simulations ?? 2_000)));
+  const periodsPerYear = Math.max(1, Math.floor(options.periodsPerYear ?? 252));
   const blockSize = Math.max(1, Math.min(sampleSize || 1, Math.round(Math.sqrt(sampleSize || 1))));
   const seed = seedFrom(input, sampleSize, candidateTrials, simulations);
-  const observedSharpe = annualizedSharpe(returns);
+  const observedSharpe = annualizedSharpe(returns, periodsPerYear);
   const deflatedSharpe = buildDeflatedSharpeEvidence(
     returns,
     observedSharpe,
     candidateTrials,
-    options.trialAnnualizedSharpes
+    options.trialAnnualizedSharpes,
+    periodsPerYear
   );
 
-  let sharpeConfidenceInterval: BacktestStatisticalValidationReport["sharpeConfidenceInterval"] = null;
+  let sharpeConfidenceInterval: BacktestStatisticalValidationReport["sharpeConfidenceInterval"] =
+    null;
   let probabilitySharpePositive: number | null = null;
   let rawSharpePValue: number | null = null;
   let bonferroniAdjustedPValue: number | null = null;
   if (sampleSize >= 2 && adjustedAlpha != null) {
     const random = seededRandom(seed);
     const bootstrapSharpes = Array.from({ length: simulations }, () =>
-      annualizedSharpe(blockBootstrap(returns, blockSize, random))
+      annualizedSharpe(blockBootstrap(returns, blockSize, random), periodsPerYear)
     ).sort((a, b) => a - b);
     const tailAlpha = adjustedAlpha / 2;
     sharpeConfidenceInterval = {
@@ -85,7 +90,13 @@ export function buildStatisticalValidationReport(
     probabilitySharpePositive = round(
       bootstrapSharpes.filter((value) => value > 0).length / bootstrapSharpes.length
     );
-    rawSharpePValue = sharpeNullPValue(returns, blockSize, simulations, seededRandom(seed ^ 0x9e3779b9));
+    rawSharpePValue = sharpeNullPValue(
+      returns,
+      blockSize,
+      simulations,
+      seededRandom(seed ^ 0x9e3779b9),
+      periodsPerYear
+    );
     bonferroniAdjustedPValue = round(
       Math.min(1, rawSharpePValue * Math.max(1, candidateTrials ?? 1))
     );
@@ -155,6 +166,7 @@ export function buildStatisticalValidationReport(
     simulations,
     blockSize,
     seed,
+    periodsPerYear,
     observedSharpe: round(observedSharpe),
     sharpeConfidenceInterval,
     probabilitySharpePositive,
@@ -169,7 +181,8 @@ function buildDeflatedSharpeEvidence(
   returns: number[],
   observedAnnualizedSharpe: number,
   candidateTrials: number | null,
-  trialAnnualizedSharpes: number[] | undefined
+  trialAnnualizedSharpes: number[] | undefined,
+  periodsPerYear: number
 ): BacktestStatisticalValidationReport["deflatedSharpe"] {
   if (returns.length < 60 || candidateTrials == null) return null;
   const trials = (trialAnnualizedSharpes ?? []).filter(Number.isFinite);
@@ -181,8 +194,8 @@ function buildDeflatedSharpeEvidence(
     candidateTrials === 1 ? 0 : expectedMaximumStandardNormal(candidateTrials);
   const benchmarkAnnualizedSharpe =
     trialMeanAnnualizedSharpe + trialStdAnnualizedSharpe * expectedMaximumZ;
-  const observedPerPeriod = observedAnnualizedSharpe / Math.sqrt(252);
-  const benchmarkPerPeriod = benchmarkAnnualizedSharpe / Math.sqrt(252);
+  const observedPerPeriod = observedAnnualizedSharpe / Math.sqrt(periodsPerYear);
+  const benchmarkPerPeriod = benchmarkAnnualizedSharpe / Math.sqrt(periodsPerYear);
   const moments = standardizedMoments(returns);
   if (!moments) return null;
   const denominatorSquared =
@@ -248,27 +261,15 @@ function sampleDeviation(values: number[], average: number): number {
 function inverseNormalCdf(probability: number): number {
   const p = clamp(probability, 1e-12, 1 - 1e-12);
   const a = [
-    -39.6968302866538,
-    220.946098424521,
-    -275.928510446969,
-    138.357751867269,
-    -30.6647980661472,
+    -39.6968302866538, 220.946098424521, -275.928510446969, 138.357751867269, -30.6647980661472,
     2.50662827745924,
   ];
   const b = [
-    -54.4760987982241,
-    161.585836858041,
-    -155.698979859887,
-    66.8013118877197,
-    -13.2806815528857,
+    -54.4760987982241, 161.585836858041, -155.698979859887, 66.8013118877197, -13.2806815528857,
   ];
   const c = [
-    -0.00778489400243029,
-    -0.322396458041136,
-    -2.40075827716184,
-    -2.54973253934373,
-    4.37466414146497,
-    2.93816398269878,
+    -0.00778489400243029, -0.322396458041136, -2.40075827716184, -2.54973253934373,
+    4.37466414146497, 2.93816398269878,
   ];
   const d = [0.00778469570904146, 0.32246712907004, 2.445134137143, 3.75440866190742];
   const low = 0.02425;
@@ -281,10 +282,8 @@ function inverseNormalCdf(probability: number): number {
   if (p > 1 - low) return -inverseNormalCdf(1 - p);
   const q = p - 0.5;
   const r = q * q;
-  const numerator =
-    (((((a[0]! * r + a[1]!) * r + a[2]!) * r + a[3]!) * r + a[4]!) * r + a[5]!) * q;
-  const denominator =
-    ((((b[0]! * r + b[1]!) * r + b[2]!) * r + b[3]!) * r + b[4]!) * r + 1;
+  const numerator = (((((a[0]! * r + a[1]!) * r + a[2]!) * r + a[3]!) * r + a[4]!) * r + a[5]!) * q;
+  const denominator = ((((b[0]! * r + b[1]!) * r + b[2]!) * r + b[3]!) * r + b[4]!) * r + 1;
   return numerator / denominator;
 }
 
@@ -294,9 +293,8 @@ function normalCdf(value: number): number {
   const t = 1 / (1 + 0.3275911 * x);
   const erf =
     1 -
-    (((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t +
-      0.254829592) *
-      t) *
+    ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) *
+      t *
       Math.exp(-x * x);
   return clamp(0.5 * (1 + sign * erf), 0, 1);
 }
@@ -358,7 +356,7 @@ export function benjaminiHochberg(
 
 export function estimateSharpeNullPValue(
   equityCurve: BacktestEquityPoint[],
-  options: { simulations?: number; seedKey?: string } = {}
+  options: { simulations?: number; seedKey?: string; periodsPerYear?: number } = {}
 ): number | null {
   const returns = equityReturns(equityCurve);
   if (returns.length < 20) return null;
@@ -371,7 +369,8 @@ export function estimateSharpeNullPValue(
     returns,
     Math.max(1, Math.round(Math.sqrt(returns.length))),
     simulations,
-    seededRandom(seed)
+    seededRandom(seed),
+    Math.max(1, Math.floor(options.periodsPerYear ?? 252))
   );
 }
 
@@ -379,14 +378,15 @@ function sharpeNullPValue(
   returns: number[],
   blockSize: number,
   simulations: number,
-  random: () => number
+  random: () => number,
+  periodsPerYear: number
 ): number {
-  const observed = annualizedSharpe(returns);
+  const observed = annualizedSharpe(returns, periodsPerYear);
   const mean = returns.reduce((sum, value) => sum + value, 0) / returns.length;
   const centered = returns.map((value) => value - mean);
   let exceedances = 0;
   for (let index = 0; index < simulations; index += 1) {
-    if (annualizedSharpe(blockBootstrap(centered, blockSize, random)) >= observed) {
+    if (annualizedSharpe(blockBootstrap(centered, blockSize, random), periodsPerYear) >= observed) {
       exceedances += 1;
     }
   }
@@ -405,13 +405,13 @@ function equityReturns(curve: BacktestEquityPoint[]): number[] {
   return out;
 }
 
-function annualizedSharpe(values: number[]): number {
+function annualizedSharpe(values: number[], periodsPerYear: number): number {
   if (values.length < 2) return 0;
   const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
   const variance =
     values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (values.length - 1);
   const deviation = Math.sqrt(Math.max(0, variance));
-  return deviation > 1e-12 ? (mean / deviation) * Math.sqrt(252) : 0;
+  return deviation > 1e-12 ? (mean / deviation) * Math.sqrt(periodsPerYear) : 0;
 }
 
 function blockBootstrap(values: number[], blockSize: number, random: () => number): number[] {

@@ -29,6 +29,14 @@ export const ForecastAttributionSchema = z.object({
   notes: z.array(z.string()).default([]),
 });
 
+export const ForecastReflectionSchema = z.object({
+  classification: z.enum(["confirmed", "invalidated", "inconclusive"]),
+  reason: z.string().min(1),
+  evaluatedAt: z.string().min(1),
+  evidence: z.array(z.string()).min(1),
+  limitations: z.array(z.string()).default([]),
+});
+
 export const ForecastBookEntrySchema = z.object({
   entryId: z.string().min(1),
   thesisId: z.string().min(1),
@@ -39,6 +47,7 @@ export const ForecastBookEntrySchema = z.object({
   orderIntentIds: z.array(z.string()).default([]),
   fillIds: z.array(z.string()).default([]),
   holdingPeriodResult: ForecastHoldingResultSchema.optional(),
+  reflection: ForecastReflectionSchema.optional(),
   attribution: ForecastAttributionSchema.default({}),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
@@ -151,6 +160,41 @@ export type ForecastBookLinkPatch = {
   sourceProviders?: string[];
 };
 
+function deriveReflection(
+  result: z.infer<typeof ForecastHoldingResultSchema> | undefined,
+  now: string
+): z.infer<typeof ForecastReflectionSchema> | undefined {
+  if (!result || !["evaluated", "invalidated", "expired"].includes(result.status)) return undefined;
+  const classification =
+    result.status === "invalidated" || result.hitStop === true
+      ? "invalidated"
+      : result.hitTarget === true && (result.realizedReturnPct ?? 0) > 0
+        ? "confirmed"
+        : "inconclusive";
+  const reason =
+    classification === "invalidated"
+      ? "holding-period outcome reached an explicit stop or invalidation state"
+      : classification === "confirmed"
+        ? "holding-period outcome reached an explicit target with positive realized return"
+        : "holding-period outcome is insufficient to confirm or invalidate the thesis";
+  return {
+    classification,
+    reason,
+    evaluatedAt: result.evaluatedAt ?? now,
+    evidence: [
+      `holding_status=${result.status}`,
+      ...(result.realizedReturnPct !== undefined
+        ? [`realized_return_pct=${result.realizedReturnPct}`]
+        : []),
+      ...(result.maxDrawdownPct !== undefined ? [`max_drawdown_pct=${result.maxDrawdownPct}`] : []),
+    ],
+    limitations: [
+      "outcome classification is not causal attribution",
+      "single holding-period result does not validate a framework or strategy",
+    ],
+  };
+}
+
 /** Idempotent merge of link fields — never removes existing ids. */
 export async function linkForecastBookEntry(
   thesisId: string,
@@ -161,18 +205,21 @@ export async function linkForecastBookEntry(
   const now = new Date().toISOString();
   const uniq = (values: string[]) => [...new Set(values.filter(Boolean))];
 
+  const holdingPeriodResult = patch.holdingPeriodResult
+    ? ForecastHoldingResultSchema.parse({
+        ...base.holdingPeriodResult,
+        ...patch.holdingPeriodResult,
+      })
+    : base.holdingPeriodResult;
+  const reflection = deriveReflection(holdingPeriodResult, now);
   const entry = ForecastBookEntrySchema.parse({
     ...base,
     recommendationId: patch.recommendationId ?? base.recommendationId,
     riskDecisionIds: uniq([...base.riskDecisionIds, ...(patch.riskDecisionIds ?? [])]),
     orderIntentIds: uniq([...base.orderIntentIds, ...(patch.orderIntentIds ?? [])]),
     fillIds: uniq([...base.fillIds, ...(patch.fillIds ?? [])]),
-    holdingPeriodResult: patch.holdingPeriodResult
-      ? ForecastHoldingResultSchema.parse({
-          ...base.holdingPeriodResult,
-          ...patch.holdingPeriodResult,
-        })
-      : base.holdingPeriodResult,
+    holdingPeriodResult,
+    ...(reflection ? { reflection } : {}),
     attribution: {
       ...base.attribution,
       sourceProviders: uniq([

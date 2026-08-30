@@ -69,22 +69,18 @@ describe("builtin tool handlers", () => {
   });
 
   /**
-   * 2026-06 拆分 Orchestrator MSA 决策汇总：原本 `runAnalystTeam` 内部强制跑的裸 LLM
-   * 调用拆成 `summarize_team_decision` builtin tool，由 Orchestrator 在 ReAct loop 中
-   * 按需调用。catalog 必须包含此工具且分类为 orchestration，否则 Agent 定义界面拉不到。
+   * Phase A：团队兼容大工具已退役——仍注册 handler 以便旧定义 fail-closed，
+   * 但不进 catalog；调用一律硬拒绝。
    */
-  test("summarize_team_decision remains a compatibility handler but is not advertised", () => {
-    expect(isBuiltinTool("summarize_team_decision")).toBe(true);
-    expect(isRoutedTool("summarize_team_decision")).toBe(false);
-    const catalog = buildToolCatalog();
-    const entry = catalog.find((e) => e.name === "summarize_team_decision");
-    expect(entry).toBeUndefined();
-  });
-
-  test("summarize_team_decision rejects missing required params", async () => {
-    await expect(
-      dispatchBuiltinTool("summarize_team_decision", ctx, {} as Record<string, unknown>)
-    ).rejects.toThrow(/fusion_summary 与 ticker 必填/);
+  test("team-compat tools are not advertised but reject when invoked", async () => {
+    for (const name of ["run_analyst_team", "summarize_team_decision", "fuse_signals"] as const) {
+      expect(isBuiltinTool(name)).toBe(true);
+      expect(isRoutedTool(name)).toBe(false);
+      expect(buildToolCatalog().some((e) => e.name === name)).toBe(false);
+      await expect(
+        dispatchBuiltinTool(name, ctx, {} as Record<string, unknown>)
+      ).rejects.toThrow(/已退役|Phase A/);
+    }
   });
 
   test("4 deleted stubs are no longer registered as builtin handlers", () => {
@@ -289,6 +285,9 @@ describe("connector bootstrap", () => {
 describe("research.thesis.write builtin", () => {
   test("is registered and catalogued", () => {
     expect(isBuiltinTool("research.thesis.write")).toBe(true);
+    expect(isBuiltinTool("research.framework.assess")).toBe(true);
+    expect(isBuiltinTool("strategy.champion_challenger.compare")).toBe(true);
+    expect(isBuiltinTool("strategy.candidate.review")).toBe(true);
     expect(isBuiltinTool("research.forecast_book.get")).toBe(true);
     expect(isBuiltinTool("research.forecast_book.link")).toBe(true);
     expect(isBuiltinTool("portfolio.construct")).toBe(true);
@@ -319,6 +318,70 @@ describe("research.thesis.write builtin", () => {
     expect(out.thesisId).toMatch(/^thesis_/);
     expect(out.snapshotId).toBeTruthy();
     expect(["auto", "unbound", "explicit"]).toContain(out.snapshotBinding);
+  });
+
+  test("screens candidates through a frozen framework card", async () => {
+    const frameworkCard = {
+      version: "investment-framework-card-v1",
+      framework: "quality_growth",
+      sourceRefs: ["source:quality-growth"],
+      principles: [{ statement: "Quality compounds capital.", sourceRefs: ["source:quality-growth"] }],
+      economicMechanism: "High returns plus reinvestment can compound shareholder capital.",
+      observableProxies: [
+        {
+          key: "roic",
+          label: "ROIC",
+          comparison: "gte",
+          threshold: 0.15,
+          weight: 1,
+          sourceRefs: ["source:quality-growth"],
+        },
+      ],
+      selectionThreshold: 1,
+      applicability: {
+        assetClasses: ["equity"],
+        markets: ["US"],
+        regimes: ["normal"],
+        holdingPeriod: "12m",
+      },
+      exclusionConditions: ["Financial statements unavailable."],
+      invalidation: [{ condition: "ROIC falls below threshold.", observable: "fund_roic" }],
+      riskBudget: { maxPositionWeightPct: 0.1, maxPortfolioDrawdownPct: 0.15 },
+    } as const;
+    const written = (await dispatchBuiltinTool("research.thesis.write", ctx, {
+      thesisId: "thesis_framework_assess_e2e",
+      snapshotId: "mkt_snapshot_framework_assess_e2e",
+      symbols: ["AAPL"],
+      direction: "long",
+      confidence: 0.7,
+      framework: "quality_growth",
+      frameworkCard,
+      claims: [{ claim: "Quality score is durable.", evidenceRefs: ["fundamental:roic:2026q2"] }],
+      invalidation: [{ condition: "ROIC falls below threshold.", observable: "fund_roic" }],
+    })) as { thesisId: string };
+
+    const assessed = (await dispatchBuiltinTool("research.framework.assess", ctx, {
+      thesisId: written.thesisId,
+      candidates: [
+        {
+          symbol: "AAPL",
+          assetClass: "equity",
+          market: "US",
+          regime: "normal",
+          observations: { roic: { value: 0.2, evidenceRefs: ["fundamental:roic:2026q2"] } },
+        },
+        {
+          symbol: "BTC-USD",
+          assetClass: "crypto",
+          market: "CRYPTO",
+          regime: "normal",
+          observations: { roic: { value: 0.2, evidenceRefs: ["fundamental:roic:2026q2"] } },
+        },
+      ],
+    })) as { qualifiedSymbols: string[]; assessments: Array<{ status: string }> };
+
+    expect(assessed.qualifiedSymbols).toEqual(["AAPL"]);
+    expect(assessed.assessments.map((row) => row.status)).toEqual(["qualified", "rejected"]);
   });
 });
 
@@ -363,6 +426,18 @@ describe("market.snapshot.get builtin", () => {
         fundamental_ledger: { version: "missing required evidence" },
       })
     ).rejects.toThrow(/fundamental_ledger/);
+    await expect(
+      dispatchBuiltinTool("market.snapshot.get", ctx, {
+        symbol: "AAPL",
+        calendar_session_windows_by_venue: { US: { "2026-01-01": [{ openAt: "bad" }] } },
+      })
+    ).rejects.toThrow(/calendar_session_windows_by_venue/);
+    await expect(
+      dispatchBuiltinTool("market.snapshot.get", ctx, {
+        symbol: "AAPL",
+        derivative_pricing_ledger: { version: "missing pricing provenance" },
+      })
+    ).rejects.toThrow(/derivative_pricing_ledger/);
   });
 });
 

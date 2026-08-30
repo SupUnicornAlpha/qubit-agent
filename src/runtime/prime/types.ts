@@ -71,6 +71,8 @@ export interface AgentSpec {
   system_prompt?: string | null;
   default_recipe_id?: string | null;
   tool_surface_ref: string;
+  /** Exact configured surface; Core uses it to lazy-load only relevant schemas. */
+  tools?: string[];
   model_ref?: string | null;
   max_iterations: number;
   hitl_profile_ref?: string | null;

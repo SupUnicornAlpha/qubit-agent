@@ -22,13 +22,14 @@ const META: ProviderMeta = {
   key: "builtin",
   displayName: "Builtin Factor Eval（纯 TS）",
   description:
-    "Pearson IC / Spearman RankIC（横截面 daily） + 年化 IR + decay curve + group returns + turnover。",
-  version: "0.2.0",
+    "Pearson IC / Spearman RankIC（横截面 daily）+ HAC 显著性 + 年化 IR + decay curve + group returns + turnover。",
+  version: "0.3.0",
   capability: {
     features: [
       "pearson_ic",
       "spearman_rank_ic",
       "daily_cross_sectional_ic",
+      "newey_west_hac_inference",
       "annualized_ir",
       "decay_curve",
       "group_returns",
@@ -137,6 +138,96 @@ function std(arr: number[]): number {
   let acc = 0;
   for (const x of arr) acc += (x - m) ** 2;
   return Math.sqrt(acc / (arr.length - 1));
+}
+
+function normalCdf(value: number): number {
+  const sign = value < 0 ? -1 : 1;
+  const x = Math.abs(value) / Math.sqrt(2);
+  const t = 1 / (1 + 0.3275911 * x);
+  const erf =
+    1 -
+    ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) *
+      t *
+      Math.exp(-x * x);
+  return Math.max(0, Math.min(1, 0.5 * (1 + sign * erf)));
+}
+
+function neweyWestInference(values: number[]): {
+  mean: number;
+  lag: number;
+  stdError: number | null;
+  tStatistic: number | null;
+  pValue: number | null;
+  positiveRate: number;
+} {
+  const n = values.length;
+  const average = mean(values);
+  const positiveRate = n > 0 ? values.filter((value) => value > 0).length / n : 0;
+  if (n < 2)
+    return { mean: average, lag: 0, stdError: null, tStatistic: null, pValue: null, positiveRate };
+  const lag = Math.max(0, Math.min(n - 1, Math.floor(4 * (n / 100) ** (2 / 9))));
+  const centered = values.map((value) => value - average);
+  let longRunVariance = centered.reduce((sum, value) => sum + value * value, 0) / n;
+  for (let k = 1; k <= lag; k += 1) {
+    let covariance = 0;
+    for (let index = k; index < n; index += 1)
+      covariance += centered[index]! * centered[index - k]!;
+    covariance /= n;
+    longRunVariance += 2 * (1 - k / (lag + 1)) * covariance;
+  }
+  const stdError = longRunVariance > 1e-18 ? Math.sqrt(longRunVariance / n) : null;
+  const tStatistic = stdError ? average / stdError : null;
+  const pValue = tStatistic == null ? null : 2 * (1 - normalCdf(Math.abs(tStatistic)));
+  return { mean: average, lag, stdError, tStatistic, pValue, positiveRate };
+}
+
+function factorStatisticalReport(
+  ics: number[],
+  rankIcs: number[]
+): NonNullable<FactorEvalResult["statisticalReport"]> {
+  const ic = neweyWestInference(ics);
+  const rankIc = neweyWestInference(rankIcs);
+  const enoughDailyObservations = ics.length >= 60;
+  const significantIc = ic.pValue != null && ic.pValue <= 0.05;
+  const significantRankIc = rankIc.pValue != null && rankIc.pValue <= 0.05;
+  return {
+    version: "factor-statistical-validation-v1",
+    dailyObservations: ics.length,
+    hacLag: Math.max(ic.lag, rankIc.lag),
+    ic: {
+      mean: Number(ic.mean.toFixed(6)),
+      neweyWestStdError: ic.stdError == null ? null : Number(ic.stdError.toFixed(6)),
+      tStatistic: ic.tStatistic == null ? null : Number(ic.tStatistic.toFixed(6)),
+      pValue: ic.pValue == null ? null : Number(ic.pValue.toFixed(6)),
+      positiveRate: Number(ic.positiveRate.toFixed(6)),
+    },
+    rankIc: {
+      mean: Number(rankIc.mean.toFixed(6)),
+      neweyWestStdError: rankIc.stdError == null ? null : Number(rankIc.stdError.toFixed(6)),
+      tStatistic: rankIc.tStatistic == null ? null : Number(rankIc.tStatistic.toFixed(6)),
+      pValue: rankIc.pValue == null ? null : Number(rankIc.pValue.toFixed(6)),
+      positiveRate: Number(rankIc.positiveRate.toFixed(6)),
+    },
+    status:
+      enoughDailyObservations && (significantIc || significantRankIc) ? "passed" : "research_only",
+    checks: [
+      {
+        key: "minimum_daily_observations",
+        state: enoughDailyObservations ? "pass" : "unknown",
+        evidence: `dailyCrossSections=${ics.length}; required=60`,
+      },
+      {
+        key: "ic_significance",
+        state: ic.pValue == null ? "unknown" : significantIc ? "pass" : "fail",
+        evidence: `NeweyWest p=${ic.pValue == null ? "unknown" : ic.pValue}`,
+      },
+      {
+        key: "rank_ic_significance",
+        state: rankIc.pValue == null ? "unknown" : significantRankIc ? "pass" : "fail",
+        evidence: `NeweyWest p=${rankIc.pValue == null ? "unknown" : rankIc.pValue}`,
+      },
+    ],
+  };
 }
 
 /** 横截面 daily IC 时序：返回每日 (pearson, spearman) */
@@ -262,6 +353,7 @@ export class BuiltinFactorEvalProvider implements FactorEvaluationProvider {
 
     // ─── 4) turnover ───
     const turnover = Number(topQuintileTurnover(pairs).toFixed(4));
+    const statisticalReport = factorStatisticalReport(daily.ics, daily.rankIcs);
 
     return {
       ic: Number(ic.toFixed(4)),
@@ -272,6 +364,7 @@ export class BuiltinFactorEvalProvider implements FactorEvaluationProvider {
       groupReturns: grpRet,
       sampleSize,
       latencyMs: Date.now() - t0,
+      statisticalReport,
     };
   }
 }

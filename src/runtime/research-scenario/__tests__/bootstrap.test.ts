@@ -3,7 +3,7 @@ import { runMigrations } from "../../../db/sqlite/migrate";
 import { bootstrapProviders } from "../../provider/bootstrap";
 import { researchScenarioRegistry } from "../registry";
 import { BUILTIN_RESEARCH_SCENARIOS } from "../scenarios-seed";
-import { buildAnalystLaunchInput, researchScenarioService } from "../service";
+import { researchScenarioService } from "../service";
 
 describe("Research scenario bootstrap + service", () => {
   test("启动序列：migrate → providers → scenarios", async () => {
@@ -38,8 +38,8 @@ describe("Research scenario bootstrap + service", () => {
     expect(result.invalidInputs?.some((e) => e.field === "universe")).toBe(true);
   });
 
-  test("planLaunch: 默认场景配置解析成功", async () => {
-    const plan = await researchScenarioService.planLaunch({
+  test("buildConversationPlan: 默认场景配置解析成功", async () => {
+    const plan = await researchScenarioService.buildConversationPlan({
       scenarioKey: "stock_screening",
       projectId: "p-test",
       inputParams: { universe: "CN-A:csi500", topN: 30 },
@@ -48,44 +48,13 @@ describe("Research scenario bootstrap + service", () => {
     expect(plan.loopOptions.maxIterations).toBe(10);
   });
 
-  test("planLaunch: scenario 不存在 → ScenarioError", async () => {
+  test("buildConversationPlan: scenario 不存在 → ScenarioError", async () => {
     await expect(
-      researchScenarioService.planLaunch({
+      researchScenarioService.buildConversationPlan({
         scenarioKey: "non_existent",
         projectId: "p-test",
         inputParams: {},
       })
     ).rejects.toThrow(/scenario_not_found/);
-  });
-
-  test("multi ticker input becomes an explicit basket rather than a comma ticker", () => {
-    expect(
-      buildAnalystLaunchInput({
-        scenarioKey: "research_multi",
-        inputParams: { symbols: ["NVDA", "AMD", "INTC"] },
-        goal: "compare semiconductors",
-      })
-    ).toMatchObject({
-      scope: { kind: "basket", symbols: ["NVDA", "AMD", "INTC"] },
-      analystRoles: [
-        "market_data",
-        "analyst_fundamental",
-        "analyst_technical",
-        "analyst_macro",
-        "news_event",
-      ],
-    });
-  });
-
-  test("comma-separated ticker input becomes an explicit basket", () => {
-    expect(
-      buildAnalystLaunchInput({
-        scenarioKey: "research_multi",
-        inputParams: { ticker: "NVDA, AMD, INTC" },
-        goal: "compare semiconductors",
-      })
-    ).toMatchObject({
-      scope: { kind: "basket", symbols: ["NVDA", "AMD", "INTC"] },
-    });
   });
 });

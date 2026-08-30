@@ -182,16 +182,20 @@ Open **http://localhost:3041**. `Backend Connected` in the top bar confirms that
 
 ### 4. Desktop client (Tauri v2, optional)
 
-Tauri is the desktop shell. In development it still uses the web backend and frontend server; `tauri dev` launches `bun run --cwd frontend dev` and loads `http://localhost:3041`.
+Tauri is the desktop shell. In development, `tauri dev` launches the frontend dev server
+and loads `http://localhost:3041`; the debug app starts the Bun backend fallback itself,
+so a separate `bun run dev` is not required. Before startup, an ignored sidecar placeholder
+is created to satisfy Tauri's `externalBin` validation; the actual backend still runs from
+source in watch mode.
 
 **Prerequisites:**
 
 - Rust (preferably via `rustup`) and your platform's native build tools are installed.
 - Step 1 has completed.
-- `bun run dev` is running in another terminal, unless you are using the packaged sidecar.
+- To use a precompiled sidecar, run `bun run build:app` first; otherwise use the development command below.
 
 ```bash
-# Terminal 3; keep Terminal 1 running
+# Terminal 1
 bun run dev:tauri
 ```
 
@@ -371,16 +375,14 @@ Output is written to `out/agent-readiness/`, including metric snapshots per work
 <details>
 <summary>Expand REST endpoints</summary>
 
-- `POST /api/v1/workflows` — create a workflow
 - `GET /api/v1/workflows/:id/stream/:runId` — step stream
 - `GET /api/v1/agents/definitions` — Agent definitions and drafts
-- `GET /api/v1/chat/sessions` · `POST .../messages` — conversations
+- `GET /api/v1/chat/sessions` · `POST /api/v1/chat/sessions/:sessionId/turns` — the single conversational execution entry point
 - `GET /api/v1/monitor/sessions/:id/overview` — aggregated session monitoring
-- `GET /api/v1/analyst/fusion/:workflowId` — team-signal fusion
+- `GET /api/v1/research-artifacts/fusion/:workflowId` — historical research artifact fusion
 - `GET /api/v1/market/data-sources` — market source capability, health, latency, circuit break, and priority
 - `POST /api/v1/market/data-sources/health` — run a real-sample health check
 - `GET /api/v1/market/readiness` — startup market-readiness state
-- `POST /api/v1/research-scenarios/:key/launch` — launch a workflow through the unified scenario harness
 - `GET /api/v1/agents/mcp/market/catalog` — paginated MCP marketplace
 - `GET /api/v1/agents/skills/market/search` — paginated Skills marketplace
 - `POST /api/v1/reia/broker/accounts/upsert` — broker account

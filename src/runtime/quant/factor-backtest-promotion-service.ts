@@ -88,6 +88,40 @@ export class FactorBacktestPromotionService {
         `factor_project_mismatch: ${mismatched.id} belongs to ${mismatched.projectId}, expected ${projectId}`
       );
     }
+    const eligibility = await factorService.assessStrategyEligibility(factorIds, {
+      ...(input.datasetSnapshotId ? { datasetSnapshotId: input.datasetSnapshotId } : {}),
+    });
+    const rejected = eligibility.filter((item) => !item.eligible);
+    if (rejected.length > 0) {
+      throw new FactorBacktestPromotionError(
+        "validation_failed",
+        `factor_research_admission_failed: ${rejected
+          .map((item) => `${item.factorId}[${item.reasons.join(",")}]`)
+          .join("; ")}`
+      );
+    }
+    if (factorIds.length > 1) {
+      const correlation = await factorService.diagnoseCorrelation({
+        factorIds,
+        ...(input.datasetSnapshotId ? { datasetSnapshotId: input.datasetSnapshotId } : {}),
+      });
+      if (correlation.status !== "passed") {
+        throw new FactorBacktestPromotionError(
+          "validation_failed",
+          `factor_correlation_admission_failed: ${correlation.reasons.join(",") || correlation.status}`
+        );
+      }
+      const exposure = await factorService.diagnoseExposure({
+        factorIds,
+        ...(input.datasetSnapshotId ? { datasetSnapshotId: input.datasetSnapshotId } : {}),
+      });
+      if (exposure.status !== "passed") {
+        throw new FactorBacktestPromotionError(
+          "validation_failed",
+          `factor_exposure_admission_failed: ${exposure.reasons.join(",") || exposure.status}`
+        );
+      }
+    }
 
     const universe = input.universe?.trim() || factors[0]?.universe || "CN-A";
     const symbols = normalizeSymbols(input.symbols, universe);

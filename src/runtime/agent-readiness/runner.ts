@@ -1,7 +1,7 @@
 /**
  * Agent 就绪度 Runner：
  *
- *   1. 拿 ScenarioRecipe → 调 createAndDispatchWorkflow → 拿 workflowRunId
+ *   1. 拿 ScenarioRecipe → 创建 chat session turn → 拿 workflowRunId
  *   2. 轮询 workflow_run.status 直到进入终态（completed / failed / cancelled / timeout）或超时
  *   3. 调 collectSnapshot 抓 6 个指标
  *   4. 写 JSON + Markdown 报告
@@ -82,7 +82,7 @@ export async function runReadiness(input: RunReadinessInput): Promise<RunReadine
   const recipe = getScenarioRecipe(input.scenario);
   const startMs = Date.now();
 
-  const launched = await researchScenarioService.launch({
+  const launched = await researchScenarioService.startConversation({
     scenarioKey: recipe.key,
     projectId: input.projectId,
     goal: recipe.workflow.goal,
@@ -111,9 +111,9 @@ export async function runReadiness(input: RunReadinessInput): Promise<RunReadine
 
 function scenarioInputParamsFromRecipe(recipe: ScenarioRecipe): Record<string, unknown> {
   return {
-    ...(recipe.analystRun.ticker ? { ticker: recipe.analystRun.ticker } : {}),
-    ...(recipe.analystRun.scope ? { scope: recipe.analystRun.scope } : {}),
-    ...(recipe.analystRun.context ? { context: recipe.analystRun.context } : {}),
+    ...(recipe.conversationContext.ticker ? { ticker: recipe.conversationContext.ticker } : {}),
+    ...(recipe.conversationContext.scope ? { scope: recipe.conversationContext.scope } : {}),
+    ...(recipe.conversationContext.context ? { context: recipe.conversationContext.context } : {}),
   };
 }
 

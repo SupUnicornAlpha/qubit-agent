@@ -3,10 +3,11 @@ import { getDb } from "../../db/sqlite/client";
 import { backtestJobService } from "../backtest/backtest-job-service";
 import { discoveryService } from "../discovery/discovery-service";
 import type { DiscoveryKind } from "../discovery/discovery-service";
+import { finalHoldoutEvaluationService } from "../effect-validation/final-holdout-evaluation-service";
 import {
-  walkForwardEvaluationService,
   type WalkForwardParameterCandidate,
   type WalkForwardRunOptions,
+  walkForwardEvaluationService,
 } from "../effect-validation/walk-forward-evaluation-service";
 import { factorService } from "../factor/factor-service";
 import type { FactorCategory, FactorLang, FactorStatus } from "../factor/factor-service";
@@ -125,43 +126,34 @@ function resolveBacktestCosts(params: Record<string, unknown>): BacktestCosts | 
     return text || undefined;
   };
   const restricted = costs.restrictedShortSymbols ?? costs.restricted_short_symbols;
+  const minCommission = optionalNumber("minCommission", "min_commission");
+  const impactCoefficient = optionalNumber("impactCoefficient", "impact_coefficient");
+  const maxVolumeParticipation = optionalNumber(
+    "maxVolumeParticipation",
+    "max_volume_participation"
+  );
+  const borrowRateAnnualBps = optionalNumber("borrowRateAnnualBps", "borrow_rate_annual_bps");
+  const costModelVersion = optionalText("costModelVersion", "cost_model_version");
+  const costModelSource = optionalText("costModelSource", "cost_model_source");
+  const costModelAsOf = optionalText("costModelAsOf", "cost_model_as_of");
   return {
     commissionBps: Number(costs.commissionBps ?? costs.commission_bps ?? 5),
     slippageBps: Number(costs.slippageBps ?? costs.slippage_bps ?? 5),
-    ...(optionalNumber("minCommission", "min_commission") !== undefined
-      ? { minCommission: optionalNumber("minCommission", "min_commission") }
-      : {}),
+    ...(minCommission !== undefined ? { minCommission } : {}),
     ...(costs.slippageModel !== undefined || costs.slippage_model !== undefined
       ? {
-          slippageModel: String(
-            costs.slippageModel ?? costs.slippage_model
-          ) as BacktestCosts["slippageModel"],
+          slippageModel: String(costs.slippageModel ?? costs.slippage_model) as NonNullable<
+            BacktestCosts["slippageModel"]
+          >,
         }
       : {}),
-    ...(optionalNumber("impactCoefficient", "impact_coefficient") !== undefined
-      ? { impactCoefficient: optionalNumber("impactCoefficient", "impact_coefficient") }
-      : {}),
-    ...(optionalNumber("maxVolumeParticipation", "max_volume_participation") !== undefined
-      ? {
-          maxVolumeParticipation: optionalNumber(
-            "maxVolumeParticipation",
-            "max_volume_participation"
-          ),
-        }
-      : {}),
-    ...(optionalNumber("borrowRateAnnualBps", "borrow_rate_annual_bps") !== undefined
-      ? { borrowRateAnnualBps: optionalNumber("borrowRateAnnualBps", "borrow_rate_annual_bps") }
-      : {}),
+    ...(impactCoefficient !== undefined ? { impactCoefficient } : {}),
+    ...(maxVolumeParticipation !== undefined ? { maxVolumeParticipation } : {}),
+    ...(borrowRateAnnualBps !== undefined ? { borrowRateAnnualBps } : {}),
     ...(Array.isArray(restricted) ? { restrictedShortSymbols: restricted.map(String) } : {}),
-    ...(optionalText("costModelVersion", "cost_model_version")
-      ? { costModelVersion: optionalText("costModelVersion", "cost_model_version") }
-      : {}),
-    ...(optionalText("costModelSource", "cost_model_source")
-      ? { costModelSource: optionalText("costModelSource", "cost_model_source") }
-      : {}),
-    ...(optionalText("costModelAsOf", "cost_model_as_of")
-      ? { costModelAsOf: optionalText("costModelAsOf", "cost_model_as_of") }
-      : {}),
+    ...(costModelVersion ? { costModelVersion } : {}),
+    ...(costModelSource ? { costModelSource } : {}),
+    ...(costModelAsOf ? { costModelAsOf } : {}),
   };
 }
 
@@ -185,9 +177,9 @@ function resolveBacktestInstruments(
       ) as BacktestInstrumentSpec["assetClass"],
       ...(item.contract_kind !== undefined || item.contractKind !== undefined
         ? {
-            contractKind: String(
-              item.contract_kind ?? item.contractKind
-            ) as BacktestInstrumentSpec["contractKind"],
+            contractKind: String(item.contract_kind ?? item.contractKind) as NonNullable<
+              BacktestInstrumentSpec["contractKind"]
+            >,
           }
         : {}),
       ...(item.contract_multiplier !== undefined || item.contractMultiplier !== undefined
@@ -214,9 +206,9 @@ function resolveBacktestInstruments(
         : {}),
       ...(item.settlement_mode !== undefined || item.settlementMode !== undefined
         ? {
-            settlementMode: String(
-              item.settlement_mode ?? item.settlementMode
-            ) as BacktestInstrumentSpec["settlementMode"],
+            settlementMode: String(item.settlement_mode ?? item.settlementMode) as NonNullable<
+              BacktestInstrumentSpec["settlementMode"]
+            >,
           }
         : {}),
       ...(item.underlying_symbol !== undefined || item.underlyingSymbol !== undefined
@@ -225,23 +217,23 @@ function resolveBacktestInstruments(
       ...(item.strike !== undefined ? { strike: Number(item.strike) } : {}),
       ...(item.option_right !== undefined || item.optionRight !== undefined
         ? {
-            optionRight: String(
-              item.option_right ?? item.optionRight
-            ) as BacktestInstrumentSpec["optionRight"],
+            optionRight: String(item.option_right ?? item.optionRight) as NonNullable<
+              BacktestInstrumentSpec["optionRight"]
+            >,
           }
         : {}),
       ...(item.exercise_style !== undefined || item.exerciseStyle !== undefined
         ? {
-            exerciseStyle: String(
-              item.exercise_style ?? item.exerciseStyle
-            ) as BacktestInstrumentSpec["exerciseStyle"],
+            exerciseStyle: String(item.exercise_style ?? item.exerciseStyle) as NonNullable<
+              BacktestInstrumentSpec["exerciseStyle"]
+            >,
           }
         : {}),
       ...(item.pricing_model !== undefined || item.pricingModel !== undefined
         ? {
-            pricingModel: String(
-              item.pricing_model ?? item.pricingModel
-            ) as BacktestInstrumentSpec["pricingModel"],
+            pricingModel: String(item.pricing_model ?? item.pricingModel) as NonNullable<
+              BacktestInstrumentSpec["pricingModel"]
+            >,
           }
         : {}),
       ...(item.future_roll !== undefined || item.futureRoll !== undefined
@@ -331,9 +323,24 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
         ? { ...(definitionRaw as Record<string, unknown>) }
         : {};
     const modelFactorRaw =
-      params.model_factor ?? params.modelFactor ?? definition.modelFactor ?? definition.model_factor;
+      params.model_factor ??
+      params.modelFactor ??
+      definition.modelFactor ??
+      definition.model_factor;
     if (modelFactorRaw && typeof modelFactorRaw === "object" && !Array.isArray(modelFactorRaw)) {
       definition.modelFactor = modelFactorRaw as Record<string, unknown>;
+    }
+    const researchContractRaw =
+      params.research_contract ?? params.researchContract ?? definition.researchContract;
+    if (researchContractRaw !== undefined) {
+      if (
+        !researchContractRaw ||
+        typeof researchContractRaw !== "object" ||
+        Array.isArray(researchContractRaw)
+      ) {
+        throw new Error("factor.register: research_contract must be an object");
+      }
+      definition.researchContract = researchContractRaw as Record<string, unknown>;
     }
     /**
      * P0-2: Agent 触发的因子注册默认启用 dry-run 闸门（详见 AGENT_STABILITY_REVIEW.md §四-P0-2）。
@@ -363,7 +370,9 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
     ).trim();
     const explicitLang = params.lang ? String(params.lang) : null;
     const isModelFactor =
-      explicitLang === "ml_score" || Boolean(definition.modelFactor) || /^model:\/\//i.test(exprRaw);
+      explicitLang === "ml_score" ||
+      Boolean(definition.modelFactor) ||
+      /^model:\/\//i.test(exprRaw);
 
     if (isModelFactor) {
       return factorService.register({
@@ -419,6 +428,24 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
     });
   },
 
+  "factor.set_research_contract": async (_ctx, params) => {
+    const factorId = pickFactorId(params);
+    if (!factorId) {
+      throw new Error("factor.set_research_contract: factor_id is required");
+    }
+    const contract = params.research_contract ?? params.researchContract ?? params.contract;
+    if (!contract || typeof contract !== "object" || Array.isArray(contract)) {
+      throw new Error("factor.set_research_contract: research_contract object is required");
+    }
+    return factorService.setResearchContract(factorId, contract);
+  },
+
+  "factor.activate": async (_ctx, params) => {
+    const factorId = pickFactorId(params);
+    if (!factorId) throw new Error("factor.activate: factor_id is required");
+    return factorService.activate(factorId);
+  },
+
   /**
    * 把外部已训好的模型 / 实时打分服务发布为可评估的 ml_score 因子。
    * 不训练；只写 factor_definition + modelFactor 绑定。
@@ -427,12 +454,12 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
     const projectId = String(params.project_id ?? ctx.projectId ?? "").trim();
     if (!projectId) throw new Error("model.publish_as_factor: project_id is required");
     const modelFactorRaw = params.model_factor ?? params.modelFactor ?? params;
-    const {
-      parseModelFactorBinding,
-      buildModelFactorExpr,
-    } = await import("../provider/model-factor-contract");
+    const { parseModelFactorBinding, buildModelFactorExpr } = await import(
+      "../provider/model-factor-contract"
+    );
     const binding = parseModelFactorBinding({
-      adapterKey: (modelFactorRaw as Record<string, unknown>).adapterKey ??
+      adapterKey:
+        (modelFactorRaw as Record<string, unknown>).adapterKey ??
         (modelFactorRaw as Record<string, unknown>).adapter_key ??
         params.adapter_key ??
         params.adapterKey,
@@ -456,8 +483,7 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
         (modelFactorRaw as Record<string, unknown>).content_hash ??
         params.content_hash ??
         params.contentHash,
-      framework:
-        (modelFactorRaw as Record<string, unknown>).framework ?? params.framework,
+      framework: (modelFactorRaw as Record<string, unknown>).framework ?? params.framework,
       featureSpecId:
         (modelFactorRaw as Record<string, unknown>).featureSpecId ??
         (modelFactorRaw as Record<string, unknown>).feature_spec_id ??
@@ -484,10 +510,7 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
       `${binding.modelId}_${binding.modelVersion}`.replace(/[^a-zA-Z0-9_.-]+/g, "_");
     const dryRunParam = params.dry_run ?? params.dryRun;
     const dryRun =
-      dryRunParam === false ||
-      dryRunParam === "false" ||
-      dryRunParam === 0 ||
-      dryRunParam === "off"
+      dryRunParam === false || dryRunParam === "false" || dryRunParam === 0 || dryRunParam === "off"
         ? false
         : true;
     return factorService.register({
@@ -942,6 +965,110 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
     };
   },
 
+  "factor.correlation.diagnose": async (_ctx, paramsIn) => {
+    const params = unwrapToolArgs(paramsIn);
+    const rawFactorIds = params.factor_ids ?? params.factorIds;
+    const factorIds = Array.isArray(rawFactorIds)
+      ? [
+          ...new Set(
+            rawFactorIds
+              .filter(
+                (value): value is string => typeof value === "string" && value.trim().length > 0
+              )
+              .map((value) => value.trim())
+          ),
+        ]
+      : [];
+    if (factorIds.length < 2) {
+      throw new Error("factor.correlation.diagnose: at least two factor_ids are required");
+    }
+    const datasetSnapshotId = String(
+      params.dataset_snapshot_id ??
+        params.datasetSnapshotId ??
+        params.snapshot_id ??
+        params.snapshotId ??
+        ""
+    ).trim();
+    if (!datasetSnapshotId) {
+      throw new Error("factor.correlation.diagnose: dataset_snapshot_id is required");
+    }
+    const maxAbsCorrelation = Number(params.max_abs_correlation ?? params.maxAbsCorrelation ?? 0.7);
+    const minimumObservations = Number(
+      params.minimum_observations ?? params.minimumObservations ?? 60
+    );
+    if (!Number.isFinite(maxAbsCorrelation) || maxAbsCorrelation <= 0 || maxAbsCorrelation > 1) {
+      throw new Error("factor.correlation.diagnose: max_abs_correlation must be in (0, 1]");
+    }
+    if (!Number.isInteger(minimumObservations) || minimumObservations < 2) {
+      throw new Error("factor.correlation.diagnose: minimum_observations must be an integer >= 2");
+    }
+    return factorService.diagnoseCorrelation({
+      factorIds,
+      datasetSnapshotId,
+      maxAbsCorrelation,
+      minimumObservations,
+    });
+  },
+
+  "factor.exposure.diagnose": async (_ctx, paramsIn) => {
+    const params = unwrapToolArgs(paramsIn);
+    const rawFactorIds = params.factor_ids ?? params.factorIds;
+    const factorIds = Array.isArray(rawFactorIds)
+      ? [
+          ...new Set(
+            rawFactorIds
+              .filter(
+                (value): value is string => typeof value === "string" && value.trim().length > 0
+              )
+              .map((value) => value.trim())
+          ),
+        ]
+      : [];
+    if (factorIds.length < 2) {
+      throw new Error("factor.exposure.diagnose: at least two factor_ids are required");
+    }
+    const datasetSnapshotId = String(
+      params.dataset_snapshot_id ??
+        params.datasetSnapshotId ??
+        params.snapshot_id ??
+        params.snapshotId ??
+        ""
+    ).trim();
+    if (!datasetSnapshotId) {
+      throw new Error("factor.exposure.diagnose: dataset_snapshot_id is required");
+    }
+    const maximumVif = Number(params.maximum_vif ?? params.maximumVif ?? 5);
+    const minimumObservations = Number(
+      params.minimum_observations ?? params.minimumObservations ?? 60
+    );
+    if (!Number.isFinite(maximumVif) || maximumVif <= 1) {
+      throw new Error("factor.exposure.diagnose: maximum_vif must be > 1");
+    }
+    if (!Number.isInteger(minimumObservations) || minimumObservations < 2) {
+      throw new Error("factor.exposure.diagnose: minimum_observations must be an integer >= 2");
+    }
+    return factorService.diagnoseExposure({
+      factorIds,
+      datasetSnapshotId,
+      maximumVif,
+      minimumObservations,
+    });
+  },
+
+  "factor.risk_exposure.regress": async (_ctx, paramsIn) => {
+    const params = unwrapToolArgs(paramsIn);
+    const factorId = pickFactorId(params);
+    const datasetSnapshotId = String(params.dataset_snapshot_id ?? params.datasetSnapshotId ?? "").trim();
+    if (!factorId || !datasetSnapshotId) {
+      throw new Error("factor.risk_exposure.regress: factor_id and dataset_snapshot_id are required");
+    }
+    const minimumObservations = Number(params.minimum_observations ?? params.minimumObservations ?? 60);
+    if (!Number.isInteger(minimumObservations) || minimumObservations < 2) {
+      throw new Error("factor.risk_exposure.regress: minimum_observations must be an integer >= 2");
+    }
+    return factorService.regressRiskExposures({ factorId, datasetSnapshotId, minimumObservations });
+  },
+
   /**
    * factor.mine.llm —— P0-4：LLM 一次产 N 个 + 内置评估闸门
    *
@@ -1056,7 +1183,7 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
       ok: true,
       job_id: job.id,
       requested: expressions.length,
-      evaluated: job.candidates.length,
+      evaluated: job.candidateAudit.length,
       eligible: eligible.length,
       promoted_count: promoted.length,
       ic_threshold: icThreshold,
@@ -1070,6 +1197,11 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
         ...(c.error ? { error: c.error } : {}),
       })),
       promoted,
+      candidate_audit: job.candidateAudit.map((candidate) => ({
+        candidate_id: candidate.id,
+        decision: candidate.discoveryDecision,
+        ...(candidate.error ? { error: candidate.error } : {}),
+      })),
       ...(promote_errors.length > 0 ? { promote_errors } : {}),
       ...(eligible.length === 0
         ? {
@@ -1241,6 +1373,33 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
       throw new Error("backtest.walk_forward: backtest_run_id is required");
     }
     return walkForwardEvaluationService.run(backtestRunId, resolveWalkForwardOptions(params));
+  },
+
+  "backtest.final_holdout": async (_ctx, paramsIn) => {
+    const params = unwrapToolArgs(paramsIn);
+    const backtestRunId = String(
+      params.backtest_run_id ?? params.backtestRunId ?? params.job_id ?? params.jobId ?? ""
+    ).trim();
+    if (!backtestRunId) {
+      throw new Error("backtest.final_holdout: backtest_run_id is required");
+    }
+    const trainEnd = String(params.train_end ?? params.trainEnd ?? "").trim();
+    const holdoutStart = String(params.holdout_start ?? params.holdoutStart ?? "").trim();
+    const holdoutEnd = String(params.holdout_end ?? params.holdoutEnd ?? "").trim();
+    if (!trainEnd || !holdoutStart || !holdoutEnd) {
+      throw new Error(
+        "backtest.final_holdout: train_end, holdout_start, and holdout_end are required"
+      );
+    }
+    const purgeDays = params.purge_days ?? params.purgeDays;
+    const embargoDays = params.embargo_days ?? params.embargoDays;
+    return finalHoldoutEvaluationService.run(backtestRunId, {
+      trainEnd,
+      holdoutStart,
+      holdoutEnd,
+      ...(purgeDays !== undefined ? { purgeDays: Number(purgeDays) } : {}),
+      ...(embargoDays !== undefined ? { embargoDays: Number(embargoDays) } : {}),
+    });
   },
 
   "factor.promote_backtest": async (ctx, params) => {

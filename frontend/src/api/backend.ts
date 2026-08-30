@@ -1,4 +1,3 @@
-import { normalizeFusionApiToTeamResult } from "../lib/fusionNormalize";
 import {
   backendFetchUrl,
   backendWebSocketUrl,
@@ -11,21 +10,16 @@ import {
 import type {
   AgentDefinitionBundle,
   AgentDefinitionDraftRecord,
-  AgentLoopKind,
   AgentMemoryStatsResponse,
   AgentPackResponse,
   AgentPromptPreviewResponse,
-  AgentRoleCatalogItem,
   AgentRuntimeMetricRecord,
   AgentSkillRecord,
   AgentSkillState,
   AgentSummary,
   AgentsConfigResponse,
   AlertEventRecord,
-  AnalystSignalFusionRecord,
-  AnalystSignalRecord,
   AnalystTeamGraphPayload,
-  AnalystTeamResult,
   BrokerAccountRecord,
   BrokerOrderEventRecord,
   BrokerProvider,
@@ -34,11 +28,6 @@ import type {
   ChatSession,
   CommunicationChannelRecord,
   CommunicationMessageLogRecord,
-  DebateConfig,
-  DebateSessionRecord,
-  DebateStreamEvent,
-  DebateTurnRecord,
-  DebateVerdictRecord,
   EvalCaseResultRecord,
   EvalDatasetRecord,
   EvalRunRecord,
@@ -91,7 +80,6 @@ import type {
   WindSessionStatus,
   WorkflowArtifactsDto,
   WorkflowCompensationTaskRecord,
-  WorkflowCreateInput,
   WorkflowDetail,
   WorkflowObservability,
   WorkflowQualitySnapshotRecord,
@@ -1129,13 +1117,6 @@ export async function listAgents(): Promise<AgentSummary[]> {
   return res.data;
 }
 
-export async function createWorkflow(input: WorkflowCreateInput): Promise<{
-  data: { id: string };
-  runId?: string;
-}> {
-  return httpPost("/api/v1/workflows", input);
-}
-
 export async function createConversationTurn(input: {
   sessionId: string;
   projectId: string;
@@ -1348,28 +1329,6 @@ export async function injectWorkflowMessage(
     { content, targetRole: targetRole ?? null }
   );
   return res.data;
-}
-
-/**
- * 对话消息入口（区别于「启动团队分析」按钮）：把消息交给 Orchestrator 跑 ReAct 自主判断
- * （直接回答 / assign_task 派单 / run_analyst_team 跑全队）。立即返回 202，结果经 token
- * firehose 流式 + team-graph 轮询出现在右栏。
- */
-export async function runOrchestratorChat(
-  workflowRunId: string,
-  message: string,
-  hitlMode?: "off" | "ai" | "always",
-  roleReasoner?: AgentLoopKind,
-  agentMode?: import("./types").AgentControlMode
-): Promise<{ status: string }> {
-  const res = await httpPost<{ ok: boolean; status: string }>("/api/v1/analyst/orchestrator-chat", {
-    workflowRunId,
-    message,
-    ...(hitlMode ? { hitlMode } : {}),
-    ...(roleReasoner ? { roleReasoner } : {}),
-    ...(agentMode ? { agentMode } : {}),
-  });
-  return { status: res.status ?? "running" };
 }
 
 /**
@@ -2318,22 +2277,6 @@ export async function paperRunStrategyContract(input: {
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
-}
-
-export async function createSessionMessage(params: {
-  sessionId: string;
-  role: "user" | "assistant" | "system";
-  content: string;
-  sender?: "user" | "orchestrator" | "agent" | "system";
-  status?: "queued" | "running" | "completed" | "failed" | "awaiting_approval";
-  workflowRunIds?: string[];
-}): Promise<ChatMessage> {
-  const { sessionId, ...payload } = params;
-  const res = await httpPost<{ data: ChatMessage }>(
-    `/api/v1/chat/sessions/${sessionId}/messages`,
-    payload
-  );
-  return res.data;
 }
 
 export async function patchSessionMessage(params: {
@@ -3412,279 +3355,16 @@ export async function diffAgentEvalExperiment(
   return res.data;
 }
 
-// ─── V2 分析师团队 API ────────────────────────────────────────────────────────
+// ─── 研究拓扑只读查询 ─────────────────────────────────────────────────────
 
-/**
- * 启动分析师团队分析（异步任务）。
- * 后端立即返回 jobId，前端通过 pollAnalystJob 轮询结果。
- * 避免 WebView 系统级 ~60s 超时（分析可能耗时 2-10 分钟）。
- */
-export async function startAnalystTeam(params: {
-  workflowRunId: string;
-  ticker?: string;
-  scope?: import("./types").ResearchScopeInput;
-  context?: string;
-  analystRoles?: string[];
-  analystDefinitionIds?: string[];
-  /**
-   * @deprecated v1 兼容；前端自 P1-H 起不再写入。后端 resolveTeamHitlMode 仍兼容
-   * 老调用方。新代码请用 `hitlMode`。
-   */
-  hitlTeam?: boolean;
-  /**
-   * v2 推荐：HITL 三档模式。
-   *   - 'off'：永不主动；仅硬规则触发
-   *   - 'ai'：默认 — Orchestrator 自评 needed=true 或硬规则命中才触发
-   *   - 'always'：每次规划都触发（v1 行为）
-   */
-  hitlMode?: "off" | "ai" | "always";
-  /** Agent 底座/引擎：每个角色单轮 reason 用哪个引擎（写入 loopOptions.roleReasoner）。 */
-  roleReasoner?: AgentLoopKind;
-  /** Agent 工作模式（Agent / Plan / Goal）。 */
-  agentMode?: import("./types").AgentControlMode;
-}): Promise<{ jobId: string }> {
-  const res = await httpPost<{ ok: boolean; jobId: string; status: string }>(
-    "/api/v1/analyst/run",
-    params
-  );
-  return { jobId: res.jobId };
-}
-
-/** 团队研究 HITL 的待审批状态，供前端展示批准/拒绝卡片 */
-export interface AnalystTeamAwaitingApproval {
-  jobId: string;
-  workflowRunId: string;
-  requestId: string;
-  title: string;
-  summary: string;
-}
-
-/**
- * 轮询服务端 analyst job 状态，直到完成 / 失败 / 超时 / 调用方主动取消。
- *
- * 重要语义：
- *  - 这里的 `timeoutMs` 是**前端轮询超时**，超时后只是不再发 GET，**后端任务仍在运行**，
- *    结果会照常落库，可在「研究画布」刷新拓扑或重新轮询查看。
- *  - `signal` 用于让调用方主动「停止等待」（同样不会终止后端任务）。
- *  - 抛错时把 `jobId` 一并带在 message 里方便排查；调用方可通过 try/catch + jobId 自行决定后续动作。
- */
-export class AnalystJobPollError extends Error {
-  jobId: string;
-  reason: "timeout" | "aborted" | "failed";
-  elapsedMs?: number;
-  constructor(opts: {
-    message: string;
-    jobId: string;
-    reason: "timeout" | "aborted" | "failed";
-    elapsedMs?: number;
-  }) {
-    super(opts.message);
-    this.name = "AnalystJobPollError";
-    this.jobId = opts.jobId;
-    this.reason = opts.reason;
-    if (opts.elapsedMs !== undefined) this.elapsedMs = opts.elapsedMs;
-  }
-}
-
-export async function pollAnalystJob(
-  jobId: string,
-  opts?: {
-    intervalMs?: number;
-    /** 默认 30 分钟。设置为 0 或负数表示不超时（直到完成 / 失败 / abort）。 */
-    timeoutMs?: number;
-    onProgress?: (elapsedMs: number) => void;
-    /** 团队 HITL 命中时持续被回调；前端据此渲染审批卡片。同一 requestId 只会触发一次。 */
-    onAwaitingApproval?: (info: AnalystTeamAwaitingApproval) => void;
-    /** awaiting_approval 状态下转回 running 时回调一次（用户已批准） */
-    onResume?: () => void;
-    signal?: AbortSignal;
-  }
-): Promise<AnalystTeamResult> {
-  const intervalMs = opts?.intervalMs ?? 3000;
-  const timeoutMs = opts?.timeoutMs ?? 1_800_000; // 30 分钟
-  const noTimeout = !Number.isFinite(timeoutMs) || timeoutMs <= 0;
-  const start = Date.now();
-  const deadline = noTimeout ? Number.POSITIVE_INFINITY : start + timeoutMs;
-  // HITL 暂停时不计入「等待上限」——人工审批可能花很久。
-  let awaitingStartedAt: number | null = null;
-  let lastAwaitingRequestId: string | null = null;
-
-  while (true) {
-    if (opts?.signal?.aborted) {
-      throw new AnalystJobPollError({
-        message: `已停止等待（jobId=${jobId}）。后端任务可能仍在运行，结果将继续落库；可在拓扑/对话流刷新查看。`,
-        jobId,
-        reason: "aborted",
-        elapsedMs: Date.now() - start,
-      });
-    }
-    const res = await httpGet<{
-      ok: boolean;
-      jobId: string;
-      status: "running" | "completed" | "failed" | "awaiting_approval";
-      result?: AnalystTeamResult;
-      error?: string;
-      elapsedMs: number;
-      workflowRunId?: string;
-      hitlRequestId?: string;
-      hitlTitle?: string;
-      hitlSummary?: string;
-    }>(`/api/v1/analyst/job/${jobId}`);
-
-    if (res.status === "completed" && res.result) {
-      return res.result;
-    }
-    if (res.status === "failed") {
-      throw new AnalystJobPollError({
-        message: res.error ?? "analyst team job failed",
-        jobId,
-        reason: "failed",
-        elapsedMs: res.elapsedMs,
-      });
-    }
-    if (res.status === "awaiting_approval" && res.hitlRequestId) {
-      if (awaitingStartedAt === null) awaitingStartedAt = Date.now();
-      if (lastAwaitingRequestId !== res.hitlRequestId) {
-        lastAwaitingRequestId = res.hitlRequestId;
-        opts?.onAwaitingApproval?.({
-          jobId,
-          workflowRunId: res.workflowRunId ?? "",
-          requestId: res.hitlRequestId,
-          title: res.hitlTitle ?? "",
-          summary: res.hitlSummary ?? "",
-        });
-      }
-    } else {
-      if (awaitingStartedAt !== null) {
-        // 由 awaiting_approval 转回 running —— 用户已批准，把这段挂起时长从 deadline 里"补回去"。
-        opts?.onResume?.();
-        awaitingStartedAt = null;
-        lastAwaitingRequestId = null;
-      }
-      opts?.onProgress?.(res.elapsedMs);
-      if (!noTimeout && Date.now() >= deadline) break;
-    }
-    // 等下一轮，但中途也响应 abort
-    await new Promise<void>((resolve) => {
-      const t = setTimeout(resolve, intervalMs);
-      opts?.signal?.addEventListener(
-        "abort",
-        () => {
-          clearTimeout(t);
-          resolve();
-        },
-        { once: true }
-      );
-    });
-  }
-  const minutes = Math.round(timeoutMs / 60_000);
-  throw new AnalystJobPollError({
-    message: `前端轮询已超时（${minutes} 分钟未完成，jobId=${jobId}）。后端任务可能仍在运行，结果将继续落库；可在拓扑/对话流刷新查看，或下次启动前调大「等待上限」。`,
-    jobId,
-    reason: "timeout",
-    elapsedMs: Date.now() - start,
-  });
-}
-
-export async function getAnalystSignals(workflowId: string): Promise<AnalystSignalRecord[]> {
-  const res = await httpGet<{ ok: boolean; data: AnalystSignalRecord[] }>(
-    `/api/v1/analyst/signals/${workflowId}`
-  );
-  return res.data;
-}
-
-export async function getSignalFusion(workflowId: string): Promise<AnalystTeamResult | null> {
-  const res = await httpGet<{ ok: boolean; data: unknown }>(`/api/v1/analyst/fusion/${workflowId}`);
-  return normalizeFusionApiToTeamResult(res.data);
-}
-
-export async function listDebateSessionsForWorkflow(
-  workflowRunId: string
-): Promise<DebateSessionRecord[]> {
-  const res = await httpGet<{ ok: boolean; data: DebateSessionRecord[] }>(
-    `/api/v1/debate/sessions/${encodeURIComponent(workflowRunId)}`
-  );
-  return Array.isArray(res.data) ? res.data : [];
-}
-
-export async function getAnalystTeamGraph(
+export async function getResearchWorkflowGraph(
   workflowRunId: string
 ): Promise<AnalystTeamGraphPayload | null> {
   const res = await httpGet<{ ok: boolean; data?: AnalystTeamGraphPayload; error?: string }>(
-    `/api/v1/analyst/workflow/${encodeURIComponent(workflowRunId)}/team-graph`
+    `/api/v1/research-artifacts/workflow/${encodeURIComponent(workflowRunId)}/team-graph`
   );
   if (!(res as { ok?: boolean }).ok) return null;
   return (res as { data?: AnalystTeamGraphPayload }).data ?? null;
-}
-
-export async function getAgentRoles(): Promise<AgentRoleCatalogItem[]> {
-  const res = await httpGet<{ ok: boolean; data: AgentRoleCatalogItem[] }>("/api/v1/analyst/roles");
-  return res.data;
-}
-
-export async function getFusionHistory(params?: {
-  ticker?: string;
-  limit?: number;
-  offset?: number;
-}): Promise<AnalystSignalFusionRecord[]> {
-  const query = new URLSearchParams();
-  if (params?.ticker) query.set("ticker", params.ticker);
-  if (params?.limit) query.set("limit", String(params.limit));
-  if (params?.offset) query.set("offset", String(params.offset));
-  const res = await httpGet<{ ok?: boolean; data?: AnalystSignalFusionRecord[] | null }>(
-    `/api/v1/analyst/fusion/history?${query.toString()}`
-  );
-  const rows = (res as { data?: unknown } | null)?.data;
-  return Array.isArray(rows) ? (rows as AnalystSignalFusionRecord[]) : [];
-}
-
-export async function getDebateConfig(): Promise<DebateConfig> {
-  const res = await httpGet<{ ok: boolean; data: DebateConfig }>("/api/v1/debate/config");
-  return res.data;
-}
-
-export async function saveDebateConfig(input: Partial<DebateConfig>): Promise<DebateConfig> {
-  const res = await httpPut<{ ok: boolean; data: DebateConfig }>("/api/v1/debate/config", input);
-  return res.data;
-}
-
-export async function getDebateTurns(sessionId: string): Promise<DebateTurnRecord[]> {
-  const res = await httpGet<{ ok: boolean; data: DebateTurnRecord[] }>(
-    `/api/v1/debate/sessions/${sessionId}/turns`
-  );
-  return res.data;
-}
-
-export async function getDebateVerdict(sessionId: string): Promise<DebateVerdictRecord | null> {
-  const res = await httpGet<{ ok: boolean; data: DebateVerdictRecord | null }>(
-    `/api/v1/debate/sessions/${sessionId}/verdict`
-  );
-  return res.data;
-}
-
-export function subscribeDebateStream(params: {
-  workflowRunId: string;
-  onEvent: (event: DebateStreamEvent) => void;
-  onError?: (err: Event) => void;
-}): () => void {
-  const url = backendFetchUrl(`/api/v1/debate/stream/${params.workflowRunId}`);
-  const es = new EventSource(url);
-  const types: DebateStreamEvent["type"][] = [
-    "debate_start",
-    "debate_turn",
-    "debate_verdict",
-    "debate_end",
-  ];
-  for (const t of types) {
-    es.addEventListener(t, (ev) => {
-      const msg = ev as MessageEvent<string>;
-      params.onEvent(JSON.parse(msg.data) as DebateStreamEvent);
-    });
-  }
-  es.onerror = (err) => {
-    params.onError?.(err);
-  };
-  return () => es.close();
 }
 
 export async function getRiskConfig(): Promise<RiskConfig> {
@@ -6175,6 +5855,10 @@ export interface BacktestRequestDto {
       version?: string;
       timezone?: string;
       sessionsBySymbol?: Record<string, Record<string, "open" | "closed">>;
+      sessionWindowsBySymbol?: Record<
+        string,
+        Record<string, Array<{ openAt: string; closeAt: string; label?: string }>>
+      >;
     };
     corporateActionEvents?: Array<{
       symbol: string;

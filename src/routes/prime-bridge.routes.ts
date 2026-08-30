@@ -32,7 +32,8 @@ import {
 } from "../runtime/prime/bridge-run-context";
 import { projectCoreBridgeToolCall } from "../runtime/prime/project-core-activity";
 import { getCoreMonitorHandle } from "../runtime/prime/project-core-monitor";
-import { classifyToolError } from "../runtime/react/nodes/tool-error-classifier";
+import { getRegisteredToolDefinition } from "../runtime/tools/tool-definition-registry";
+import { classifyToolError } from "../runtime/host/tool-error-classifier";
 import {
   evaluateToolGovernance,
   isCacheableWorkflowToolFailure,
@@ -75,6 +76,7 @@ export const BRIDGED_TOOLS = [
   "skill.patch",
   "skill.archive",
   "workspace.memory.search",
+  "tool.catalog.search",
 
   // Research / strategy contracts
   "run_screener",
@@ -101,12 +103,13 @@ export const BRIDGED_TOOLS = [
   "model.publish_as_factor",
   "backtest.run",
   "backtest.walk_forward",
+  "backtest.final_holdout",
   "workspace.context.snapshot",
   "web.search",
   "web.fetch",
-  // Specialist read/analysis tools. AgentSpec `tool_surface_ref` is not yet
-  // resolved by Core, so every tool a child is expected to call must also be
-  // advertised by the legacy bridge (and mirrored in qubit-tool-host).
+  // Specialist read/analysis tools. AgentSpec.tools selects the per-agent
+  // subset in Core; this bridge list remains the capability inventory and
+  // fallback surface when a legacy spec has no explicit tool list.
   "fetch_klines",
   "fetch_quote",
   "fetch_ticks",
@@ -683,14 +686,16 @@ primeBridgeRouter.post("/rpc", async (c) => {
         result: {
           tools: [
             ...names.map((name) => ({
-              name,
-              description: name.startsWith("call_team_")
-                ? `Dispatch specialist subagent via A2A (${name}). Prefer for context-split research; pass {goal}.`
-                : `Legacy Bun builtin (bridged): ${name}`,
+              ...getRegisteredToolDefinition(name),
+              description:
+                name.startsWith("call_team_")
+                  ? `Dispatch specialist subagent via A2A (${name}). Prefer for context-split research; pass {goal}.`
+                  : getRegisteredToolDefinition(name).description,
             })),
             ...mcpTools.map((t) => ({
               name: t.name,
               description: t.description,
+              parameters: t.inputSchema,
             })),
           ],
         },

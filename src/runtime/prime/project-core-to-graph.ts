@@ -91,32 +91,6 @@ export async function projectCoreTurnResult(input: {
   });
 }
 
-/** research_team_execute (Bun MSA) → topology edges under rust valve */
-export async function projectTeamResearchEdges(input: {
-  workflowRunId: string;
-  attendedRoles?: string[];
-  ticker?: string;
-  fusionId?: string;
-}): Promise<void> {
-  const roles = input.attendedRoles?.filter(Boolean) ?? [];
-  for (const role of roles) {
-    await logResearchTeamInteraction({
-      workflowRunId: input.workflowRunId,
-      fromRole: "orchestrator",
-      toRole: role,
-      kind: "tool_call",
-      toolKind: "prime_team_msa",
-      toolName: "research_team_execute",
-      contentText: input.ticker ? `team slot ${role} for ${input.ticker}` : `team slot ${role}`,
-      payloadJson: {
-        backend: "rust",
-        phase: "prime_team_msa_bridge",
-        fusionId: input.fusionId,
-      },
-    });
-  }
-}
-
 /** agent.invoke → topology edge + ChatExecutionActivity (supports Running → terminal). */
 export async function projectCoreInvocation(input: {
   workflowRunId: string;

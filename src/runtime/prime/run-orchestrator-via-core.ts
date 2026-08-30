@@ -10,7 +10,7 @@ import { completeA2ATask, markA2ATaskWorking } from "../a2a/a2a-task-service";
 import { buildTaskResult } from "../a2a/task-result";
 import { completeWorkflowConversationAssistant } from "../conversation/conversation-projection";
 import { onWorkflowTerminal } from "../monitor/observability-hook";
-import { stepStreamBus } from "../react/event-stream";
+import { stepStreamBus } from "../host/event-stream";
 import type { RuntimeHandlerContext } from "../types";
 import { createHitlRequest, loadWorkflowLoopContext } from "../workflow/hitl-service";
 import { setWorkflowState } from "../workflow/workflow-state-machine";

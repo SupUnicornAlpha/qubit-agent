@@ -3,13 +3,14 @@
 //! Includes Bun MCP surface advertised as `mcp:<server>:<tool>`
 //! (`call_mcp` remains invokable for back-compat but is not advertised).
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use qubit_protocol::{EffectKind, EffectRecord, SessionId, ToolCallId, ToolResult};
 use qubit_tool_host::{
     is_default_bridged_tool_name, LegacyBridgeClient, LegacyInvokeParams, LegacyToolSpec,
-    DEFAULT_BRIDGED_TOOLS,
+    ToolDefinition, DEFAULT_BRIDGED_TOOLS,
 };
 use tokio::sync::RwLock;
 use tracing::{info, warn};
@@ -29,6 +30,9 @@ pub struct BridgeToolHost {
     client: Arc<LegacyBridgeClient>,
     /// Cached names from list, or default allowlist if list fails.
     names: Arc<RwLock<Vec<String>>>,
+    /// Cached registry definitions. Schemas are loaded from Bun, never
+    /// reconstructed in the Core model adapter.
+    specs: Arc<RwLock<Vec<LegacyToolSpec>>>,
     turn_ctx: Arc<RwLock<BridgeTurnContext>>,
 }
 
@@ -50,6 +54,7 @@ impl BridgeToolHost {
                     .map(|s| (*s).to_string())
                     .collect(),
             )),
+            specs: Arc::new(RwLock::new(Vec::new())),
             turn_ctx: Arc::new(RwLock::new(BridgeTurnContext::default())),
         }
     }
@@ -65,6 +70,7 @@ impl BridgeToolHost {
                 if !names.is_empty() {
                     *self.names.write().await = names;
                 }
+                *self.specs.write().await = specs.clone();
                 Ok(specs)
             }
             Err(e) => {
@@ -236,6 +242,25 @@ impl ToolHost for BridgeToolHost {
                     .collect()
             })
     }
+
+    fn tool_definitions(&self, names: &[String]) -> Vec<ToolDefinition> {
+        let specs = self
+            .specs
+            .try_read()
+            .map(|guard| guard.clone())
+            .unwrap_or_default();
+        names
+            .iter()
+            .map(|name| {
+                specs
+                    .iter()
+                    .find(|spec| spec.name == *name)
+                    .cloned()
+                    .map(ToolDefinition::from)
+                    .unwrap_or_else(|| ToolDefinition::generic(name.clone()))
+            })
+            .collect()
+    }
 }
 
 /// Routes L0 tools locally and everything else to the bridge (or fallback).
@@ -358,5 +383,43 @@ impl ToolHost for CompositeToolHost {
             }
         }
         names
+    }
+
+    fn tool_definitions(&self, names: &[String]) -> Vec<ToolDefinition> {
+        let mut registry = BTreeMap::new();
+        for definition in self.l0.tool_definitions(names) {
+            registry.insert(definition.name.clone(), definition);
+        }
+        if let Some(ref bridge) = self.bridge {
+            for definition in bridge.tool_definitions(names) {
+                registry
+                    .entry(definition.name.clone())
+                    .and_modify(|current: &mut ToolDefinition| {
+                        if current.description.is_empty() {
+                            *current = definition.clone();
+                        }
+                    })
+                    .or_insert(definition);
+            }
+        }
+        for definition in self.fallback.tool_definitions(names) {
+            registry
+                .entry(definition.name.clone())
+                .and_modify(|current: &mut ToolDefinition| {
+                    if current.description.is_empty() {
+                        *current = definition.clone();
+                    }
+                })
+                .or_insert(definition);
+        }
+        names
+            .iter()
+            .map(|name| {
+                registry
+                    .get(name)
+                    .cloned()
+                    .unwrap_or_else(|| ToolDefinition::generic(name.clone()))
+            })
+            .collect()
     }
 }

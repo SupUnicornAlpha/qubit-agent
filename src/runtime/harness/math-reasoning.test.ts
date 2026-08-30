@@ -64,13 +64,26 @@ const contract: MathDerivationContract = {
 const evaluator: MathNumericEvaluator = {
   id: "test",
   async evaluate({ expression, variables }) {
-    if (expression === "sum") return { ok: true, value: variables.x + variables.y };
-    if (expression === "nonnegative") return { ok: true, value: variables.x >= 0 };
-    if (expression === "too_large") return { ok: true, value: variables.x > 4 };
-    if (expression === "double_x") return { ok: true, value: 2 * variables.x };
+    if (expression === "sum")
+      return { ok: true, value: variable(variables, "x") + variable(variables, "y") };
+    if (expression === "nonnegative") return { ok: true, value: variable(variables, "x") >= 0 };
+    if (expression === "too_large") return { ok: true, value: variable(variables, "x") > 4 };
+    if (expression === "double_x") return { ok: true, value: 2 * variable(variables, "x") };
     return { ok: false, error: "unknown" };
   },
 };
+
+function variable(variables: Record<string, number>, key: string): number {
+  const value = variables[key];
+  if (value === undefined) throw new Error(`missing test variable: ${key}`);
+  return value;
+}
+
+function requiredItem<T>(items: readonly T[]): T {
+  const [item] = items;
+  if (item === undefined) throw new Error("missing test fixture item");
+  return item;
+}
 
 describe("MathDerivationContract", () => {
   test("accepts a complete, audit-friendly contract and independently verifies it", async () => {
@@ -94,7 +107,7 @@ describe("MathDerivationContract", () => {
     expect(parseMathDerivationContract(withThought).ok).toBe(false);
     const badReference: MathDerivationContract = {
       ...contract,
-      derivation: [{ ...contract.derivation[0], formulaIds: ["missing"] }],
+      derivation: [{ ...requiredItem(contract.derivation), formulaIds: ["missing"] }],
     };
     const parsed = parseMathDerivationContract(badReference);
     expect(parsed.ok).toBe(false);
@@ -104,7 +117,7 @@ describe("MathDerivationContract", () => {
       ...contract,
       checks: {
         ...contract.checks,
-        numerical: [{ ...contract.checks.numerical[0], variables: { z: 1 } }],
+        numerical: [{ ...requiredItem(contract.checks.numerical), variables: { z: 1 } }],
       },
     };
     const invalidVariables = parseMathDerivationContract(undefinedVariable);
@@ -117,7 +130,7 @@ describe("MathDerivationContract", () => {
       ...contract,
       checks: {
         ...contract.checks,
-        counterexamples: [{ ...contract.checks.counterexamples[0], expected: true }],
+        counterexamples: [{ ...requiredItem(contract.checks.counterexamples), expected: true }],
       },
     };
     const audit = await auditMathDerivation({

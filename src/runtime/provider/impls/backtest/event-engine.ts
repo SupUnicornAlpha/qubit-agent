@@ -86,6 +86,8 @@ export interface EngineInput {
   benchmarkSeries?: Array<{ date: string; close: number }>;
   /** 冻结的合约定义；衍生品的乘数、到期与资金费均从这里解析。 */
   instruments?: Record<string, BacktestInstrumentSpec>;
+  /** Frequency-aware annualization denominator. */
+  periodsPerYear?: number;
   /** Explicit corporate delisting settlements from the immutable action ledger. */
   delistings?: Array<{ symbol: string; effectiveDate: string; cashAmount?: number }>;
 }
@@ -101,15 +103,17 @@ interface Position {
   futuresMargin?: FuturesMarginPosition;
 }
 
-function isRebalanceDay(
-  date: string,
-  prevDate: string | null,
+function isRebalanceSession(
+  timestamp: string,
+  lastRebalanceTimestamp: string | null,
   freq: "daily" | "weekly" | "monthly"
 ): boolean {
-  if (freq === "daily") return true;
-  if (!prevDate) return true;
-  const cur = new Date(`${date}T00:00:00Z`);
-  const prev = new Date(`${prevDate}T00:00:00Z`);
+  if (!lastRebalanceTimestamp) return true;
+  const cur = new Date(timestamp);
+  const prev = new Date(lastRebalanceTimestamp);
+  if (freq === "daily") {
+    return cur.toISOString().slice(0, 10) !== prev.toISOString().slice(0, 10);
+  }
   if (freq === "weekly") {
     const cw = isoWeek(cur);
     const pw = isoWeek(prev);
@@ -165,9 +169,15 @@ function pickHoldings(
 function computeMetrics(
   equityCurve: BacktestEquityPoint[],
   trades: BacktestTrade[],
-  initialCapital: number
+  initialCapital: number,
+  periodsPerYear?: number
 ): BacktestMetrics {
-  const metrics = computePerformanceMetrics({ equityCurve, trades, initialCapital });
+  const metrics = computePerformanceMetrics({
+    equityCurve,
+    trades,
+    initialCapital,
+    periodsPerYear,
+  });
   return {
     ...metrics,
     winRate: metrics.positivePeriodRate,
@@ -453,7 +463,9 @@ function isDelisted(
   date: string,
   delistings: ReadonlyArray<{ symbol: string; effectiveDate: string }>
 ): boolean {
-  return delistings.some((event) => event.symbol === symbol && event.effectiveDate <= date);
+  return delistings.some(
+    (event) => event.symbol === symbol && event.effectiveDate <= date.slice(0, 10)
+  );
 }
 
 /**
@@ -477,7 +489,7 @@ function settleDelistingsAtOpen(input: {
 }): number {
   let cash = input.cash;
   for (const event of input.delistings) {
-    if (event.effectiveDate !== input.date) continue;
+    if (event.effectiveDate !== input.date.slice(0, 10)) continue;
     const position = input.positions.get(event.symbol);
     if (!position) continue;
     const bar = input.barsToday.get(event.symbol);
@@ -540,6 +552,7 @@ export function runEventEngine(input: EngineInput): BacktestResult {
     benchmarkSeries,
     instruments,
     delistings = [],
+    periodsPerYear,
   } = input;
 
   const equityCurve: BacktestEquityPoint[] = [];
@@ -563,9 +576,10 @@ export function runEventEngine(input: EngineInput): BacktestResult {
     const date = dates[di]!;
     const barsToday = bars.get(date);
     if (!barsToday) continue;
+    const sessionDate = date.slice(0, 10);
 
     cash = rollFuturesAtOpen({
-      date,
+      date: sessionDate,
       barsToday,
       instruments,
       costs,
@@ -593,7 +607,10 @@ export function runEventEngine(input: EngineInput): BacktestResult {
     const isFirstEntry = positions.size === 0;
     if (
       di > 0 &&
-      (isFirstEntry || isRebalanceDay(dates[di - 1]!, prevRebalanceDate, rebalance)) &&
+      // Targets are produced by the previous bar and executed at this bar's
+      // open. Therefore the rebalance clock follows that signal bar, never
+      // the execution bar itself.
+      (isFirstEntry || isRebalanceSession(dates[di - 1]!, prevRebalanceDate, rebalance)) &&
       (targets.longs.length > 0 || targets.shorts.length > 0 || positions.size > 0)
     ) {
       // 计算当前组合市值（用今日 open）
@@ -605,10 +622,10 @@ export function runEventEngine(input: EngineInput): BacktestResult {
       const activeLongs = Array.from(
         new Set(
           targets.longs
-            .map((symbol) => resolveFutureRollSymbol(symbol, date, instruments))
+            .map((symbol) => resolveFutureRollSymbol(symbol, sessionDate, instruments))
             .filter(
               (symbol) =>
-                !isExpired(normalizeInstrument(symbol, instruments), date) &&
+                !isExpired(normalizeInstrument(symbol, instruments), sessionDate) &&
                 !isDelisted(symbol, date, delistings)
             )
         )
@@ -616,10 +633,10 @@ export function runEventEngine(input: EngineInput): BacktestResult {
       const activeShorts = Array.from(
         new Set(
           targets.shorts
-            .map((symbol) => resolveFutureRollSymbol(symbol, date, instruments))
+            .map((symbol) => resolveFutureRollSymbol(symbol, sessionDate, instruments))
             .filter(
               (symbol) =>
-                !isExpired(normalizeInstrument(symbol, instruments), date) &&
+                !isExpired(normalizeInstrument(symbol, instruments), sessionDate) &&
                 !isDelisted(symbol, date, delistings)
             )
         )
@@ -634,7 +651,7 @@ export function runEventEngine(input: EngineInput): BacktestResult {
       for (const [sym, pos] of positions) {
         if (allTargets.has(sym)) continue;
         // 到期合约必须走当日官方结算价，不能被普通再平衡提前按 open 平仓。
-        if (isExpired(normalizeInstrument(sym, instruments), date)) continue;
+        if (isExpired(normalizeInstrument(sym, instruments), sessionDate)) continue;
         const curBar = barsToday.get(sym);
         const openPx = curBar?.open;
         if (openPx == null) continue;
@@ -953,7 +970,7 @@ export function runEventEngine(input: EngineInput): BacktestResult {
         !spec.optionRight ||
         !spec.strike ||
         !spec.expiryDate ||
-        isExpired(spec, date)
+        isExpired(spec, sessionDate)
       ) {
         continue;
       }
@@ -1049,7 +1066,7 @@ export function runEventEngine(input: EngineInput): BacktestResult {
           continue;
         }
       }
-      if (isExpired(spec, date)) {
+      if (isExpired(spec, sessionDate)) {
         const qty = Math.abs(pos.qty);
         const side: "buy" | "sell" = pos.qty > 0 ? "sell" : "buy";
         const notional = Math.abs(contractNotional(qty, settlePx, spec));
@@ -1072,7 +1089,7 @@ export function runEventEngine(input: EngineInput): BacktestResult {
     for (const [sym, pos] of positions) {
       const spec = normalizeInstrument(sym, instruments);
       if (isFuturesInstrument(spec)) continue;
-      if (!isExpired(spec, date)) continue;
+      if (!isExpired(spec, sessionDate)) continue;
       const bar = barsToday.get(sym);
       if (!bar) continue;
       const settlePx = bar.settlementPrice ?? bar.close;
@@ -1110,7 +1127,7 @@ export function runEventEngine(input: EngineInput): BacktestResult {
     equityCurve.push(point);
   }
 
-  const metrics = computeMetrics(equityCurve, trades, capital);
+  const metrics = computeMetrics(equityCurve, trades, capital, periodsPerYear);
   return {
     equityCurve,
     trades,
@@ -1119,6 +1136,7 @@ export function runEventEngine(input: EngineInput): BacktestResult {
       latencyMs: Date.now() - t0,
       sampleSize: equityCurve.length,
       barCount: Array.from(bars.values()).reduce((s, m) => s + m.size, 0),
+      ...(periodsPerYear ? { periodsPerYear } : {}),
       skippedDays,
       ...(assetLifecycleEvents.length > 0 ? { assetLifecycleEvents } : {}),
     },

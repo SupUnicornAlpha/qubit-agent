@@ -66,7 +66,6 @@ export async function createStrategyRuntime(
   input: CreateStrategyRuntimeInput,
   db?: DbClient
 ): Promise<typeof strategyRuntime.$inferSelect> {
-  assertTradingModuleEnabled();
   const client = db ?? (await getDb());
 
   const scripts = await client
@@ -121,6 +120,10 @@ export async function createStrategyRuntime(
     }
   }
 
+  await assertTradingModuleEnabled(client, {
+    ...(brokerAccountId ? { brokerAccountId } : {}),
+  });
+
   const id = randomUUID();
   const now = new Date().toISOString();
   await client.insert(strategyRuntime).values({
@@ -149,7 +152,6 @@ export async function createStrategyRuntime(
 }
 
 export async function startStrategyRuntime(runtimeId: string, db?: DbClient): Promise<void> {
-  assertTradingModuleEnabled();
   const client = db ?? (await getDb());
   const runtimeRows = await client
     .select()
@@ -158,6 +160,10 @@ export async function startStrategyRuntime(runtimeId: string, db?: DbClient): Pr
     .limit(1);
   const runtime = runtimeRows[0];
   if (!runtime) throw new Error("strategy_runtime_not_found");
+  await assertTradingModuleEnabled(client, {
+    ...(runtime.brokerAccountId ? { brokerAccountId: runtime.brokerAccountId } : {}),
+    strategyRuntimeId: runtime.id,
+  });
   if (runtime.executionMode === "live") {
     await strategyPromotionService.assertRuntimeLiveEligible(runtimeId, client);
   }

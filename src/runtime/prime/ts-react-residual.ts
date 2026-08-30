@@ -1,24 +1,20 @@
 /**
- * TS ReAct residual inventory + hard guard for QUBIT_CORE_BACKEND=rust.
+ * Phase B: TS Agent runtime removed. Inventory kept for migration notes.
  *
- * Direct `executeAgentReact(` call sites (2026-08-05 audit):
- *   1. src/runtime/a2a/a2a-react-task.ts          — valved: rust → Core
- *   2. src/runtime/msa/role-reasoner.ts            — valved: rust → Core invoke
+ * Former `executeAgentReact` call sites have been reduced to Core adapters:
+ *   1. src/runtime/a2a/a2a-react-task.ts → runOrchestratorTaskViaCore / reasonSpecialistViaCore
  *
- * Not ReAct (keep on Bun indefinitely / OUT of Core loop):
- *   - handlers/order-intent-handler.ts  (ORDER_INTENT sign/forward)
- *   - msa/* coordination (MSA fan-out, fusion) — orchestration glue
- *   - CLI role reasoners (claude_cli / codex_cli)
+ * Host (Bun) retains external capabilities under `src/runtime/host/`:
+ *   - event-stream / step-stream types
+ *   - checkpoint row load/delete
+ *   - tool-error-classifier
  *
- * Delete gate for executeAgentReact module:
- *   - soak rust default without QUBIT_ALLOW_TS_REACT_UNDER_RUST
- *   - no production traffic on ts backend
- *   - bridge covers required L2 tools for primary+subagent
+ * Topology UI projection lives in `host/team-workflow-graph.ts` (not an Agent loop).
  */
 
 export type TsReactCallSite = {
   file: string;
-  valve: "rust→core" | "ts-only";
+  valve: "rust→core";
   notes: string;
 };
 
@@ -26,40 +22,28 @@ export const TS_REACT_CALL_SITES: readonly TsReactCallSite[] = [
   {
     file: "src/runtime/a2a/a2a-react-task.ts",
     valve: "rust→core",
-    notes: "orchestrator→turn.start; specialist→agent.invoke",
-  },
-  {
-    file: "src/runtime/msa/role-reasoner.ts",
-    valve: "rust→core",
-    notes: "NativeRoleReasoner → reasonSpecialistViaCore",
+    notes: "Host-side A2A adapter delegates every Agent turn/invoke to Core",
   },
 ] as const;
 
 export const TS_REACT_OUT_OF_SCOPE = [
-  "src/runtime/handlers/order-intent-handler.ts — ORDER_INTENT, no ReAct",
-  "src/runtime/msa/analyst-team.ts — MSA wave/fusion glue",
-  "src/runtime/msa/cli-role-reasoner.ts — external CLI engines",
+  "src/runtime/host/* — Bun Host observability / cleanup (not a Core)",
+  "src/runtime/host/team-workflow-graph.ts — Team UI topology projection",
+  "src/runtime/handlers/order-intent-handler.ts — ORDER_INTENT, no loop",
 ] as const;
 
-/** Escape hatch for soak / debugging when backend=rust must still run TS ReAct. */
+/** @deprecated Always false after Phase A/B. */
 export function isTsReactAllowedUnderRust(): boolean {
-  return process.env.QUBIT_ALLOW_TS_REACT_UNDER_RUST === "1";
+  return false;
 }
 
 /**
- * Throw if rust backend would enter executeAgentReact without explicit allow.
- * Call at the top of executeAgentReact.
+ * Any attempt to enter a TS Agent loop is a hard error.
+ * Prefer Core turn/invoke; there is no TS runtime anymore.
  */
 export function assertTsReactAllowed(callerHint: string): void {
-  const backend = (process.env.QUBIT_CORE_BACKEND ?? "ts").trim().toLowerCase();
-  if (backend !== "rust") return;
-  if (isTsReactAllowedUnderRust()) {
-    console.warn(
-      `[prime] TS ReAct entered under rust (QUBIT_ALLOW_TS_REACT_UNDER_RUST=1) via ${callerHint}`
-    );
-    return;
-  }
   throw new Error(
-    `TS ReAct blocked under QUBIT_CORE_BACKEND=rust (${callerHint}). Expected valve via Core turn/invoke. Set QUBIT_ALLOW_TS_REACT_UNDER_RUST=1 to override.`
+    `TS Agent runtime removed (Phase B). Refusing entry via ${callerHint}. ` +
+      `Use QUBIT_CORE_BACKEND=rust + Core turn/invoke.`
   );
 }

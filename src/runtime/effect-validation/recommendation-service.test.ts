@@ -89,6 +89,7 @@ describe("RecommendationService", () => {
       maxAdverseExcursionPct: -2,
       maxFavorableExcursionPct: 5,
       barsObserved: 2,
+      marketDataEvidence: { version: "test", target: { fingerprint: "outcome_market_test" } },
       evaluatedAt: "2026-01-03T00:00:00.000Z",
     });
     await recommendationService.recordOutcome({
@@ -113,6 +114,12 @@ describe("RecommendationService", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.symbol).toBe("AAPL");
     expect(rows[0]?.riskRewardRatio).toBe(2);
+    expect(
+      rows[0]?.outcomes.find((outcome) => outcome.horizonDays === 1)?.marketDataEvidenceJson
+    ).toEqual({
+      version: "test",
+      target: { fingerprint: "outcome_market_test" },
+    });
     expect(rows[0]?.positionSizePct).toBeCloseTo(0.143333, 6);
     expect(rows[0]?.outcome?.takeProfitTriggered).toBe(true);
     expect(rows[0]?.outcomes.map((outcome) => outcome.horizonDays)).toEqual([1, 5]);

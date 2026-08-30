@@ -30,4 +30,26 @@ describe("point-in-time fundamental expression fields", () => {
     expect(fundamentalFieldName("revenue ttm")).toBe("fund_revenue_ttm");
     expect(fields.fund_revenue_ttm).toEqual([null, 100, 105]);
   });
+
+  test("fails closed when two metric names collapse to the same expression field", () => {
+    expect(() =>
+      materializeFundamentalPitFields(
+        [{ timestamp: "2026-01-02T00:00:00.000Z" }],
+        [
+          {
+            metric: "net income",
+            fiscalPeriodEnd: "2025-12-31",
+            availableAt: "2026-01-01T00:00:00.000Z",
+            value: 1,
+          },
+          {
+            metric: "net-income",
+            fiscalPeriodEnd: "2025-12-31",
+            availableAt: "2026-01-01T00:00:00.000Z",
+            value: 1,
+          },
+        ]
+      )
+    ).toThrow(/fundamental_metric_field_collision/);
+  });
 });

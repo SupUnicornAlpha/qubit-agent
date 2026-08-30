@@ -126,6 +126,34 @@ export const MarketCalendarSessionsByVenueSchema = z.record(
 );
 export type MarketCalendarSessionsByVenue = z.infer<typeof MarketCalendarSessionsByVenueSchema>;
 
+/** Frozen intraday session windows. A split session or early close is explicit. */
+export const MarketCalendarSessionWindowSchema = z.object({
+  openAt: z.string().min(1),
+  closeAt: z.string().min(1),
+  label: z.string().min(1).optional(),
+});
+export type MarketCalendarSessionWindow = z.infer<typeof MarketCalendarSessionWindowSchema>;
+export const MarketCalendarSessionWindowsByVenueSchema = z.record(
+  z.record(z.array(MarketCalendarSessionWindowSchema).min(1))
+);
+export type MarketCalendarSessionWindowsByVenue = z.infer<
+  typeof MarketCalendarSessionWindowsByVenueSchema
+>;
+
+/**
+ * Provenance for the frozen rate and implied-volatility inputs consumed by
+ * option risk audit. Values stay on the Bar; this ledger records which
+ * point-in-time curve/quote release supplied them.
+ */
+export const MarketDerivativePricingLedgerSchema = z.object({
+  version: z.string().min(1),
+  source: z.string().min(1),
+  asOf: z.string().min(1),
+  impliedVolatilityMethod: z.enum(["market_quote", "surface_interpolated"]),
+  riskFreeRateMethod: z.enum(["explicit_term_rate", "zero_curve_interpolated"]),
+});
+export type MarketDerivativePricingLedger = z.infer<typeof MarketDerivativePricingLedgerSchema>;
+
 /**
  * Frozen point-in-time membership intervals for a research universe. The source table must
  * describe membership changes rather than only the symbols that survive in today's universe.
@@ -208,6 +236,29 @@ export const MarketFundamentalLedgerSchema = z.object({
 });
 export type MarketFundamentalLedger = z.infer<typeof MarketFundamentalLedgerSchema>;
 
+/**
+ * Point-in-time external risk exposures (industry/style/market). These are
+ * deliberately separate from factor values: a signal's own VIF cannot prove
+ * sector neutrality. Every revision remains addressable through availableAt.
+ */
+export const MarketRiskExposureObservationSchema = z.object({
+  effectiveDate: z.string().min(1),
+  availableAt: z.string().min(1),
+  exposures: z.record(z.number().finite()),
+  revisionId: z.string().min(1).optional(),
+  reference: z.string().min(1).optional(),
+});
+export type MarketRiskExposureObservation = z.infer<typeof MarketRiskExposureObservationSchema>;
+
+export const MarketRiskExposureLedgerSchema = z.object({
+  version: z.string().min(1),
+  source: z.string().min(1),
+  asOf: z.string().min(1),
+  model: z.string().min(1),
+  observationsBySymbol: z.record(z.array(MarketRiskExposureObservationSchema)),
+});
+export type MarketRiskExposureLedger = z.infer<typeof MarketRiskExposureLedgerSchema>;
+
 export const DataQualityVerdictSchema = z.object({
   instrument: MarketInstrumentSchema,
   feed: z.string().min(1),
@@ -244,9 +295,12 @@ export const MarketSnapshotSchema = z.object({
   universeHistory: MarketUniverseHistorySchema.optional(),
   corporateActionLedger: MarketCorporateActionLedgerSchema.optional(),
   fundamentalLedger: MarketFundamentalLedgerSchema.optional(),
+  riskExposureLedger: MarketRiskExposureLedgerSchema.optional(),
   timezone: z.string().default("UTC"),
   calendarVersion: z.string().optional(),
   calendarSessionsByVenue: MarketCalendarSessionsByVenueSchema.optional(),
+  calendarSessionWindowsByVenue: MarketCalendarSessionWindowsByVenueSchema.optional(),
+  derivativePricingLedger: MarketDerivativePricingLedgerSchema.optional(),
   eventRefs: z.array(z.string()).default([]),
   createdAt: z.string().min(1),
   schemaVersion: z.literal(MARKET_EVENT_SCHEMA_VERSION),
@@ -259,6 +313,69 @@ export const ResearchThesisClaimSchema = z.object({
   counterEvidenceRefs: z.array(z.string()).default([]),
 });
 
+/** A declared investment lens makes a thesis comparable and falsifiable across runs. */
+export const ResearchFrameworkSchema = z.enum([
+  "quality_growth",
+  "value_margin_of_safety",
+  "growth_at_reasonable_price",
+  "trend_following",
+  "event_driven",
+  "macro_regime",
+  "market_neutral_factor",
+  "custom",
+]);
+export type ResearchFramework = z.infer<typeof ResearchFrameworkSchema>;
+
+/**
+ * Source-linked, compilable investment lens. It intentionally describes rules
+ * and observable proxies, never an alleged private reasoning trace of a named
+ * investor.
+ */
+export const InvestmentFrameworkCardSchema = z.object({
+  version: z.literal("investment-framework-card-v1"),
+  framework: ResearchFrameworkSchema,
+  sourceRefs: z.array(z.string().min(1)).min(1),
+  principles: z
+    .array(
+      z.object({
+        statement: z.string().min(1),
+        sourceRefs: z.array(z.string().min(1)).min(1),
+      })
+    )
+    .min(1),
+  economicMechanism: z.string().min(1),
+  observableProxies: z
+    .array(
+      z.object({
+        key: z.string().regex(/^[a-z][a-z0-9_]*$/),
+        label: z.string().min(1),
+        comparison: z.enum(["gte", "lte"]),
+        threshold: z.number().finite(),
+        weight: z.number().positive(),
+        sourceRefs: z.array(z.string().min(1)).min(1),
+      })
+    )
+    .min(1),
+  selectionThreshold: z.number().min(0).max(1),
+  applicability: z.object({
+    assetClasses: z.array(z.string().min(1)).min(1),
+    markets: z.array(z.string().min(1)).min(1),
+    regimes: z.array(z.string().min(1)).min(1),
+    holdingPeriod: z.string().min(1),
+  }),
+  exclusionConditions: z.array(z.string().min(1)).min(1),
+  invalidation: z
+    .array(
+      z.object({ condition: z.string().min(1), observable: z.string().min(1) })
+    )
+    .min(1),
+  riskBudget: z.object({
+    maxPositionWeightPct: z.number().positive().max(1),
+    maxPortfolioDrawdownPct: z.number().positive().max(1),
+  }),
+});
+export type InvestmentFrameworkCard = z.infer<typeof InvestmentFrameworkCardSchema>;
+
 export const ResearchThesisSchema = z.object({
   thesisId: z.string().min(1),
   snapshotId: z.string().min(1),
@@ -266,6 +383,8 @@ export const ResearchThesisSchema = z.object({
   direction: z.enum(["long", "short", "neutral"]),
   horizon: z.string().min(1),
   confidence: z.number().min(0).max(1),
+  framework: ResearchFrameworkSchema.optional(),
+  frameworkCard: InvestmentFrameworkCardSchema.optional(),
   claims: z.array(ResearchThesisClaimSchema).default([]),
   invalidation: z
     .array(

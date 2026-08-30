@@ -23,6 +23,7 @@ pub mod session;
 pub mod stall;
 pub mod store;
 pub mod supervisor;
+pub mod tool_surface;
 pub mod tools;
 pub mod trigger;
 

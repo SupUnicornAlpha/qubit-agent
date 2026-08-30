@@ -7,10 +7,8 @@ import { registerBuiltinConnectors } from "./connectors/bootstrap";
 import { a2aRouter } from "./routes/a2a.routes";
 import { agentEvalRouter } from "./routes/agent-eval.routes";
 import { agentRouter } from "./routes/agent.routes";
-import { analystRouter } from "./routes/analyst.routes";
 import { backtestJobRouter } from "./routes/backtest-job.routes";
 import { chatRouter } from "./routes/chat.routes";
-import { debateRouter } from "./routes/debate.routes";
 import { discoveryRouter } from "./routes/discovery.routes";
 import { environmentRouter } from "./routes/environment.routes";
 import { executionRouter } from "./routes/execution.routes";
@@ -31,6 +29,7 @@ import { providerRouter } from "./routes/provider.routes";
 import { quantRouter } from "./routes/quant.routes";
 import { recommendationRouter } from "./routes/recommendation.routes";
 import { reiaRouter } from "./routes/reia.routes";
+import { researchArtifactsRouter } from "./routes/research-artifacts.routes";
 import { researchScenarioRouter } from "./routes/research-scenario.routes";
 import { riskRouter } from "./routes/risk.routes";
 import { ruleRouter } from "./routes/rule.routes";
@@ -50,7 +49,7 @@ import {
   marketStreamGateway,
 } from "./runtime/market/market-stream-gateway";
 import { getPrimeAttachStatus } from "./runtime/prime/attach";
-import { stepStreamBus } from "./runtime/react/event-stream";
+import { stepStreamBus } from "./runtime/host/event-stream";
 
 void registerBuiltinConnectors();
 void refreshHarnessPackageRuntime();
@@ -95,8 +94,7 @@ app.route("/api/v1/chat", chatRouter);
 app.route("/api/v1/monitor", monitorRouter);
 app.route("/api/v1/agent-eval", agentEvalRouter);
 app.route("/api/v1/integrations", integrationsRouter);
-app.route("/api/v1/analyst", analystRouter);
-app.route("/api/v1/debate", debateRouter);
+app.route("/api/v1/research-artifacts", researchArtifactsRouter);
 app.route("/api/v1/risk", riskRouter);
 app.route("/api/v1/screener", screenerRouter);
 app.route("/api/v1/gene", geneRouter);
@@ -128,19 +126,6 @@ app.route("/api/v1/a2a", a2aRouter);
 app.route("/api/v1/llm-providers", llmProviderRouter);
 // 后端元信息：commit / startedAt / pid / watchMode，便于"代码到底有没有生效"快速排查
 app.route("/api/v1/_meta", metaRouter);
-app.get("/api/v1/workflows/:id/stream", (c) => {
-  const runId = c.req.query("runId");
-  if (!runId) return c.json({ error: "runId is required" }, 400);
-  const stream = stepStreamBus.createSseStream(runId);
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
-    },
-  });
-});
 app.get("/api/v1/workflows/:id/stream/:runId", (c) => {
   const runId = c.req.param("runId");
   const stream = stepStreamBus.createSseStream(runId);

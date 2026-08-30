@@ -10,6 +10,7 @@ import {
 } from "../execution/broker/broker-service";
 import { engagedKillSwitches } from "../execution/kill-switch";
 import { scanPositionReconciliation } from "../execution/position-reconciliation-service";
+import { getTradingModuleStatus } from "../trader/trading-module-control";
 import type { BuiltinToolHandler } from "./types";
 
 const PROVIDERS = new Set<BrokerProvider>([
@@ -122,9 +123,12 @@ export const EXECUTION_OBSERVABILITY_HANDLERS: Record<string, BuiltinToolHandler
       ...(projectId ? { projectId } : {}),
       ...(strategyId ? { strategyId } : {}),
     });
+    const module = await getTradingModuleStatus();
+    if (!module.enabled) engaged.push("trading_module");
     return {
       clear: engaged.length === 0,
       engaged,
+      tradingModule: module,
       scope: {
         provider: provider ?? null,
         accountRef: accountRef ?? null,

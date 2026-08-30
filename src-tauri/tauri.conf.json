@@ -6,7 +6,7 @@
   "build": {
     "frontendDist": "../frontend/dist",
     "devUrl": "http://localhost:3041",
-    "beforeDevCommand": "bun run --cwd frontend dev",
+    "beforeDevCommand": "bash scripts/ensure-dev-tauri-sidecar.sh && bun run --cwd frontend dev",
     "beforeBuildCommand": "bun run --cwd frontend build"
   },
   "app": {

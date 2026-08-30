@@ -1,7 +1,7 @@
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FC } from "react";
 import { createPortal } from "react-dom";
-import { createConversationTurn, getOrCreateDefaultProject, createChatSession, getChatSessionWorkflow, putFsWorkspaceRun, getDefaultWorkspace, getDefaultProjectSession, getAnalystTeamGraph, deleteWorkflow, listMonitorWorkflows, listProjects, patchWorkflow, updateWorkflowGoal, injectWorkflowMessage, interruptWorkflow, listFactors, listStrategyVersions, listStrategyScripts, listBacktestJobs, subscribeWorkflowEvents } from "../api/backend";
+import { createConversationTurn, getOrCreateDefaultProject, createChatSession, getChatSessionWorkflow, putFsWorkspaceRun, getDefaultWorkspace, getDefaultProjectSession, getResearchWorkflowGraph, deleteWorkflow, listMonitorWorkflows, listProjects, patchWorkflow, updateWorkflowGoal, injectWorkflowMessage, interruptWorkflow, listFactors, listStrategyVersions, listStrategyScripts, listBacktestJobs, subscribeWorkflowEvents } from "../api/backend";
 import type { AnalystTeamGraphPayload, AnalystTeamGraphInteraction, AnalystTeamGraphAgentStep, AnalystTeamGraphToolCall, AnalystTeamGraphMcpCall, StepStreamEvent, AgentControlMode, AgentLoopKind } from "../api/types";
 import { useAppStore } from "../store";
 import { stripToolCallSentinels } from "../lib/chatMessageHydration";
@@ -503,7 +503,7 @@ export const TeamDashboardPanel: FC = () => {
   const [teamGraph, setTeamGraph] = useState<AnalystTeamGraphPayload | null>(null);
   /** SSE 正常时由事件驱动拓扑回拉；断线时才启用低频轮询兜底。 */
   const [workflowEventStreamUnavailable, setWorkflowEventStreamUnavailable] = useState(false);
-  /** 单调递增；切 workflow 后丢弃过期的 getAnalystTeamGraph 响应（长对话尤其容易晚归）。 */
+  /** 单调递增；切 workflow 后丢弃过期的拓扑响应（长对话尤其容易晚归）。 */
   const teamGraphLoadGenRef = useRef(0);
   const [graphSelection, setGraphSelection] = useState<TeamGraphSelection>(null);
   const [graphLoading, setGraphLoading] = useState(false);
@@ -564,7 +564,7 @@ export const TeamDashboardPanel: FC = () => {
     const gen = ++teamGraphLoadGenRef.current;
     if (!opts?.background) setGraphLoading(true);
     try {
-      const g = await getAnalystTeamGraph(wf);
+      const g = await getResearchWorkflowGraph(wf);
       // 用户已切到其他工作流：丢掉本响应，否则长对话会把右侧/中栏「钉」回旧任务。
       if (gen !== teamGraphLoadGenRef.current || workflowRunIdRef.current.trim() !== wf) {
         return;

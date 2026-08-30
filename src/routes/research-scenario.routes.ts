@@ -1,5 +1,5 @@
 /**
- * /api/v1/research-scenarios — 研究场景注册中心查看 & 启动接口
+ * /api/v1/research-scenarios — 研究场景注册中心查看与对话前置校验
  *
  * 详见 docs/FACTOR_RULE_STRATEGY_DESIGN.md §6.6
  */
@@ -59,61 +59,6 @@ researchScenarioRouter.post("/:key/validate", async (c) => {
   } catch (e) {
     if (e instanceof ScenarioError) {
       return c.json({ ok: false, code: e.code, error: e.message }, 400);
-    }
-    throw e;
-  }
-});
-
-/** POST /api/v1/research-scenarios/:key/plan-launch  { projectId, inputParams } */
-researchScenarioRouter.post("/:key/plan-launch", async (c) => {
-  const key = c.req.param("key");
-  const body = await c.req.json<{
-    projectId: string;
-    inputParams: Record<string, unknown>;
-    loopOverrides?: Record<string, unknown>;
-  }>();
-  try {
-    const plan = await researchScenarioService.planLaunch({
-      scenarioKey: key,
-      projectId: body.projectId,
-      inputParams: body.inputParams ?? {},
-      ...(body.loopOverrides ? { loopOverrides: body.loopOverrides as never } : {}),
-    });
-    return c.json({ ok: true, data: plan });
-  } catch (e) {
-    if (e instanceof ScenarioError) {
-      return c.json({ ok: false, code: e.code, error: e.message }, 400);
-    }
-    throw e;
-  }
-});
-
-/** POST /api/v1/research-scenarios/:key/launch  { projectId, inputParams, goal? } */
-researchScenarioRouter.post("/:key/launch", async (c) => {
-  const key = c.req.param("key");
-  const body = await c.req.json<{
-    projectId: string;
-    goal?: string;
-    inputParams: Record<string, unknown>;
-    loopOverrides?: Record<string, unknown>;
-  }>();
-  try {
-    const launched = await researchScenarioService.launch({
-      scenarioKey: key,
-      projectId: body.projectId,
-      ...(body.goal ? { goal: body.goal } : {}),
-      inputParams: body.inputParams ?? {},
-      ...(body.loopOverrides ? { loopOverrides: body.loopOverrides as never } : {}),
-    });
-    return c.json({ ok: true, data: launched }, 202);
-  } catch (e) {
-    if (e instanceof ScenarioError) {
-      const status =
-        e.code === "scenario_not_found" ? 404 : e.code === "missing_capability" ? 409 : 400;
-      const payload = { ok: false, code: e.code, error: e.message, details: e.details };
-      if (status === 404) return c.json(payload, 404);
-      if (status === 409) return c.json(payload, 409);
-      return c.json(payload, 400);
     }
     throw e;
   }

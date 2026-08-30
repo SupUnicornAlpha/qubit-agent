@@ -51,4 +51,17 @@ describe("Harness tool surface shadow", () => {
       selectHarnessShadowProfiles({ role: "research", legacyTools: ["fetch_klines"] })
     ).not.toContain("math-audit");
   });
+
+  test("composes quant integrity only through an explicit integrity or paper workflow", () => {
+    expect(
+      buildHarnessToolSurfaceShadow({
+        role: "research",
+        legacyTools: ["fetch_klines", "backtest.run"],
+      }).capabilityIds
+    ).toContain("quant.research-integrity");
+    expect(
+      buildHarnessToolSurfaceShadow({ role: "research", legacyTools: ["fetch_klines"] })
+        .capabilityIds
+    ).not.toContain("quant.research-integrity");
+  });
 });

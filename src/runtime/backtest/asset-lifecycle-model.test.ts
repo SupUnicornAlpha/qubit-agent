@@ -69,6 +69,35 @@ describe("asset lifecycle model", () => {
     expect(report.checks.every((check) => check.state !== "fail")).toBe(true);
   });
 
+  test("requires point-in-time IV and rate-curve provenance before option Greeks become auditable", () => {
+    const input = request({
+      "AAPL-C": {
+        assetClass: "option",
+        contractMultiplier: 100,
+        expiryDate: "2026-01-30",
+        settlementMode: "cash",
+        underlyingSymbol: "AAPL",
+        strike: 200,
+        optionRight: "call",
+        exerciseStyle: "european",
+      },
+    });
+    input.dataset.derivativePricing = {
+      version: "us-options-iv-2026.01",
+      source: "fixture_options_vendor",
+      asOf: "2026-01-01T00:00:00Z",
+      impliedVolatilityMethod: "market_quote",
+      riskFreeRateMethod: "zero_curve_interpolated",
+    };
+
+    const report = buildAssetLifecycleReport(input);
+
+    expect(report.checks).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: "option_pricing_provenance_valid" })])
+    );
+    expect(report.limitations).not.toContain("option_pricing_provenance_missing");
+  });
+
   test("applies multiplier and lot size when converting exposure", () => {
     const spec = normalizeInstrument("ES", {
       ES: { assetClass: "future", contractMultiplier: 50, lotSize: 1 },

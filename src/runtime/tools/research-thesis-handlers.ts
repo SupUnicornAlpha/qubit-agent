@@ -1,11 +1,16 @@
 import {
   ensureForecastBookForThesis,
+  ForecastHoldingResultSchema,
   getForecastBookEntry,
   linkForecastBookEntry,
 } from "../market/contracts/forecast-book-service";
 import { getOrCreateMarketSnapshot } from "../market/contracts/market-snapshot-service";
 import { constructTargetPortfolio } from "../market/contracts/portfolio-construct-service";
+import { ResearchFrameworkSchema } from "../market/contracts/market-event-v2";
+import { assessInvestmentFrameworkCandidate } from "../market/contracts/investment-framework-assessment";
+import { recommendationService } from "../effect-validation/recommendation-service";
 import {
+  getResearchThesisById,
   isResearchThesisWriteEnabled,
   writeResearchThesis,
 } from "../market/contracts/research-thesis-service";
@@ -90,6 +95,12 @@ function parseInvalidation(raw: unknown): Array<{ condition: string; observable:
   return out;
 }
 
+function parseFrameworkCard(raw: unknown): Record<string, unknown> | undefined {
+  return raw && typeof raw === "object" && !Array.isArray(raw)
+    ? (raw as Record<string, unknown>)
+    : undefined;
+}
+
 /** Structured research thesis + forecast book tools (Prime D4). */
 export const RESEARCH_THESIS_HANDLERS: Record<string, BuiltinToolHandler> = {
   "research.thesis.write": async (ctx, params) => {
@@ -108,6 +119,13 @@ export const RESEARCH_THESIS_HANDLERS: Record<string, BuiltinToolHandler> = {
 
     const direction = resolveThesisDirection(canonical);
     const confidence = coerceConfidence01(canonical.confidence, 0.5);
+    const framework =
+      typeof canonical.framework === "string"
+        ? ResearchFrameworkSchema.safeParse(canonical.framework)
+        : undefined;
+    if (framework && !framework.success) {
+      throw new Error("research.thesis.write: framework is not a supported research framework");
+    }
 
     let snapshotId =
       String(canonical.snapshotId ?? canonical.snapshot_id ?? "").trim() ||
@@ -137,12 +155,23 @@ export const RESEARCH_THESIS_HANDLERS: Record<string, BuiltinToolHandler> = {
       }
     }
 
+    const frameworkCard = parseFrameworkCard(
+      canonical.frameworkCard ?? canonical.framework_card
+    );
+    const explicitThesisId =
+      typeof canonical.thesisId === "string"
+        ? canonical.thesisId
+        : typeof canonical.thesis_id === "string"
+          ? canonical.thesis_id
+          : undefined;
     const written = await writeResearchThesis({
       snapshotId,
       instrumentScope: symbols,
       direction,
       horizon: String(canonical.horizon ?? "5d"),
       confidence,
+      ...(framework?.success ? { framework: framework.data } : {}),
+      ...(frameworkCard ? { frameworkCard: frameworkCard as never } : {}),
       claims: parseClaims(canonical.claims),
       invalidation: parseInvalidation(canonical.invalidation),
       knownUnknowns: asStringArray(canonical.knownUnknowns ?? canonical.known_unknowns),
@@ -152,12 +181,7 @@ export const RESEARCH_THESIS_HANDLERS: Record<string, BuiltinToolHandler> = {
           ctx.definition.version ??
           "unknown"
       ),
-      thesisId:
-        typeof canonical.thesisId === "string"
-          ? canonical.thesisId
-          : typeof canonical.thesis_id === "string"
-            ? canonical.thesis_id
-            : undefined,
+      ...(explicitThesisId ? { thesisId: explicitThesisId } : {}),
       workflowRunId: ctx.workflowId,
       role: ctx.definition.role,
     });
@@ -179,6 +203,65 @@ export const RESEARCH_THESIS_HANDLERS: Record<string, BuiltinToolHandler> = {
     };
   },
 
+  "research.framework.assess": async (_ctx, params) => {
+    const thesisId = String(params.thesisId ?? params.thesis_id ?? "").trim();
+    if (!thesisId) throw new Error("research.framework.assess: thesis_id is required");
+    const record = await getResearchThesisById(thesisId);
+    if (!record?.thesis.frameworkCard) {
+      throw new Error("research.framework.assess: thesis_framework_card_missing");
+    }
+    const candidatesRaw = params.candidates;
+    if (!Array.isArray(candidatesRaw) || candidatesRaw.length === 0) {
+      throw new Error("research.framework.assess: candidates is required");
+    }
+    const assessments = candidatesRaw.map((raw) => {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+        throw new Error("research.framework.assess: every candidate must be an object");
+      }
+      const candidate = raw as Record<string, unknown>;
+      const observationsRaw =
+        candidate.observations &&
+        typeof candidate.observations === "object" &&
+        !Array.isArray(candidate.observations)
+          ? (candidate.observations as Record<string, unknown>)
+          : {};
+      const observations = Object.fromEntries(
+        Object.entries(observationsRaw).map(([key, value]) => {
+          const row =
+            value && typeof value === "object" && !Array.isArray(value)
+              ? (value as Record<string, unknown>)
+              : {};
+          const numeric = Number(row.value);
+          return [
+            key,
+            {
+              value:
+                row.value === null || row.value === undefined || !Number.isFinite(numeric)
+                  ? null
+                  : numeric,
+              evidenceRefs: asStringArray(row.evidenceRefs ?? row.evidence_refs),
+            },
+          ];
+        })
+      );
+      return assessInvestmentFrameworkCandidate(record.thesis.frameworkCard!, {
+        symbol: String(candidate.symbol ?? "").trim(),
+        assetClass: String(candidate.assetClass ?? candidate.asset_class ?? "").trim(),
+        market: String(candidate.market ?? "").trim(),
+        regime: String(candidate.regime ?? "").trim(),
+        observations,
+      });
+    });
+    return {
+      thesisId,
+      framework: record.thesis.frameworkCard.framework,
+      assessments,
+      qualifiedSymbols: assessments
+        .filter((assessment) => assessment.status === "qualified")
+        .map((assessment) => assessment.symbol),
+    };
+  },
+
   "research.forecast_book.get": async (_ctx, params) => {
     const { thesisId, entryId } = extractForecastBookKey(params);
     const key = entryId || thesisId;
@@ -192,29 +275,54 @@ export const RESEARCH_THESIS_HANDLERS: Record<string, BuiltinToolHandler> = {
     return { ok: true, entry };
   },
 
+  "research.recommendation.calibration": async (ctx, params) => {
+    const projectId = String(params.project_id ?? params.projectId ?? ctx.projectId ?? "").trim();
+    if (!projectId) throw new Error("research.recommendation.calibration: project_id is required");
+    const minimumObservations = Number(
+      params.minimum_observations ?? params.minimumObservations ?? 30
+    );
+    if (!Number.isInteger(minimumObservations) || minimumObservations < 1) {
+      throw new Error(
+        "research.recommendation.calibration: minimum_observations must be an integer >= 1"
+      );
+    }
+    return {
+      projectId,
+      minimumObservations,
+      groups: await recommendationService.calibrationReport({ projectId, minimumObservations }),
+      caveat:
+        "descriptive calibration only; insufficient groups must not be used to auto-change strategy or confidence",
+    };
+  },
+
   "research.forecast_book.link": async (_ctx, params) => {
     const thesisId = String(params.thesisId ?? params.thesis_id ?? "").trim();
     if (!thesisId) {
       throw new Error("research.forecast_book.link: thesisId is required");
     }
+    const recommendationId =
+      typeof params.recommendationId === "string"
+        ? params.recommendationId
+        : typeof params.recommendation_id === "string"
+          ? params.recommendation_id
+          : undefined;
+    const rawHoldingPeriodResult =
+      params.holdingPeriodResult &&
+      typeof params.holdingPeriodResult === "object" &&
+      !Array.isArray(params.holdingPeriodResult)
+        ? params.holdingPeriodResult
+        : undefined;
+    const holdingPeriodResult = rawHoldingPeriodResult
+      ? ForecastHoldingResultSchema.parse(rawHoldingPeriodResult)
+      : undefined;
     const entry = await linkForecastBookEntry(thesisId, {
-      recommendationId:
-        typeof params.recommendationId === "string"
-          ? params.recommendationId
-          : typeof params.recommendation_id === "string"
-            ? params.recommendation_id
-            : undefined,
+      ...(recommendationId ? { recommendationId } : {}),
       riskDecisionIds: asStringArray(params.riskDecisionIds ?? params.risk_decision_ids),
       orderIntentIds: asStringArray(params.orderIntentIds ?? params.order_intent_ids),
       fillIds: asStringArray(params.fillIds ?? params.fill_ids),
       sourceProviders: asStringArray(params.sourceProviders ?? params.source_providers),
       attributionNotes: asStringArray(params.notes ?? params.attributionNotes),
-      holdingPeriodResult:
-        params.holdingPeriodResult &&
-        typeof params.holdingPeriodResult === "object" &&
-        !Array.isArray(params.holdingPeriodResult)
-          ? (params.holdingPeriodResult as Record<string, unknown>)
-          : undefined,
+      ...(holdingPeriodResult ? { holdingPeriodResult } : {}),
     });
     return {
       ok: true,
@@ -259,25 +367,28 @@ export const RESEARCH_THESIS_HANDLERS: Record<string, BuiltinToolHandler> = {
         }))
       : undefined;
 
+    const grossLimit =
+      params.grossLimit != null && Number.isFinite(Number(params.grossLimit))
+        ? Number(params.grossLimit)
+        : undefined;
+    const netLimit =
+      params.netLimit != null && Number.isFinite(Number(params.netLimit))
+        ? Number(params.netLimit)
+        : undefined;
+    const perPositionMax =
+      params.perPositionMax != null && Number.isFinite(Number(params.perPositionMax))
+        ? Number(params.perPositionMax)
+        : undefined;
     const constructed = await constructTargetPortfolio({
       thesisId,
-      snapshotId,
+      ...(snapshotId ? { snapshotId } : {}),
       capital,
-      candidates,
+      ...(candidates ? { candidates } : {}),
       workflowRunId: ctx.workflowId,
       config: {
-        grossLimit:
-          params.grossLimit != null && Number.isFinite(Number(params.grossLimit))
-            ? Number(params.grossLimit)
-            : undefined,
-        netLimit:
-          params.netLimit != null && Number.isFinite(Number(params.netLimit))
-            ? Number(params.netLimit)
-            : undefined,
-        perPositionMax:
-          params.perPositionMax != null && Number.isFinite(Number(params.perPositionMax))
-            ? Number(params.perPositionMax)
-            : undefined,
+        ...(grossLimit !== undefined ? { grossLimit } : {}),
+        ...(netLimit !== undefined ? { netLimit } : {}),
+        ...(perPositionMax !== undefined ? { perPositionMax } : {}),
       },
     });
 

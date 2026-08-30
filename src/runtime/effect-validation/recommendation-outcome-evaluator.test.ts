@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { BarData } from "../../connectors/data/data.connector";
 import {
   type DecisionSignalForEvaluation,
+  buildOutcomeMarketDataEvidence,
   evaluateDecisionSignal,
   evaluationHorizons,
 } from "./recommendation-outcome-evaluator";
@@ -62,7 +63,13 @@ describe("evaluateDecisionSignal", () => {
 
   test("same bar stop and target uses conservative stop-first policy", () => {
     const result = evaluateDecisionSignal(
-      signal({ horizonDays: 1, stopLoss: 95, takeProfit: 105 }),
+      signal({
+        horizonDays: 1,
+        entryLow: 100,
+        entryHigh: 100,
+        stopLoss: 95,
+        takeProfit: 105,
+      }),
       bars([
         ["2026-01-02T00:00:00.000Z", 100, 106, 94, 100],
         ["2026-01-05T00:00:00.000Z", 100, 101, 99, 100],
@@ -73,6 +80,58 @@ describe("evaluateDecisionSignal", () => {
     expect(result.ambiguousBar).toBe(true);
     expect(result.exitReason).toBe("stop_loss");
     expect(result.returnPct).toBe(-5);
+  });
+
+  test("market-close entry never reads its own candle high or low as an exit", () => {
+    const result = evaluateDecisionSignal(
+      signal({ horizonDays: 1, stopLoss: 95, takeProfit: 110 }),
+      bars([
+        // The position is entered at this bar's close (100), after its range
+        // is known. Treating its high/low as an executable stop/target would
+        // be a same-bar future leak.
+        ["2026-01-02T00:00:00.000Z", 100, 120, 90, 100],
+        ["2026-01-05T00:00:00.000Z", 100, 103, 99, 101],
+      ])
+    );
+    expect(result.kind).toBe("evaluated");
+    if (result.kind !== "evaluated") return;
+    expect(result.exitReason).toBe("horizon");
+    expect(result.exitAt).toBe("2026-01-05T00:00:00.000Z");
+    expect(result.returnPct).toBe(1);
+    expect(result.ambiguousBar).toBe(false);
+  });
+
+  test("captures the exact scored market slice with a deterministic digest", () => {
+    const result = evaluateDecisionSignal(signal({ horizonDays: 1 }), forwardBars);
+    expect(result.kind).toBe("evaluated");
+    if (result.kind !== "evaluated") return;
+    const benchmarkBars = forwardBars.map((bar, index) => ({
+      ...bar,
+      symbol: "SPY",
+      close: 500 + index * 10,
+    }));
+    const evidence = buildOutcomeMarketDataEvidence({
+      signal: signal({ horizonDays: 1 }),
+      result,
+      bars: [...forwardBars].reverse(),
+      benchmarkBars,
+      benchmarkSymbol: "SPY",
+    });
+    expect(evidence.target.bars.map((bar) => bar.timestamp)).toEqual([
+      result.entryAt,
+      result.exitAt,
+    ]);
+    expect(evidence.target.fingerprint).toMatch(/^outcome_market_[a-f0-9]{24}$/);
+    expect(evidence.benchmark?.bars).toHaveLength(2);
+    const reordered = buildOutcomeMarketDataEvidence({
+      signal: signal({ horizonDays: 1 }),
+      result,
+      bars: forwardBars,
+      benchmarkBars: [...benchmarkBars].reverse(),
+      benchmarkSymbol: "SPY",
+    });
+    expect(reordered.target.fingerprint).toBe(evidence.target.fingerprint);
+    expect(reordered.benchmark?.fingerprint).toBe(evidence.benchmark?.fingerprint);
   });
 
   test("short recommendation reverses price return", () => {

@@ -8,7 +8,12 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { defaultDataDir } from "../../app-paths";
 import { coerceConfidence01 } from "../../tools/research-arg-normalize";
-import { type ResearchThesis, ResearchThesisSchema, newThesisId } from "./market-event-v2";
+import {
+  type InvestmentFrameworkCard,
+  type ResearchThesis,
+  ResearchThesisSchema,
+  newThesisId,
+} from "./market-event-v2";
 
 export type ResearchThesisWriteInput = {
   snapshotId: string;
@@ -18,6 +23,8 @@ export type ResearchThesisWriteInput = {
   confidence: number;
   claims?: ResearchThesis["claims"];
   invalidation?: ResearchThesis["invalidation"];
+  framework?: ResearchThesis["framework"];
+  frameworkCard?: InvestmentFrameworkCard;
   knownUnknowns?: string[];
   modelAndPromptVersion?: string;
   /** Optional explicit id; otherwise content-addressed. */
@@ -64,6 +71,8 @@ function canonicalFingerprint(input: Omit<ResearchThesis, "thesisId" | "createdA
     direction: input.direction,
     horizon: input.horizon,
     confidence: input.confidence,
+    framework: input.framework ?? null,
+    frameworkCard: input.frameworkCard ?? null,
     claims: input.claims,
     invalidation: input.invalidation,
     knownUnknowns: [...input.knownUnknowns].sort(),
@@ -134,11 +143,38 @@ export async function writeResearchThesis(
     direction: input.direction,
     horizon: input.horizon.trim() || "5d",
     confidence,
+    ...(input.framework ? { framework: input.framework } : {}),
+    ...(input.frameworkCard ? { frameworkCard: input.frameworkCard } : {}),
     claims: input.claims ?? [],
     invalidation: input.invalidation ?? [],
     knownUnknowns: input.knownUnknowns ?? [],
     modelAndPromptVersion: (input.modelAndPromptVersion ?? "unknown").trim() || "unknown",
   };
+  if (body.framework && body.framework !== "custom") {
+    if (!body.frameworkCard) {
+      throw new Error(
+        "framework_card_required: declared investment framework requires a source-linked framework card"
+      );
+    }
+    if (body.frameworkCard.framework !== body.framework) {
+      throw new Error("framework_card_framework_mismatch");
+    }
+    if (
+      body.claims.length === 0 ||
+      body.claims.some(
+        (claim) => !Array.isArray(claim.evidenceRefs) || claim.evidenceRefs.length === 0
+      )
+    ) {
+      throw new Error(
+        "framework_evidence_required: declared investment framework requires evidence-backed claims"
+      );
+    }
+    if (body.invalidation.length === 0) {
+      throw new Error(
+        "framework_invalidation_required: declared investment framework requires an observable invalidation condition"
+      );
+    }
+  }
   const fingerprint = canonicalFingerprint(body);
   const thesisId = input.thesisId?.trim() || thesisIdFromFingerprint(fingerprint) || newThesisId();
   const createdAt = input.createdAt ?? new Date().toISOString();

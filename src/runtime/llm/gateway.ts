@@ -1127,19 +1127,43 @@ async function runOpenAICompatibleNonStream(
  *
  * 启用后会做两件事：
  *   - HTTP header 加 `anthropic-beta: prompt-caching-2024-07-31`；
- *   - request body 把 `system` 字段从 string 改成 array：
- *       [{ type: 'text', text: <prompt>, cache_control: { type: 'ephemeral' } }]
- *     这是 Anthropic 标记 cache 边界的 schema —— 同一 hash 的 system block 在 5
- *     分钟 TTL 内复用 → cache_read 命中（10% 输入价）。
+ *   - request body 把 `system` 字段从 string 改成 array；稳定的 identity/harness
+ *     前缀标记 `cache_control`，工具名、模式和 recipe checklist 留在未缓存 suffix。
+ *     同一稳定前缀在 5 分钟 TTL 内复用 → cache_read 命中（10% 输入价）。
  *
  * 关闭：不传 ENV / 短 prompt → 与 P0/P1/P2 行为完全一致。
  */
+function splitAnthropicSystemPrompt(systemPrompt: string): { stable: string; dynamic: string } {
+  // Keep the stable identity/harness prefix cacheable while leaving tool
+  // names, mode control and recipe checklists outside the cache boundary.
+  // These markers are deliberately protocol-level, not provider-specific.
+  const markers = [
+    "\n\ntools: ",
+    "\n\nMODE=",
+    "\n\n## Policy checklist",
+    "\n\n## 可用工具",
+    "\n\n## 工具调用\n",
+  ];
+  const boundary = markers
+    .map((marker) => systemPrompt.indexOf(marker))
+    .filter((index) => index > 0)
+    .sort((left, right) => left - right)[0];
+  if (boundary === undefined) {
+    return { stable: systemPrompt, dynamic: "" };
+  }
+  return {
+    stable: systemPrompt.slice(0, boundary).trimEnd(),
+    dynamic: systemPrompt.slice(boundary).trimStart(),
+  };
+}
+
 function shouldEnableAnthropicPromptCache(systemPrompt: string): boolean {
   if (process.env.QUBIT_LLM_ANTHROPIC_PROMPT_CACHE === "1") return true;
   const raw = process.env.QUBIT_LLM_ANTHROPIC_PROMPT_CACHE_MIN_CHARS;
+  const { stable } = splitAnthropicSystemPrompt(systemPrompt);
   if (raw?.trim()) {
     const n = Number(raw);
-    if (Number.isFinite(n) && n >= 0 && systemPrompt.length >= n) return true;
+    if (Number.isFinite(n) && n >= 0 && stable.length >= n) return true;
   }
   return false;
 }
@@ -1166,13 +1190,15 @@ async function runAnthropic(input: LlmGatewayInput): Promise<LlmGatewayResult> {
    * caching 启用时 system 必须是带 cache_control 的 block 数组；不启用走老的
    * string 字段，保持 schema 100% 兼容。
    */
+  const systemParts = splitAnthropicSystemPrompt(input.systemPrompt);
   const systemField: unknown = useCaching
     ? [
         {
           type: "text",
-          text: input.systemPrompt,
+          text: systemParts.stable,
           cache_control: { type: "ephemeral" },
         },
+        ...(systemParts.dynamic ? [{ type: "text", text: systemParts.dynamic }] : []),
       ]
     : input.systemPrompt;
   const startedAt = Date.now();

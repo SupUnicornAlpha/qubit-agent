@@ -149,11 +149,31 @@ describe("market snapshot service (D2)", () => {
       calendarVersion: "NYSE-2026.1",
       calendarSessionsByVenue: { US: { "2026-08-01": "closed" } },
     });
+    const earlyClose = buildMarketSnapshotRecord({
+      ...base,
+      calendarVersion: "NYSE-2026.1",
+      calendarSessionsByVenue: { US: { "2026-08-01": "open" } },
+      calendarSessionWindowsByVenue: {
+        US: {
+          "2026-08-01": [
+            {
+              openAt: "2026-08-01T13:30:00.000Z",
+              closeAt: "2026-08-01T17:00:00.000Z",
+              label: "early_close",
+            },
+          ],
+        },
+      },
+    });
 
     expect(oldCalendar.snapshot.calendarVersion).toBe("NYSE-2026.1");
     expect(oldCalendar.snapshot.timezone).toBe("America/New_York");
     expect(oldCalendar.snapshot.snapshotId).not.toBe(newCalendar.snapshot.snapshotId);
     expect(oldCalendar.snapshot.snapshotId).not.toBe(closedSession.snapshot.snapshotId);
+    expect(oldCalendar.snapshot.snapshotId).not.toBe(earlyClose.snapshot.snapshotId);
+    expect(earlyClose.snapshot.calendarSessionWindowsByVenue?.US?.["2026-08-01"]?.[0]).toEqual(
+      expect.objectContaining({ label: "early_close" })
+    );
   });
 
   test("historical universe and corporate-action ledgers are frozen into snapshot identity", () => {
@@ -243,12 +263,29 @@ describe("market snapshot service (D2)", () => {
         },
       },
     });
+    const changedDerivativePricing = buildMarketSnapshotRecord({
+      ...base,
+      universeHistory: first.snapshot.universeHistory,
+      corporateActionLedger: first.snapshot.corporateActionLedger,
+      derivativePricingLedger: {
+        version: "us-options-iv-2026.02",
+        source: "fixture_options_vendor",
+        asOf: "2026-08-04T00:00:00.000Z",
+        impliedVolatilityMethod: "surface_interpolated",
+        riskFreeRateMethod: "zero_curve_interpolated",
+      },
+    });
 
     expect(first.snapshot.snapshotId).not.toBe(changedHistory.snapshot.snapshotId);
     expect(first.snapshot.snapshotId).not.toBe(changedFundamentals.snapshot.snapshotId);
+    expect(first.snapshot.snapshotId).not.toBe(changedDerivativePricing.snapshot.snapshotId);
     expect(first.snapshot.universeHistory?.version).toBe("2026.01");
     expect(first.snapshot.corporateActionLedger?.version).toBe("2026.01");
     expect(changedFundamentals.snapshot.fundamentalLedger?.version).toBe("fundamentals-2026.02");
+    expect(changedDerivativePricing.snapshot.derivativePricingLedger).toMatchObject({
+      version: "us-options-iv-2026.02",
+      impliedVolatilityMethod: "surface_interpolated",
+    });
   });
 
   test("canonicalCalendarSessions sorts venues/days for stable fingerprints", () => {

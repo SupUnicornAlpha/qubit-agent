@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { classifyToolError } from "../../react/nodes/tool-error-classifier";
+import { classifyToolError } from "../../host/tool-error-classifier";
 import { _formatStdioExitErrorMessage, prefixStdioToolError } from "../stdio-session";
 
 /*

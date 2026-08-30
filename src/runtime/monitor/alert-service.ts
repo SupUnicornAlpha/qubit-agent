@@ -1,14 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, desc, eq, lt, sql } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import {
   agentStep,
   alertEvent,
-  analystResearchJob,
   workflowQualitySnapshot,
   workflowRun,
 } from "../../db/sqlite/schema";
-import { failAnalystResearchJob } from "../msa/analyst-research-jobs";
 import { setWorkflowState } from "../workflow/workflow-state-machine";
 import type { WorkflowTerminalStatus } from "./observability-hook";
 
@@ -193,27 +191,7 @@ export async function cancelInactiveWorkflows(maxIdleMinutes = 20) {
       continue;
     }
 
-    // 2) 配套 analyst_research_job 也 fail（avoid HITL UI 一直转圈）
-    try {
-      const activeJobs = await db
-        .select({ id: analystResearchJob.id })
-        .from(analystResearchJob)
-        .where(
-          and(
-            eq(analystResearchJob.workflowRunId, wf.id),
-            inArray(analystResearchJob.status, ["running", "awaiting_approval"])
-          )
-        );
-      for (const j of activeJobs) {
-        await failAnalystResearchJob(j.id, new Error(reason));
-      }
-    } catch (e) {
-      console.warn(
-        `[cancelInactiveWorkflows] failAnalystResearchJob failed for workflow ${wf.id}: ${(e as Error).message}`
-      );
-    }
-
-    // 3) 起 alert 留痕（去重：同 workflow + workflow_stuck 只 1 条 open）
+    // 2) 起 alert 留痕（去重：同 workflow + workflow_stuck 只 1 条 open）
     try {
       const existing = await findOpenAlert("workflow", wf.id, "workflow_stuck");
       if (!existing) {

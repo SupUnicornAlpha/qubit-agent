@@ -13,6 +13,39 @@
  */
 import type { FC } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  type MonitorSummary,
+  ackAlert,
+  aggregateAgentQuality,
+  createChatSession,
+  createConversationTurn,
+  createEvalDataset,
+  createWorkflowQuality,
+  getDefaultProjectSession,
+  getDefaultWorkspace,
+  getEvalRunDetail,
+  getMonitorSummary,
+  getOrCreateDefaultProject,
+  getSessionAgentsBoard,
+  getWorkflowDetail,
+  getWorkflowObservability,
+  getWorkflowTimeline,
+  listAgentQuality,
+  listAgents,
+  listAlerts,
+  listEvalDatasets,
+  listEvalRuns,
+  listMonitorWorkflows,
+  listProjects,
+  listStrategyRuntimes,
+  listWorkflowQuality,
+  listWorkspaces,
+  resolveAlert,
+  runEval,
+  scanStuckWorkflowAlerts,
+  subscribeWorkflowStream,
+  triggerWorkflowAlerts,
+} from "../../api/backend";
 import type {
   AgentLoopKind,
   AgentRuntimeMetricRecord,
@@ -27,61 +60,29 @@ import type {
   WorkflowQualitySnapshotRecord,
   WorkflowTimeline,
 } from "../../api/types";
-import {
-  ackAlert,
-  aggregateAgentQuality,
-  createEvalDataset,
-  getOrCreateDefaultProject,
-  createWorkflow,
-  createWorkflowQuality,
-  getDefaultProjectSession,
-  getDefaultWorkspace,
-  getEvalRunDetail,
-  getMonitorSummary,
-  getSessionAgentsBoard,
-  getWorkflowDetail,
-  getWorkflowObservability,
-  getWorkflowTimeline,
-  listAgents,
-  listAgentQuality,
-  listAlerts,
-  listEvalDatasets,
-  listEvalRuns,
-  listMonitorWorkflows,
-  listProjects,
-  listStrategyRuntimes,
-  listWorkflowQuality,
-  listWorkspaces,
-  resolveAlert,
-  runEval,
-  scanStuckWorkflowAlerts,
-  subscribeWorkflowStream,
-  triggerWorkflowAlerts,
-  type MonitorSummary,
-} from "../../api/backend";
 import { groupStreamEventsByRun } from "../../lib/groupStreamEventsByRun";
 import { useAppStore } from "../../store";
+import { AgentTab } from "./AgentTab";
+import { type AlertStatusFilter, AlertsEvalTab } from "./AlertsEvalTab";
+import { DiagnosticsTab } from "./DiagnosticsTab";
+import { MemoryTab } from "./MemoryTab";
+import { OverviewTab, type StrategyRuntime } from "./OverviewTab";
+import { RecommendationsTab } from "./RecommendationsTab";
+import { SkillsTab } from "./SkillsTab";
+import { StreamTab } from "./StreamTab";
+import { WorkflowTab } from "./WorkflowTab";
 import {
+  type MonitorScope,
   SCOPE_TABS,
+  type WorkflowRow,
+  type WorkflowSessionGroup,
   asWorkflowRows,
   buildAgentCardViews,
+  flattenMonitorWorkflowList,
   resolvePoolExecutionPath,
   styles,
   wrap,
-  type MonitorScope,
-  type WorkflowRow,
-  type WorkflowSessionGroup,
-  flattenMonitorWorkflowList,
 } from "./monitor-shared";
-import { OverviewTab, type StrategyRuntime } from "./OverviewTab";
-import { WorkflowTab } from "./WorkflowTab";
-import { AgentTab } from "./AgentTab";
-import { SkillsTab } from "./SkillsTab";
-import { MemoryTab } from "./MemoryTab";
-import { DiagnosticsTab } from "./DiagnosticsTab";
-import { StreamTab } from "./StreamTab";
-import { AlertsEvalTab, type AlertStatusFilter } from "./AlertsEvalTab";
-import { RecommendationsTab } from "./RecommendationsTab";
 
 export const MonitorDashboard: FC = () => {
   const agents = useAppStore((s) => s.agents);
@@ -118,7 +119,9 @@ export const MonitorDashboard: FC = () => {
   const [unboundWorkflows, setUnboundWorkflows] = useState<WorkflowRow[]>([]);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
   const [drawerDetail, setDrawerDetail] = useState("");
-  const [workflowObservability, setWorkflowObservability] = useState<WorkflowObservability | null>(null);
+  const [workflowObservability, setWorkflowObservability] = useState<WorkflowObservability | null>(
+    null
+  );
   const [workflowTimeline, setWorkflowTimeline] = useState<WorkflowTimeline | null>(null);
   const [qualitySnapshots, setQualitySnapshots] = useState<WorkflowQualitySnapshotRecord[]>([]);
   const [agentQuality, setAgentQuality] = useState<AgentRuntimeMetricRecord[]>([]);
@@ -137,7 +140,10 @@ export const MonitorDashboard: FC = () => {
   const [alertStatusFilter, setAlertStatusFilter] = useState<AlertStatusFilter>("open");
   const [sessionAgentsBoard, setSessionAgentsBoard] = useState<SessionAgentBoardItem[]>([]);
 
-  const monitorStreamGroups = useMemo(() => groupStreamEventsByRun(streamEvents, null), [streamEvents]);
+  const monitorStreamGroups = useMemo(
+    () => groupStreamEventsByRun(streamEvents, null),
+    [streamEvents]
+  );
 
   /** 当前选中工作流下的 SSE（未选中时为空，避免与「全局实时流」混淆） */
   const workflowScopedStreamGroups = useMemo(() => {
@@ -157,7 +163,10 @@ export const MonitorDashboard: FC = () => {
     return m;
   }, [agentQuality]);
 
-  const latestMetricsByDef = useMemo(() => [...metricsByDefinitionId.values()], [metricsByDefinitionId]);
+  const latestMetricsByDef = useMemo(
+    () => [...metricsByDefinitionId.values()],
+    [metricsByDefinitionId]
+  );
 
   const agentCardViews = useMemo(
     () => buildAgentCardViews(agents, metricsByDefinitionId),
@@ -266,7 +275,9 @@ export const MonitorDashboard: FC = () => {
     try {
       const rows = await aggregateAgentQuality({});
       setAgentQuality(rows);
-      setMetricsHint(rows.length ? `已聚合并写入 ${rows.length} 条指标` : "聚合完成（本窗口无实例数据）");
+      setMetricsHint(
+        rows.length ? `已聚合并写入 ${rows.length} 条指标` : "聚合完成（本窗口无实例数据）"
+      );
     } catch (e) {
       setMetricsHint(e instanceof Error ? e.message : "聚合失败");
     } finally {
@@ -309,9 +320,7 @@ export const MonitorDashboard: FC = () => {
       const unbound = asWorkflowRows(rows.unbound ?? []);
       setWorkflowGroups(groups);
       setUnboundWorkflows(unbound);
-      setWorkflowList(
-        flattenMonitorWorkflowList({ mode: "grouped", groups, unbound })
-      );
+      setWorkflowList(flattenMonitorWorkflowList({ mode: "grouped", groups, unbound }));
     }
     await refreshSummary();
     try {
@@ -443,30 +452,48 @@ export const MonitorDashboard: FC = () => {
       }
     }, 12_000);
     return () => window.clearInterval(t);
-  }, [autoRefresh, projectId, onSearch, scope, refreshAgents, refreshMetrics, refreshSessionAgentsBoard]);
+  }, [
+    autoRefresh,
+    projectId,
+    onSearch,
+    scope,
+    refreshAgents,
+    refreshMetrics,
+    refreshSessionAgentsBoard,
+  ]);
 
   const onCreate = async (event: React.FormEvent) => {
     event.preventDefault();
     clearStreamEvents();
-    const created = await createWorkflow({
+    const activeSessionId =
+      sessionId ||
+      (
+        await createChatSession({
+          workspaceId,
+          projectId,
+          title: goal,
+        })
+      ).id;
+    const created = await createConversationTurn({
+      sessionId: activeSessionId,
       projectId,
-      goal,
-      mode,
-      sessionId: sessionId || undefined,
-      source: "manual",
+      message: goal,
+      workflowMode: mode,
       loopKind: createLoopKind,
+      turnMode: "new_goal",
     });
+    setSessionId(activeSessionId);
     if (created.runId) {
       subscribeWorkflowStream({
-        workflowId: created.data.id,
+        workflowId: created.workflowRunId,
         runId: created.runId,
         onEvent: pushStreamEvent,
         onError: () => {},
       });
     }
-    const detail = await getWorkflowDetail(created.data.id);
+    const detail = await getWorkflowDetail(created.workflowRunId);
     setDrawerDetail(JSON.stringify(detail, null, 2));
-    setSelectedWorkflowId(created.data.id);
+    setSelectedWorkflowId(created.workflowRunId);
     await onSearch();
   };
 
@@ -608,7 +635,8 @@ export const MonitorDashboard: FC = () => {
         >
           Recharts
         </a>{" "}
-        （MIT）渲染；未嵌入 Grafana，避免 Tauri/前端再运维一套时序库。工作流结束时会自动写入质量快照并评估告警；Agent
+        （MIT）渲染；未嵌入 Grafana，避免
+        Tauri/前端再运维一套时序库。工作流结束时会自动写入质量快照并评估告警；Agent
         维度指标需手动「聚合过去24h」或调用聚合 API。
       </p>
 
@@ -618,7 +646,10 @@ export const MonitorDashboard: FC = () => {
         在隔离 project（如 eval 跑批新建的 agent-eval-batch-3）下产出的 workflow 完全不可见。
         这里提供两个最小化下拉，让"打开监控就能看到当前 project 的全部 workflow"成为默认行为。
       */}
-      <div style={styles.form} role="group" aria-label="workspace 与 project 切换">
+      <fieldset
+        style={{ ...styles.form, border: 0, padding: 0 }}
+        aria-label="workspace 与 project 切换"
+      >
         <label style={{ ...styles.check, gap: 6 }}>
           <span style={{ color: "var(--qb-main-meta, #a1a1aa)" }}>Workspace</span>
           <select
@@ -660,7 +691,7 @@ export const MonitorDashboard: FC = () => {
         <span style={{ ...styles.kpiLabel, alignSelf: "center", marginLeft: "auto" }}>
           {projectId ? `当前 project: ${projectId.slice(0, 8)}…` : "未选择 project"}
         </span>
-      </div>
+      </fieldset>
 
       <div className="qb-monitor__tabs" style={styles.tabBar} role="tablist" aria-label="监控维度">
         {SCOPE_TABS.map((t) => (
@@ -746,15 +777,10 @@ export const MonitorDashboard: FC = () => {
       ) : null}
 
       {scope === "skills" ? (
-        <SkillsTab
-          sessionFilter={sessionFilter || undefined}
-          onJumpToWorkflow={onJumpToWorkflow}
-        />
+        <SkillsTab sessionFilter={sessionFilter || undefined} onJumpToWorkflow={onJumpToWorkflow} />
       ) : null}
 
-      {scope === "memory" ? (
-        <MemoryTab projectId={projectId} autoRefresh={autoRefresh} />
-      ) : null}
+      {scope === "memory" ? <MemoryTab projectId={projectId} autoRefresh={autoRefresh} /> : null}
 
       {scope === "recommendations" ? <RecommendationsTab projectId={projectId} /> : null}
 
@@ -766,7 +792,10 @@ export const MonitorDashboard: FC = () => {
       ) : null}
 
       {scope === "stream" ? (
-        <StreamTab monitorStreamGroups={monitorStreamGroups} clearStreamEvents={clearStreamEvents} />
+        <StreamTab
+          monitorStreamGroups={monitorStreamGroups}
+          clearStreamEvents={clearStreamEvents}
+        />
       ) : null}
 
       {scope === "alerts_eval" ? (

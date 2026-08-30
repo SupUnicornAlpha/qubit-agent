@@ -15,7 +15,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import type { AgentRole } from "../../types/entities";
-import { BUILTIN_AGENT_GROUPS, type BuiltinAgentGroupSpec } from "../seed-agent-catalog";
+import { BUILTIN_AGENT_GROUPS } from "../seed-agent-catalog";
 import {
   RETIRED_BUILTIN_DEFINITION_IDS,
   SEED_AGENT_DEFINITIONS,
@@ -96,7 +96,9 @@ describe("P2-F：BuiltinAgentGroupSpec 卫生", () => {
 
 describe("P2-F：稳定 type 检查（防回退）", () => {
   test("BuiltinAgentGroupSpec 仍是 readonly 接口（type guard）", () => {
-    const sample: BuiltinAgentGroupSpec = BUILTIN_AGENT_GROUPS[0]!;
+    const sample = BUILTIN_AGENT_GROUPS[0];
+    expect(sample).toBeDefined();
+    if (!sample) return;
     expect(typeof sample.id).toBe("string");
     expect(Array.isArray(sample.memberRoles)).toBe(true);
   });
@@ -105,13 +107,8 @@ describe("P2-F：稳定 type 检查（防回退）", () => {
 /**
  * Migration 0073 卫生测试（防"哪些 role 做什么"再次硬编码进 dispatcher）。
  *
- * 触发场景（2026-06 评估批次实测）：
- *   - case 5 (event-radar) news_event 在 memberRoles 里、但 dispatcher 用
- *     `isMsAnalystRole` 过滤把它丢了，attendedRoles=[] / signals=0；
- *   - case 4 (discovery) 同理 backtest_engineer 被丢。
- *
  * 修复路径：
- *   - `agent_group.pipeline_kind` 决定编组 dispatch 模式（msa_fusion / sequential_research / ...）；
+ *   - `agent_group.pipeline_kind` 决定编组 dispatch 模式；
  *   - `agent_definition.outputs` 决定角色产出能力（signal / report / events / ...）；
  *   - Dispatcher 按 outputs 分桶（而非按 role 名硬编码 set），按 pipelineKind 路由。
  *
@@ -119,12 +116,7 @@ describe("P2-F：稳定 type 检查（防回退）", () => {
  * 在 Phase B 单独验证）。
  */
 describe("P0-01 / P1-04：pipeline_kind + outputs 卫生（migration 0073）", () => {
-  const VALID_PIPELINES = new Set([
-    "msa_fusion",
-    "sequential_research",
-    "event_radar",
-    "factor_discovery",
-  ]);
+  const VALID_PIPELINES = new Set(["sequential_research", "event_radar", "factor_discovery"]);
   const VALID_OUTPUTS = new Set([
     "signal",
     "report",
@@ -169,18 +161,6 @@ describe("P0-01 / P1-04：pipeline_kind + outputs 卫生（migration 0073）", (
       if (!hasFactor || !hasBacktest) {
         throw new Error(
           `${g.id} pipelineKind=factor_discovery 但成员缺 factor_candidates=${hasFactor} / backtest_results=${hasBacktest}`
-        );
-      }
-    }
-  });
-
-  test("msa_fusion 编组必须至少有 2 个 signal 产出者（否则无投票意义）", () => {
-    for (const g of BUILTIN_AGENT_GROUPS.filter((x) => x.pipelineKind === "msa_fusion")) {
-      const memberDefs = SEED_AGENT_DEFINITIONS.filter((d) => g.memberDefinitionIds.includes(d.id));
-      const signalCount = memberDefs.filter((d) => (d.outputs ?? []).includes("signal")).length;
-      if (signalCount < 2) {
-        throw new Error(
-          `${g.id} pipelineKind=msa_fusion 但仅 ${signalCount} 个 signal 产出者（需 ≥2）`
         );
       }
     }

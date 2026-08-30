@@ -9,7 +9,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { workflowRun } from "../../db/sqlite/schema";
 import { type AgentPlanSnapshot, parseAgentPlanSnapshot } from "../agent-control-mode";
-import { stepStreamBus } from "../react/event-stream";
+import { stepStreamBus } from "../host/event-stream";
 import { logResearchTeamInteraction } from "../research-team/interaction-log";
 import { compactHeavyJson } from "../util/compact-heavy-json";
 import { writeWorkflowPlanArtifacts } from "../workflow/plan-artifact";

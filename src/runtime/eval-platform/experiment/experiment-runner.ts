@@ -95,7 +95,7 @@ export async function runExperiment(input: ExperimentRunInput): Promise<Experime
         if (!launch.scenarioKey) {
           throw new Error("missing scenarioKey in dataset item inputJson");
         }
-        const launched = await researchScenarioService.launch({
+        const launched = await researchScenarioService.startConversation({
           projectId: launch.projectId,
           scenarioKey: launch.scenarioKey,
           goal: launch.goal,

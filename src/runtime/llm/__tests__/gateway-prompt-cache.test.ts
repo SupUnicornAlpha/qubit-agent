@@ -109,6 +109,34 @@ describe("Gateway P3-1 — Anthropic prompt-caching opt-in", () => {
     expect(result.usage?.cacheCreationInputTokens).toBe(95);
   });
 
+  test("只缓存稳定 identity 前缀，动态工具面留在 suffix", async () => {
+    process.env.QUBIT_LLM_ANTHROPIC_PROMPT_CACHE = "1";
+    const calls: Array<{ body: Record<string, unknown> }> = [];
+    fetchSpy.mockImplementation((_url: string | URL, init?: RequestInit) => {
+      calls.push({ body: JSON.parse(String(init?.body ?? "{}")) });
+      return Promise.resolve(
+        jsonResponse({
+          content: [{ type: "text", text: "ok" }],
+          usage: { input_tokens: 100, output_tokens: 5 },
+        })
+      );
+    });
+
+    await runLlmGateway({
+      config: { provider: "anthropic", model: "claude-3-5-sonnet-latest", apiKey: "sk-test" },
+      systemPrompt: `${"stable identity ".repeat(400)}\n\ntools: market.snapshot.get`,
+      userPrompt: "hi",
+      onToken: () => {},
+    });
+
+    const systemArr = calls[0]?.body.system as Array<Record<string, unknown>>;
+    expect(systemArr).toHaveLength(2);
+    expect(systemArr[0]?.cache_control).toEqual({ type: "ephemeral" });
+    expect(String(systemArr[0]?.text)).toContain("stable identity");
+    expect(systemArr[1]?.cache_control).toBeUndefined();
+    expect(systemArr[1]?.text).toBe("tools: market.snapshot.get");
+  });
+
   test("ENV QUBIT_LLM_ANTHROPIC_PROMPT_CACHE_MIN_CHARS=4096：阈值生效", async () => {
     process.env.QUBIT_LLM_ANTHROPIC_PROMPT_CACHE_MIN_CHARS = "4096";
     const calls: Array<{ body: Record<string, unknown>; headers: Record<string, string> }> = [];

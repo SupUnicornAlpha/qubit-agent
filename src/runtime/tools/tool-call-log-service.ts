@@ -25,7 +25,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { mcpCallLog, toolCallLog } from "../../db/sqlite/schema";
 import { appendHarnessEventForToolCallSafe, appendHarnessEventSafe } from "../harness/event-ledger";
-import { classifyToolError } from "../react/nodes/tool-error-classifier";
+import { classifyToolError } from "../host/tool-error-classifier";
 
 export type ToolTargetKind = "mcp" | "tool" | "connector";
 export type ToolKind = "mcp" | "builtin" | "acp_connector";

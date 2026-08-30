@@ -1823,27 +1823,18 @@ bun run dev:backend
 
 强制旧路径：`QUBIT_CORE_BACKEND=ts`。禁止自启：`QUBIT_SKIP_CORE_SPAWN=1`。严格模式：`QUBIT_CORE_STRICT=1`。
 
-### 13.3 删除 TS ReAct 前置清单
+### 13.3 TS ReAct 与 MSA 清理结果
 
-**直接调用 `executeAgentReact(` 仅 2 处**（均已阀门，见 `src/runtime/prime/ts-react-residual.ts`）：
+TS ReAct loop、MSA wave/fusion、辩论引擎及其启动型路由已移除。当前 Bun 层只保留
+Host 适配能力：对话/SSE、checkpoint 读写、工具错误分类、拓扑投影和 Core bridge。
 
-| 文件 | rust 行为 |
-|------|-----------|
-| `a2a/a2a-react-task.ts` | Core turn / invoke |
-| `msa/role-reasoner.ts` | Core invoke |
+Agent 研究唯一入口是：
 
-**明确 OUT（不进 Core loop，可长期留 Bun）**：
+`POST /api/v1/chat/sessions/:sessionId/turns`
 
-- `order-intent-handler.ts`（ORDER_INTENT 签名转发，无 ReAct）
-- MSA wave/fusion 协调（`analyst-team.ts` 等）
-- CLI reasoner（`claude_cli` / `codex_cli`）
-
-**删除闸门**（满足后再删 `execute-agent-react` / `run-react-loop`）：
-
-1. 默认长期跑 `activeBackend=rust` soak（无 `QUBIT_ALLOW_TS_REACT_UNDER_RUST`）
-2. Bridge 覆盖 primary/subagent 所需 L2 工具（持续扩 allowlist）
-3. 生产流量不再走 `ts` 后端
-4. CI 以 rust 路径冒烟为 gate
+`research-scenarios` 只提供注册表查询、输入校验和启停配置，不创建 workflow、不启动
+Agent。`research-artifacts` 只读历史产物；workflow 的 resume/HITL 接口只负责恢复与
+人工决策。Rust Core 负责对话 turn 的编排、工具执行、子 Agent 调用和运行态恢复。
 
 ---
 

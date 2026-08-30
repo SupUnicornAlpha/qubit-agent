@@ -1,10 +1,10 @@
 /**
  * Bench / readiness recipe keys → research_scenario registry keys.
- * Keep in sync with `research-scenario/service.ts` launch aliases.
+ * Keep in sync with the conversational research service aliases.
  */
 export const SCENARIO_KEY_ALIASES: Record<string, string> = {
-  research: "analyst_debate",
-  research_multi: "analyst_debate",
+  research: "conversational_research",
+  research_multi: "conversational_research",
   research_theme: "stock_screening",
   stock_pick: "stock_screening",
   stock_pick_short: "stock_screening",

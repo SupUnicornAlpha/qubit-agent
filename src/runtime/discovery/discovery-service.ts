@@ -22,6 +22,10 @@ import type { BarData } from "../../connectors/data/data.connector";
 import { getDb } from "../../db/sqlite/client";
 import { discoveryJob as discoveryJobTable } from "../../db/sqlite/schema";
 import { generateGbmTicks } from "../../util/synthesize-gbm";
+import {
+  benjaminiHochberg,
+  type FalseDiscoveryRateResult,
+} from "../backtest/statistical-validation-report";
 import { type FactorRecord, factorService } from "../factor/factor-service";
 import { queryBarsRange } from "../market/klines-query";
 import { type PriceSeries, evalQlibExpr as evalExpr } from "../provider";
@@ -90,10 +94,29 @@ export interface DiscoveryCandidate {
     ic: number;
     rankIc: number;
     sampleSize: number;
+    /** HAC p-values and family-wise correction are evidence, never ranking-only decoration. */
+    icPValue?: number | null;
+    rankIcPValue?: number | null;
+    adjustedPValue?: number | null;
+    statisticalStatus?: "passed" | "research_only";
     /** |IC| 越大越靠前 */
     score: number;
   };
   error?: string;
+  /**
+   * Persisted candidate-graveyard decision. A shortlist is still research-only;
+   * it is not a statement that the expression is valid for strategy admission.
+   */
+  discoveryDecision?: {
+    status: "shortlisted" | "rejected";
+    shortlistRank?: number;
+    reasons: Array<
+      | "evaluation_error"
+      | "statistical_evidence_missing"
+      | "fdr_not_passed"
+      | "ranked_below_top_k"
+    >;
+  };
 }
 
 export interface DiscoveryJobRecord {
@@ -103,7 +126,20 @@ export interface DiscoveryJobRecord {
   kind: DiscoveryKind;
   status: DiscoveryStatus;
   input: DiscoverySubmitInput;
+  /** Top-K research shortlist; use candidateAudit for the complete search budget. */
   candidates: DiscoveryCandidate[];
+  /**
+   * Every expression evaluated in the job, including invalid and non-selected
+   * candidates. This makes rejected ideas durable evidence instead of a hidden
+   * side effect of top-K truncation.
+   */
+  candidateAudit: DiscoveryCandidate[];
+  /**
+   * Family-level statistical evidence for this search budget.  Kept alongside
+   * the selected candidates so callers cannot mistake an unadjusted IC ranking
+   * for a validated discovery.
+   */
+  multipleTesting: FalseDiscoveryRateResult | null;
   startedAt: string;
   endedAt: string | null;
   error: string | null;
@@ -154,7 +190,7 @@ export class DiscoveryService {
       workflowRunId: input.workflowRunId ?? null,
       kind: input.kind,
       inputJson: input as never,
-      outputJson: { candidates: [] } as never,
+      outputJson: { candidates: [], candidateAudit: [] } as never,
       status: "pending",
       createdBy: input.createdBy ?? "user",
       agentInstanceId: input.agentInstanceId ?? null,
@@ -183,17 +219,88 @@ export class DiscoveryService {
         throw new DiscoveryError("validation_failed", `unsupported_kind_${job.kind}`);
       }
 
-      // |IC| 排序，取 top K
-      const sorted = candidates
+      const fdr = benjaminiHochberg(
+        candidates.map((candidate) => ({
+          id: candidate.id,
+          pValue: candidate.metrics.rankIcPValue ?? candidate.metrics.icPValue ?? null,
+        }))
+      );
+      const adjustedByCandidate = new Map(
+        fdr.hypotheses.map((hypothesis) => [hypothesis.id, hypothesis])
+      );
+      const evidenceBound = candidates.map((candidate) => {
+        const hypothesis = adjustedByCandidate.get(candidate.id);
+        return {
+          ...candidate,
+          metrics: {
+            ...candidate.metrics,
+            ...(hypothesis ? { adjustedPValue: hypothesis.adjustedPValue } : {}),
+          },
+        };
+      });
+      // Candidates remain visible for audit, but only FDR-passing evidence is allowed to outrank
+      // an otherwise stronger in-sample IC. Promotion still creates a draft, never an active factor.
+      const ranked = evidenceBound
         .filter((c) => !c.error)
-        .sort((a, b) => b.metrics.score - a.metrics.score)
-        .slice(0, job.input.topK ?? 10);
+        .sort(
+          (a, b) =>
+            Number((b.metrics.adjustedPValue ?? 1) <= 0.05) -
+              Number((a.metrics.adjustedPValue ?? 1) <= 0.05) || b.metrics.score - a.metrics.score
+        );
+      const shortlisted = ranked.slice(0, job.input.topK ?? 10);
+      const shortlistIndex = new Map(shortlisted.map((candidate, index) => [candidate.id, index + 1]));
+      const candidateAudit = evidenceBound.map((candidate) => {
+        const shortlistRank = shortlistIndex.get(candidate.id);
+        if (shortlistRank !== undefined) {
+          return {
+            ...candidate,
+            discoveryDecision: {
+              status: "shortlisted" as const,
+              shortlistRank,
+              reasons:
+                (candidate.metrics.adjustedPValue ?? null) === null
+                  ? (["statistical_evidence_missing"] as const)
+                  : candidate.metrics.adjustedPValue! <= 0.05
+                    ? ([] as const)
+                    : (["fdr_not_passed"] as const),
+            },
+          };
+        }
+        if (candidate.error) {
+          return {
+            ...candidate,
+            discoveryDecision: {
+              status: "rejected" as const,
+              reasons: ["evaluation_error"] as const,
+            },
+          };
+        }
+        return {
+          ...candidate,
+          discoveryDecision: {
+            status: "rejected" as const,
+            reasons:
+              (candidate.metrics.adjustedPValue ?? null) === null
+                ? (["statistical_evidence_missing", "ranked_below_top_k"] as const)
+                : candidate.metrics.adjustedPValue! > 0.05
+                  ? (["fdr_not_passed", "ranked_below_top_k"] as const)
+                  : (["ranked_below_top_k"] as const),
+          },
+        };
+      });
+      const shortlistedById = new Map(candidateAudit.map((candidate) => [candidate.id, candidate]));
+      const candidatesForPromotion = shortlisted.map((candidate) => shortlistedById.get(candidate.id)!);
 
       await db
         .update(discoveryJobTable)
         .set({
           status: "succeeded",
-          outputJson: { candidates: sorted, totalEvaluated: candidates.length } as never,
+          outputJson: {
+            candidates: candidatesForPromotion,
+            candidateAudit,
+            totalEvaluated: candidates.length,
+            multipleTesting: fdr,
+          } as never,
           endedAt: new Date().toISOString(),
         })
         .where(eq(discoveryJobTable.id, jobId));
@@ -483,6 +590,13 @@ export class DiscoveryService {
           ic: r.ic,
           rankIc: r.rankIc,
           sampleSize: r.sampleSize,
+          ...(r.statisticalReport
+            ? {
+                icPValue: r.statisticalReport.ic.pValue,
+                rankIcPValue: r.statisticalReport.rankIc.pValue,
+                statisticalStatus: r.statisticalReport.status,
+              }
+            : {}),
           score: Math.abs(r.ic),
         },
         ...(r.error ? { error: r.error } : {}),
@@ -500,7 +614,12 @@ export class DiscoveryService {
   }
 
   private rowToRecord(r: typeof discoveryJobTable.$inferSelect): DiscoveryJobRecord {
-    const output = (r.outputJson as { candidates?: DiscoveryCandidate[] }) ?? { candidates: [] };
+    const output =
+      (r.outputJson as {
+        candidates?: DiscoveryCandidate[];
+        candidateAudit?: DiscoveryCandidate[];
+        multipleTesting?: FalseDiscoveryRateResult;
+      }) ?? { candidates: [] };
     return {
       id: r.id,
       projectId: r.projectId,
@@ -509,6 +628,8 @@ export class DiscoveryService {
       status: r.status,
       input: r.inputJson as unknown as DiscoverySubmitInput,
       candidates: output.candidates ?? [],
+      candidateAudit: output.candidateAudit ?? output.candidates ?? [],
+      multipleTesting: output.multipleTesting ?? null,
       startedAt: r.startedAt,
       endedAt: r.endedAt ?? null,
       error: r.error ?? null,

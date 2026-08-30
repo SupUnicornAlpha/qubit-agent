@@ -4,16 +4,13 @@ import { getDb } from "../db/sqlite/client";
 import {
   COMMUNICATION_CHANNEL_KINDS,
   type CommunicationChannelKind,
-  chatMessage,
-  chatMessageWorkflowLink,
   chatSession,
   communicationChannel,
   communicationMessageLog,
   project,
-  workflowRun,
   workspace,
 } from "../db/sqlite/schema";
-import { dispatchTaskToRole } from "../runtime/agent-pool";
+import { createConversationTurn } from "../runtime/conversation/conversation-turn-service";
 import {
   getIntegrationAdapter,
   isSupportedIntegrationKind,
@@ -325,42 +322,18 @@ async function dispatchInboundAsResearch(
     };
     await db.insert(chatSession).values(session);
   }
-  const userMessageId = crypto.randomUUID();
-  await db.insert(chatMessage).values({
-    id: userMessageId,
+  const turn = await createConversationTurn({
     sessionId: session.id,
-    role: "user",
-    sender: "user",
-    content: text,
-    status: "running",
-  });
-  const workflowId = crypto.randomUUID();
-  await db.insert(workflowRun).values({
-    id: workflowId,
     projectId,
+    message: text,
+    workflowMode: "research",
+    turnMode: "continue_goal",
+  });
+  return {
     sessionId: session.id,
-    goal: text,
-    mode: "research",
-    source: "chat",
-    status: "pending",
-  });
-  await db.insert(chatMessageWorkflowLink).values({
-    id: crypto.randomUUID(),
-    chatMessageId: userMessageId,
-    workflowRunId: workflowId,
-    traceId: crypto.randomUUID(),
-  });
-  await dispatchTaskToRole({
-    workflowId,
-    role: "orchestrator",
-    payload: {
-      taskId: crypto.randomUUID(),
-      taskType: "workflow_start",
-      params: { workflowRunId: workflowId, goal: text, mode: "research" },
-      assignedRole: "orchestrator",
-    },
-  });
-  return { sessionId: session.id, workflowId, userMessageId };
+    workflowId: turn.workflowRunId,
+    userMessageId: turn.userMessage.id,
+  };
 }
 
 integrationsRouter.post("/:kind/webhook", async (c) => {

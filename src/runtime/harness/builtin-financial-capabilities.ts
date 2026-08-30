@@ -162,6 +162,18 @@ export const builtinFinancialCapabilities: HarnessCapabilityPlugin[] = [
   },
   {
     manifest: {
+      id: "quant.research-integrity",
+      version: "1.0.0",
+      title: "量化研究完整性",
+      kind: "risk",
+      description:
+        "Qubit 产品自有的量化研究闭环编排：统一展示快照、反泄漏、因子暴露、OOS、paper 与人工批准证据；研究阶段只报告缺口，paper/live 由宿主服务强制闸门。",
+      requires: ["market.core", "research.core"],
+      permissions: ["research:integrity:read", "risk:admission:read"],
+    },
+  },
+  {
+    manifest: {
       id: "browser.automation",
       version: "1.0.0",
       title: "受控浏览器",

@@ -35,7 +35,8 @@ const PRIME_EVIDENCE_CHAIN: Array<{ name: string; step: string; purpose: string 
   },
 ];
 
-const TEAM_COMPAT_DEPRECATED = ["run_analyst_team", "fuse_signals", "summarize_team_decision"] as const;
+/** Phase A：已从 catalog / 默认面移除；面板仅作退役说明。 */
+const TEAM_COMPAT_RETIRED = ["run_analyst_team", "fuse_signals", "summarize_team_decision"] as const;
 
 function lifecycleCounts(catalog: ToolCatalogEntry[]): Record<string, number> {
   const out: Record<string, number> = { stable: 0, deprecated: 0, stub: 0, experimental: 0 };
@@ -72,8 +73,8 @@ export const ToolSurfacePanel: FC = () => {
             Prime 工具面 · 证据链
           </div>
           <div style={styles.subtitle}>
-            Orchestrator 默认走 snapshot → thesis → portfolio → intent。团队批量工具已标弃用，不再进入默认授权面；
-            专家派单仍用 <code>assign_task</code> / <code>call_team_*</code>。
+            Orchestrator 默认走 snapshot → thesis → portfolio → intent。团队批量工具已退役（调用会失败）；
+            专家派单用 <code>assign_task</code> / <code>call_team_*</code> / <code>agent.invoke</code>。
           </div>
         </div>
         <div style={styles.counts}>
@@ -113,17 +114,18 @@ export const ToolSurfacePanel: FC = () => {
       </div>
 
       <div style={styles.compatBox}>
-        <div style={styles.compatTitle}>团队兼容工具（已弃用 · 不进 Orchestrator 默认面）</div>
+        <div style={styles.compatTitle}>团队兼容工具（Phase A 已退役 · 调用硬拒绝）</div>
         <div style={styles.compatChips}>
-          {TEAM_COMPAT_DEPRECATED.map((name) => {
-            const meta = byName.get(name);
-            return (
-              <span key={name} style={styles.compatChip} title={meta?.deprecationReason ?? meta?.description}>
-                {name}
-                <span style={styles.badge}>deprecated</span>
-              </span>
-            );
-          })}
+          {TEAM_COMPAT_RETIRED.map((name) => (
+            <span
+              key={name}
+              style={styles.compatChip}
+              title="请用 assign_task / call_team_* / agent.invoke"
+            >
+              {name}
+              <span style={styles.badge}>retired</span>
+            </span>
+          ))}
         </div>
       </div>
 

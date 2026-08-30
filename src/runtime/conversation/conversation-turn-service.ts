@@ -64,6 +64,10 @@ export interface CreateConversationTurnInput {
   preserveGoal?: boolean;
   /** FS Workspace id：注入说明书/记忆/宇宙到 Orchestrator context */
   fsWorkspaceId?: string;
+  /** 场景评测等内部调用的附加 workflow 选项；执行仍必须走本函数的对话 turn。 */
+  loopOptionsJson?: Record<string, unknown>;
+  /** 可选研究场景标签，用于 artifact gate 与审计，不改变对话入口。 */
+  researchScenarioId?: string;
   /** Browser-pasted images, validated by the chat route before persistence. */
   attachments?: ChatImageAttachment[];
 }
@@ -247,6 +251,7 @@ function mergeLoopOptions(
 ): Record<string, unknown> {
   return {
     ...current,
+    ...(input.loopOptionsJson ?? {}),
     ...(input.hitlMode
       ? {
           hitlMode: input.hitlMode,
@@ -442,6 +447,9 @@ export async function createConversationTurn(
           : {}),
       planJson: nextPlan as never,
       loopOptionsJson: loopOptionsJson as never,
+      ...(input.researchScenarioId
+        ? { researchScenarioId: input.researchScenarioId }
+        : {}),
     })
     .where(eq(workflowRun.id, workflow.id));
 
