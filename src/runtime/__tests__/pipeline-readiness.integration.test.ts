@@ -39,6 +39,7 @@ const { runStockScreener } = await import("../screener/stock-screener");
 const { factorService } = await import("../factor/factor-service");
 const { strategyComposer } = await import("../strategy/strategy-composer");
 const { createOrderIntentFromReiaPayload } = await import("../execution/reia-bridge");
+const { fuseResearchSignals } = await import("../msa/signal-fusion");
 
 const WORKSPACE_ID = "ws-pipeline-readiness";
 const PROJECT_ID = "proj-pipeline-readiness";
@@ -108,6 +109,62 @@ describe("五产线就绪度（pipeline readiness）", () => {
       .from(schema.screenerCandidate)
       .where(drizzle.eq(schema.screenerCandidate.screenerRunId, lastRun.id));
     expect(candidates.length).toBeGreaterThan(0);
+  });
+
+  test("产线 1：行情研究 — fuseResearchSignals 落 analyst_signal + signal_fusion_result", async () => {
+    const db = await getDb();
+    const result = await fuseResearchSignals(
+      {
+        workflowRunId,
+        snapshotId: "mkt_snapshot_pipeline_readiness",
+        signals: [
+          {
+            analystRole: "analyst_technical",
+            ticker: "AAPL",
+            signal: "buy",
+            confidence: 0.7,
+            reasoning: "trend and volume confirm",
+          },
+          {
+            analystRole: "analyst_fundamental",
+            ticker: "AAPL",
+            signal: "hold",
+            confidence: 0.6,
+            reasoning: "valuation leaves limited margin of safety",
+          },
+        ],
+        persistSignals: [
+          {
+            signal: {
+              analystRole: "analyst_technical",
+              ticker: "AAPL",
+              signal: "buy",
+              confidence: 0.7,
+              reasoning: "trend and volume confirm",
+            },
+          },
+          {
+            signal: {
+              analystRole: "analyst_fundamental",
+              ticker: "AAPL",
+              signal: "hold",
+              confidence: 0.6,
+              reasoning: "valuation leaves limited margin of safety",
+            },
+          },
+        ],
+      },
+      db
+    );
+    expect(result.fusionId).toBeTruthy();
+    const signals = await db
+      .select()
+      .from(schema.analystSignal)
+      .where(drizzle.eq(schema.analystSignal.workflowRunId, workflowRunId));
+    expect(signals).toHaveLength(2);
+    expect((signals[0]?.dataSnapshotJson as Record<string, unknown>).snapshotId).toBe(
+      "mkt_snapshot_pipeline_readiness"
+    );
   });
 
   test("产线 3：因子生成 — factorService.register 落 factor_definition + 关联 workflowRunId", async () => {
@@ -228,10 +285,12 @@ describe("五产线就绪度（pipeline readiness）", () => {
       db
     );
     expect(out.legacyIntentOrderId).toBeTruthy();
+    const legacyIntentOrderId = out.legacyIntentOrderId;
+    if (!legacyIntentOrderId) throw new Error("expected legacy intent id");
     const rows = await db
       .select()
       .from(schema.intentOrder)
-      .where(drizzle.eq(schema.intentOrder.id, out.legacyIntentOrderId!));
+      .where(drizzle.eq(schema.intentOrder.id, legacyIntentOrderId));
     expect(rows).toHaveLength(1);
   });
 

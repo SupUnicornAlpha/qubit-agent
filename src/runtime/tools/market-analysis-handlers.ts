@@ -222,11 +222,11 @@ export const MARKET_ANALYSIS_HANDLERS: Record<string, BuiltinToolHandler> = {
 
   /** 用户级行情上下文；含本机自选和已关联券商的只读持仓。 */
   "market.watchlist.get": async () => {
-    const watchlist = await getMarketWatchlist();
+    const watchlist = await getMarketWatchlist({ includePositions: false });
     return {
       ...watchlist,
       guidance:
-        "兼容工具：自选为用户本机维护；broker_position 仅代表已关联账户返回的持仓。新实现请先用 market.ide_subscription.get 读取 IDE 自选，再按需用 market.broker_quote.get 获取券商行情。",
+        "兼容工具：默认只返回本机自选，不访问券商。持仓请切到 IDE 持仓页或使用券商账户工具；新实现请先用 market.ide_subscription.get。",
     };
   },
 

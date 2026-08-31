@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { type DbClient, getDb } from "../../db/sqlite/client";
 import {
   indicatorStrategyScript,
+  strategyComposition,
   strategyEvalRun,
   strategyPnlSnapshot,
   strategyRuntime,
@@ -50,11 +51,12 @@ export class PaperEvaluationService {
       .limit(1);
     const projectId = workflowRows[0]?.projectId;
     if (!projectId) throw new Error("workflow_project_not_found");
+    const params = (runtime.paramsJson as Record<string, unknown>) ?? {};
+    const compositionId = await resolvePaperCompositionId(db, params, strategyVersionId);
     const snapshots = await db
       .select()
       .from(strategyPnlSnapshot)
       .where(eq(strategyPnlSnapshot.strategyRuntimeId, strategyRuntimeId));
-    const params = (runtime.paramsJson as Record<string, unknown>) ?? {};
     const configuredCohort = params.comparisonCohortId;
     const comparisonCohortId = readStrategyComparisonCohortId({
       comparisonCohort: { id: configuredCohort },
@@ -64,12 +66,20 @@ export class PaperEvaluationService {
     }
     if (comparisonCohortId) {
       const evaluations = await db
-        .select({ evalKind: strategyEvalRun.evalKind, metricsJson: strategyEvalRun.metricsJson })
+        .select({
+          evalKind: strategyEvalRun.evalKind,
+          compositionId: strategyEvalRun.compositionId,
+          metricsJson: strategyEvalRun.metricsJson,
+        })
         .from(strategyEvalRun)
         .where(eq(strategyEvalRun.strategyVersionId, strategyVersionId));
       const supportedKinds = new Set(
         evaluations
-          .filter((row) => readStrategyComparisonCohortId(row.metricsJson) === comparisonCohortId)
+          .filter(
+            (row) =>
+              (!compositionId || row.compositionId === compositionId) &&
+              readStrategyComparisonCohortId(row.metricsJson) === comparisonCohortId
+          )
           .map((row) => row.evalKind)
       );
       if (!supportedKinds.has("backtest") || !supportedKinds.has("walk_forward")) {
@@ -97,6 +107,7 @@ export class PaperEvaluationService {
       workflowRunId,
       strategyRuntimeId,
       strategyVersionId,
+      compositionId,
       tradingDays: days.length,
       netPnl,
       netReturn,
@@ -126,6 +137,7 @@ export class PaperEvaluationService {
       projectId: string;
       workflowRunId: string;
       comparisonCohortId: string | null;
+      compositionId: string | null;
     }
   ) {
     const rows = await db
@@ -150,9 +162,7 @@ export class PaperEvaluationService {
       sharpe: input.sharpe,
       maxDrawdown: input.maxDrawdown,
       turnover: input.turnover,
-      ...(input.comparisonCohortId
-        ? { comparisonCohort: { id: input.comparisonCohortId } }
-        : {}),
+      ...(input.comparisonCohortId ? { comparisonCohort: { id: input.comparisonCohortId } } : {}),
       gateVersion: "paper-gate-v1",
     };
     if (existing) {
@@ -166,6 +176,7 @@ export class PaperEvaluationService {
         workflowRunId: input.workflowRunId,
         projectId: input.projectId,
         strategyVersionId: input.strategyVersionId,
+        compositionId: input.compositionId,
         scenarioKey: "paper",
         evalKind: "paper",
         metricsJson,
@@ -177,6 +188,30 @@ export class PaperEvaluationService {
     }
     return id;
   }
+}
+
+/**
+ * A paper runtime can bind a composition explicitly. For legacy runtimes we
+ * infer only when the strategy version has exactly one composition; ambiguous
+ * versions remain unbound and therefore cannot validate a reusable recipe.
+ */
+async function resolvePaperCompositionId(
+  db: DbClient,
+  params: Record<string, unknown>,
+  strategyVersionId: string
+): Promise<string | null> {
+  const requested = String(params.compositionId ?? params.strategyCompositionId ?? "").trim();
+  const rows = await db
+    .select({ id: strategyComposition.id })
+    .from(strategyComposition)
+    .where(eq(strategyComposition.strategyVersionId, strategyVersionId));
+  if (requested) {
+    if (!rows.some((row) => row.id === requested)) {
+      throw new Error("paper_composition_not_bound_to_strategy_version");
+    }
+    return requested;
+  }
+  return rows.length === 1 ? (rows[0]?.id ?? null) : null;
 }
 
 function finitePositive(value: unknown): number | null {

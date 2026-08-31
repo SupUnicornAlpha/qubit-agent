@@ -84,7 +84,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   },
   update_plan: {
     description:
-      "更新对用户可见的分步计划/TODO（params: steps=[{id?,title,status?,note?}], successCriteria?:string[], constraints?:string[]；status∈pending|in_progress|done|skipped）。Goal 开工前先写可验证的完成标准和 3-5 步计划，每完成一步就更新状态；skipped 必须写原因。",
+      "更新对用户可见的分步计划/TODO（params: research_phase?:scope|plan|evidence|analysis|validation|delivery, research_phases?:[{phase,status,note?}], steps=[{id?,title,status?,note?}], successCriteria?:string[], constraints?:string[]；phase status∈pending|active|completed|revisited|blocked；step status∈pending|in_progress|done|skipped）。研究任务应维护当前 research_phase；只有发生回访或阻塞时才需要补充 research_phases。Goal 开工前先写可验证的完成标准和 3-5 步计划，每完成一步就更新状态；skipped 必须写原因。",
     category: "orchestration",
   },
   "web.fetch": {
@@ -202,6 +202,11 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
       "confidence 用 0–1（也接受 low/medium/high 或 0–100 百分制）。" +
       "可选：horizon、claims[]、invalidation[]、knownUnknowns、modelAndPromptVersion。命名 `framework` 时必须附 source-linked `framework_card`（原则、经济机制、可观测代理/阈值/权重、适用域、排除/失效条件及风险预算），不能把任何人物名或印象当作证据。" +
       "研究结论应走本工具，而不是只写 Markdown；后续归因用 research.forecast_book.*。",
+    category: "research",
+  },
+  "research.signal_fuse": {
+    description:
+      "将同一冻结 snapshot 下、同一标的的多个分析师信号写入审计账本并作确定性加权融合。必填 snapshot_id 与 signals[]（analyst_role、ticker、signal=buy|sell|hold、confidence 0–1、reasoning；可带本 workflow 的 agent_instance_id 以绑定历史准确率权重）。结果只是研究证据，低置信度会标记应辩论；不会创建订单或替代 thesis/backtest。",
     category: "research",
   },
   "research.framework.assess": {
@@ -676,9 +681,9 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
      */
     description:
       "下达一个交易意向（落 order_intent + 证据绑定 + 数据质量门 + pre-trade risk + execution_task）。**必填**：`strategy_version_id` + `symbol` + `side` + `qty`。" +
-      "可选：`thesis_id`/`thesisId`（Prime D5）、`snapshot_id`/`snapshotId`、`order_type`、`price`、`time_in_force`、`market`、`broker_account_id`、`dispatch_mode`。" +
+      "可选：`thesis_id`/`thesisId`（Prime D5）、`snapshot_id`/`snapshotId`、`framework_assessment_artifact_id`、`order_type`、`price`、`time_in_force`、`market`、`broker_account_id`、`dispatch_mode`。" +
       "`dispatch_mode`：`paper`=本地假成交（默认）；`sim`=券商模拟盘（如 Futu TrdEnv.SIMULATE，可自动解析 sandbox 账户）；`live`=真钱。" +
-      "**Live 必须传 thesisId**（snapshot 可从 thesis 派生，且 qualityVerdict.tradable=true）。sim 不强制 thesis，便于规则/因子快环。" +
+      "**Live 必须传 thesisId**（snapshot 可从 thesis 派生，且 qualityVerdict.tradable=true）；若 thesis 声明命名框架，还必须传同 workflow 的 `research.framework.assess` 返回的合格 Artifact ID。sim 不强制 thesis，便于规则/因子快环。" +
       "研究级 paper 可暂不传（会记 warning）。成功后旁路写入 forecast book。",
     category: "trading",
   },
@@ -746,7 +751,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   },
   "discovery.promote": {
     description:
-      "把挖掘出的候选表达式 promote 为项目下正式 factor_definition（保留 lineage 到 discovery_job）",
+      "把挖掘出的候选表达式登记为项目下的 **draft** factor_definition（保留完整 discovery lineage 与候选族规模）。此工具不能直接创建 active 因子；必须补齐 research_contract、在冻结快照上完成评估后调用 factor.activate。",
     category: "research",
   },
   "backtest.run": {
@@ -759,7 +764,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
       "`start_date`/`end_date` 建议显式；缺省近 365 天。" +
       "`composition_id` 与 `signals` 二选一；刚 compose 过可不传 composition_id（自动取该 version 最新组合）。多因子 composition 会先逐日截面排名标准化，再按已配置权重合成；目前快照回测仅支持 qlib_expr 因子。" +
       "必须声明 `parameter_selection`：fixed_before_run / full_sample_optimized / unknown，并用 `candidate_trials`（1–10000）记录同一假设族查看过的候选总数；缺失时保持 research-only，full_sample_optimized 会被反泄漏闸门拒绝。可选 `pre_registration_id` 记录预注册。" +
-      "期权、期货、永续合约必须传 `instruments`（按 symbol 索引），冻结 asset_class、contract_multiplier、expiry_date、settlement_mode 等合约字段；期权还需 underlying_symbol/strike/option_right/exercise_style。期货还要求 initial_margin_rate 与 maintenance_margin_rate，并可声明 target_leverage；系统逐日盯市、追保，现金不足时按结算价强平。显式换月使用 `future_roll:{roll_date,successor_symbol}`：换月日按快照 open 平旧、以合约乘数换算新仓，next contract 必须同样在 instruments 中冻结；禁止从连续代码推断。快照可提供逐 Bar 的 tradable/suspended/price_limit_up/price_limit_down：引擎会阻止停牌、不可交易、涨停买入与跌停卖出，并审计未成交；字段完全缺失时保持 research-only。缺字段 fail-closed。当前 event_driven 只接受日线快照（`1d`）；盘中快照会直接拒绝，绝不会把同日多个 Bar 合并成伪日线结果。首版支持现金结算欧式期权、现金结算期货与由快照 Bar 提供资金费率的币永续；交易所参数曲线仍未建模。" +
+      "期权、期货、永续合约必须传 `instruments`（按 symbol 索引），冻结 asset_class、contract_multiplier、expiry_date、settlement_mode 等合约字段；期权还需 underlying_symbol/strike/option_right/exercise_style。期货还要求 initial_margin_rate 与 maintenance_margin_rate，并可声明 target_leverage；系统逐日盯市、追保，现金不足时按结算价强平。显式换月使用 `future_roll:{roll_date,successor_symbol}`：换月日按快照 open 平旧、以合约乘数换算新仓，next contract 必须同样在 instruments 中冻结；禁止从连续代码推断。快照可提供逐 Bar 的 tradable/suspended/price_limit_up/price_limit_down：引擎会阻止停牌、不可交易、涨停买入与跌停卖出，并审计未成交；字段完全缺失时保持 research-only。缺字段 fail-closed。`timeframe` 必须与冻结 snapshot 完全一致；事件引擎支持日线和带冻结会话窗口的盘中 K 线，频率不匹配或无会话窗口都会拒绝，绝不会把同日多个 Bar 合并成伪日线结果。首版支持现金结算欧式期权、现金结算期货与由快照 Bar 提供资金费率的币永续；交易所参数曲线仍未建模。" +
       "`costs` 会冻结佣金、滑点、最小佣金、冲击、参与率、借券和禁空约束；若用于验证级结论，必须同时提供 `cost_model_version`、`cost_model_source` 和 ISO `cost_model_as_of`。缺失成本血缘或采用内置默认 5bp 时，交易成本证据保持 unknown。" +
       "顺序：create_version → compose → backtest.run。",
     category: "research",

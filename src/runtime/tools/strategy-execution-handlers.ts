@@ -80,27 +80,33 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
     const projectId =
       ctx.projectId || (isLikelyProjectIdFormat(requestedProjectId) ? requestedProjectId : "");
     if (!projectId) throw new Error("strategy.candidate.review: project_id is required");
-    const strategyVersionId = String(params.strategy_version_id ?? params.strategyVersionId ?? "").trim();
+    const strategyVersionId = String(
+      params.strategy_version_id ?? params.strategyVersionId ?? ""
+    ).trim();
     const comparisonCohortId = String(
       params.comparison_cohort_id ?? params.comparisonCohortId ?? ""
     ).trim();
     const decision = String(params.decision ?? "").trim();
     if (!strategyVersionId || !comparisonCohortId) {
-      throw new Error("strategy.candidate.review: strategy_version_id and comparison_cohort_id are required");
+      throw new Error(
+        "strategy.candidate.review: strategy_version_id and comparison_cohort_id are required"
+      );
     }
     if (!["eligible", "incomplete", "rejected", "retired"].includes(decision)) {
       throw new Error("strategy.candidate.review: decision is invalid");
     }
     const reasonCodes = Array.isArray(params.reason_codes ?? params.reasonCodes)
-      ? (params.reason_codes ?? params.reasonCodes as unknown[]).map(String)
+      ? (params.reason_codes ?? (params.reasonCodes as unknown[])).map(String)
       : [];
     const asObject = (value: unknown): Record<string, unknown> =>
       value && typeof value === "object" && !Array.isArray(value)
         ? (value as Record<string, unknown>)
         : {};
     const regimeEvidence = Array.isArray(params.regime_evidence ?? params.regimeEvidence)
-      ? (params.regime_evidence ?? params.regimeEvidence as unknown[])
-          .filter((value): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value)))
+      ? (params.regime_evidence ?? (params.regimeEvidence as unknown[])).filter(
+          (value): value is Record<string, unknown> =>
+            Boolean(value && typeof value === "object" && !Array.isArray(value))
+        )
       : [];
     return strategyCandidateReviewService.record({
       projectId,
@@ -108,9 +114,10 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
       comparisonCohortId,
       decision: decision as "eligible" | "incomplete" | "rejected" | "retired",
       reasonCodes,
-      duplicateOfStrategyVersionId: String(
-        params.duplicate_of_strategy_version_id ?? params.duplicateOfStrategyVersionId ?? ""
-      ).trim() || null,
+      duplicateOfStrategyVersionId:
+        String(
+          params.duplicate_of_strategy_version_id ?? params.duplicateOfStrategyVersionId ?? ""
+        ).trim() || null,
       regimeEvidence,
       capacityEvidence: asObject(params.capacity_evidence ?? params.capacityEvidence),
       correlationEvidence: asObject(params.correlation_evidence ?? params.correlationEvidence),
@@ -384,6 +391,10 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
     }
     const snapshotId = String(params.snapshot_id ?? params.snapshotId ?? "").trim() || null;
     const thesisId = String(params.thesis_id ?? params.thesisId ?? "").trim() || null;
+    const frameworkAssessmentArtifactId =
+      String(
+        params.framework_assessment_artifact_id ?? params.frameworkAssessmentArtifactId ?? ""
+      ).trim() || null;
     if (dispatchMode === "live" && !thesisId) {
       throw new Error(
         "order.create_intent: dispatch_mode=live 必须传 thesisId（先 research.thesis.write；snapshot 可从 thesis 派生）"
@@ -445,6 +456,7 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
       brokerAccountId,
       snapshotId,
       thesisId,
+      frameworkAssessmentArtifactId,
       requireDataQualityGate: dispatchMode === "live" || snapshotId != null || thesisId != null,
       ...(ctx.traceId ? { traceId: ctx.traceId } : {}),
     });

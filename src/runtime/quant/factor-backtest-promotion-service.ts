@@ -16,6 +16,7 @@ export interface FactorBacktestPromotionInput {
   description?: string;
   symbols?: string[];
   universe?: string;
+  timeframe?: string;
   startDate: string;
   endDate: string;
   /** 由 market.snapshot.get 预先冻结的回测数据。 */
@@ -152,6 +153,7 @@ export class FactorBacktestPromotionService {
         factorIds,
         universe,
         symbols,
+        timeframe: input.timeframe?.trim() || "1d",
       },
       hashSeed: `${workflowRunId ?? "manual"}:${factorIds.join(",")}:${input.startDate}:${input.endDate}`,
     });
@@ -177,6 +179,7 @@ export class FactorBacktestPromotionService {
       compositionId: composition.id,
       symbols,
       universe,
+      ...(input.timeframe ? { timeframe: input.timeframe } : {}),
       startDate: input.startDate,
       endDate: input.endDate,
       ...(input.datasetSnapshotId ? { datasetSnapshotId: input.datasetSnapshotId } : {}),

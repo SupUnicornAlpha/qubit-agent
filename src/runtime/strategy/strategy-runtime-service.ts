@@ -40,6 +40,42 @@ export interface StrategyRuntimeParams {
   strategyMode?: "indicator" | "script" | "contract";
   /** Fixed capital used to translate contract target-percent/value signals. */
   paperCapital?: number;
+  /** Bind paper evidence to this exact composition; required when a version has multiple recipes. */
+  compositionId?: string;
+  /** Alias accepted by the runtime API. */
+  strategyCompositionId?: string;
+  /**
+   * Immutable research thesis used to authorize a live runtime's orders.
+   * It is intentionally runtime configuration rather than an ephemeral worker
+   * argument so every automated order can be traced back to the same thesis.
+   */
+  thesisId?: string;
+  /**
+   * Optional explicit snapshot. When omitted, the execution gate derives it
+   * from thesisId and still validates freshness/quality for every order.
+   */
+  snapshotId?: string;
+  /** Required when the configured thesis names an investment framework card. */
+  frameworkAssessmentArtifactId?: string;
+}
+
+function asRuntimeParams(value: unknown): StrategyRuntimeParams {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as StrategyRuntimeParams;
+}
+
+/**
+ * Do the inexpensive configuration check at admission time. The canonical
+ * order-intent pipeline deliberately performs the authoritative thesis ↔
+ * snapshot freshness and data-quality validation again for every live order:
+ * evidence can expire while a long-lived runtime is idle.
+ */
+function assertLiveRuntimeEvidenceConfigured(params: StrategyRuntimeParams): void {
+  if (!params.thesisId?.trim()) {
+    throw new Error(
+      "live_runtime_evidence_missing: params.thesisId is required for live strategy runtimes"
+    );
+  }
 }
 
 async function ensureInstrumentForSymbol(
@@ -78,9 +114,13 @@ export async function createStrategyRuntime(
 
   const purpose = script.purpose ?? "both";
   const executionMode = input.executionMode ?? "paper";
+  const runtimeParams = asRuntimeParams(input.params);
   // research-only 脚本允许 paper 本地引擎；sim/live 仍须 both/live_trading
   if (purpose === "research" && executionMode !== "paper") {
     throw new Error("strategy_script_not_enabled_for_live");
+  }
+  if (executionMode === "live") {
+    assertLiveRuntimeEvidenceConfigured(runtimeParams);
   }
 
   const resolved = await resolveInstrument({
@@ -135,14 +175,15 @@ export async function createStrategyRuntime(
     market: resolved.market,
     symbol: resolved.symbol,
     timeframe: input.timeframe ?? "1d",
-    paramsJson: input.params ?? {},
+    paramsJson: runtimeParams,
     createdAt: now,
     updatedAt: now,
   });
 
   const row = (
     await client.select().from(strategyRuntime).where(eq(strategyRuntime.id, id)).limit(1)
-  )[0]!;
+  )[0];
+  if (!row) throw new Error("strategy_runtime_create_failed");
 
   if (input.autoStart) {
     await startStrategyRuntime(id, client);
@@ -165,6 +206,7 @@ export async function startStrategyRuntime(runtimeId: string, db?: DbClient): Pr
     strategyRuntimeId: runtime.id,
   });
   if (runtime.executionMode === "live") {
+    assertLiveRuntimeEvidenceConfigured(asRuntimeParams(runtime.paramsJson));
     await strategyPromotionService.assertRuntimeLiveEligible(runtimeId, client);
   }
   const now = new Date().toISOString();
@@ -278,6 +320,7 @@ export async function submitRuntimeOrder(
   const instrumentId = await ensureInstrumentForSymbol(db, runtime.symbol, runtime.market);
   const dispatchMode =
     runtime.executionMode === "live" ? "live" : runtime.executionMode === "sim" ? "sim" : "paper";
+  const runtimeParams = asRuntimeParams(runtime.paramsJson);
 
   const result = await createOrderIntentWithExecution(db, {
     workflowRunId,
@@ -295,6 +338,11 @@ export async function submitRuntimeOrder(
     signalBarTime: input.signalBarTime,
     dispatchMode,
     brokerAccountId: runtime.brokerAccountId,
+    ...(runtimeParams.thesisId !== undefined ? { thesisId: runtimeParams.thesisId } : {}),
+    ...(runtimeParams.snapshotId !== undefined ? { snapshotId: runtimeParams.snapshotId } : {}),
+    ...(runtimeParams.frameworkAssessmentArtifactId !== undefined
+      ? { frameworkAssessmentArtifactId: runtimeParams.frameworkAssessmentArtifactId }
+      : {}),
     // Live auto-trading always requires a tradable snapshot (Prime D3).
     // Sim (Futu sandbox) skips thesis gate for low-latency rule/factor loops.
     requireDataQualityGate: dispatchMode === "live",

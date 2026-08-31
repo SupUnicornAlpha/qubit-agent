@@ -172,9 +172,53 @@ describe("promoteStrategyRecipes", () => {
       minUseCount: 1,
       minQuality: 0.55,
       existingCompositionIds: new Set(),
+      evidenceAssessor: async ({ compositionId }) => ({
+        eligible: true,
+        evidence: {
+          status: "validated",
+          strategyVersionId: "strategy-v1",
+          compositionId,
+          backtestRunId: "backtest-1",
+          datasetSnapshotId: "snapshot-1",
+          comparisonCohortId: "cohort-1",
+          finalHoldoutFingerprint: "holdout-1",
+          verifiedAt: "2026-07-02T00:00:00.000Z",
+        },
+        reasons: [],
+      }),
     });
     expect(result.scanned).toBe(2);
     expect(result.promoted).toBe(1);
     expect(result.skippedLowQuality).toBeGreaterThanOrEqual(1);
+  });
+
+  test("无真实验证证据的策略反思不能晋升", async () => {
+    const store = new InMemoryExperienceStore();
+    await store.insert({
+      kind: "procedural",
+      subKind: "strategy_recipe",
+      scope: "project",
+      scopeId: "proj-x",
+      contentJson: { summary: "untested recipe" },
+      validFrom: "2026-07-01T00:00:00.000Z",
+      metadataJson: { compositionId: "comp-unverified" },
+      qualityScore: 0.99,
+    });
+    const [recipe] = await store.query({ subKind: "strategy_recipe", scopeId: "proj-x" });
+    await store.update(recipe.id, { useCount: 8, successCount: 8 });
+
+    const result = await promoteStrategyRecipes({
+      projectId: "proj-x",
+      mode: "dry_run",
+      store,
+      existingCompositionIds: new Set(),
+      evidenceAssessor: async () => ({
+        eligible: false,
+        evidence: null,
+        reasons: ["final_holdout_missing"],
+      }),
+    });
+    expect(result.promoted).toBe(0);
+    expect(result.skippedInsufficientEvidence).toBe(1);
   });
 });

@@ -31,10 +31,21 @@ export function renderWorkflowPlanMarkdown(input: {
     `- Workflow: \`${markdownCell(input.workflowRunId)}\``,
     `- Project: \`${markdownCell(input.projectId)}\``,
     `- Mode: \`${markdownCell(input.plan.mode ?? "agent")}\``,
+    ...(input.plan.researchPhase
+      ? [`- Research phase: \`${markdownCell(input.plan.researchPhase)}\``]
+      : []),
     `- Updated: ${markdownCell(input.plan.updatedAt ?? "")}`,
   ];
   if (input.plan.goal?.text) {
     lines.push("", "## Goal", "", markdownCell(input.plan.goal.text));
+  }
+  if (input.plan.researchPhases?.length) {
+    lines.push("", "## Research phases", "", "| Phase | Status | Note |", "| --- | --- | --- |");
+    for (const phase of input.plan.researchPhases) {
+      lines.push(
+        `| ${markdownCell(phase.phase)} | ${markdownCell(phase.status)} | ${markdownCell(phase.note)} |`
+      );
+    }
   }
   lines.push("", "## Steps", "", "| Status | Step | Note |", "| --- | --- | --- |");
   for (const step of input.plan.steps) {

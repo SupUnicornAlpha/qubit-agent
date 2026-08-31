@@ -21,6 +21,7 @@ export * as reporting from "./reporting-handlers";
 export * as requiredToolGate from "./required-tool-gate";
 export * as researchArguments from "./research-arg-normalize";
 export * as researchThesis from "./research-thesis-handlers";
+export * as signalFusion from "./signal-fusion-handlers";
 export * as semanticResult from "./semantic-tool-result";
 export * as skill from "./skill-handlers";
 export * as strategyExecution from "./strategy-execution-handlers";

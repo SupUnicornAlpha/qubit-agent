@@ -10,6 +10,11 @@ import {
   type HarnessToolSurfaceShadow,
   buildHarnessToolSurfaceShadow,
 } from "../harness/shadow-tool-surface";
+import {
+  MATH_DERIVATION_VERIFY_TOOL,
+  acquireWorkflowMathHarnessLease,
+  acquireWorkflowResearchIntegrityHarnessLease,
+} from "../harness/workflow-harness";
 import { stripOrchestratorTeamCompatTools } from "../market/contracts/prime-tool-host-surface";
 import {
   applyMissingArtifactToolFilter,
@@ -50,9 +55,18 @@ async function withHarnessShadow(
   workflowId: string,
   result: Omit<EffectiveToolsResult, "harnessShadow" | "harnessRollout">
 ): Promise<EffectiveToolsResult> {
+  const mathLease = await acquireWorkflowMathHarnessLease(workflowId);
+  const integrityLease = await acquireWorkflowResearchIntegrityHarnessLease(workflowId);
+  // Mathematical verification is not merely hidden in an ordinary workflow:
+  // it is removed before both prompt projection and capability authorization.
+  // The handler repeats this check to fail closed for any out-of-band call.
+  const workflowScopedTools = mathLease
+    ? result.tools
+    : result.tools.filter((tool) => tool !== MATH_DERIVATION_VERIFY_TOOL);
   const harnessShadow = buildHarnessToolSurfaceShadow({
     role: definition.role,
-    legacyTools: result.tools,
+    legacyTools: workflowScopedTools,
+    additionalProfileIds: integrityLease ? [integrityLease.profileId] : [],
   });
   const harnessRollout = resolveHarnessResolverRolloutFromEnv(harnessShadow);
   await appendHarnessCompositionSafe({

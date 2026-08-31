@@ -1,11 +1,12 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { getDb } from "../../../db/sqlite/client";
-import { evalCaseResult, evalRun } from "../../../db/sqlite/schema";
+import { evalCaseResult, evalDataset, evalRun } from "../../../db/sqlite/schema";
 import { researchScenarioService } from "../../research-scenario/service";
+import { listDatasetItems } from "../dataset/dataset-item-service";
 import { persistWorkflowEvalScores } from "../orchestrator";
 import { listScores } from "../score-query";
-import { listDatasetItems } from "../dataset/dataset-item-service";
+import { captureExperimentComponentEvidence } from "./component-evidence-capture";
 import { waitForWorkflowTerminal } from "./workflow-wait";
 
 export interface ExperimentRunInput {
@@ -43,7 +44,8 @@ export interface ExperimentRunResult {
 function readLaunchInput(inputJson: Record<string, unknown>, fallbackProjectId: string) {
   const scenarioKey = typeof inputJson.scenarioKey === "string" ? inputJson.scenarioKey : null;
   const goal = typeof inputJson.goal === "string" ? inputJson.goal : "";
-  const projectId = typeof inputJson.projectId === "string" ? inputJson.projectId : fallbackProjectId;
+  const projectId =
+    typeof inputJson.projectId === "string" ? inputJson.projectId : fallbackProjectId;
   const inputParams =
     typeof inputJson.inputParams === "object" && inputJson.inputParams
       ? (inputJson.inputParams as Record<string, unknown>)
@@ -70,6 +72,15 @@ export async function runExperiment(input: ExperimentRunInput): Promise<Experime
   const now = new Date().toISOString();
   const mode = input.mode ?? "replay";
   const items = await listDatasetItems(input.datasetId);
+  const dataset = (
+    await db
+      .select({ id: evalDataset.id, version: evalDataset.version })
+      .from(evalDataset)
+      .where(eq(evalDataset.id, input.datasetId))
+      .limit(1)
+  )[0];
+  if (!dataset) throw new Error(`eval_dataset_not_found:${input.datasetId}`);
+  const comparisonCohortId = deriveExperimentComparisonCohort(dataset, items);
 
   await db.insert(evalRun).values({
     id: runId,
@@ -82,6 +93,7 @@ export async function runExperiment(input: ExperimentRunInput): Promise<Experime
       mode,
       experimentLabel: input.experimentLabel,
       baselineRunId: input.baselineRunId ?? null,
+      comparisonCohortId,
     },
   });
 
@@ -104,7 +116,7 @@ export async function runExperiment(input: ExperimentRunInput): Promise<Experime
         workflowRunId = launched.workflowRunId;
         await waitForWorkflowTerminal({
           workflowRunId,
-          timeoutMs: input.waitTimeoutMs,
+          ...(input.waitTimeoutMs !== undefined ? { timeoutMs: input.waitTimeoutMs } : {}),
         });
       }
 
@@ -159,9 +171,7 @@ export async function runExperiment(input: ExperimentRunInput): Promise<Experime
   }
 
   const passCount = cases.filter((c) => c.pass).length;
-  const avgScore = cases.length
-    ? cases.reduce((sum, c) => sum + c.score, 0) / cases.length
-    : 0;
+  const avgScore = cases.length ? cases.reduce((sum, c) => sum + c.score, 0) / cases.length : 0;
   const summary = {
     caseCount: cases.length,
     passCount,
@@ -178,12 +188,57 @@ export async function runExperiment(input: ExperimentRunInput): Promise<Experime
     })
     .where(eq(evalRun.id, runId));
 
+  for (const outcome of cases) {
+    if (!outcome.workflowRunId) continue;
+    try {
+      await captureExperimentComponentEvidence({
+        projectId: input.projectId,
+        evalRunId: runId,
+        workflowRunId: outcome.workflowRunId,
+        caseKey: outcome.caseKey,
+        comparisonCohortId,
+        configFingerprint: input.configFingerprint,
+        score: outcome.score,
+        pass: outcome.pass,
+        client: db,
+      });
+    } catch (error) {
+      console.warn(
+        `[eval-platform] component capture failed for ${outcome.workflowRunId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  }
+
   return {
     runId,
     baselineRunId: input.baselineRunId ?? null,
     cases,
     summary,
   };
+}
+
+function deriveExperimentComparisonCohort(
+  dataset: { id: string; version: string },
+  items: Awaited<ReturnType<typeof listDatasetItems>>
+): string {
+  const digest = createHash("sha256")
+    .update(
+      JSON.stringify(
+        items
+          .map((item) => ({
+            caseKey: item.caseKey,
+            input: item.inputJson,
+            expected: item.expectedJson,
+            metadata: item.metadataJson,
+          }))
+          .sort((left, right) => left.caseKey.localeCompare(right.caseKey))
+      )
+    )
+    .digest("hex")
+    .slice(0, 24);
+  return `eval:${dataset.id}:${dataset.version}:${digest}`;
 }
 
 export interface ExperimentDiffRow {

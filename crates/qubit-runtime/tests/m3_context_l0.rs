@@ -216,6 +216,7 @@ async fn diagnose_alias_from_legacy_debug_string() {
         title: "t".into(),
         status: PlanStepStatus::Done,
         note: None,
+        research_phase: None,
     };
     let _ = StaticIdentityLoader;
 }

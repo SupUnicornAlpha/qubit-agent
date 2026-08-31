@@ -15,6 +15,9 @@ export interface ScheduledExecutionPayload {
   brokerProvider?: BrokerProvider;
   market?: string;
   timeframe?: string;
+  thesisId?: string;
+  snapshotId?: string;
+  frameworkAssessmentArtifactId?: string;
 }
 
 export async function runAutoExecution(input: {
@@ -34,6 +37,11 @@ export async function runAutoExecution(input: {
       timeframe: input.payload.timeframe,
       executionMode: "paper",
       brokerProvider: input.payload.brokerProvider,
+      ...(input.payload.thesisId !== undefined ? { thesisId: input.payload.thesisId } : {}),
+      ...(input.payload.snapshotId !== undefined ? { snapshotId: input.payload.snapshotId } : {}),
+      ...(input.payload.frameworkAssessmentArtifactId !== undefined
+        ? { frameworkAssessmentArtifactId: input.payload.frameworkAssessmentArtifactId }
+        : {}),
     });
     if (pre.legacyIntentOrderId) {
       await requestExecutionConfirmation(pre.legacyIntentOrderId);
@@ -56,6 +64,11 @@ export async function runAutoExecution(input: {
           ? "live"
           : "paper",
     brokerProvider: input.payload.brokerProvider,
+    ...(input.payload.thesisId !== undefined ? { thesisId: input.payload.thesisId } : {}),
+    ...(input.payload.snapshotId !== undefined ? { snapshotId: input.payload.snapshotId } : {}),
+    ...(input.payload.frameworkAssessmentArtifactId !== undefined
+      ? { frameworkAssessmentArtifactId: input.payload.frameworkAssessmentArtifactId }
+      : {}),
   });
 
   const db = await getDb();

@@ -407,7 +407,7 @@ export const FsWorkspaceExplorer: FC<FsWorkspaceExplorerProps> = ({
       ) : null}
       {onOpenWorkflowSettings ? (
         <button type="button" style={styles.linkBtn} onClick={onOpenWorkflowSettings}>
-          打开工作流 / 研究设置 →
+          打开工作流 →
         </button>
       ) : null}
       <div style={styles.actionsRow}>

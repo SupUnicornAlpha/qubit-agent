@@ -362,11 +362,24 @@ export class StrategyPromotionService {
   async assertRuntimeLiveEligible(strategyRuntimeId: string, client?: DbClient): Promise<void> {
     const db = client ?? (await getDb());
     const resolved = await resolveRuntimeVersion(db, strategyRuntimeId);
-    const assessment = await this.assess(resolved.strategyVersionId, db);
+    await this.assertStrategyVersionLiveEligible(resolved.strategyVersionId, db);
+  }
+
+  /**
+   * Central real-money gate for every entry point that has a strategy version
+   * but not necessarily a strategy-runtime record (manual intent, rebalance,
+   * recovery worker). It intentionally checks more than a base backtest.
+   */
+  async assertStrategyVersionLiveEligible(
+    strategyVersionId: string,
+    client?: DbClient
+  ): Promise<void> {
+    const db = client ?? (await getDb());
+    const assessment = await this.assess(strategyVersionId, db);
     if (!assessment.liveEligible) {
       throw new Error(`live_promotion_gate_blocked:${JSON.stringify(assessment)}`);
     }
-    const datasetAdmission = await assessStrategyExecutionAdmission(db, resolved.strategyVersionId);
+    const datasetAdmission = await assessStrategyExecutionAdmission(db, strategyVersionId);
     if (!datasetAdmission.eligible) {
       throw new Error(`live_dataset_admission_blocked:${JSON.stringify(datasetAdmission)}`);
     }

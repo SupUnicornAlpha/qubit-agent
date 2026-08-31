@@ -50,6 +50,7 @@ import { detectRegimeFromBars } from "../runtime/market/regime";
 import {
   addMarketWatchlistItem,
   getMarketWatchlist,
+  parseWatchlistIncludePositionsQuery,
   removeMarketWatchlistItem,
 } from "../runtime/market/watchlist-service";
 import { runStructuredTune } from "../runtime/market/structured-tune";
@@ -88,9 +89,9 @@ marketRouter.get("/stream/metrics", (c) =>
   c.json({ ok: true, data: marketStreamGateway.snapshot() })
 );
 
-/** 本机用户自选 + 已关联券商持仓；只读聚合，永不写券商侧。 */
+/** 本机用户自选；只有 `includePositions=1` 才同步打券商持仓。 */
 marketRouter.get("/watchlist", async (c) => {
-  const includePositions = c.req.query("includePositions") !== "0";
+  const includePositions = parseWatchlistIncludePositionsQuery(c.req.query("includePositions"));
   return c.json({ ok: true, data: await getMarketWatchlist({ includePositions }) });
 });
 
@@ -439,8 +440,11 @@ marketRouter.post("/klines/batch", async (c) => {
   try {
     const body = (await c.req.json().catch(() => ({}))) as {
       requests?: Array<{ symbol?: string; exchange?: string; timeframe?: string; limit?: number }>;
+      /** 自选 sparkline：禁止 Yahoo 瀑布，避免拖慢本机自选列表。 */
+      fast?: boolean;
     };
     const requests = Array.isArray(body.requests) ? body.requests.slice(0, 30) : [];
+    const bestEffort = body.fast === true;
     if (requests.length === 0) {
       return c.json({ ok: true, data: {} as Record<string, unknown> });
     }
@@ -463,6 +467,7 @@ marketRouter.post("/klines/batch", async (c) => {
           ...(exchange ? { exchange } : {}),
           ...(req.timeframe ? { timeframe: req.timeframe } : {}),
           ...(req.limit !== undefined ? { limit: req.limit } : {}),
+          ...(bestEffort ? { bestEffort: true } : {}),
         });
         results[key] = { bars, meta, ...(error ? { error } : {}) };
       }

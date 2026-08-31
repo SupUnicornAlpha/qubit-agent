@@ -75,8 +75,9 @@ describe("DiscoveryService", () => {
     expect(job.multipleTesting?.method).toBe("benjamini_hochberg");
     expect(job.multipleTesting?.hypothesisCount).toBeGreaterThanOrEqual(job.candidates.length);
     for (let i = 1; i < job.candidates.length; i++) {
-      const previous = job.candidates[i - 1]!;
-      const current = job.candidates[i]!;
+      const previous = job.candidates[i - 1];
+      const current = job.candidates[i];
+      if (!previous || !current) throw new Error("expected adjacent candidates");
       expect(Number((previous.metrics.adjustedPValue ?? 1) <= 0.05)).toBeGreaterThanOrEqual(
         Number((current.metrics.adjustedPValue ?? 1) <= 0.05)
       );
@@ -168,9 +169,10 @@ describe("DiscoveryService", () => {
     expect(job.candidates.length).toBeGreaterThan(0);
     expect(job.candidates.length).toBeLessThanOrEqual(3);
     for (let i = 1; i < job.candidates.length; i++) {
-      expect(job.candidates[i - 1]?.metrics.score).toBeGreaterThanOrEqual(
-        job.candidates[i]?.metrics.score
-      );
+      const previous = job.candidates[i - 1];
+      const current = job.candidates[i];
+      if (!previous || !current) throw new Error("expected adjacent candidates");
+      expect(previous.metrics.score).toBeGreaterThanOrEqual(current.metrics.score);
     }
     for (const c of job.candidates) expect(c.lang).toBe("qlib_expr");
   });
@@ -202,9 +204,9 @@ describe("DiscoveryService", () => {
     expect(job.status).toBe("succeeded");
     // run() 里 sorted 把 error 过滤了 → topK 中只剩 1 个有效
     expect(job.candidates.every((c) => !c.error)).toBe(true);
-    expect(job.candidateAudit.some((c) => c.error && c.discoveryDecision?.status === "rejected")).toBe(
-      true
-    );
+    expect(
+      job.candidateAudit.some((c) => c.error && c.discoveryDecision?.status === "rejected")
+    ).toBe(true);
   });
 
   test("list 按 projectId 过滤", async () => {
@@ -225,7 +227,8 @@ describe("DiscoveryService", () => {
       topK: 3,
     });
     expect(job.candidates.length).toBeGreaterThan(0);
-    const cand = job.candidates[0]!;
+    const cand = job.candidates[0];
+    if (!cand) throw new Error("expected shortlisted candidate");
 
     const fName = `promoted_${randomUUID().slice(0, 6)}`;
     const factor = await discoveryService.promoteCandidate(job.id, cand.id, {
@@ -243,6 +246,27 @@ describe("DiscoveryService", () => {
     expect(lineage?.discoveryJobId).toBe(job.id);
     expect(lineage?.candidateId).toBe(cand.id);
     expect(lineage?.ic).toBe(cand.metrics.ic);
+    expect(lineage?.candidateTrials).toBe(job.candidateAudit.length);
+    expect(factor.status).toBe("draft");
+  });
+
+  test("promoteCandidate cannot bypass factor admission by requesting active", async () => {
+    const job = await discoveryService.submitAndRun({
+      projectId,
+      kind: "factor_alpha101",
+      symbols: ["SYN1", "SYN2", "SYN3"],
+      startDate: "2026-01-01",
+      endDate: "2026-04-30",
+      topK: 1,
+    });
+    const candidate = job.candidates[0];
+    if (!candidate) throw new Error("expected shortlisted candidate");
+    await expect(
+      discoveryService.promoteCandidate(job.id, candidate.id, {
+        name: `blocked_${randomUUID().slice(0, 6)}`,
+        status: "active",
+      })
+    ).rejects.toThrow("discovery_promote_requires_draft");
   });
 
   test("promoteCandidate：候选不存在 → validation_failed", async () => {

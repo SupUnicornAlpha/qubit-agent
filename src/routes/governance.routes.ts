@@ -3,9 +3,17 @@ import {
   componentChallengerService,
   resolveShadowVariant,
 } from "../runtime/governance/component-challenger-service";
+import { getResearchIntegrityReview } from "../runtime/governance/research-integrity-review-service";
 import { getStrategyConsistencyReport } from "../runtime/governance/strategy-consistency-service";
 
 export const governanceRouter = new Hono();
+
+/** Read-only joint projection; it intentionally never promotes a component or strategy. */
+governanceRouter.get("/research-integrity-review", async (c) => {
+  const projectId = c.req.query("projectId")?.trim();
+  if (!projectId) return c.json({ ok: false, error: "projectId is required" }, 400);
+  return c.json({ ok: true, data: await getResearchIntegrityReview(projectId) });
+});
 
 governanceRouter.post("/component-evaluations", async (c) => {
   const body = await c.req.json<Parameters<typeof componentChallengerService.record>[0]>();
@@ -14,7 +22,8 @@ governanceRouter.post("/component-evaluations", async (c) => {
     !body.componentKind ||
     !body.componentId ||
     !body.versionId ||
-    !body.evalKind
+    !body.evalKind ||
+    !body.comparisonCohortId
   ) {
     return c.json({ ok: false, error: "missing_required_fields" }, 400);
   }
@@ -23,7 +32,13 @@ governanceRouter.post("/component-evaluations", async (c) => {
 
 governanceRouter.post("/component-challengers/compare", async (c) => {
   const body = await c.req.json<Parameters<typeof componentChallengerService.compare>[0]>();
-  if (!body.projectId || !body.componentKind || !body.componentId || !body.challengerVersionId) {
+  if (
+    !body.projectId ||
+    !body.componentKind ||
+    !body.componentId ||
+    !body.challengerVersionId ||
+    !body.comparisonCohortId
+  ) {
     return c.json({ ok: false, error: "missing_required_fields" }, 400);
   }
   return c.json({ ok: true, data: await componentChallengerService.compare(body) });

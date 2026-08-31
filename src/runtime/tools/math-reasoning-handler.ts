@@ -2,6 +2,7 @@ import { createMathjsNumericEvaluator, withNumericFallback } from "../harness/ma
 import { pythonMathNumericEvaluator, pythonSympyVerifier } from "../harness/math-python-verifier";
 import { auditMathDerivation, parseMathDerivationContract } from "../harness/math-reasoning";
 import { resolveReasoningHarnessModeFromTaskMetadata } from "../harness/reasoning-harness";
+import { acquireWorkflowMathHarnessLease } from "../harness/workflow-harness";
 import type { BuiltinToolHandler } from "./types";
 import { recordWorkflowToolArtifact } from "./workflow-artifact-ledger";
 
@@ -11,12 +12,24 @@ import { recordWorkflowToolArtifact } from "./workflow-artifact-ledger";
  * free-form reasoning or provider thinking fields.
  */
 export const MATH_REASONING_HANDLER: BuiltinToolHandler = async (ctx, params) => {
+  const lease = await acquireWorkflowMathHarnessLease(ctx.workflowId);
+  if (!lease) {
+    throw new Error(
+      "math.derivation.verify: math_harness_not_admitted（仅限显式启用 math-audit 的工作流，或已登记的高保证量化场景）"
+    );
+  }
   const mode = resolveReasoningHarnessModeFromTaskMetadata({
-    // Dispatch has already authorized the builtin tool. This flag means the
-    // math capability is available, not that every conversation is admitted.
+    // The lease is the authoritative workflow admission; tool params cannot
+    // promote a normal conversation into a math-audit workflow.
     capabilityEnabled: true,
-    metadata: { ...(ctx.inboundPayload ?? {}), ...params },
-    requestedMode: params.math_mode ?? params.mathMode,
+    metadata: {
+      ...(ctx.inboundPayload ?? {}),
+      ...params,
+      workflowKind: lease.workflowKind ?? "factor",
+      hasMathematicalClaim: true,
+      affectsDecision: true,
+    },
+    requestedMode: lease.mode,
   });
   if (mode === "off") {
     throw new Error(

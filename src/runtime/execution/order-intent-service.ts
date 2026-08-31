@@ -4,14 +4,17 @@ import type { DbClient } from "../../db/sqlite/client";
 import {
   BUILTIN_PAPER_TRADING_ACCOUNT_ID,
   executionTask,
+  instrument,
   orderIntent,
   riskReviewTicket,
 } from "../../db/sqlite/schema";
 import type { OrderSide, OrderType, RiskDecisionResult, TimeInForce } from "../../types/entities";
 import { appendAuditLog } from "../audit/audit-chain-service";
-import { assessStrategyExecutionAdmission } from "../effect-validation/strategy-evaluation-service";
+import { strategyPromotionService } from "../effect-validation/strategy-promotion-service";
 import { resolveExecutionEvidenceBinding } from "../market/contracts/evidence-binding";
 import { linkForecastBookEntry } from "../market/contracts/forecast-book-service";
+import { getResearchThesisById } from "../market/contracts/research-thesis-service";
+import { findWorkflowArtifactById } from "../tools/workflow-artifact-ledger";
 import { assertTradingModuleEnabled } from "../trader/trading-module-control";
 import type { DispatchMode } from "./live-trading-gate";
 import { evaluatePreTradeForIntent } from "./pre-trade-risk";
@@ -51,6 +54,8 @@ export interface CreateOrderIntentInput {
   snapshotId?: string | null;
   /** Prime D5: research thesis binding for executable intents. */
   thesisId?: string | null;
+  /** Required for live orders when the thesis uses a named framework card. */
+  frameworkAssessmentArtifactId?: string | null;
   /** Force quality gate even for paper paths (auto strategies). */
   requireDataQualityGate?: boolean;
 }
@@ -87,6 +92,63 @@ function audit(
     resourceId: input.resourceId,
     detailJson: input.detail,
   });
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+/**
+ * A framework-backed thesis is executable only after its concrete symbol has
+ * been deterministically qualified with evidence in this workflow. Merely
+ * naming a famous investment framework, or returning an unpersisted tool
+ * result in chat, is never an execution permission.
+ */
+async function assertFrameworkAssessmentForLiveIntent(
+  db: DbClient,
+  input: CreateOrderIntentInput,
+  bound: { thesisId: string | null; snapshotId: string | null }
+): Promise<void> {
+  if (!bound.thesisId) return;
+  const thesisRecord = await getResearchThesisById(bound.thesisId);
+  if (!thesisRecord?.thesis.frameworkCard) return;
+  const artifactId = input.frameworkAssessmentArtifactId?.trim();
+  if (!artifactId) throw new Error("framework_assessment_artifact_required_for_live");
+  const artifact = await findWorkflowArtifactById(input.workflowRunId, artifactId);
+  if (
+    !artifact ||
+    artifact.kind !== "InvestmentFrameworkAssessment" ||
+    artifact.toolName !== "research.framework.assess"
+  ) {
+    throw new Error("framework_assessment_artifact_not_found_or_out_of_scope");
+  }
+  const payload = artifact.payload;
+  if (payload.thesisId !== bound.thesisId || payload.snapshotId !== bound.snapshotId) {
+    throw new Error("framework_assessment_thesis_or_snapshot_mismatch");
+  }
+  let symbol = input.symbol?.trim().toUpperCase() ?? "";
+  if (!symbol) {
+    const row = (
+      await db
+        .select({ symbol: instrument.symbol })
+        .from(instrument)
+        .where(eq(instrument.id, input.instrumentId))
+        .limit(1)
+    )[0];
+    symbol = row?.symbol.trim().toUpperCase() ?? "";
+  }
+  const assessments = Array.isArray(payload.assessments) ? payload.assessments : [];
+  const qualified = assessments.some((value) => {
+    const item = asRecord(value);
+    return (
+      typeof item.symbol === "string" &&
+      item.symbol.trim().toUpperCase() === symbol &&
+      item.status === "qualified"
+    );
+  });
+  if (!qualified) throw new Error("framework_symbol_not_qualified_for_live");
 }
 
 export async function createOrderIntentWithExecution(
@@ -179,15 +241,16 @@ export async function createOrderIntentWithExecution(
   }
 
   // A live intent is a deployment decision, not merely an order-shaped
-  // research output.  Evidence binding above validates the current market
-  // snapshot/thesis; this gate additionally validates the strategy version's
-  // own frozen historical experiment.  Paper and broker-sim remain available
-  // for validation workflows, but real-money dispatch fails closed.
+  // research output. Evidence binding above validates the current market
+  // snapshot/thesis; this gate also requires the strategy's exact frozen
+  // backtest, OOS, final holdout, paper evidence and human approval. Paper
+  // and broker-sim remain available for validation workflows.
   if (dispatchMode === "live") {
-    const admission = await assessStrategyExecutionAdmission(db, input.strategyVersionId);
-    if (!admission.eligible) {
-      throw new Error(`strategy_execution_not_admitted:${admission.code}:${admission.reason}`);
-    }
+    await strategyPromotionService.assertStrategyVersionLiveEligible(input.strategyVersionId, db);
+    await assertFrameworkAssessmentForLiveIntent(db, input, {
+      thesisId: boundThesisId,
+      snapshotId: boundSnapshotId,
+    });
   }
 
   const orderIntentId = randomUUID();

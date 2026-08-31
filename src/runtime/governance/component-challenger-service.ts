@@ -3,7 +3,24 @@ import { and, eq } from "drizzle-orm";
 import { type DbClient, getDb } from "../../db/sqlite/client";
 import { componentEvalRun } from "../../db/sqlite/schema";
 
-export type GovernedComponentKind = "agent" | "prompt" | "tool" | "model";
+export type GovernedComponentKind =
+  | "agent"
+  | "prompt"
+  | "tool"
+  | "model"
+  | "skill"
+  | "data_source"
+  | "harness";
+
+export type ComponentScorecard = {
+  versionId: string;
+  comparisonCohortId: string;
+  score: number;
+  sampleSize: number;
+  evaluationCount: number;
+  eligible: boolean;
+  evalKinds: Array<"offline" | "shadow" | "paper">;
+};
 
 export function resolveShadowVariant(input: {
   allocationKey: string;
@@ -23,28 +40,50 @@ export function resolveShadowVariant(input: {
 export function buildComponentScorecards(
   rows: Array<typeof componentEvalRun.$inferSelect>,
   minimumSamples = 20
-) {
-  const versions = new Map<string, Array<typeof componentEvalRun.$inferSelect>>();
+): ComponentScorecard[] {
+  const versions = new Map<
+    string,
+    {
+      versionId: string;
+      comparisonCohortId: string;
+      rows: Array<typeof componentEvalRun.$inferSelect>;
+    }
+  >();
   for (const row of rows) {
-    const bucket = versions.get(row.versionId) ?? [];
-    bucket.push(row);
-    versions.set(row.versionId, bucket);
+    // Old evaluation rows without a frozen benchmark cohort remain observable
+    // in storage but are intentionally ineligible for promotion.
+    const comparisonCohortId = row.comparisonCohortId?.trim();
+    if (!comparisonCohortId) continue;
+    const key = `${row.versionId}\u0000${comparisonCohortId}`;
+    const bucket = versions.get(key) ?? {
+      versionId: row.versionId,
+      comparisonCohortId,
+      rows: [],
+    };
+    bucket.rows.push(row);
+    versions.set(key, bucket);
   }
-  return [...versions]
-    .map(([versionId, evaluations]) => {
+  return [...versions.values()]
+    .map(({ versionId, comparisonCohortId, rows: evaluations }) => {
       const sampleSize = evaluations.reduce((sum, row) => sum + row.sampleSize, 0);
       const weightedScore =
         sampleSize > 0
           ? evaluations.reduce((sum, row) => sum + row.qualityScore * row.sampleSize, 0) /
             sampleSize
           : 0;
+      const evalKinds = [...new Set(evaluations.map((row) => row.evalKind))];
       return {
         versionId,
+        comparisonCohortId,
         score: Number(weightedScore.toFixed(6)),
         sampleSize,
         evaluationCount: evaluations.length,
-        eligible: sampleSize >= minimumSamples && evaluations.every((row) => row.pass),
-        evalKinds: [...new Set(evaluations.map((row) => row.evalKind))],
+        eligible:
+          sampleSize >= minimumSamples &&
+          evaluations.every((row) => row.pass) &&
+          evalKinds.includes("offline") &&
+          (evalKinds.includes("shadow") || evalKinds.includes("paper")),
+        evalKinds,
       };
     })
     .sort((left, right) => right.score - left.score);
@@ -58,6 +97,7 @@ export class ComponentChallengerService {
       componentKind: GovernedComponentKind;
       componentId: string;
       versionId: string;
+      comparisonCohortId: string;
       evalKind: "offline" | "shadow" | "paper";
       sampleSize: number;
       metrics: Record<string, unknown>;
@@ -68,6 +108,8 @@ export class ComponentChallengerService {
     client?: DbClient
   ) {
     const db = client ?? (await getDb());
+    const comparisonCohortId = input.comparisonCohortId.trim();
+    if (!comparisonCohortId) throw new Error("component_comparison_cohort_required");
     const id = randomUUID();
     await db.insert(componentEvalRun).values({
       id,
@@ -76,6 +118,7 @@ export class ComponentChallengerService {
       componentKind: input.componentKind,
       componentId: input.componentId,
       versionId: input.versionId,
+      comparisonCohortId,
       evalKind: input.evalKind,
       sampleSize: Math.max(0, Math.floor(input.sampleSize)),
       metricsJson: input.metrics,
@@ -92,6 +135,7 @@ export class ComponentChallengerService {
       componentKind: GovernedComponentKind;
       componentId: string;
       challengerVersionId: string;
+      comparisonCohortId: string;
       championVersionId?: string;
       minimumSamples?: number;
       minimumScoreUplift?: number;
@@ -99,6 +143,8 @@ export class ComponentChallengerService {
     client?: DbClient
   ) {
     const db = client ?? (await getDb());
+    const comparisonCohortId = input.comparisonCohortId.trim();
+    if (!comparisonCohortId) throw new Error("component_comparison_cohort_required");
     const rows = await db
       .select()
       .from(componentEvalRun)
@@ -106,7 +152,8 @@ export class ComponentChallengerService {
         and(
           eq(componentEvalRun.projectId, input.projectId),
           eq(componentEvalRun.componentKind, input.componentKind),
-          eq(componentEvalRun.componentId, input.componentId)
+          eq(componentEvalRun.componentId, input.componentId),
+          eq(componentEvalRun.comparisonCohortId, comparisonCohortId)
         )
       );
     const scorecards = buildComponentScorecards(rows, input.minimumSamples ?? 20);
@@ -123,6 +170,7 @@ export class ComponentChallengerService {
     );
     return {
       ...input,
+      comparisonCohortId,
       champion,
       challenger,
       scoreUplift,

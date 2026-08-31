@@ -2,7 +2,8 @@ use async_trait::async_trait;
 use qubit_protocol::{
     AgentGoalSnapshot, AgentPlanSnapshot, AgentPlanStep, AgentSpec, AgentSpecId, EffectKind,
     EffectRecord, GoalStatus, InteractionMode, InvocationBudget, InvocationId, InvocationRequest,
-    PlanStepStatus, SessionId, ToolCallId, ToolResult, TurnId,
+    PlanStepStatus, ResearchPhase, ResearchPhaseState, ResearchPhaseStatus, SessionId, ToolCallId,
+    ToolResult, TurnId,
 };
 use qubit_tool_host::ToolDefinition;
 use serde_json::{json, Value};
@@ -44,6 +45,55 @@ pub fn parse_update_plan_args_for_session(
         None => args_mode == Some(InteractionMode::Plan),
     };
     let mode = session_mode.or(args_mode);
+    let research_phase = obj
+        .get("research_phase")
+        .or_else(|| obj.get("researchPhase"))
+        .and_then(|v| v.as_str())
+        .and_then(ResearchPhase::parse);
+    let research_phases = obj
+        .get("research_phases")
+        .or_else(|| obj.get("researchPhases"))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            let mut states = Vec::new();
+            for raw in arr.iter().take(6) {
+                let Some(item) = raw.as_object() else {
+                    continue;
+                };
+                let Some(phase) = item
+                    .get("phase")
+                    .or_else(|| item.get("research_phase"))
+                    .or_else(|| item.get("researchPhase"))
+                    .and_then(|v| v.as_str())
+                    .and_then(ResearchPhase::parse)
+                else {
+                    continue;
+                };
+                if states
+                    .iter()
+                    .any(|state: &ResearchPhaseState| state.phase == phase)
+                {
+                    continue;
+                }
+                let status = item
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .and_then(ResearchPhaseStatus::parse)
+                    .unwrap_or(ResearchPhaseStatus::Pending);
+                let note = item
+                    .get("note")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim().chars().take(300).collect::<String>())
+                    .filter(|s| !s.is_empty());
+                states.push(ResearchPhaseState {
+                    phase,
+                    status,
+                    note,
+                });
+            }
+            states
+        })
+        .unwrap_or_default();
 
     let mut steps = Vec::new();
     if let Some(arr) = obj.get("steps").and_then(|v| v.as_array()) {
@@ -90,11 +140,16 @@ pub fn parse_update_plan_args_for_session(
                 .and_then(|s| s.get("note"))
                 .and_then(|v| v.as_str())
                 .map(|s| s.chars().take(300).collect::<String>());
+            let research_phase = step
+                .and_then(|s| s.get("research_phase").or_else(|| s.get("researchPhase")))
+                .and_then(|v| v.as_str())
+                .and_then(ResearchPhase::parse);
             steps.push(AgentPlanStep {
                 id,
                 title,
                 status,
                 note,
+                research_phase,
             });
         }
     }
@@ -183,6 +238,8 @@ pub fn parse_update_plan_args_for_session(
         mode,
         goal,
         steps,
+        research_phase,
+        research_phases,
         updated_at,
     })
 }
@@ -789,6 +846,35 @@ mod tests {
         )
         .unwrap();
         assert_eq!(plan.steps[0].status, PlanStepStatus::Done);
+    }
+
+    #[test]
+    fn update_plan_preserves_research_phase() {
+        let plan = parse_update_plan_args(&json!({
+            "research_phase": "validation",
+            "research_phases": [
+                { "phase": "evidence", "status": "completed", "note": "行情与新闻证据已收集" },
+                { "phase": "validation", "status": "active" }
+            ],
+            "steps": [{
+                "id": "a",
+                "title": "验证样本外表现",
+                "research_phase": "validation"
+            }]
+        }))
+        .unwrap();
+        assert_eq!(plan.research_phase, Some(ResearchPhase::Validation));
+        assert_eq!(
+            plan.steps[0].research_phase,
+            Some(ResearchPhase::Validation)
+        );
+        assert_eq!(plan.research_phases.len(), 2);
+        assert_eq!(plan.research_phases[0].phase, ResearchPhase::Evidence);
+        assert_eq!(
+            plan.research_phases[0].status,
+            ResearchPhaseStatus::Completed
+        );
+        assert_eq!(plan.research_phases[1].status, ResearchPhaseStatus::Active);
     }
 
     fn sample_specs() -> Vec<AgentSpec> {

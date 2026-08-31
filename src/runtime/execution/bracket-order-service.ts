@@ -25,6 +25,10 @@ export interface CreateBracketOrderInput {
   brokerAccountId?: string | null;
   market?: string | null;
   symbol?: string | null;
+  /** Immutable execution evidence, required by every live leg. */
+  thesisId?: string | null;
+  snapshotId?: string | null;
+  frameworkAssessmentArtifactId?: string | null;
   clientOrderId?: string | null;
 }
 
@@ -87,6 +91,11 @@ export async function createBracketOrder(
       ...(input.brokerAccountId ? { brokerAccountId: input.brokerAccountId } : {}),
       ...(input.market ? { market: input.market } : {}),
       ...(input.symbol ? { symbol: input.symbol } : {}),
+      ...(input.thesisId !== undefined ? { thesisId: input.thesisId } : {}),
+      ...(input.snapshotId !== undefined ? { snapshotId: input.snapshotId } : {}),
+      ...(input.frameworkAssessmentArtifactId !== undefined
+        ? { frameworkAssessmentArtifactId: input.frameworkAssessmentArtifactId }
+        : {}),
     } as const;
     const entry = await createOrderIntentWithExecution(db, {
       ...common,

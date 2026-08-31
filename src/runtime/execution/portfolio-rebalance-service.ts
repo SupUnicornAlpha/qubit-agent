@@ -43,6 +43,9 @@ export async function executePortfolioRebalance(
     expectedPlanHash: string;
     dispatchMode?: "paper" | "live";
     brokerAccountId?: string;
+    thesisId?: string;
+    snapshotId?: string;
+    frameworkAssessmentArtifactId?: string;
   }
 ) {
   const plan = buildPortfolioRebalancePlan(input.rows);
@@ -69,6 +72,12 @@ export async function executePortfolioRebalance(
         symbol: order.symbol,
         dispatchMode: input.dispatchMode ?? "paper",
         ...(input.brokerAccountId ? { brokerAccountId: input.brokerAccountId } : {}),
+        ...(input.thesisId !== undefined ? { thesisId: input.thesisId } : {}),
+        ...(input.snapshotId !== undefined ? { snapshotId: input.snapshotId } : {}),
+        ...(input.frameworkAssessmentArtifactId !== undefined
+          ? { frameworkAssessmentArtifactId: input.frameworkAssessmentArtifactId }
+          : {}),
+        requireDataQualityGate: input.dispatchMode === "live",
         clientOrderId: `rebalance:${plan.planHash}:${order.symbol}:${order.side}`,
       })
     );

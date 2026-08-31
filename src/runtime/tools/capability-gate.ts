@@ -58,6 +58,7 @@ export type CapabilityDeny = {
     | "mcp_server_disabled"
     | "mcp_in_cooldown"
     | "plan_mode_blocked"
+    | "ask_mode_blocked"
     | "topology_role_blocked"
     | "lifecycle_hidden";
   message: string;
@@ -206,6 +207,20 @@ export async function authorizeCapability(call: CapabilityCall): Promise<Capabil
       "tool_not_allowed",
       `工具 "${route.effectiveName}" 不在沙箱白名单`,
       "请改用可用工具列表中的工具。"
+    );
+  }
+
+  // Prompt visibility alone is not a security boundary: a provider can still
+  // emit a stale or hand-written builtin call. Enforce the same workflow
+  // surface here so scoped Harness tools (notably math-audit) cannot bypass
+  // their lease at execution time.
+  const effective = await resolveEffectiveAgentTools(def, call.workflowId);
+  if (!effective.tools.includes(route.effectiveName)) {
+    return deny(
+      "tool_not_allowed",
+      `工具 \"${route.effectiveName}\" 未在当前 workflow 的能力租约中启用`,
+      "请在工作流配置中显式启用所需 Harness，或改用当前工具面中的工具。",
+      effective.tools
     );
   }
 

@@ -6,7 +6,10 @@ import { resolveAgentControlMode } from "../../types/loop";
 import {
   type AgentPlanSnapshot,
   type AgentPlanStepStatus,
+  type ResearchPhaseState,
   parseAgentPlanSnapshot,
+  parseResearchPhase,
+  parseResearchPhaseStatus,
 } from "../agent-control-mode";
 import { dispatchTeamAgentTask } from "../orchestration/team-dispatch-adapter";
 import { getStepStreamPorts } from "../ports/step-stream";
@@ -44,7 +47,8 @@ export const ORCHESTRATION_HANDLERS: Record<string, BuiltinToolHandler> = {
       // read-only tools are the most useful search results and should not be
       // hidden by unrelated catalog entries when callers use a small limit.
       .sort((left, right) => {
-        const configuredDelta = Number(configured.has(right.name)) - Number(configured.has(left.name));
+        const configuredDelta =
+          Number(configured.has(right.name)) - Number(configured.has(left.name));
         return configuredDelta || left.name.localeCompare(right.name);
       })
       .slice(0, limit)
@@ -100,11 +104,13 @@ export const ORCHESTRATION_HANDLERS: Record<string, BuiltinToolHandler> = {
         : "pending";
       const status: AgentPlanStepStatus = mode === "plan" ? "pending" : normalizedStatus;
       const note = rawStep.note != null ? String(rawStep.note).slice(0, 300) : undefined;
+      const researchPhase = parseResearchPhase(rawStep.researchPhase ?? rawStep.research_phase);
       steps.push({
         id: (String(rawStep.id ?? "").trim() || `s${i + 1}`).slice(0, 40),
         title: title.slice(0, 200),
         status,
         ...(note ? { note } : {}),
+        ...(researchPhase ? { researchPhase } : {}),
       });
     }
     const completedSteps = steps.filter((step) => step.status === "done").length;
@@ -112,6 +118,38 @@ export const ORCHESTRATION_HANDLERS: Record<string, BuiltinToolHandler> = {
     const hasActive = steps.some((step) => step.status === "in_progress");
     const allTerminal = steps.length > 0 && completedSteps + skippedSteps === steps.length;
     const previousPlan = parseAgentPlanSnapshot(workflowMeta.planJson);
+    const researchPhase =
+      parseResearchPhase(params.researchPhase ?? params.research_phase) ??
+      previousPlan?.researchPhase;
+    const parsedResearchPhases: ResearchPhaseState[] = [];
+    const rawResearchPhases = params.researchPhases ?? params.research_phases;
+    if (Array.isArray(rawResearchPhases)) {
+      for (const rawPhase of rawResearchPhases.slice(0, 6)) {
+        if (!rawPhase || typeof rawPhase !== "object") continue;
+        const phaseRecord = rawPhase as Record<string, unknown>;
+        const phase = parseResearchPhase(
+          phaseRecord.phase ?? phaseRecord.researchPhase ?? phaseRecord.research_phase
+        );
+        const status = parseResearchPhaseStatus(phaseRecord.status);
+        if (
+          !phase ||
+          !status ||
+          parsedResearchPhases.some((candidate) => candidate.phase === phase)
+        ) {
+          continue;
+        }
+        const note = String(phaseRecord.note ?? "")
+          .trim()
+          .slice(0, 300);
+        parsedResearchPhases.push({
+          phase,
+          status,
+          ...(note ? { note } : {}),
+        });
+      }
+    }
+    const researchPhases =
+      parsedResearchPhases.length > 0 ? parsedResearchPhases : (previousPlan?.researchPhases ?? []);
     const normalizeGoalList = (
       value: unknown,
       fallback: string[] | undefined
@@ -153,6 +191,8 @@ export const ORCHESTRATION_HANDLERS: Record<string, BuiltinToolHandler> = {
           : {}),
       },
       steps,
+      ...(researchPhase ? { researchPhase } : {}),
+      ...(researchPhases.length > 0 ? { researchPhases } : {}),
       updatedAt: new Date().toISOString(),
     };
     await db

@@ -53,7 +53,8 @@ traderRouter.put("/module", async (c) => {
   if (typeof body.enabled !== "boolean") {
     return c.json({ ok: false, error: "enabled must be boolean" }, 400);
   }
-  const brokerAccountId = typeof body.brokerAccountId === "string" ? body.brokerAccountId.trim() : "";
+  const brokerAccountId =
+    typeof body.brokerAccountId === "string" ? body.brokerAccountId.trim() : "";
   const strategyRuntimeId =
     typeof body.strategyRuntimeId === "string" ? body.strategyRuntimeId.trim() : "";
   const scope = {
@@ -166,6 +167,9 @@ traderRouter.post("/orders", async (c) => {
     executionMode?: "paper" | "live" | "sim";
     strategyRuntimeId?: string;
     signalBarTime?: string;
+    thesisId?: string;
+    snapshotId?: string;
+    frameworkAssessmentArtifactId?: string;
   };
 
   if (!body.workflowRunId?.trim()) {
@@ -213,6 +217,11 @@ traderRouter.post("/orders", async (c) => {
         ? { strategyRuntimeId: body.strategyRuntimeId }
         : {}),
       ...(body.signalBarTime !== undefined ? { signalBarTime: body.signalBarTime } : {}),
+      ...(body.thesisId !== undefined ? { thesisId: body.thesisId } : {}),
+      ...(body.snapshotId !== undefined ? { snapshotId: body.snapshotId } : {}),
+      ...(body.frameworkAssessmentArtifactId !== undefined
+        ? { frameworkAssessmentArtifactId: body.frameworkAssessmentArtifactId }
+        : {}),
     });
     return c.json({ ok: true, data });
   } catch (e) {
@@ -235,6 +244,9 @@ traderRouter.post("/orders/bracket", async (c) => {
     timeframe?: string;
     executionMode?: "paper" | "live" | "sim";
     brokerAccountId?: string;
+    thesisId?: string;
+    snapshotId?: string;
+    frameworkAssessmentArtifactId?: string;
   }>();
   if (
     !body.workflowRunId ||
@@ -280,6 +292,11 @@ traderRouter.post("/orders/bracket", async (c) => {
       ...(body.timeframe ? { timeframe: body.timeframe } : {}),
       executionMode: body.executionMode ?? "paper",
       ...(body.brokerAccountId ? { brokerAccountId: body.brokerAccountId } : {}),
+      ...(body.thesisId !== undefined ? { thesisId: body.thesisId } : {}),
+      ...(body.snapshotId !== undefined ? { snapshotId: body.snapshotId } : {}),
+      ...(body.frameworkAssessmentArtifactId !== undefined
+        ? { frameworkAssessmentArtifactId: body.frameworkAssessmentArtifactId }
+        : {}),
     });
     return c.json({ ok: true, data });
   } catch (error) {
@@ -338,6 +355,9 @@ traderRouter.post("/command", async (c) => {
     timeframe?: string;
     text?: string;
     executionMode?: "paper" | "live" | "sim";
+    thesisId?: string;
+    snapshotId?: string;
+    frameworkAssessmentArtifactId?: string;
   };
 
   if (!body.workflowRunId || !body.text?.trim()) {
@@ -383,6 +403,11 @@ traderRouter.post("/command", async (c) => {
       ...(body.timeframe !== undefined ? { timeframe: body.timeframe } : {}),
       rationale: `user_command:${body.text}`,
       executionMode: body.executionMode ?? "paper",
+      ...(body.thesisId !== undefined ? { thesisId: body.thesisId } : {}),
+      ...(body.snapshotId !== undefined ? { snapshotId: body.snapshotId } : {}),
+      ...(body.frameworkAssessmentArtifactId !== undefined
+        ? { frameworkAssessmentArtifactId: body.frameworkAssessmentArtifactId }
+        : {}),
     });
     return c.json({ ok: true, data, parsed });
   } catch (e) {

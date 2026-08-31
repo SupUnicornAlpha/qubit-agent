@@ -27,20 +27,25 @@
 `src/runtime/effect-validation` 和 `src/runtime/strategy` 持有；它们不是另一套
 可替换的执行引擎。`src/runtime/harness/quant-research-integrity.ts` 是产品自有、无
 I/O 的编排层：它把已有快照、反泄漏、因子风险暴露、Walk-Forward、paper 和人工
-批准证据归为同一审计结果。`quant-research-integrity` profile 可在 workflow 范围组合
-或撤销；`paper-trading` 默认继承它。研究任务只得到 advisory 缺口报告，不能由 profile
-配置获得执行权限；paper/live 的 required gate 仍在宿主服务内执行，因此卸载 profile
-不会削弱实盘准入。最终独立 holdout 由 `backtest.final_holdout` 创建不可变合同后只执行
+批准证据归为同一审计结果。`workflow-harness.ts` 以 workflow-scoped lease 装配
+`quant-research-integrity` profile：登记的高保证研究场景得到 advisory 审阅，backtest /
+simulation / live 得到 required 审阅；工作流终态统一 `dispose()`。也可用结构化
+`harness.researchIntegrity={mode,reason}` 显式启用或撤销其审计投影。`paper-trading`
+默认继承它。研究任务只得到 advisory 缺口报告，不能由 profile 配置获得执行权限；paper/live
+的 required gate 仍在宿主服务内执行，因此卸载 profile 不会削弱实盘准入。最终独立 holdout 由 `backtest.final_holdout` 创建不可变合同后只执行
 一次，单独写入 `strategy_eval_run.eval_kind='holdout'`；同一 source backtest 不能换窗口或
 重复查看。live promotion 必须绑定同一 `backtest_run_id`、strategy version 与 dataset snapshot
 的通过 holdout 记录。
 人工 `approve-live` 也只能在 holdout 已通过后写入，不能先批准、后补测试；因此旧批准
 不会因之后补跑保留集而自动变成有效实盘授权。
 
-`math-audit` 是另一条独立、按任务加载的 Harness：只有显式 `math_mode`，或由结构化
-workflow metadata 标记为高保证的数学决策任务，才会在 Prompt 和 `math.derivation.verify`
-执行边界同时启用；普通对话中的公式文本不会触发。其 handler 仅精确导入数学验证组件，
-不依赖全量 Harness barrel 或工具注册表，因此可单独加载、测试和撤销。
+`math-audit` 是另一条独立、按 workflow 租约加载的 Harness：`workflow_run.loop_options_json`
+中的结构化 `harness.mathAudit={mode,reason}` 可显式启用/关闭；登记的高保证量化场景
+（因子、策略、规则、组合、风控、发现、实盘）和 `backtest` workflow 默认启用 required。
+普通对话中的公式文本绝不会触发。租约同时约束 Prompt 工具面、CapabilityGate 与
+`math.derivation.verify` handler；工作流终态会 `dispose()`，因此不能靠手写工具调用绕过。
+其 handler 仅精确导入数学验证组件，不依赖全量 Harness barrel 或工具注册表，因此可单独
+加载、测试和撤销。
 
 ## 当前基线与必须修复的断点
 
@@ -74,13 +79,24 @@ workflow metadata 标记为高保证的数学决策任务，才会在 Prompt 和
 - 已完成：信号基底暴露与共线性诊断。`factor.exposure.diagnose` 在同一冻结快照的共同 `(date,symbol)` 观测上，以其余候选因子作控制变量，输出每个因子的 OLS R²、VIF、样本数和秩/方差不足原因；默认 VIF ≥ 5 明确失败。多因子 `factor.promote_backtest` 将其作为与 pairwise correlation 并列的准入门；它不把内部信号回归误称为行业、风格或市场暴露：后者仍必须引入版本化外部分类/风险暴露账本。
 - 已完成：外部风险暴露账本的快照血缘。`market.snapshot.get` 可接收 `risk_exposure_ledger:{version,source,asOf,model,observationsBySymbol}`；每条 observation 带 `effectiveDate`、`availableAt`、风险暴露向量及可选 revision/reference，所有修订均进入不可变快照指纹。该基础协议防止事后风险模型覆盖历史可得暴露；横截面回归与行业/风格中性结论仍只能在此账本真正提供足够 PIT 覆盖时生成。
 - 已完成：因子外部风险回归与 live 闭环。`factor.risk_exposure.regress` 对同一快照的单因子值，仅匹配决策时间前已发布的外部暴露，输出每个行业/风格/市场维度的横截面 OLS beta、R² 与覆盖缺口。因子组合的 backtest evaluation 会持久化 `factorRiskExposure`；若它声明 `required=true`，Champion–Challenger 与 live promotion 都必须读取 `status=passed`，否则不得晋级。非因子/历史记录不被追溯性阻断。
-- 已完成：受控发现的候选墓地。每个 `discovery_job` 除 top-K 短名单外持久化完整 `candidateAudit`，逐条记录计算错误、统计证据缺失、FDR 未通过或排名淘汰的原因；短名单也保留“尚未通过 FDR”的事实。Agent 不能再把 top-K 截断当作删除其余假设，也必须把同一搜索预算内的完整候选数计入后续 `candidate_trials`。`discovery.promote` 只创建 draft；可通过 `factor.set_research_contract` 补齐合同，完成同一冻结快照评估后再由 `factor.activate` 进行 fail-closed 激活。
+- 已完成：受控发现的候选墓地。每个 `discovery_job` 除 top-K 短名单外持久化完整 `candidateAudit`，逐条记录计算错误、统计证据缺失、FDR 未通过或排名淘汰的原因；短名单也保留“尚未通过 FDR”的事实。Agent 不能再把 top-K 截断当作删除其余假设，也必须把同一搜索预算内的完整候选数计入后续 `candidate_trials`。`discovery.promote` 强制只创建 draft，并把候选族规模和 FDR 证据写入 lineage；即使调用方传入 `status:'active'` 也会拒绝。可通过 `factor.set_research_contract` 补齐合同，完成同一冻结快照评估后再由 `factor.activate` 进行 fail-closed 激活。
 - 已完成：持久化交易模块暂停。`trading_module_control` 单例记录 enabled、reason、changedBy、revision 与 changedAt，服务重启后仍可恢复相同状态；环境变量关闭优先级更高。创建 order intent、创建/启动 strategy runtime、execution worker 和 dispatcher 都在派发前检查该状态。关闭模块时，路由会停止 running runtime，并只取消尚未派发的 pending/held/conditional/awaiting-review task，写入取消事件；已获券商确认的订单不会被伪装成“已取消”，仍交给对账/撤单流程。`execution.kill_switch.status` 同时输出环境级和数据库级停机原因。
 - 已完成：框架化选股的可审计执行。命名 `ResearchThesis.framework` 现在必须绑定版本化 `InvestmentFrameworkCard`：来源、原则、经济机制、可观测代理及阈值/权重、适用资产/市场/regime、排除/失效条件和风险预算。`research.framework.assess` 依据冻结卡片作确定性评估；每个代理数值均需 evidence ref，缺数据或引用只能为 `research_only`，适用域不匹配或分数低于阈值即为 `rejected`。这避免把“像某个投资流派”的自由文本直接升级为可交易建议。
 - 已完成：策略 Champion–Challenger 的同 cohort 比较门。backtest 与 walk-forward 会写入由冻结 snapshot、时框、标的池、universe、benchmark 和成本模型生成的 `strategy_cohort_*`；paper/shadow 只能在同一策略已具备该 backtest + walk-forward 证据时引用该 ID。`strategy.champion_challenger.compare` 仅在 backtest、walk-forward、paper 三者均共享同 cohort 时计算分数，缺失/歧义/不匹配时明确返回不可比较，绝不自动切换 live runtime。
+- 已完成：策略反思的可复用证据闸门。`strategy_recipe` 只有在其**精确 composition** 已绑定同一 strategy version、backtest run、冻结 dataset snapshot 和 comparison cohort 的通过 backtest、walk-forward、一次性 final holdout 与 paper 证据后，才可被 Skill Curator 晋升为 `pending_review` 技能；仍需人工审核才会启用。未验证 recipe 只能以 hypothesis 留存：不能通过高 quality / useCount 直接晋升，Finance Recall 会将其 importance 与 outcome 权重分别封顶为 0.30 / 0.20，并在 Prompt 中明确标注 `unverified_hypothesis`。paper runtime 可显式绑定 `params.compositionId`；旧 runtime 只会在同一 strategy version 恰有一个 composition 时安全推断，歧义时保持未绑定，因而不能为任一 recipe 提供验证证据。
+- 已完成：通用组件的冻结 benchmark 对比。`component_eval_run` 现在把 `comparison_cohort_id` 作为结构化证据；Agent、Prompt、Tool、Model、Skill、数据源与 Harness 的控制/挑战版本只能在显式指定的同一 cohort 内比较。候选版本必须达到样本下限、所有记录通过，并同时拥有 offline 与 shadow/paper 证据；缺 cohort 的历史行仍可审计但不会参与推广。所有晋级仍只生成 `candidate_for_manual_promotion`，live 流量一律留在 control。
+- 已完成：只读完整性审阅按**精确 cohort**展示策略证据。每行从一个通过或失败的 base backtest 出发，只接受同 cohort 的 Walk-Forward、paper 与 live 记录，并把 final holdout 绑定到该 source backtest、strategy version 与 dataset snapshot；不同 cohort 的绿色阶段不能再被拼接成“完整”策略。缺 cohort 的历史记录会保留为 `unbound`，但绝不显示为可晋级。
+- 已完成：实验平台组件证据自动采集。完成的 `eval_run` 以 eval dataset 的版本和全部 case 输入/期望/元数据摘要生成不可混用的 cohort 指纹，并将每个 case 的 Agent、LLM provider/model、Tool、实际执行 Skill 和 Harness profile 使用版本记为 `offline` 组件评测。采集是幂等的，记录引用 workflow、case、eval run 和配置指纹；它不会从 production workflow 自动学习，且 offline 证据仍不足以触发组件晋级。
+- 已完成：数据源的版本化评测血缘。实验组件采集只从 workflow 关联的 `backtest_run.dataset_snapshot_id` 读取持久化 market snapshot 的 `sourceIds`；每条数据源证据以 `sourceId + snapshotId` 表示版本，快照不可读时宁可缺证据也不猜测实时 provider。不同 snapshot 的数据修订不能被聚合为同一数据源挑战版本。
 - 已完成：最终独立 Holdout。`backtest.final_holdout` 要求 `train_end` 精确等于源 backtest 的结束日，并用同一不可变 snapshot、代码、参数和成本在后续保留区间执行一次；它会从该 snapshot **重新绑定** Holdout 窗口，而不会复用源回测的训练期 dataset binding，快照窗口或标的 K 线未覆盖保留区间时明确 fail-closed，provider 不得回退到运行时行情。合同固定 `purge_days` / `embargo_days` 与指纹；晋级评分和 execution admission 会重算该指纹，并核验同一 strategy version、source backtest 与 dataset snapshot。相同 source run 的相同合同不能重复读取，不同窗口也会被拒绝，防止在最终测试集上反复挑窗。结果以独立 `holdout` evaluation 写入，完整性报告按单一保留集（而非伪装成多折 Walk-Forward）审计；live promotion 与 execution admission 都要求该 holdout 针对当前 base backtest 通过。
 - 已完成：策略候选墓地。`strategy_candidate_review` 以 project + strategy version + frozen/review cohort 幂等保存 `eligible`、`incomplete`、`rejected`、`retired` 结论和明确 reason codes；可附结构重复指向、regime、容量、相关性证据。每次 Champion–Challenger 比较都会沉淀最低限度的评审记录，Agent 可通过 `strategy.candidate.review` 补齐证据；同项目内完全一致的脚本标识或组合内核会被保守地自动标记为结构重复，而“输给 champion”只代表相对表现，不会被错误标记为重复。
 - 已完成：三级持久化交易暂停。`trading_module_control` 的记录键可表达 `global`、`broker_account:<id>` 与 `strategy_runtime:<id>`；环境级关闭仍优先于全部数据库状态。下单意图、策略 runtime 启动、dispatcher 都按当前账户/运行时求交集并 fail-closed；暂停路由只停止匹配 runtime、只取消尚未派发的匹配任务，返回真实取消列表，不会把已被 worker 获取或已获券商确认的订单误报为已取消。
+- 已完成：完整策略晋级门已下沉到所有真钱入口。除 live runtime 启动和人工 reconcile 外，`createOrderIntentWithExecution` 与 broker dispatcher 在订单创建及真正提交券商前都会重验同 cohort 的 backtest、Walk-Forward、final holdout、paper、人工批准与冻结数据集资格。若一个已排队订单在等待期间失去资格，worker 将其标为 `rejected`，而不是按网络故障重试。
+- 已完成：真钱执行入口收敛。遗留 `intent_order → executeIntentLive`、旧 REIA route、旧 broker connector 与 broker MCP 都不再能直连券商；它们对真钱请求统一 fail-closed 并指向 canonical `order_intent` 管线。`POST /execution/intents` 现完整透传 `dispatchMode`、券商账户、strategy runtime、thesis、snapshot 与 framework assessment Artifact，真实订单只能通过同一套创建与派发复核。
+- 已完成：回测 K 线频率的端到端绑定。`BacktestJobService`、`backtest.run`、因子 promotion 与 Quant API 都显式透传 `timeframe` 到 immutable snapshot binding；日线和已冻结会话窗口的盘中快照均可通过事件引擎执行，但请求频率与快照不一致、或盘中会话窗口缺失时仍 fail-closed。策略版本的 promotion 参数同时保存该频率，避免将 5m/1h 研究伪装为日线回测。
+- 已完成：live strategy runtime 的证据配置闭环。`StrategyRuntimeParams` 持久化 `thesisId`、可选 `snapshotId` 与框架评估 Artifact；创建或启动 live runtime 时缺少 thesis 立即拒绝，运行中每一笔订单继续由 canonical `order_intent` 管线重新校验 thesis↔snapshot、一致性、数据质量、策略晋级及（若适用）框架标的资格。这样既避免“已启动、首个信号才失败”，也不会把长时间空闲 runtime 的旧证据当成永久授权。
+- 已完成：执行证据贯穿所有高层订单入口。Trader 单笔/命令、Bracket 三腿、REIA bridge、计划任务、组合 rebalance 和持仓对账修复均能承载 thesis、snapshot 与框架评估 Artifact；使用 live runtime 的对账修复只读取该 runtime 已持久化的证据，而不会相信请求体覆盖。它们最终均复用 canonical `order_intent` 的实时复核，不能靠某个 UI 或服务层漏传字段取得真钱派发。
+- 已完成：多分析师研究信号重新接入可审计链。`research.signal_fuse` 只接受同一 workflow、同一冻结 snapshot、同一 ticker 的带方向/置信度/理由信号；逐条写入 `analyst_signal`，再以确定性、历史准确率受限的权重写入 `signal_fusion_result`。低置信度只建议辩论，融合永远只是研究证据，不能创建订单或替代 thesis、回测与风控。过期异步团队遥测会在父 workflow 不存在时安全丢弃，避免将交互附着到错误的数据库生命周期或产生 FK 噪声。
 - 已完成：推荐 outcome 的因果边界与幂等反思。推荐结果只回写同一 workflow 的 `research_conclusion`，或 metadata 中显式绑定同一 recommendation 的结论；不再因“同一个 symbol”把新结果归因给旧 thesis。每个 `recommendationId + horizonDays` 形成 outcome 去重键，worker 重放不会重复增加 experience 的 success/fail 计数；该经验更新只表示预测校准/关联证据，仍不构成单次结果的因果验证。
 - 已完成：推荐 outcome 的成交时点防前视。无 entry range 的推荐在首个可用日线的 close 才建仓，止盈/止损、MFE/MAE 和退出判定从下一根 K 线开始；带 entry range 的同根 K 线触发仍以 stop-first 保守处理。结果不会把已知收盘前的 high/low 伪装成可执行的同根交易。
 - 已完成：推荐 outcome 的行情证据冻结。成熟 outcome 持久化本次评分实际消费的目标和基准 OHLCV 片段、窗口、市场、版本及 SHA-256 指纹，并在审计日志留下目标指纹；之后数据源修订不会被误写为原始反思事实。该证据仅说明历史评分输入，尚不构成推荐或策略的因果证明。
@@ -247,11 +263,13 @@ workflow metadata 标记为高保证的数学决策任务，才会在 Prompt 和
 - 对策略记录收益归因、factor/regime/行业暴露、执行偏差、容量衰减和数据/模型/执行故障分类。
 - Skill、提示词、模型、数据源和 Harness 升级都进入 champion–challenger benchmark；只在统计与业务指标改善后推广。
 - 反思产物区分事实、假设、失败模式和可复用 playbook；未经 outcome 证实的内容不能提升为高权重记忆。
+- 策略 recipe 的“已验证”只能由宿主查询持久化的 backtest / OOS / final holdout / paper 证据得出；模型文本、召回次数、质量分和单次 outcome 都不能代替该判断。
 
 ### 硬门
 
 - `unknown` outcome 不能被计为成功。
 - 自我反思不得绕过数据、回测或人工审批门槛。
+- 不同 composition、不同回测实例、不同 dataset snapshot 或不同 comparison cohort 的证据不得拼接为同一 recipe 的验证记录。
 
 ### 验收
 

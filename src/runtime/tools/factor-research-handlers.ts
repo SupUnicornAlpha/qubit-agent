@@ -509,10 +509,12 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
       String(params.name ?? "").trim() ||
       `${binding.modelId}_${binding.modelVersion}`.replace(/[^a-zA-Z0-9_.-]+/g, "_");
     const dryRunParam = params.dry_run ?? params.dryRun;
-    const dryRun =
-      dryRunParam === false || dryRunParam === "false" || dryRunParam === 0 || dryRunParam === "off"
-        ? false
-        : true;
+    const dryRun = !(
+      dryRunParam === false ||
+      dryRunParam === "false" ||
+      dryRunParam === 0 ||
+      dryRunParam === "off"
+    );
     return factorService.register({
       projectId,
       name,
@@ -1058,11 +1060,17 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
   "factor.risk_exposure.regress": async (_ctx, paramsIn) => {
     const params = unwrapToolArgs(paramsIn);
     const factorId = pickFactorId(params);
-    const datasetSnapshotId = String(params.dataset_snapshot_id ?? params.datasetSnapshotId ?? "").trim();
+    const datasetSnapshotId = String(
+      params.dataset_snapshot_id ?? params.datasetSnapshotId ?? ""
+    ).trim();
     if (!factorId || !datasetSnapshotId) {
-      throw new Error("factor.risk_exposure.regress: factor_id and dataset_snapshot_id are required");
+      throw new Error(
+        "factor.risk_exposure.regress: factor_id and dataset_snapshot_id are required"
+      );
     }
-    const minimumObservations = Number(params.minimum_observations ?? params.minimumObservations ?? 60);
+    const minimumObservations = Number(
+      params.minimum_observations ?? params.minimumObservations ?? 60
+    );
     if (!Number.isInteger(minimumObservations) || minimumObservations < 2) {
       throw new Error("factor.risk_exposure.regress: minimum_observations must be an integer >= 2");
     }
@@ -1332,6 +1340,7 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
     return backtestJobService.submitAndRun({
       strategyVersionId,
       symbols,
+      ...(params.timeframe ? { timeframe: String(params.timeframe) } : {}),
       startDate,
       endDate,
       datasetSnapshotId,
@@ -1444,6 +1453,7 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
       endDate,
       datasetSnapshotId,
       ...(symbols && symbols.length > 0 ? { symbols } : {}),
+      ...(params.timeframe ? { timeframe: String(params.timeframe) } : {}),
       ...(params.universe ? { universe: String(params.universe) } : {}),
       ...(params.strategy_name ? { strategyName: String(params.strategy_name) } : {}),
       ...(params.version_tag ? { versionTag: String(params.version_tag) } : {}),

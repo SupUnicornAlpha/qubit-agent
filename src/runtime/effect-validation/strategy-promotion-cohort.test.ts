@@ -3,11 +3,14 @@ import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import * as schema from "../../db/sqlite/schema";
-import { strategyPromotionService } from "./strategy-promotion-service";
+import { createFinalHoldoutContract } from "../backtest/final-holdout-contract";
 import { strategyCandidateReviewService } from "./strategy-candidate-review-service";
+import { strategyPromotionService } from "./strategy-promotion-service";
+import { assessStrategyRecipeEvidence } from "./strategy-recipe-evidence";
 
 const cohort = "strategy_cohort_0123456789abcdef01234567";
 
@@ -48,7 +51,9 @@ async function seededDb() {
     });
     versions.push(versionId);
   }
-  return { db, projectId, championVersionId: versions[0]!, challengerVersionId: versions[1]! };
+  const [championVersionId, challengerVersionId] = versions;
+  if (!championVersionId || !challengerVersionId) throw new Error("expected two strategy versions");
+  return { db, projectId, championVersionId, challengerVersionId };
 }
 
 async function insertCohortEvidence(
@@ -57,8 +62,10 @@ async function insertCohortEvidence(
   strategyVersionId: string,
   score: number
 ) {
+  const datasetSnapshotId = `snapshot-${strategyVersionId}`;
   const backtestMetrics = {
     comparisonCohort: { id: cohort },
+    datasetSnapshotId,
     datasetQualification: {
       useClass: "strategy_validation",
       universeHistory: "verified",
@@ -69,14 +76,29 @@ async function insertCohortEvidence(
     pitReport: { pass: true, verdict: "point_in_time_clean" },
     statisticalValidationReport: { status: "passed" },
   };
-  for (const evalKind of ["backtest", "walk_forward", "paper"] as const) {
+  for (const evalKind of ["backtest", "walk_forward", "holdout", "paper"] as const) {
     await db.insert(schema.strategyEvalRun).values({
       id: randomUUID(),
       projectId,
       strategyVersionId,
       scenarioKey: "fixed-oos-shadow",
       evalKind,
-      metricsJson: evalKind === "backtest" ? backtestMetrics : { comparisonCohort: { id: cohort } },
+      metricsJson:
+        evalKind === "backtest"
+          ? backtestMetrics
+          : evalKind === "holdout"
+            ? {
+                contract: createFinalHoldoutContract({
+                  strategyVersionId,
+                  datasetSnapshotId,
+                  trainEnd: "2026-01-31",
+                  holdoutStart: "2026-02-06",
+                  holdoutEnd: "2026-02-28",
+                  purgeDays: 5,
+                  embargoDays: 5,
+                }),
+              }
+            : { comparisonCohort: { id: cohort } },
       qualityScore: score,
       pass: true,
       notes: "test",
@@ -107,5 +129,97 @@ describe("strategy promotion fixed-cohort gate", () => {
       comparisonCohortId: cohort,
       decision: "eligible",
     });
+  });
+
+  test("strategy recipe requires evidence from its exact composition", async () => {
+    const { db, projectId, championVersionId } = await seededDb();
+    const compositionId = randomUUID();
+    const backtestRunId = randomUUID();
+    const datasetSnapshotId = "recipe-validation-snapshot";
+    await db.insert(schema.strategyComposition).values({
+      id: compositionId,
+      strategyVersionId: championVersionId,
+      kind: "factor_score",
+      factorIdsJson: [],
+      ruleIdsJson: [],
+      weightMethod: "equal",
+      rebalanceFreq: "1d",
+      universe: "US",
+      paramsJson: {},
+    });
+    await db.insert(schema.backtestRun).values({
+      id: backtestRunId,
+      strategyVersionId: championVersionId,
+      connectorInstanceId: "fixture",
+      datasetSnapshotId,
+      configJson: {},
+      status: "completed",
+      compositionId,
+    });
+    const backtestMetrics = {
+      comparisonCohort: { id: cohort },
+      datasetSnapshotId,
+      datasetQualification: {
+        useClass: "strategy_validation",
+        universeHistory: "verified",
+        corporateActions: "verified",
+        pointInTime: "verified",
+      },
+      antiLeakageReport: { status: "passed" },
+      pitReport: { pass: true, verdict: "point_in_time_clean" },
+      statisticalValidationReport: { status: "passed" },
+    };
+    for (const evalKind of ["backtest", "walk_forward", "holdout", "paper"] as const) {
+      await db.insert(schema.strategyEvalRun).values({
+        id: randomUUID(),
+        projectId,
+        strategyVersionId: championVersionId,
+        compositionId,
+        backtestRunId: evalKind === "paper" ? null : backtestRunId,
+        scenarioKey: "recipe-proof",
+        evalKind,
+        metricsJson:
+          evalKind === "backtest"
+            ? backtestMetrics
+            : evalKind === "holdout"
+              ? {
+                  contract: createFinalHoldoutContract({
+                    strategyVersionId: championVersionId,
+                    datasetSnapshotId,
+                    trainEnd: "2026-01-31",
+                    holdoutStart: "2026-02-06",
+                    holdoutEnd: "2026-02-28",
+                    purgeDays: 5,
+                    embargoDays: 5,
+                  }),
+                }
+              : { comparisonCohort: { id: cohort } },
+        qualityScore: 0.8,
+        pass: true,
+        notes: "recipe-proof",
+        createdBy: "test",
+      });
+    }
+
+    const eligible = await assessStrategyRecipeEvidence({ projectId, compositionId, client: db });
+    expect(eligible.eligible).toBe(true);
+    if (eligible.eligible) {
+      expect(eligible.evidence).toMatchObject({
+        compositionId,
+        backtestRunId,
+        datasetSnapshotId,
+      });
+    }
+
+    await db
+      .update(schema.strategyEvalRun)
+      .set({ compositionId: null })
+      .where(eq(schema.strategyEvalRun.evalKind, "paper"));
+    const missingExactPaper = await assessStrategyRecipeEvidence({
+      projectId,
+      compositionId,
+      client: db,
+    });
+    expect(missingExactPaper.eligible).toBe(false);
   });
 });

@@ -11,20 +11,22 @@
  *   QUBIT_BENCH_TAGS=memory,orchestration
  */
 
+import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { runReadinessFromWorkflowId } from "../src/runtime/agent-readiness/runner";
-import {
-  listQubitBenchCases,
-  QUBIT_BENCH_CASES,
-  QUBIT_BENCH_VERSION,
-  type QubitBenchCase,
-} from "../src/runtime/benchmark/qubit-bench-cases";
-import { buildRunEnvelope } from "../src/runtime/benchmark/run-envelope";
 import {
   buildBenchmarkHealthPanel,
   renderBenchmarkHealthMarkdown,
 } from "../src/runtime/benchmark/health-panel";
+import {
+  QUBIT_BENCH_CASES,
+  QUBIT_BENCH_VERSION,
+  type QubitBenchCase,
+  listQubitBenchCases,
+} from "../src/runtime/benchmark/qubit-bench-cases";
+import { buildRunEnvelope } from "../src/runtime/benchmark/run-envelope";
 import { scoreRunEnvelope } from "../src/runtime/benchmark/scorecard";
 import { type UpgradeGateResult, evaluateUpgradeGate } from "../src/runtime/benchmark/upgrade-gate";
 import {
@@ -269,6 +271,27 @@ function renderSummary(results: readonly CaseResult[]): string {
   return lines.join("\n");
 }
 
+function assertBenchmarkDataDirConfigured(): void {
+  if (process.platform !== "darwin" || process.env.QUBIT_DATA_DIR) return;
+
+  const defaultDb = join(homedir(), ".quant-agent", "db", "core.sqlite");
+  const appDb = join(
+    homedir(),
+    "Library",
+    "Application Support",
+    "app.qubit.agent",
+    "db",
+    "core.sqlite"
+  );
+  if (!existsSync(defaultDb) && existsSync(appDb)) {
+    throw new Error(
+      `QUBIT_DATA_DIR 未设置：benchmark 会读取 ${defaultDb}，但 dev server 使用的可能是 ${appDb}。` +
+        ` 请先 export QUBIT_DATA_DIR="${join(homedir(), "Library", "Application Support", "app.qubit.agent")}"。`
+    );
+  }
+}
+
+assertBenchmarkDataDirConfigured();
 await mkdir(outputDir, { recursive: true });
 console.log(`QUBIT benchmark ${QUBIT_BENCH_VERSION}: ${selected.length} cases, label=${label}`);
 const results: CaseResult[] = [];

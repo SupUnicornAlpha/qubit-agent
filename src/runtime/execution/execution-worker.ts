@@ -8,13 +8,20 @@ import {
   orderIntent,
   riskReviewTicket,
 } from "../../db/sqlite/schema";
+import { getTradingModuleStatus } from "../trader/trading-module-control";
 import { processConditionalOrders } from "./conditional-order-service";
 import { dispatchExecutionTask } from "./execution-dispatcher";
 import { pollPendingBrokerOrders } from "./execution-dispatcher-poll";
-import { getTradingModuleStatus } from "../trader/trading-module-control";
 
 const DEFAULT_TICK_MS = 1500;
 const RETRY_DELAY_MS = 30_000;
+
+function isPermanentGovernanceBlock(message: string): boolean {
+  return (
+    message.startsWith("live_promotion_gate_blocked:") ||
+    message.startsWith("live_dataset_admission_blocked:")
+  );
+}
 
 async function appendEvent(
   db: DbClient,
@@ -139,6 +146,25 @@ async function processOneTask(db: DbClient, taskId: string, nowIso: string): Pro
       await db
         .update(orderIntent)
         .set({ lifecycleStatus: "cancelled", lifecycleUpdatedAt: nowIso })
+        .where(eq(orderIntent.id, task.orderIntentId));
+      return;
+    }
+    // A real-money admission failure is deliberate governance, not a flaky
+    // connector error. Reject the unsent task so it cannot revive through the
+    // generic retry loop after a strategy loses eligibility.
+    if (isPermanentGovernanceBlock(msg)) {
+      await appendEvent(db, {
+        executionTaskId: task.id,
+        eventType: "reject",
+        payload: { error: msg, reason: "live_governance_gate" },
+      });
+      await db
+        .update(executionTask)
+        .set({ status: "rejected", lastError: msg, updatedAt: nowIso })
+        .where(eq(executionTask.id, task.id));
+      await db
+        .update(orderIntent)
+        .set({ lifecycleStatus: "rejected", lifecycleUpdatedAt: nowIso })
         .where(eq(orderIntent.id, task.orderIntentId));
       return;
     }

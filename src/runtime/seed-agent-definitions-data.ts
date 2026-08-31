@@ -87,7 +87,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
      * 4.3.0：Cursor/Codex 式 subagent 纪律 —— 一次派单、结构化 handoff、父代理合成；
      * 禁止对同专家盲重试同一 goal；空信封必须收口标注缺口。
      */
-    version: "4.3.1",
+    version: "4.3.2",
     systemPrompt: PROMPT_ORCHESTRATOR,
     tools: [
       // 编排
@@ -98,6 +98,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "market.broker_quote.get",
       "market.resolve_symbol",
       "market.snapshot.get",
+      "research.signal_fuse",
       "research.thesis.write",
       "research.forecast_book.get",
       "portfolio.construct",

@@ -177,11 +177,18 @@ fn mode_control_text(mode: InteractionMode) -> String {
     match mode {
         InteractionMode::Plan => concat!(
             "MODE=plan: only call update_plan; do not execute side-effect tools.\n",
-            "Write 3-7 pending steps, then answer with tool=none. Do not mark steps done in Plan mode."
+            "Write 3-7 pending steps, set research_phase=\"plan\" when this is research, ",
+            "and optionally provide research_phases with pending/active/completed/revisited/blocked states. ",
+            "Then answer with tool=none. ",
+            "Do not mark steps done in Plan mode."
         )
         .into(),
         InteractionMode::Goal => concat!(
             "MODE=goal: you MUST keep the plan current via update_plan while executing.\n",
+            "For research, include research_phase in every plan snapshot: scope, plan, evidence, ",
+            "analysis, validation, or delivery; mark individual steps with research_phase when useful. ",
+            "Optionally include research_phases to show completed, active, revisited, or blocked stages. ",
+            "This is a business stage, not the runtime step phase.\n",
             "Rules:\n",
             "1) Before/while working: keep exactly one step status=in_progress.\n",
             "2) After finishing a step: set it to done (or skipped with a reason) before the next tool batch.\n",
@@ -197,7 +204,10 @@ fn mode_control_text(mode: InteractionMode) -> String {
         }
         InteractionMode::Agent => concat!(
             "MODE=agent: full tool surface within policy.\n",
-            "For multi-step research: call update_plan early, keep one in_progress step, and mark done/skipped as you go so the UI plan progress stays truthful."
+            "For multi-step research: call update_plan early and include research_phase (scope, plan, ",
+            "evidence, analysis, validation, or delivery); mark individual steps with research_phase ",
+            "when useful. Use research_phases when a stage is revisited or blocked. Keep one in_progress step and mark ",
+            "done/skipped as you go so the UI plan progress stays truthful."
         )
         .into(),
     }

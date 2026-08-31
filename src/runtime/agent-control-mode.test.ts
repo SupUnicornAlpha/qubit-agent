@@ -153,4 +153,38 @@ describe("Goal completion gate", () => {
       verification: { evidenceCount: 2, summary: "bun test 通过", verifiedAt: "now" },
     });
   });
+
+  test("preserves the explicit research phase from both wire casings", () => {
+    expect(
+      parseAgentPlanSnapshot({
+        research_phase: "validation",
+        steps: [{ title: "验证样本外表现", research_phase: "validation" }],
+      })?.researchPhase
+    ).toBe("validation");
+    expect(
+      parseAgentPlanSnapshot({
+        research_phase: "validation",
+        steps: [{ title: "验证样本外表现", research_phase: "validation" }],
+      })?.steps[0]?.researchPhase
+    ).toBe("validation");
+    expect(
+      parseAgentPlanSnapshot({
+        researchPhase: "delivery",
+        steps: [{ title: "交付报告" }],
+      })?.researchPhase
+    ).toBe("delivery");
+    expect(
+      parseAgentPlanSnapshot({
+        researchPhase: "validation",
+        research_phases: [
+          { phase: "evidence", status: "completed", note: "证据已收集" },
+          { phase: "validation", status: "revisited" },
+        ],
+        steps: [{ title: "验证" }],
+      })?.researchPhases
+    ).toEqual([
+      { phase: "evidence", status: "completed", note: "证据已收集" },
+      { phase: "validation", status: "revisited" },
+    ]);
+  });
 });

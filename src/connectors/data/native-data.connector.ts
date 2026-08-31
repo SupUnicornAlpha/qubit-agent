@@ -608,8 +608,9 @@ export class QubitNativeDataConnector extends DataConnector {
       mode,
       settings: liveSettings,
     });
+    const attempted = params.bestEffort ? plan.slice(0, 1) : plan;
     const errors: string[] = [];
-    for (const source of plan) {
+    for (const source of attempted) {
       const started = Date.now();
       try {
         const bars = await this.fetchBarsFromSources(params, source, liveSettings);
@@ -641,13 +642,14 @@ export class QubitNativeDataConnector extends DataConnector {
         });
       }
     }
-    if (plan.length === 0) {
+    if (attempted.length === 0) {
       throw new Error(
         `market_data_unavailable: no eligible source for market=${market}, timeframe=${params.period}, mode=${mode}`
       );
     }
+    if (params.bestEffort) return [];
     throw new Error(
-      `market_data_unavailable: all ${plan.length} source(s) failed for ${params.symbol} (${market}/${params.period}): ${errors.join(" | ") || "empty results"}`
+      `market_data_unavailable: all ${attempted.length} source(s) failed for ${params.symbol} (${market}/${params.period}): ${errors.join(" | ") || "empty results"}`
     );
   }
 

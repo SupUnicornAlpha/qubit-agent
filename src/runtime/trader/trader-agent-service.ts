@@ -84,6 +84,9 @@ export async function placeTraderOrder(input: {
   executionMode?: "paper" | "live" | "sim";
   strategyRuntimeId?: string;
   signalBarTime?: string;
+  thesisId?: string;
+  snapshotId?: string;
+  frameworkAssessmentArtifactId?: string;
 }): Promise<{
   orderIntentId: string;
   executionTaskId: string | null;
@@ -123,6 +126,11 @@ export async function placeTraderOrder(input: {
         ? { strategyRuntimeId: input.strategyRuntimeId }
         : {}),
       ...(input.signalBarTime !== undefined ? { signalBarTime: input.signalBarTime } : {}),
+      ...(input.thesisId !== undefined ? { thesisId: input.thesisId } : {}),
+      ...(input.snapshotId !== undefined ? { snapshotId: input.snapshotId } : {}),
+      ...(input.frameworkAssessmentArtifactId !== undefined
+        ? { frameworkAssessmentArtifactId: input.frameworkAssessmentArtifactId }
+        : {}),
     },
     db
   );
@@ -169,6 +177,9 @@ export async function placeTraderBracketOrder(input: {
   timeframe?: string;
   executionMode?: "paper" | "live" | "sim";
   brokerAccountId?: string;
+  thesisId?: string;
+  snapshotId?: string;
+  frameworkAssessmentArtifactId?: string;
 }) {
   const symbol = input.symbol.trim().toUpperCase();
   const market = chartExchangeToMarket(input.exchange);
@@ -202,6 +213,11 @@ export async function placeTraderBracketOrder(input: {
     timeInForce: "gtc",
     dispatchMode,
     ...(brokerAccountId ? { brokerAccountId } : {}),
+    ...(input.thesisId !== undefined ? { thesisId: input.thesisId } : {}),
+    ...(input.snapshotId !== undefined ? { snapshotId: input.snapshotId } : {}),
+    ...(input.frameworkAssessmentArtifactId !== undefined
+      ? { frameworkAssessmentArtifactId: input.frameworkAssessmentArtifactId }
+      : {}),
     market,
     symbol,
   });

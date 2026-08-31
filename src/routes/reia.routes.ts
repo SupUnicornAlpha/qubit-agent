@@ -12,7 +12,6 @@ import {
 } from "../runtime/execution/broker/broker-admin";
 import {
   createIntentOrder,
-  executeIntentLive,
   executeIntentPaper,
   getIntentExecutionView,
   listIntentOrders,
@@ -83,26 +82,31 @@ reiaRouter.post("/safety/execute-confirmed", async (c) => {
     provider?: BrokerProvider;
   }>();
   if (!body.intentOrderId) return c.json({ error: "intentOrderId is required" }, 400);
+  const safety = await loadExecutionSafetyConfig();
+  // The legacy intent_order schema cannot carry the immutable evidence now
+  // required for a live order. Do not consume the legacy confirmation ticket
+  // when the caller needs to migrate to the canonical pipeline.
+  if (!body.forceDryRun && !safety.dryRunOnly) {
+    return c.json(
+      {
+        ok: false,
+        error: "legacy_live_execution_retired",
+        hint: "Use POST /api/v1/execution/intents with dispatchMode=live, thesisId, snapshotId and a promotion-qualified strategy version.",
+      },
+      410
+    );
+  }
   const gate = await verifyConfirmationAndAllowExecute({
     intentOrderId: body.intentOrderId,
     ...(body.confirmToken !== undefined ? { confirmToken: body.confirmToken } : {}),
     ...(body.forceDryRun !== undefined ? { forceDryRun: body.forceDryRun } : {}),
   });
-  const data =
-    gate.executeMode === "live"
-      ? await executeIntentLive({
-          intentOrderId: body.intentOrderId,
-          provider: body.provider ?? "futu",
-          ...(body.deviationThreshold !== undefined
-            ? { deviationThreshold: body.deviationThreshold }
-            : {}),
-        })
-      : await executeIntentPaper({
-          intentOrderId: body.intentOrderId,
-          ...(body.deviationThreshold !== undefined
-            ? { deviationThreshold: body.deviationThreshold }
-            : {}),
-        });
+  const data = await executeIntentPaper({
+    intentOrderId: body.intentOrderId,
+    ...(body.deviationThreshold !== undefined
+      ? { deviationThreshold: body.deviationThreshold }
+      : {}),
+  });
   return c.json({ ok: true, gate, data });
 });
 

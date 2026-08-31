@@ -12,10 +12,11 @@ import {
   orderIntent,
 } from "../../db/sqlite/schema";
 import type { BrokerProvider } from "../../types/broker";
+import { strategyPromotionService } from "../effect-validation/strategy-promotion-service";
 import { executeWithPolicy } from "../external-call/policy";
+import { assertTradingModuleEnabled } from "../trader/trading-module-control";
 import { connectorForAccount, resolveBrokerAccount } from "./broker/broker-service";
 import { type DispatchMode, assertBrokerDispatchAllowed } from "./live-trading-gate";
-import { assertTradingModuleEnabled } from "../trader/trading-module-control";
 
 export type { DispatchMode };
 
@@ -291,6 +292,12 @@ export async function dispatchExecutionTask(
     ...(input.brokerAccountId ? { brokerAccountId: input.brokerAccountId } : {}),
     ...(intent.strategyRuntimeId ? { strategyRuntimeId: intent.strategyRuntimeId } : {}),
   });
+  // Re-check immediately before a real broker call. A previously approved
+  // intent may have waited on risk/HITL while its live approval or data
+  // evidence changed; no stale task is allowed to bypass the current gate.
+  if (input.dispatchMode === "live") {
+    await strategyPromotionService.assertStrategyVersionLiveEligible(intent.strategyVersionId, db);
+  }
   const effectiveOrderType = resolveEffectiveOrderType(intent.orderType, intent.activationStatus);
 
   let fillPrice = intent.price;

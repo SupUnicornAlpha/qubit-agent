@@ -64,6 +64,7 @@ quantRouter.post("/factor-backtest-promotions/run-now", async (c) => {
       description?: string;
       symbols?: string[];
       universe?: string;
+      timeframe?: string;
       start_date?: string;
       startDate?: string;
       end_date?: string;
@@ -98,6 +99,7 @@ quantRouter.post("/factor-backtest-promotions/run-now", async (c) => {
       ...(body.description ? { description: body.description } : {}),
       ...(body.symbols ? { symbols: body.symbols } : {}),
       ...(body.universe ? { universe: body.universe } : {}),
+      ...(body.timeframe ? { timeframe: body.timeframe } : {}),
       startDate: body.start_date ?? body.startDate ?? "",
       endDate: body.end_date ?? body.endDate ?? "",
       ...(body.capital !== undefined ? { capital: Number(body.capital) } : {}),

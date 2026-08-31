@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { getDb, getSqliteForTesting } from "../../db/sqlite/client";
-import { researchTeamInteraction } from "../../db/sqlite/schema";
+import { researchTeamInteraction, workflowRun } from "../../db/sqlite/schema";
 import { completeWorkflowConversationAssistant } from "../conversation/conversation-projection";
 
 export type ResearchTeamInteractionKind = "llm_message" | "tool_call" | "signal_submit";
@@ -20,6 +21,18 @@ export async function logResearchTeamInteraction(input: {
 }): Promise<void> {
   try {
     const db = await getDb();
+    // Late asynchronous telemetry can outlive a cancelled/deleted workflow
+    // (especially in isolated test/runtime data directories). It is not a
+    // new interaction and must neither emit a noisy FK warning nor attach to
+    // another workflow after the DB singleton is reinitialised.
+    const parent = (
+      await db
+        .select({ id: workflowRun.id })
+        .from(workflowRun)
+        .where(eq(workflowRun.id, input.workflowRunId))
+        .limit(1)
+    )[0];
+    if (!parent) return;
     await db.insert(researchTeamInteraction).values({
       id: randomUUID(),
       workflowRunId: input.workflowRunId,
@@ -32,6 +45,9 @@ export async function logResearchTeamInteraction(input: {
       payloadJson: input.payloadJson ?? {},
     });
   } catch (err) {
+    // A parent may disappear between the existence check and insert. This is
+    // an expected telemetry race; skip it without masking unrelated faults.
+    if (err instanceof Error && /FOREIGN KEY constraint failed/i.test(err.message)) return;
     console.warn("[logResearchTeamInteraction]", err);
   }
 }

@@ -188,8 +188,14 @@ export type MarketWatchlistSnapshot = {
   brokerWatchlistSupported: false;
 };
 
+/** HTTP `includePositions`：只有显式 `1`/`true` 才打券商；缺省必须是本机自选。 */
+export function parseWatchlistIncludePositionsQuery(raw: string | undefined): boolean {
+  const value = raw?.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
+}
+
 export async function getMarketWatchlist(options?: {
-  /** 默认 true（Agent/兼容）；IDE 首屏传 false 跳过券商持仓拉取。 */
+  /** 默认 true（Agent/兼容）；HTTP 首屏与 IDE 传 false 跳过券商持仓拉取。 */
   includePositions?: boolean;
 }): Promise<MarketWatchlistSnapshot> {
   const includePositions = options?.includePositions !== false;

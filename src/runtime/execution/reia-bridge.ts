@@ -30,6 +30,11 @@ export interface ReiaOrderPayload {
   brokerAccountId?: string;
   strategyRuntimeId?: string;
   signalBarTime?: string;
+  /** Immutable research thesis required by the canonical live execution gate. */
+  thesisId?: string;
+  /** Optional explicit snapshot; the gate derives it from thesisId when omitted. */
+  snapshotId?: string;
+  frameworkAssessmentArtifactId?: string;
   /** 迁移期兼容：仅显式开启时才同步写旧 intent_order。主链默认只写 order_intent。 */
   legacyDualWrite?: boolean;
 }
@@ -201,6 +206,9 @@ export async function createOrderIntentFromReiaPayload(
     signalBarTime: input.signalBarTime ?? null,
     dispatchMode,
     brokerAccountId,
+    thesisId: input.thesisId ?? null,
+    snapshotId: input.snapshotId ?? null,
+    frameworkAssessmentArtifactId: input.frameworkAssessmentArtifactId ?? null,
     requireDataQualityGate: dispatchMode === "live",
     traceId: randomUUID(),
   });

@@ -68,6 +68,67 @@ impl InteractionMode {
     }
 }
 
+/// Business research stage. This is intentionally separate from agent-step
+/// lifecycle (`perceive/reason/act/observe`) because a research plan can
+/// revisit a stage or run stages in parallel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ResearchPhase {
+    Scope,
+    Plan,
+    Evidence,
+    Analysis,
+    Validation,
+    Delivery,
+}
+
+impl ResearchPhase {
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "scope" => Some(Self::Scope),
+            "plan" => Some(Self::Plan),
+            "evidence" => Some(Self::Evidence),
+            "analysis" => Some(Self::Analysis),
+            "validation" => Some(Self::Validation),
+            "delivery" => Some(Self::Delivery),
+            _ => None,
+        }
+    }
+}
+
+/// Runtime state of a research phase. This is optional and only applies to
+/// research workflows; generic agents can omit the research extension.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ResearchPhaseStatus {
+    Pending,
+    Active,
+    Completed,
+    Revisited,
+    Blocked,
+}
+
+impl ResearchPhaseStatus {
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "pending" | "queued" => Some(Self::Pending),
+            "active" | "in_progress" | "in-progress" | "running" => Some(Self::Active),
+            "completed" | "complete" | "done" => Some(Self::Completed),
+            "revisited" | "revisit" | "回访" => Some(Self::Revisited),
+            "blocked" | "阻塞" => Some(Self::Blocked),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ResearchPhaseState {
+    pub phase: ResearchPhase,
+    pub status: ResearchPhaseStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
 /// Structured plan artifact written by L0 `update_plan` (existing TS shape).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AgentPlanSnapshot {
@@ -77,6 +138,11 @@ pub struct AgentPlanSnapshot {
     pub goal: Option<AgentGoalSnapshot>,
     #[serde(default)]
     pub steps: Vec<AgentPlanStep>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub research_phase: Option<ResearchPhase>,
+    /// Optional research-only lifecycle state. Generic Agent plans leave this empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub research_phases: Vec<ResearchPhaseState>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
 }
@@ -97,6 +163,8 @@ pub struct AgentPlanStep {
     pub status: PlanStepStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub research_phase: Option<ResearchPhase>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]

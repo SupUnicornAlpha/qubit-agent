@@ -42,6 +42,26 @@ export const ResearchConclusionMetaSchema = z.object({
 
 export type ResearchConclusionMeta = z.infer<typeof ResearchConclusionMetaSchema>;
 
+/**
+ * Host-stamped evidence attached only after the exact composition has passed
+ * the reusable-strategy evidence gate. This is intentionally a compact
+ * reference to immutable runs rather than a copy of performance claims.
+ */
+export const StrategyRecipeValidationEvidenceSchema = z.object({
+  status: z.literal("validated"),
+  strategyVersionId: z.string().min(1),
+  compositionId: z.string().min(1),
+  backtestRunId: z.string().min(1),
+  datasetSnapshotId: z.string().min(1),
+  comparisonCohortId: z.string().min(1),
+  finalHoldoutFingerprint: z.string().min(1),
+  verifiedAt: z.string().min(1),
+});
+
+export type StrategyRecipeValidationEvidence = z.infer<
+  typeof StrategyRecipeValidationEvidenceSchema
+>;
+
 export const StrategyRecipeMetaSchema = z.object({
   compositionId: z.string().min(1),
   factorIds: z.array(z.string()).default([]),
@@ -50,9 +70,16 @@ export const StrategyRecipeMetaSchema = z.object({
   rebalanceFreq: z.string().optional(),
   asof: z.string().min(1),
   memoryTier: z.enum(["shallow", "intermediate", "deep"]).default("deep"),
+  validationEvidence: StrategyRecipeValidationEvidenceSchema.optional(),
 });
 
 export type StrategyRecipeMeta = z.infer<typeof StrategyRecipeMetaSchema>;
+
+export function hasValidatedStrategyRecipeEvidence(
+  value: unknown
+): value is StrategyRecipeValidationEvidence {
+  return StrategyRecipeValidationEvidenceSchema.safeParse(value).success;
+}
 
 export const StrategyEvalMetaSchema = z.object({
   compositionId: z.string().min(1).optional(),

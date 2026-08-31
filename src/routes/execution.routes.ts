@@ -76,6 +76,9 @@ executionRouter.post("/reconciliation/positions/remediate", async (c) => {
     workflowRunId?: string;
     strategyVersionId?: string;
     brokerAccountId?: string;
+    thesisId?: string;
+    snapshotId?: string;
+    frameworkAssessmentArtifactId?: string;
   }>();
   if (
     !body.projectId ||
@@ -114,6 +117,9 @@ executionRouter.post("/reconciliation/positions/remediate", async (c) => {
   let workflowRunId = body.workflowRunId?.trim() ?? "";
   let strategyVersionId = body.strategyVersionId?.trim() ?? "";
   let brokerAccountId = body.brokerAccountId?.trim() ?? "";
+  let thesisId = body.thesisId?.trim() ?? "";
+  let snapshotId = body.snapshotId?.trim() ?? "";
+  let frameworkAssessmentArtifactId = body.frameworkAssessmentArtifactId?.trim() ?? "";
   if (body.strategyRuntimeId) {
     const runtimes = await db
       .select()
@@ -146,6 +152,17 @@ executionRouter.post("/reconciliation/positions/remediate", async (c) => {
     workflowRunId = resolvedContext.workflowRunId;
     strategyVersionId = resolvedContext.strategyVersionId;
     brokerAccountId = runtime.brokerAccountId;
+    const runtimeParams =
+      runtime.paramsJson &&
+      typeof runtime.paramsJson === "object" &&
+      !Array.isArray(runtime.paramsJson)
+        ? (runtime.paramsJson as Record<string, unknown>)
+        : {};
+    thesisId = String(runtimeParams.thesisId ?? "").trim();
+    snapshotId = String(runtimeParams.snapshotId ?? "").trim();
+    frameworkAssessmentArtifactId = String(
+      runtimeParams.frameworkAssessmentArtifactId ?? ""
+    ).trim();
   } else {
     const assessment = await strategyPromotionService.assess(strategyVersionId, db);
     if (!assessment.liveEligible) {
@@ -229,6 +246,10 @@ executionRouter.post("/reconciliation/positions/remediate", async (c) => {
         timeInForce: "day",
         dispatchMode: "live",
         brokerAccountId,
+        thesisId: thesisId || null,
+        snapshotId: snapshotId || null,
+        frameworkAssessmentArtifactId: frameworkAssessmentArtifactId || null,
+        requireDataQualityGate: true,
         symbol: item.action.symbol,
         clientOrderId: `reconcile:${current.remediation.planHash}:${item.action.symbol}`,
         traceId: `reconcile:${current.remediation.planHash}`,
@@ -454,6 +475,23 @@ executionRouter.post("/intents", async (c) => {
       ...(body.accountId !== undefined ? { accountId: body.accountId } : {}),
       ...(body.traceId !== undefined ? { traceId: body.traceId } : {}),
       ...(body.clientOrderId !== undefined ? { clientOrderId: body.clientOrderId } : {}),
+      ...(body.dispatchMode !== undefined ? { dispatchMode: body.dispatchMode } : {}),
+      ...(body.brokerAccountId !== undefined ? { brokerAccountId: body.brokerAccountId } : {}),
+      ...(body.strategyRuntimeId !== undefined
+        ? { strategyRuntimeId: body.strategyRuntimeId }
+        : {}),
+      ...(body.signalBarTime !== undefined ? { signalBarTime: body.signalBarTime } : {}),
+      ...(body.market !== undefined ? { market: body.market } : {}),
+      ...(body.symbol !== undefined ? { symbol: body.symbol } : {}),
+      ...(body.timeframe !== undefined ? { timeframe: body.timeframe } : {}),
+      ...(body.snapshotId !== undefined ? { snapshotId: body.snapshotId } : {}),
+      ...(body.thesisId !== undefined ? { thesisId: body.thesisId } : {}),
+      ...(body.frameworkAssessmentArtifactId !== undefined
+        ? { frameworkAssessmentArtifactId: body.frameworkAssessmentArtifactId }
+        : {}),
+      ...(body.requireDataQualityGate !== undefined
+        ? { requireDataQualityGate: body.requireDataQualityGate }
+        : {}),
     });
     return c.json({ ok: true, data: result });
   } catch (error) {
@@ -499,6 +537,11 @@ executionRouter.post("/intents/bracket", async (c) => {
       ...(body.brokerAccountId ? { brokerAccountId: body.brokerAccountId } : {}),
       ...(body.market ? { market: body.market } : {}),
       ...(body.symbol ? { symbol: body.symbol } : {}),
+      ...(body.thesisId !== undefined ? { thesisId: body.thesisId } : {}),
+      ...(body.snapshotId !== undefined ? { snapshotId: body.snapshotId } : {}),
+      ...(body.frameworkAssessmentArtifactId !== undefined
+        ? { frameworkAssessmentArtifactId: body.frameworkAssessmentArtifactId }
+        : {}),
       ...(body.clientOrderId ? { clientOrderId: body.clientOrderId } : {}),
     });
     return c.json({ ok: true, data });

@@ -453,6 +453,8 @@ export type KlinesBatchEntry = {
 /** 批量 K 线（自选 sparkline）；服务端并发受限并复用缓存。 */
 export async function getKlinesBatch(params: {
   requests: Array<{ symbol: string; exchange?: string; timeframe?: string; limit?: number }>;
+  /** true = 只打第一个行情源，失败/空数据直接返回，不拖自选列表 */
+  fast?: boolean;
 }): Promise<Record<string, KlinesBatchEntry>> {
   const response = await httpPost<{ ok: boolean; data: Record<string, KlinesBatchEntry> }>(
     "/api/v1/market/klines/batch",
@@ -622,9 +624,10 @@ export async function getMarketWatchlist(options?: {
   /** false = 跳过券商持仓拉取，IDE 首屏更快 */
   includePositions?: boolean;
 }): Promise<import("./types").MarketWatchlistSnapshot> {
-  const query = options?.includePositions === false ? "?includePositions=0" : "";
+  const query = new URLSearchParams();
+  query.set("includePositions", options?.includePositions ? "1" : "0");
   const response = await httpGet<{ ok: boolean; data: import("./types").MarketWatchlistSnapshot }>(
-    `/api/v1/market/watchlist${query}`
+    `/api/v1/market/watchlist?${query.toString()}`
   );
   return response.data;
 }
@@ -5000,6 +5003,9 @@ export async function placeTraderOrder(input: {
   executionMode?: "paper" | "live" | "sim";
   strategyRuntimeId?: string;
   signalBarTime?: string;
+  thesisId?: string;
+  snapshotId?: string;
+  frameworkAssessmentArtifactId?: string;
 }): Promise<{
   orderIntentId: string;
   executionTaskId: string | null;
@@ -5032,6 +5038,10 @@ export async function placeTraderBracketOrder(input: {
   stopLossPrice: number;
   timeframe?: string;
   executionMode?: "paper" | "live" | "sim";
+  brokerAccountId?: string;
+  thesisId?: string;
+  snapshotId?: string;
+  frameworkAssessmentArtifactId?: string;
 }): Promise<{
   bracketId: string;
   ocoGroupId: string;
@@ -6733,6 +6743,43 @@ export async function listStrategyVersions(
     ? `/api/v1/strategies/versions?${qs.join("&")}`
     : `/api/v1/strategies/versions`;
   const res = await httpGet<{ ok: boolean; data: StrategyVersionFlatRecord[] }>(url);
+  return res.data;
+}
+
+export interface ResearchIntegrityReviewDto {
+  readOnly: true;
+  strategies: Array<{
+    strategyVersionId: string;
+    /** Null means the historical evidence cannot be tied to a frozen cohort. */
+    comparisonCohortId: string | null;
+    stages: Record<
+      "backtest" | "walk_forward" | "holdout" | "paper" | "live",
+      { pass: boolean | null; id: string; createdAt: string } | null
+    >;
+    missingStages: string[];
+    candidateForManualPromotion: boolean;
+    promotionState: "evidence_incomplete" | "manual_review_required" | "live_approved";
+    readOnly: true;
+  }>;
+  components: Array<{
+    componentKind: string;
+    componentId: string;
+    comparisonCohortId: string;
+    versions: string[];
+    evalKinds: Array<"offline" | "shadow" | "paper">;
+    sampleSize: number;
+    allPassed: boolean;
+    promotionState: "evidence_incomplete" | "manual_review_required";
+    readOnly: true;
+  }>;
+}
+
+export async function fetchResearchIntegrityReview(
+  projectId: string
+): Promise<ResearchIntegrityReviewDto> {
+  const res = await httpGet<{ ok: boolean; data: ResearchIntegrityReviewDto }>(
+    `/api/v1/governance/research-integrity-review?projectId=${encodeURIComponent(projectId)}`
+  );
   return res.data;
 }
 

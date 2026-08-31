@@ -3,6 +3,11 @@
  */
 
 import type { Experience } from "../../types/entities";
+import {
+  type StrategyRecipeEvidence,
+  type StrategyRecipeEvidenceAssessment,
+  assessStrategyRecipeEvidence,
+} from "../effect-validation/strategy-recipe-evidence";
 import { getExperienceStore } from "../experience";
 import type { ExperienceStore } from "../experience/experience-store";
 import { skillService } from "../skills/skill-service";
@@ -18,6 +23,11 @@ export interface PromoteRecipeOptions {
   store?: ExperienceStore;
   /** 测试注入：已存在的 compositionId */
   existingCompositionIds?: Set<string>;
+  /** 测试注入；生产环境以冻结回测、OOS、Holdout 与 paper 证据评估。 */
+  evidenceAssessor?: (input: {
+    projectId: string;
+    compositionId: string;
+  }) => Promise<StrategyRecipeEvidenceAssessment>;
 }
 
 export interface PromoteRecipeResult {
@@ -25,6 +35,7 @@ export interface PromoteRecipeResult {
   promoted: number;
   skippedDuplicate: number;
   skippedLowQuality: number;
+  skippedInsufficientEvidence: number;
   skillIds: string[];
 }
 
@@ -51,11 +62,13 @@ export async function promoteStrategyRecipes(
     promoted: 0,
     skippedDuplicate: 0,
     skippedLowQuality: 0,
+    skippedInsufficientEvidence: 0,
     skillIds: [],
   };
 
   const existing =
     opts.existingCompositionIds ?? (await listExistingCompositionIds(opts.projectId));
+  const assessEvidence = opts.evidenceAssessor ?? assessStrategyRecipeEvidence;
 
   for (const exp of rows) {
     const compositionId = String(exp.metadataJson?.compositionId ?? "").trim();
@@ -71,11 +84,21 @@ export async function promoteStrategyRecipes(
       result.skippedLowQuality += 1;
       continue;
     }
+    const assessment = await assessEvidence({ projectId: opts.projectId, compositionId });
+    if (!assessment.eligible) {
+      result.skippedInsufficientEvidence += 1;
+      continue;
+    }
     if (mode === "dry_run") {
       result.promoted += 1;
       continue;
     }
-    const skill = await createSkillFromRecipe(opts.projectId, exp, compositionId);
+    const skill = await createSkillFromRecipe(
+      opts.projectId,
+      exp,
+      compositionId,
+      assessment.evidence
+    );
     existing.add(compositionId);
     result.promoted += 1;
     result.skillIds.push(skill.id);
@@ -100,13 +123,19 @@ async function listExistingCompositionIds(projectId: string): Promise<Set<string
   }
 }
 
-async function createSkillFromRecipe(projectId: string, exp: Experience, compositionId: string) {
+async function createSkillFromRecipe(
+  projectId: string,
+  exp: Experience,
+  compositionId: string,
+  evidence: StrategyRecipeEvidence
+) {
   const summary = exp.contentJson.summary ?? `strategy recipe ${compositionId.slice(0, 8)}`;
   const bodyCore = typeof exp.contentJson.body === "string" ? exp.contentJson.body : summary;
   const bodyMd = [
     "# Strategy Recipe",
     "",
     `compositionId: \`${compositionId}\``,
+    `validationEvidence: \`${evidence.backtestRunId}\` / \`${evidence.finalHoldoutFingerprint}\``,
     "",
     bodyCore.slice(0, 12_000),
     "",
@@ -127,6 +156,7 @@ async function createSkillFromRecipe(projectId: string, exp: Experience, composi
       compositionId,
       sourceExperienceId: exp.id,
       subKind: "strategy_recipe",
+      validationEvidence: evidence,
     },
   });
 }

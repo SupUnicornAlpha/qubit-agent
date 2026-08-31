@@ -16,15 +16,27 @@ export function isAgentControlPlaneTool(toolName: string): boolean {
 
 export type AgentPlanStepStatus = "pending" | "in_progress" | "done" | "skipped";
 
+export type ResearchPhase = "scope" | "plan" | "evidence" | "analysis" | "validation" | "delivery";
+export type ResearchPhaseStatus = "pending" | "active" | "completed" | "revisited" | "blocked";
+
+export interface ResearchPhaseState {
+  phase: ResearchPhase;
+  status: ResearchPhaseStatus;
+  note?: string;
+}
+
 export interface AgentPlanStepSnapshot {
   id: string;
   title: string;
   status: AgentPlanStepStatus;
   note?: string;
+  researchPhase?: ResearchPhase;
 }
 
 export interface AgentPlanSnapshot {
   mode?: AgentControlMode;
+  researchPhase?: ResearchPhase;
+  researchPhases?: ResearchPhaseState[];
   goal?: {
     text?: string;
     status?: "planning" | "executing" | "paused" | "completed" | "blocked" | "cleared";
@@ -44,6 +56,39 @@ export interface AgentPlanSnapshot {
 }
 
 const PLAN_STATUSES = new Set<AgentPlanStepStatus>(["pending", "in_progress", "done", "skipped"]);
+const RESEARCH_PHASES = new Set<ResearchPhase>([
+  "scope",
+  "plan",
+  "evidence",
+  "analysis",
+  "validation",
+  "delivery",
+]);
+const RESEARCH_PHASE_STATUSES = new Set<ResearchPhaseStatus>([
+  "pending",
+  "active",
+  "completed",
+  "revisited",
+  "blocked",
+]);
+
+export function parseResearchPhase(raw: unknown): ResearchPhase | undefined {
+  if (typeof raw !== "string") return undefined;
+  const value = raw.trim().toLowerCase() as ResearchPhase;
+  return RESEARCH_PHASES.has(value) ? value : undefined;
+}
+
+export function parseResearchPhaseStatus(raw: unknown): ResearchPhaseStatus | undefined {
+  if (typeof raw !== "string") return undefined;
+  const value = raw.trim().toLowerCase();
+  if (value === "queued") return "pending";
+  if (value === "running" || value === "in_progress" || value === "in-progress") return "active";
+  if (value === "done" || value === "complete") return "completed";
+  if (value === "revisit") return "revisited";
+  return RESEARCH_PHASE_STATUSES.has(value as ResearchPhaseStatus)
+    ? (value as ResearchPhaseStatus)
+    : undefined;
+}
 
 export function parseAgentPlanSnapshot(raw: unknown): AgentPlanSnapshot | null {
   let value = raw;
@@ -65,12 +110,14 @@ export function parseAgentPlanSnapshot(raw: unknown): AgentPlanSnapshot | null {
     const rawStatus = String(step.status ?? "pending") as AgentPlanStepStatus;
     const status = PLAN_STATUSES.has(rawStatus) ? rawStatus : "pending";
     const note = step.note == null ? "" : String(step.note).trim();
+    const researchPhase = parseResearchPhase(step.researchPhase ?? step.research_phase);
     return [
       {
         id: String(step.id ?? `s${index + 1}`).slice(0, 40),
         title: title.slice(0, 200),
         status,
         ...(note ? { note: note.slice(0, 300) } : {}),
+        ...(researchPhase ? { researchPhase } : {}),
       },
     ];
   });
@@ -82,6 +129,33 @@ export function parseAgentPlanSnapshot(raw: unknown): AgentPlanSnapshot | null {
     record.mode === "diagnose"
       ? record.mode
       : undefined;
+  const researchPhase = parseResearchPhase(record.researchPhase ?? record.research_phase);
+  const researchPhases = Array.isArray(record.researchPhases ?? record.research_phases)
+    ? (record.researchPhases ?? record.research_phases)
+        .flatMap((item): ResearchPhaseState[] => {
+          if (!item || typeof item !== "object") return [];
+          const phaseRecord = item as Record<string, unknown>;
+          const phase = parseResearchPhase(
+            phaseRecord.phase ?? phaseRecord.researchPhase ?? phaseRecord.research_phase
+          );
+          const status = parseResearchPhaseStatus(phaseRecord.status);
+          if (!phase || !status) return [];
+          return [
+            {
+              phase,
+              status,
+              ...(typeof phaseRecord.note === "string" && phaseRecord.note.trim()
+                ? { note: phaseRecord.note.trim().slice(0, 300) }
+                : {}),
+            },
+          ];
+        })
+        .filter(
+          (state, index, states) =>
+            states.findIndex((candidate) => candidate.phase === state.phase) === index
+        )
+        .slice(0, 6)
+    : [];
   const goalRecord =
     record.goal && typeof record.goal === "object"
       ? (record.goal as Record<string, unknown>)
@@ -122,6 +196,8 @@ export function parseAgentPlanSnapshot(raw: unknown): AgentPlanSnapshot | null {
   return {
     steps,
     ...(mode ? { mode } : {}),
+    ...(researchPhase ? { researchPhase } : {}),
+    ...(researchPhases.length > 0 ? { researchPhases } : {}),
     ...(updatedAt ? { updatedAt } : {}),
     ...(goalRecord
       ? {

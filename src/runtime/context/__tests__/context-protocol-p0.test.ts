@@ -59,6 +59,63 @@ describe("FinanceMemory schemas", () => {
   });
 });
 
+describe("Strategy recipe reflection recall", () => {
+  test("未经验证的 recipe 不得以深层记忆或成功结果提升权重", async () => {
+    const store = new InMemoryExperienceStore();
+    const validFrom = "2026-07-01T00:00:00.000Z";
+    const recipeBase = {
+      kind: "procedural" as const,
+      subKind: "strategy_recipe",
+      scope: "project" as const,
+      scopeId: "p1",
+      contentJson: { summary: "momentum recipe" },
+      validFrom,
+      qualityScore: 0.95,
+      metadataJson: {
+        compositionId: "composition-1",
+        asof: "2026-07-01",
+        memoryTier: "deep",
+      },
+    };
+    const unverified = await store.insert(recipeBase);
+    const verified = await store.insert({
+      ...recipeBase,
+      metadataJson: {
+        ...recipeBase.metadataJson,
+        compositionId: "composition-2",
+        validationEvidence: {
+          status: "validated" as const,
+          strategyVersionId: "version-2",
+          compositionId: "composition-2",
+          backtestRunId: "backtest-2",
+          datasetSnapshotId: "snapshot-2",
+          comparisonCohortId: "cohort-2",
+          finalHoldoutFingerprint: "holdout-2",
+          verifiedAt: "2026-07-02T00:00:00.000Z",
+        },
+      },
+    });
+    await store.update(unverified.id, { useCount: 10, successCount: 10 });
+    await store.update(verified.id, { useCount: 10, successCount: 10 });
+
+    const recall = new FinanceRecall({ store, now: () => new Date("2026-07-03T00:00:00.000Z") });
+    const hits = await recall.recall({
+      projectId: "p1",
+      definitionId: null,
+      query: "momentum recipe",
+      topK: 5,
+      silentEmit: true,
+    });
+    const raw = hits.find((hit) => hit.experience.id === unverified.id);
+    const validated = hits.find((hit) => hit.experience.id === verified.id);
+    expect(raw?.components.importance).toBeLessThanOrEqual(0.3);
+    expect(raw?.components.outcomeWeight).toBeLessThanOrEqual(0.2);
+    expect(validated?.components.importance).toBeGreaterThan(0.3);
+    expect(validated?.components.outcomeWeight).toBeGreaterThan(0.2);
+    expect(renderFinanceRecallBlockForPrompt(hits)).toContain("validation=unverified_hypothesis");
+  });
+});
+
 describe("FinanceMemory writer", () => {
   test("upsert factor_archive 同 factorId+asof 日不重复", async () => {
     const store = new InMemoryExperienceStore();

@@ -77,9 +77,9 @@ describe("builtin tool handlers", () => {
       expect(isBuiltinTool(name)).toBe(true);
       expect(isRoutedTool(name)).toBe(false);
       expect(buildToolCatalog().some((e) => e.name === name)).toBe(false);
-      await expect(
-        dispatchBuiltinTool(name, ctx, {} as Record<string, unknown>)
-      ).rejects.toThrow(/已退役|Phase A/);
+      await expect(dispatchBuiltinTool(name, ctx, {} as Record<string, unknown>)).rejects.toThrow(
+        /已退役|Phase A/
+      );
     }
   });
 
@@ -285,6 +285,7 @@ describe("connector bootstrap", () => {
 describe("research.thesis.write builtin", () => {
   test("is registered and catalogued", () => {
     expect(isBuiltinTool("research.thesis.write")).toBe(true);
+    expect(isBuiltinTool("research.signal_fuse")).toBe(true);
     expect(isBuiltinTool("research.framework.assess")).toBe(true);
     expect(isBuiltinTool("strategy.champion_challenger.compare")).toBe(true);
     expect(isBuiltinTool("strategy.candidate.review")).toBe(true);
@@ -294,6 +295,26 @@ describe("research.thesis.write builtin", () => {
     const entry = buildToolCatalog().find((row) => row.name === "research.thesis.write");
     expect(entry?.category).toBe("research");
     expect(entry?.description).toContain("thesisId");
+    expect(buildToolCatalog().find((row) => row.name === "research.signal_fuse")?.category).toBe(
+      "research"
+    );
+  });
+
+  test("requires a persisted immutable snapshot before accepting analyst signals", async () => {
+    await expect(
+      dispatchBuiltinTool("research.signal_fuse", ctx, {
+        snapshot_id: "mkt_snapshot_missing",
+        signals: [
+          {
+            analyst_role: "analyst_technical",
+            ticker: "AAPL",
+            signal: "buy",
+            confidence: 0.7,
+            reasoning: "test",
+          },
+        ],
+      })
+    ).rejects.toThrow(/snapshot_not_found/);
   });
 
   test("requires symbols when snapshot and narrative omit them", async () => {
@@ -325,7 +346,9 @@ describe("research.thesis.write builtin", () => {
       version: "investment-framework-card-v1",
       framework: "quality_growth",
       sourceRefs: ["source:quality-growth"],
-      principles: [{ statement: "Quality compounds capital.", sourceRefs: ["source:quality-growth"] }],
+      principles: [
+        { statement: "Quality compounds capital.", sourceRefs: ["source:quality-growth"] },
+      ],
       economicMechanism: "High returns plus reinvestment can compound shareholder capital.",
       observableProxies: [
         {
@@ -360,25 +383,34 @@ describe("research.thesis.write builtin", () => {
       invalidation: [{ condition: "ROIC falls below threshold.", observable: "fund_roic" }],
     })) as { thesisId: string };
 
-    const assessed = (await dispatchBuiltinTool("research.framework.assess", ctx, {
-      thesisId: written.thesisId,
-      candidates: [
-        {
-          symbol: "AAPL",
-          assetClass: "equity",
-          market: "US",
-          regime: "normal",
-          observations: { roic: { value: 0.2, evidenceRefs: ["fundamental:roic:2026q2"] } },
-        },
-        {
-          symbol: "BTC-USD",
-          assetClass: "crypto",
-          market: "CRYPTO",
-          regime: "normal",
-          observations: { roic: { value: 0.2, evidenceRefs: ["fundamental:roic:2026q2"] } },
-        },
-      ],
-    })) as { qualifiedSymbols: string[]; assessments: Array<{ status: string }> };
+    // This test deliberately uses an unbound handler context. Workflow-level
+    // artifact persistence is covered by workflow-artifact-ledger.test.ts.
+    const assessed = (await dispatchBuiltinTool(
+      "research.framework.assess",
+      {
+        ...ctx,
+        workflowId: undefined,
+      },
+      {
+        thesisId: written.thesisId,
+        candidates: [
+          {
+            symbol: "AAPL",
+            assetClass: "equity",
+            market: "US",
+            regime: "normal",
+            observations: { roic: { value: 0.2, evidenceRefs: ["fundamental:roic:2026q2"] } },
+          },
+          {
+            symbol: "BTC-USD",
+            assetClass: "crypto",
+            market: "CRYPTO",
+            regime: "normal",
+            observations: { roic: { value: 0.2, evidenceRefs: ["fundamental:roic:2026q2"] } },
+          },
+        ],
+      }
+    )) as { qualifiedSymbols: string[]; assessments: Array<{ status: string }> };
 
     expect(assessed.qualifiedSymbols).toEqual(["AAPL"]);
     expect(assessed.assessments.map((row) => row.status)).toEqual(["qualified", "rejected"]);

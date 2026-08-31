@@ -19,6 +19,7 @@ import {
 } from "../experience/pipes/recall";
 import { isPitCutoffEnabled } from "./axioms";
 import { incContextMetric } from "./context-metrics";
+import { hasValidatedStrategyRecipeEvidence } from "./finance-memory-schemas";
 import { FINANCE_RECALL_PREFER_SUB_KINDS, type FinanceSubKind } from "./types";
 
 export interface FinanceRecallContext extends RecallContext {
@@ -99,7 +100,8 @@ export class FinanceRecall {
         continue;
       }
       if (exp.subKind === "strategy_recipe" && !meta.compositionId) continue;
-      if (exp.subKind === "research_conclusion" &&
+      if (
+        exp.subKind === "research_conclusion" &&
         (!Array.isArray(meta.symbols) || meta.symbols.length === 0)
       ) {
         continue;
@@ -164,18 +166,26 @@ export class FinanceRecall {
       this.now()
     );
 
+    const validatedRecipe =
+      exp.subKind !== "strategy_recipe" ||
+      hasValidatedStrategyRecipeEvidence(meta.validationEvidence);
     const tier =
       typeof meta.memoryTier === "string"
         ? meta.memoryTier
-        : exp.subKind === "factor_archive" || exp.subKind === "strategy_recipe"
+        : exp.subKind === "factor_archive" || (exp.subKind === "strategy_recipe" && validatedRecipe)
           ? "deep"
           : "intermediate";
     const tierBase = TIER_IMPORTANCE[tier] ?? 0.5;
-    const importance = Math.min(1, tierBase * (0.5 + 0.5 * exp.qualityScore));
+    const importance = Math.min(
+      validatedRecipe ? 1 : (TIER_IMPORTANCE.shallow ?? 0.3),
+      tierBase * (0.5 + 0.5 * exp.qualityScore)
+    );
 
     const use = Math.max(exp.useCount, 1);
     const successRate = exp.successCount / use;
-    const outcomeWeight = computeOutcomeWeight(exp, successRate);
+    const outcomeWeight = validatedRecipe
+      ? computeOutcomeWeight(exp, successRate)
+      : Math.min(0.2, computeOutcomeWeight(exp, successRate));
 
     if (
       typeof (meta.decisionRecord as { outcome?: { brierContribution?: number } } | undefined)
@@ -244,6 +254,12 @@ export function renderFinanceRecallBlockForPrompt(results: FinanceRecallResult[]
     const refs: string[] = [];
     if (meta.factorId) refs.push(`factorId=${meta.factorId}`);
     if (meta.compositionId) refs.push(`compositionId=${meta.compositionId}`);
+    if (
+      exp.subKind === "strategy_recipe" &&
+      !hasValidatedStrategyRecipeEvidence(meta.validationEvidence)
+    ) {
+      refs.push("validation=unverified_hypothesis");
+    }
     if (meta.asof) refs.push(`asof=${meta.asof}`);
     const metric = `score=${r.score.toFixed(3)} out=${r.components.outcomeWeight.toFixed(2)} q=${exp.qualityScore.toFixed(2)}`;
     lines.push(`### ${kindBadge} ${truncate(exp.contentJson.summary, 90)}`);

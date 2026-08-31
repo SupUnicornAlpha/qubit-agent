@@ -1,48 +1,109 @@
+import { Ban, Plus, RefreshCw, Trash2 } from "lucide-react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FC } from "react";
+import { type FC, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { createConversationTurn, getOrCreateDefaultProject, createChatSession, getChatSessionWorkflow, putFsWorkspaceRun, getDefaultWorkspace, getDefaultProjectSession, getResearchWorkflowGraph, deleteWorkflow, listMonitorWorkflows, listProjects, patchWorkflow, updateWorkflowGoal, injectWorkflowMessage, interruptWorkflow, listFactors, listStrategyVersions, listStrategyScripts, listBacktestJobs, subscribeWorkflowEvents } from "../api/backend";
-import type { AnalystTeamGraphPayload, AnalystTeamGraphInteraction, AnalystTeamGraphAgentStep, AnalystTeamGraphToolCall, AnalystTeamGraphMcpCall, StepStreamEvent, AgentControlMode, AgentLoopKind } from "../api/types";
-import { useAppStore } from "../store";
-import { stripToolCallSentinels } from "../lib/chatMessageHydration";
-import { isNarrativeNearDuplicate } from "../lib/narrativeNearDuplicate";
-import { isUiHiddenAgentThought } from "../lib/uiHiddenAgentThought";
+import {
+  createChatSession,
+  createConversationTurn,
+  deleteWorkflow,
+  getChatSessionWorkflow,
+  getDefaultProjectSession,
+  getDefaultWorkspace,
+  getOrCreateDefaultProject,
+  getResearchWorkflowGraph,
+  injectWorkflowMessage,
+  interruptWorkflow,
+  listBacktestJobs,
+  listFactors,
+  listMonitorWorkflows,
+  listProjects,
+  listStrategyScripts,
+  listStrategyVersions,
+  patchWorkflow,
+  putFsWorkspaceRun,
+  subscribeWorkflowEvents,
+  updateWorkflowGoal,
+} from "../api/backend";
+import type {
+  AgentControlMode,
+  AgentLoopKind,
+  AnalystTeamGraphAgentStep,
+  AnalystTeamGraphInteraction,
+  AnalystTeamGraphMcpCall,
+  AnalystTeamGraphPayload,
+  AnalystTeamGraphToolCall,
+  ResearchPhase,
+  ResearchPhaseState,
+  ResearchPhaseStatus,
+  StepStreamEvent,
+} from "../api/types";
 import { KlinePanel } from "../components/chart/KlinePanel";
 import { NewsBriefSection } from "../components/chart/NewsBriefSection";
-import { TeamAgentGraph, teamGraphUndirectedKey, type TeamGraphActivity, type TeamGraphSelection } from "../components/ide/TeamAgentGraph";
-import { TeamAgentPixelOffice } from "../components/team/TeamAgentPixelOffice";
-import { ResearchMultiKlineGrid } from "../components/team/ResearchMultiKlineGrid";
-import { ResearchToolResultsPanel } from "../components/team/ResearchToolResultsPanel";
-import { buildResearchCanvasToolHits, latestSuccessfulMarketLink, type ResearchCanvasToolHit } from "../lib/researchCanvasToolLink";
-import { coerceChartMarketExchange, guessChartExchangeFromSymbol } from "../lib/chartSpec";
-import { buildResearchMarketSymbolList } from "../lib/researchMarketSymbols";
-import { chartPatchFromResearchScope } from "../lib/researchScopeChartLink";
-import { formatEdgeSelectionSummary, isToolGraphEdge } from "../lib/teamGraphEdgeVisual";
-import { filterPromptTemplates, instrumentLabel, parseSymbolList, scopeModeLabel, type ResearchInstrumentUi, type ResearchScopeMode } from "../lib/researchScope";
-import { buildFilteredTeamGraphDisplay, describeInteractionRouting, filterInteractionsForEdge } from "../lib/teamGraphDisplay";
-import { ResearchOutputTabs } from "../components/team/ResearchOutputTabs";
-import { AgentRunPanel } from "../components/team/AgentRunChatView";
-import { LiveConversationView, type LiveConversationEvent } from "../components/team/LiveConversationView";
-import { ResizableY } from "../components/team/ResizableY";
-import { TeamHitlBanner } from "../components/team/TeamHitlBanner";
-import type { OrchestratorPlan } from "../components/team/PlanCard";
 import {
+  TeamAgentGraph,
+  type TeamGraphActivity,
+  type TeamGraphSelection,
+  teamGraphUndirectedKey,
+} from "../components/ide/TeamAgentGraph";
+import { pickPreferredProject } from "../components/quant/useDefaultProject";
+import { AgentRunPanel } from "../components/team/AgentRunChatView";
+import {
+  type LiveConversationEvent,
+  LiveConversationView,
+} from "../components/team/LiveConversationView";
+import {
+  type OrchestratorArtifact,
+  OrchestratorChatPanel,
+} from "../components/team/OrchestratorChatPanel";
+import type { OrchestratorPlan } from "../components/team/PlanCard";
+import { ResearchAnalysisWorkspace } from "../components/team/ResearchAnalysisWorkspace";
+import { ResearchMultiKlineGrid } from "../components/team/ResearchMultiKlineGrid";
+import { ResearchOutputTabs } from "../components/team/ResearchOutputTabs";
+import { ResearchToolResultsPanel } from "../components/team/ResearchToolResultsPanel";
+import { ResizableY } from "../components/team/ResizableY";
+import { TeamAgentPixelOffice } from "../components/team/TeamAgentPixelOffice";
+import { TeamHitlBanner } from "../components/team/TeamHitlBanner";
+import { TeamStrategyContractPane } from "../components/team/TeamStrategyContractPane";
+import {
+  type PlanTimelineSegment,
   latestPlanFromSegments,
   planStructureKey,
-  type PlanTimelineSegment,
   upsertPlanSegment,
 } from "../components/team/planSegments";
-import { OrchestratorChatPanel, type OrchestratorArtifact } from "../components/team/OrchestratorChatPanel";
 import { FsWorkspaceExplorer } from "../components/workspace/FsWorkspaceExplorer";
 import { WorkspaceFilePane } from "../components/workspace/WorkspaceFilePane";
-import { TeamStrategyContractPane } from "../components/team/TeamStrategyContractPane";
-import { TeamResearchSettingsPanel } from "../components/team/TeamResearchSettingsPanel";
-import { buildSubAgentRunSummaries } from "../lib/subAgentRuns";
-import { classifyWorkflow, groupWorkflowOptions, WORKFLOW_KIND_LABEL, type WorkflowKind } from "../lib/workflowKind";
+import { coerceChartMarketExchange, guessChartExchangeFromSymbol } from "../lib/chartSpec";
+import { stripToolCallSentinels } from "../lib/chatMessageHydration";
+import { isNarrativeNearDuplicate } from "../lib/narrativeNearDuplicate";
 import { quantNavigationForArtifact } from "../lib/quantArtifactNavigation";
-import { pickPreferredProject } from "../components/quant/useDefaultProject";
+import {
+  type ResearchCanvasToolHit,
+  buildResearchCanvasToolHits,
+  latestSuccessfulMarketLink,
+} from "../lib/researchCanvasToolLink";
+import { buildResearchMarketSymbolList } from "../lib/researchMarketSymbols";
+import {
+  type ResearchInstrumentUi,
+  type ResearchScopeMode,
+  parseSymbolList,
+  scopeModeLabel,
+} from "../lib/researchScope";
+import { buildSubAgentRunSummaries } from "../lib/subAgentRuns";
+import {
+  buildFilteredTeamGraphDisplay,
+  describeInteractionRouting,
+  filterInteractionsForEdge,
+} from "../lib/teamGraphDisplay";
+import { formatEdgeSelectionSummary, isToolGraphEdge } from "../lib/teamGraphEdgeVisual";
+import { isUiHiddenAgentThought } from "../lib/uiHiddenAgentThought";
+import {
+  WORKFLOW_KIND_LABEL,
+  type WorkflowKind,
+  classifyWorkflow,
+  groupWorkflowOptions,
+} from "../lib/workflowKind";
 import { useAgentDockOptional } from "../shell/pro/AgentDockContext";
-
+import { useAppStore } from "../store";
 
 /** Team 页面（原 MainContent.TeamDashboardPanel） */
 type TeamPaneKey = "left" | "center" | "right";
@@ -52,6 +113,48 @@ const TEAM_PANE_LABEL: Record<TeamPaneKey, string> = {
   center: "研究画布",
   right: "Orchestrator 对话",
 };
+const RESEARCH_PHASE_VALUES = new Set<ResearchPhase>([
+  "scope",
+  "plan",
+  "evidence",
+  "analysis",
+  "validation",
+  "delivery",
+]);
+const RESEARCH_PHASE_STATUS_VALUES = new Set<ResearchPhaseStatus>([
+  "pending",
+  "active",
+  "completed",
+  "revisited",
+  "blocked",
+]);
+
+function parseResearchPhaseStates(raw: unknown): ResearchPhaseState[] {
+  if (!Array.isArray(raw)) return [];
+  const states: ResearchPhaseState[] = [];
+  for (const item of raw.slice(0, 6)) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    const phaseRaw = record.phase ?? record.researchPhase ?? record.research_phase;
+    const statusRaw = record.status;
+    if (
+      typeof phaseRaw !== "string" ||
+      !RESEARCH_PHASE_VALUES.has(phaseRaw as ResearchPhase) ||
+      typeof statusRaw !== "string" ||
+      !RESEARCH_PHASE_STATUS_VALUES.has(statusRaw as ResearchPhaseStatus) ||
+      states.some((state) => state.phase === phaseRaw)
+    ) {
+      continue;
+    }
+    const note = typeof record.note === "string" ? record.note.trim().slice(0, 300) : "";
+    states.push({
+      phase: phaseRaw as ResearchPhase,
+      status: statusRaw as ResearchPhaseStatus,
+      ...(note ? { note } : {}),
+    });
+  }
+  return states;
+}
 const TEAM_PANES_LS_KEY = "qubit-agent.teamPanes.hidden.v1";
 /** 画布可多选高亮的团队成员角色（与后端研究团队槽位一致；空集表示不过滤） */
 /** 拓扑画布固定视口高度，避免 ResizeObserver↔SVG 高度互相撑开导致无限增高 */
@@ -72,114 +175,36 @@ const TEAM_GRAPH_VIEWPORT_MAX_HEIGHT = 720;
 const TEAM_GRAPH_VIEWPORT_PER_NODE = 36;
 
 function computeTopologyHeight(nodeCount: number, viewportHeight: number): number {
-  const byCount = TEAM_GRAPH_VIEWPORT_MIN_HEIGHT + Math.max(0, nodeCount - 6) * TEAM_GRAPH_VIEWPORT_PER_NODE;
+  const byCount =
+    TEAM_GRAPH_VIEWPORT_MIN_HEIGHT + Math.max(0, nodeCount - 6) * TEAM_GRAPH_VIEWPORT_PER_NODE;
   const byViewport = Math.floor(viewportHeight * 0.58);
   return Math.max(
     TEAM_GRAPH_VIEWPORT_MIN_HEIGHT,
-    Math.min(TEAM_GRAPH_VIEWPORT_MAX_HEIGHT, byViewport, byCount),
+    Math.min(TEAM_GRAPH_VIEWPORT_MAX_HEIGHT, byViewport, byCount)
   );
 }
 
 export const TeamDashboardPanel: FC = () => {
-  const [ticker, setTicker] = useState("");
-  const [scopeMode, setScopeMode] = useState<ResearchScopeMode>("single");
-  const [basketTickers, setBasketTickers] = useState("");
-  const [sectorName, setSectorName] = useState("");
-  const [sectorPeers, setSectorPeers] = useState("");
   /**
-   * 2026-05-26 修复：scope 模式各自独立 state，**不再用预填默认值**（旧实现把
-   * sectorPeers 默认为 "NVDA,AMD,AVGO" 导致 goal=板块·AAPL 时实际跑 NVDA 系列）。
-   * 用户在每个模式下都得自己输入，避免跨模式数据残留。
+   * 研究范围不再走左栏表单：新建会话用默认单标的 / 股票多头。
+   * 真正的研究问题从右侧 Orchestrator 对话发出。
    */
-  const [exploreTheme, setExploreTheme] = useState("");
-  const [exploreCandidates, setExploreCandidates] = useState("");
-  const [researchInstrument, setResearchInstrument] = useState<ResearchInstrumentUi>("equity_long");
-  const [optionUnderlying, setOptionUnderlying] = useState("");
-  const [optionContract, setOptionContract] = useState("");
-  const [optionExpiry, setOptionExpiry] = useState("");
-  const [optionStrike, setOptionStrike] = useState("");
-  const [optionRight, setOptionRight] = useState<"call" | "put" | "">("call");
+  const ticker = "";
+  const scopeMode: ResearchScopeMode = "single";
+  const researchInstrument: ResearchInstrumentUi = "equity_long";
   /** 右侧 Orchestrator 输入框的研究上下文。 */
   const [teamAnalysisContext, setTeamAnalysisContext] = useState("");
-  const [promptTemplateId, setPromptTemplateId] = useState("");
   /**
    * Agent 底座/引擎：团队里每个角色单轮 reason 用哪个引擎
    * （docs/CLI_AGENT_PROJECTION_DESIGN.md 模型 B）。写入 loopOptions.roleReasoner，
    * 与 loop_kind 正交——仍走 MSA 编排，仅替换角色 reason 引擎。
    */
-  const [roleReasoner, setRoleReasoner] = useState<AgentLoopKind>("native");
+  const roleReasoner: AgentLoopKind = "native";
   /** Agent / Plan / Goal 工作模式；与上面的推理引擎选择正交。 */
   const teamAgentMode = useAppStore((s) => s.agentControlMode);
   const setTeamAgentMode = useAppStore((s) => s.setAgentControlMode);
   const selectedConversationSessionId = useAppStore((s) => s.selectedSessionId);
   const setSelectedConversationSessionId = useAppStore((s) => s.setSelectedSessionId);
-
-  /**
-   * 切换 scope 模式时清空"上一模式特有"的输入，避免数据串台到下一次提交。
-   * 这是用户在 Q3 抱怨"goal 是 AAPL 实际跑 NVDA" 的另一道防线。
-   *
-   * 2026-05-27 P0-2 加固：之前实现只清 promptTemplateId，导致 `instrument='option'
-   * + optionContract='ASTSCall 2026.5.29'` 残留到下一次"单标的 RKLB"提交，
-   * `buildResearchScopePayload` 看到 `instrument==='option'` 直接用 optionContract
-   * 当 ticker，结果 workflow_run.goal=RKLB 但 analyst_research_job.ticker=
-   * "期权·ASTSCall 2026.5.29" —— Orchestrator kickoff 标的也错（WF 9adf5d91 实测）。
-   *
-   * 现在切 mode 时一并：
-   *   - basket → 切到非 basket 时清空 basketTickers
-   *   - sector → 切到非 sector 时清空 sectorName / sectorPeers
-   *   - explore → 切到非 explore 时清空 exploreTheme / exploreCandidates
-   *   - instrument: 期权只允许单标的；期货与加密资产可保留在篮子/主题研究中。
-   *   - 期权字段：所有非 single 模式都清空（option 模式只在 single 下有意义）
-   */
-  const handleScopeModeChange = (next: ResearchScopeMode) => {
-    if (next === scopeMode) return;
-    setPromptTemplateId("");
-    if (scopeMode === "basket" && next !== "basket") setBasketTickers("");
-    if (scopeMode === "sector" && next !== "sector") {
-      setSectorName("");
-      setSectorPeers("");
-    }
-    if (scopeMode === "explore" && next !== "explore") {
-      setExploreTheme("");
-      setExploreCandidates("");
-    }
-    if (next !== "single" && researchInstrument === "option") {
-      setResearchInstrument("equity_long");
-      setOptionUnderlying("");
-      setOptionContract("");
-      setOptionExpiry("");
-      setOptionStrike("");
-      setOptionRight("call");
-    }
-    setScopeMode(next);
-  };
-
-  /**
-   * 工具类型切换：从 option 切回 equity_long / equity_short 时清空 option_* 残留，
-   * 同样为防止跨次提交污染 scope payload。
-   */
-  const handleResearchInstrumentChange = (next: ResearchInstrumentUi) => {
-    if (next === researchInstrument) return;
-    if (researchInstrument === "option" && next !== "option") {
-      setOptionUnderlying("");
-      setOptionContract("");
-      setOptionExpiry("");
-      setOptionStrike("");
-      setOptionRight("call");
-    }
-    setResearchInstrument(next);
-  };
-
-  const availablePromptTemplates = useMemo(
-    () => filterPromptTemplates(scopeMode, researchInstrument),
-    [scopeMode, researchInstrument]
-  );
-  const applyPromptTemplate = (id: string) => {
-    setPromptTemplateId(id);
-    if (!id) return;
-    const tpl = availablePromptTemplates.find((t) => t.id === id);
-    if (tpl) setTeamAnalysisContext(tpl.prompt);
-  };
 
   const [workflowRunId, setWorkflowRunId] = useState("");
   /** 始终指向最新选中的 workflow，供慢请求 / 对话收口校验，避免切走后旧响应回写。 */
@@ -219,8 +244,9 @@ export const TeamDashboardPanel: FC = () => {
    * 注意：这块必须放在 `workflowRunId` 的 useState 之后，因为 useEffect 依赖
    * 该变量；之前一次重构把 useState 放到了下方导致 TDZ 错误（TS2448/TS2454）。
    */
-  const [agentHeartbeats, setAgentHeartbeats] =
-    useState<import("../api/backend").WorkflowAgentHeartbeatsResponse | null>(null);
+  const [agentHeartbeats, setAgentHeartbeats] = useState<
+    import("../api/backend").WorkflowAgentHeartbeatsResponse | null
+  >(null);
   /** 心跳快照是运行状态的服务端权威读模型；连接状态单独保留，避免重连窗口误报运行。 */
   const [heartbeatSyncState, setHeartbeatSyncState] = useState<
     "idle" | "connecting" | "live" | "degraded" | "unavailable"
@@ -237,10 +263,9 @@ export const TeamDashboardPanel: FC = () => {
     setHeartbeatSyncState("connecting");
 
     void (async () => {
-      const {
-        subscribeWorkflowHeartbeatStream,
-        getWorkflowAgentHeartbeats,
-      } = await import("../api/backend");
+      const { subscribeWorkflowHeartbeatStream, getWorkflowAgentHeartbeats } = await import(
+        "../api/backend"
+      );
       if (cancelled) return;
 
       unsubscribe = subscribeWorkflowHeartbeatStream({
@@ -317,27 +342,14 @@ export const TeamDashboardPanel: FC = () => {
   }, [leftRailMode]);
 
   const fsWorkspaceCreateDefaults = useMemo(() => {
-    const symbolsRaw =
-      scopeMode === "basket"
-        ? parseSymbolList(basketTickers || ticker)
-        : scopeMode === "sector"
-          ? [...parseSymbolList(sectorPeers), ...parseSymbolList(ticker)]
-          : scopeMode === "explore"
-            ? parseSymbolList(exploreCandidates)
-            : researchInstrument === "option"
-              ? parseSymbolList(optionUnderlying || ticker)
-              : parseSymbolList(ticker);
+    const symbolsRaw = parseSymbolList(ticker);
     const symbols = [...new Set(symbolsRaw)].slice(0, 32).map((symbol) => ({
       symbol,
       exchange: coerceChartMarketExchange(guessChartExchangeFromSymbol(symbol)),
     }));
     const focusSym = symbols[0]?.symbol || ticker.trim().toUpperCase();
     return {
-      name:
-        `${scopeModeLabel(scopeMode)} · ${focusSym || sectorName || exploreTheme || "课题"}`.slice(
-          0,
-          80
-        ),
+      name: `${scopeModeLabel(scopeMode)} · ${focusSym || "课题"}`.slice(0, 80),
       mode: scopeMode,
       symbols,
       focus: focusSym
@@ -347,17 +359,7 @@ export const TeamDashboardPanel: FC = () => {
           }
         : undefined,
     };
-  }, [
-    scopeMode,
-    basketTickers,
-    ticker,
-    sectorPeers,
-    exploreCandidates,
-    researchInstrument,
-    optionUnderlying,
-    sectorName,
-    exploreTheme,
-  ]);
+  }, [scopeMode, ticker]);
 
   /**
    * 团队页大三栏（左：研究与工作流 / 中：研究画布 / 右：研究产出）的显隐控制。
@@ -404,11 +406,11 @@ export const TeamDashboardPanel: FC = () => {
         return next;
       });
     },
-    [persistHiddenTeamPanes],
+    [persistHiddenTeamPanes]
   );
   const teamPaneVisible = useCallback(
     (pane: TeamPaneKey) => !hiddenTeamPanes.has(pane),
-    [hiddenTeamPanes],
+    [hiddenTeamPanes]
   );
 
   /** 专业壳：Orchestrator 右栏外挂到 ProAgentPanel，避免双右栏 */
@@ -460,10 +462,7 @@ export const TeamDashboardPanel: FC = () => {
   const settleRefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Coding-Agent 体验 P1：Orchestrator 分步计划/TODO + 当前「正在调用什么、为何」活动行。 */
   const [teamPlanSegments, setTeamPlanSegments] = useState<PlanTimelineSegment[]>([]);
-  const teamPlan = useMemo(
-    () => latestPlanFromSegments(teamPlanSegments),
-    [teamPlanSegments]
-  );
+  const teamPlan = useMemo(() => latestPlanFromSegments(teamPlanSegments), [teamPlanSegments]);
   const [activeRationale, setActiveRationale] = useState<{
     tool: string;
     why: string;
@@ -474,9 +473,7 @@ export const TeamDashboardPanel: FC = () => {
    * 供 Cursor 风格运行态条与 ChatExecutionActivity 使用。
    * 切换 workflow 时清空；容量上限避免内存膨胀。
    */
-  const [orchestratorStreamEvents, setOrchestratorStreamEvents] = useState<StepStreamEvent[]>(
-    []
-  );
+  const [orchestratorStreamEvents, setOrchestratorStreamEvents] = useState<StepStreamEvent[]>([]);
   /**
    * 用户在右侧 Orchestrator 对话框发出的提示词回显（启动指令 / 运行中插话）。
    * 合成成 fromRole="user" 的消息事件并入实时流，让用户看到自己说过什么。
@@ -492,7 +489,10 @@ export const TeamDashboardPanel: FC = () => {
     const text = content.trim();
     if (!text) return;
     setUserEchoes((prev) =>
-      [...prev, { id: `ue-${Date.now()}-${prev.length}`, content: text, ts: new Date().toISOString() }].slice(-50)
+      [
+        ...prev,
+        { id: `ue-${Date.now()}-${prev.length}`, content: text, ts: new Date().toISOString() },
+      ].slice(-50)
     );
   }, []);
   /** 本工作流已生成的产物（内联在右栏对话框顶部，点击可打开到量化工坊）。 */
@@ -508,10 +508,10 @@ export const TeamDashboardPanel: FC = () => {
   const [graphSelection, setGraphSelection] = useState<TeamGraphSelection>(null);
   const [graphLoading, setGraphLoading] = useState(false);
   const [teamGraphView, setTeamGraphView] = useState<"topology" | "office">("topology");
-  /** 研究中栏画布：拓扑 / 行情 / 新闻 / 工具结果 / Strategy API */
+  /** 研究中栏画布：分析流 / 行情 / 新闻 / 工具结果 / 执行图 / Strategy API */
   const [researchCanvasTab, setResearchCanvasTab] = useState<
-    "topology" | "market" | "news" | "tools" | "file" | "strategy"
-  >("topology");
+    "analysis" | "topology" | "market" | "news" | "tools" | "file" | "strategy"
+  >("analysis");
   const [openWsFile, setOpenWsFile] = useState<{
     workspaceId: string;
     path: string;
@@ -540,7 +540,12 @@ export const TeamDashboardPanel: FC = () => {
   const teamTriRef = useRef<HTMLDivElement | null>(null);
   const [teamLeftW, setTeamLeftW] = useState(268);
   const [teamRightW, setTeamRightW] = useState(400);
-  const teamColDrag = useRef<{ which: 1 | 2; startX: number; left0: number; right0: number } | null>(null);
+  const teamColDrag = useRef<{
+    which: 1 | 2;
+    startX: number;
+    left0: number;
+    right0: number;
+  } | null>(null);
 
   const refreshWorkflowOptions = useCallback(async () => {
     const wfRows = (await listMonitorWorkflows({})) as Array<Record<string, unknown>>;
@@ -549,44 +554,47 @@ export const TeamDashboardPanel: FC = () => {
     return active;
   }, []);
 
-  const loadTeamGraph = useCallback(async (opts?: {
-    preserveSelection?: boolean;
-    /** 后台同步不切换 loading，避免运行期画布像整页刷新一样闪烁。 */
-    background?: boolean;
-  }) => {
-    const wf = workflowRunId.trim();
-    if (!wf) {
-      teamGraphLoadGenRef.current += 1;
-      setTeamGraph(null);
-      setGraphLoading(false);
-      return;
-    }
-    const gen = ++teamGraphLoadGenRef.current;
-    if (!opts?.background) setGraphLoading(true);
-    try {
-      const g = await getResearchWorkflowGraph(wf);
-      // 用户已切到其他工作流：丢掉本响应，否则长对话会把右侧/中栏「钉」回旧任务。
-      if (gen !== teamGraphLoadGenRef.current || workflowRunIdRef.current.trim() !== wf) {
-        return;
-      }
-      setTeamGraph(g);
-      if (g?.plan?.steps?.length) {
-        const at = g.plan.updatedAt ?? new Date().toISOString();
-        setTeamPlanSegments((prev) => upsertPlanSegment(prev, g.plan as OrchestratorPlan, at));
-      }
-      if (!opts?.preserveSelection) setGraphSelection(null);
-    } catch {
-      if (gen !== teamGraphLoadGenRef.current || workflowRunIdRef.current.trim() !== wf) {
-        return;
-      }
-      // 后台同步短暂失败时保留上一帧，不能为了一个网络抖动把画布清空。
-      if (!opts?.background) setTeamGraph(null);
-    } finally {
-      if (gen === teamGraphLoadGenRef.current && !opts?.background) {
+  const loadTeamGraph = useCallback(
+    async (opts?: {
+      preserveSelection?: boolean;
+      /** 后台同步不切换 loading，避免运行期画布像整页刷新一样闪烁。 */
+      background?: boolean;
+    }) => {
+      const wf = workflowRunId.trim();
+      if (!wf) {
+        teamGraphLoadGenRef.current += 1;
+        setTeamGraph(null);
         setGraphLoading(false);
+        return;
       }
-    }
-  }, [workflowRunId]);
+      const gen = ++teamGraphLoadGenRef.current;
+      if (!opts?.background) setGraphLoading(true);
+      try {
+        const g = await getResearchWorkflowGraph(wf);
+        // 用户已切到其他工作流：丢掉本响应，否则长对话会把右侧/中栏「钉」回旧任务。
+        if (gen !== teamGraphLoadGenRef.current || workflowRunIdRef.current.trim() !== wf) {
+          return;
+        }
+        setTeamGraph(g);
+        if (g?.plan?.steps?.length) {
+          const at = g.plan.updatedAt ?? new Date().toISOString();
+          setTeamPlanSegments((prev) => upsertPlanSegment(prev, g.plan as OrchestratorPlan, at));
+        }
+        if (!opts?.preserveSelection) setGraphSelection(null);
+      } catch {
+        if (gen !== teamGraphLoadGenRef.current || workflowRunIdRef.current.trim() !== wf) {
+          return;
+        }
+        // 后台同步短暂失败时保留上一帧，不能为了一个网络抖动把画布清空。
+        if (!opts?.background) setTeamGraph(null);
+      } finally {
+        if (gen === teamGraphLoadGenRef.current && !opts?.background) {
+          setGraphLoading(false);
+        }
+      }
+    },
+    [workflowRunId]
+  );
 
   /**
    * 稳定 ref 持有最新 loadTeamGraph，供 SSE 订阅里的收口回拉调用，
@@ -616,12 +624,13 @@ export const TeamDashboardPanel: FC = () => {
   }, []);
 
   const handleOrchestratorChatRef = useRef<
-    ((options?: {
-      message?: string;
-      agentMode?: AgentControlMode;
-      preserveGoal?: boolean;
-      skipEcho?: boolean;
-    }) => Promise<void>) | null
+    | ((options?: {
+        message?: string;
+        agentMode?: AgentControlMode;
+        preserveGoal?: boolean;
+        skipEcho?: boolean;
+      }) => Promise<void>)
+    | null
   >(null);
 
   useEffect(() => {
@@ -793,11 +802,11 @@ export const TeamDashboardPanel: FC = () => {
         scope: {
           mode: scopeMode,
           ticker,
-          basketTickers,
-          sectorPeers,
-          exploreCandidates,
+          basketTickers: "",
+          sectorPeers: "",
+          exploreCandidates: "",
           instrument: researchInstrument,
-          optionUnderlying,
+          optionUnderlying: "",
         },
         toolHits: researchCanvasToolHits,
         limit: 8,
@@ -807,11 +816,7 @@ export const TeamDashboardPanel: FC = () => {
       chartSpec.exchange,
       scopeMode,
       ticker,
-      basketTickers,
-      sectorPeers,
-      exploreCandidates,
       researchInstrument,
-      optionUnderlying,
       researchCanvasToolHits,
     ]
   );
@@ -821,9 +826,7 @@ export const TeamDashboardPanel: FC = () => {
       if (hit.symbol) {
         setChartSpec({
           symbol: hit.symbol,
-          ...(hit.exchange
-            ? { exchange: coerceChartMarketExchange(hit.exchange) }
-            : {}),
+          ...(hit.exchange ? { exchange: coerceChartMarketExchange(hit.exchange) } : {}),
         });
         requestChartReload();
       }
@@ -832,7 +835,7 @@ export const TeamDashboardPanel: FC = () => {
     [requestChartReload, setChartSpec]
   );
 
-  // 工具联动：同步标的到 chartSpec；不自动抢走画布 Tab（默认保持拓扑）。
+  // 工具联动：同步标的到 chartSpec；不自动抢走画布 Tab（默认保持分析流）。
   useEffect(() => {
     const link = latestSuccessfulMarketLink(researchCanvasToolHits);
     if (!link?.symbol) return;
@@ -850,42 +853,8 @@ export const TeamDashboardPanel: FC = () => {
 
   useEffect(() => {
     lastLinkedToolIdRef.current = null;
-    setResearchCanvasTab("topology");
+    setResearchCanvasTab("analysis");
   }, [workflowRunId]);
-
-  // 左栏研究范围 → 画布标的联动（单标的/篮子首标/板块成分首标/期权标的）
-  useEffect(() => {
-    const patch = chartPatchFromResearchScope({
-      mode: scopeMode,
-      ticker,
-      basketTickers,
-      sectorPeers,
-      exploreCandidates,
-      instrument: researchInstrument,
-      optionUnderlying,
-    });
-    if (!patch) return;
-    if (
-      chartSpec.symbol.toUpperCase() === patch.symbol &&
-      chartSpec.exchange.toUpperCase() === patch.exchange
-    ) {
-      return;
-    }
-    setChartSpec(patch);
-    requestChartReload();
-    // 仅在用户改左栏研究范围时写入；不把 chartSpec 放进依赖，避免工具联动后回写互踢
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
-  }, [
-    scopeMode,
-    ticker,
-    basketTickers,
-    sectorPeers,
-    exploreCandidates,
-    researchInstrument,
-    optionUnderlying,
-    requestChartReload,
-    setChartSpec,
-  ]);
 
   /** 右栏「专家进度」：从 graph + 流式态 + 心跳推导已派发子 Agent。 */
   const subAgentRuns = useMemo(() => {
@@ -906,11 +875,7 @@ export const TeamDashboardPanel: FC = () => {
    * 右栏虚框：优先 orchestrator 本轮思考；否则取最近更新的 role（专家也在跑时可见）。
    */
   const liveReasoning = useMemo(() => {
-    const pick = (
-      text: string,
-      status: "streaming" | "done",
-      role: string
-    ) => {
+    const pick = (text: string, status: "streaming" | "done", role: string) => {
       const cleaned = text.trim();
       if (!cleaned || isUiHiddenAgentThought(cleaned)) return null;
       return { text: cleaned, status, role };
@@ -928,9 +893,7 @@ export const TeamDashboardPanel: FC = () => {
         best = { text: row.text, status: row.status, role, ts: row.ts };
       }
     }
-    return best
-      ? { text: best.text, status: best.status, role: best.role }
-      : null;
+    return best ? { text: best.text, status: best.status, role: best.role } : null;
   }, [reasoningByRole]);
 
   const graphNodeDetail = useMemo((): {
@@ -1103,9 +1066,7 @@ export const TeamDashboardPanel: FC = () => {
         payloadJson: { phase: "reasoning_progress", streaming: true },
       });
     }
-    return events
-      .sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0))
-      .slice(-200);
+    return events.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0)).slice(-200);
   }, [graphSelection, graphEdgeDetail, teamGraph, streamingByRole, userEchoes]);
 
   /**
@@ -1157,14 +1118,23 @@ export const TeamDashboardPanel: FC = () => {
         }
         if (event.type === "plan") {
           // 分步计划快照 → 任务段落（结构变则新开一段，仅进度则刷新当前段）。
-          const steps = Array.isArray(event.payload?.["steps"])
-            ? (event.payload["steps"] as OrchestratorPlan["steps"])
+          const steps = Array.isArray(event.payload?.steps)
+            ? (event.payload.steps as OrchestratorPlan["steps"])
             : [];
-          const mode = event.payload?.["mode"];
-          const goal = event.payload?.["goal"];
+          const mode = event.payload?.mode;
+          const goal = event.payload?.goal;
+          const rawResearchPhase = event.payload?.researchPhase ?? event.payload?.research_phase;
+          const researchPhase =
+            typeof rawResearchPhase === "string" &&
+            RESEARCH_PHASE_VALUES.has(rawResearchPhase as ResearchPhase)
+              ? (rawResearchPhase as ResearchPhase)
+              : undefined;
+          const researchPhases = parseResearchPhaseStates(
+            event.payload?.researchPhases ?? event.payload?.research_phases
+          );
           const snapshot: OrchestratorPlan = {
             steps,
-            updatedAt: String(event.payload?.["updatedAt"] ?? event.ts ?? ""),
+            updatedAt: String(event.payload?.updatedAt ?? event.ts ?? ""),
             ...(mode === "agent" ||
             mode === "plan" ||
             mode === "goal" ||
@@ -1175,22 +1145,19 @@ export const TeamDashboardPanel: FC = () => {
             ...(goal && typeof goal === "object"
               ? { goal: goal as NonNullable<OrchestratorPlan["goal"]> }
               : {}),
+            ...(researchPhase ? { researchPhase } : {}),
+            ...(researchPhases.length > 0 ? { researchPhases } : {}),
           };
           const at = snapshot.updatedAt || new Date(event.ts).toISOString();
           setTeamPlanSegments((prev) => {
             const last = prev[prev.length - 1];
-            const isNew =
-              !last || planStructureKey(last.plan) !== planStructureKey(snapshot);
+            const isNew = !last || planStructureKey(last.plan) !== planStructureKey(snapshot);
             let startAt = at;
             if (isNew) {
               // 把触发该任务的最近一条用户消息划入新段落（否则仍挂在上一段下面）。
               const echoes = userEchoesRef.current;
               const lastEcho = echoes[echoes.length - 1];
-              if (
-                lastEcho?.ts &&
-                (!last || lastEcho.ts >= last.startedAt) &&
-                lastEcho.ts <= at
-              ) {
+              if (lastEcho?.ts && (!last || lastEcho.ts >= last.startedAt) && lastEcho.ts <= at) {
                 startAt = lastEcho.ts;
               }
             }
@@ -1210,8 +1177,7 @@ export const TeamDashboardPanel: FC = () => {
         if (event.type === "reasoning_token") {
           const piece = String(event.payload?.["token"] ?? event.payload?.["text"] ?? "");
           if (!piece) return;
-          const stepIndex =
-            typeof event.stepIndex === "number" ? event.stepIndex : undefined;
+          const stepIndex = typeof event.stepIndex === "number" ? event.stepIndex : undefined;
           const ts = new Date(event.ts).toISOString();
           setReasoningByRole((prev) => {
             const cur = prev[role];
@@ -1270,26 +1236,22 @@ export const TeamDashboardPanel: FC = () => {
             setOrchestratorStreamEvents((prev) => {
               const open = new Map<string, StepStreamEvent>();
               for (const ev of prev) {
-                const id = String(
-                  ev.payload.toolCallId ?? `${ev.runId}:${ev.stepIndex}`
-                );
+                const id = String(ev.payload.toolCallId ?? `${ev.runId}:${ev.stepIndex}`);
                 if (ev.type === "tool_call_start") open.set(id, ev);
                 if (ev.type === "tool_call_end") open.delete(id);
               }
               if (open.size === 0) return prev;
               const now = Date.now();
-              const closes: StepStreamEvent[] = [...open.entries()].map(
-                ([id, start]) => ({
-                  ...start,
-                  type: "tool_call_end",
-                  ts: now,
-                  payload: {
-                    ...start.payload,
-                    toolCallId: id,
-                    status: event.type === "error" ? "failed" : "success",
-                  },
-                })
-              );
+              const closes: StepStreamEvent[] = [...open.entries()].map(([id, start]) => ({
+                ...start,
+                type: "tool_call_end",
+                ts: now,
+                payload: {
+                  ...start.payload,
+                  toolCallId: id,
+                  status: event.type === "error" ? "failed" : "success",
+                },
+              }));
               return [...prev, ...closes].slice(-ORCHESTRATOR_STREAM_CAP);
             });
             const followUps = pendingFollowUpsRef.current.splice(0);
@@ -1398,12 +1360,14 @@ export const TeamDashboardPanel: FC = () => {
       const scriptsRequest = artifactSessionId
         ? listStrategyScripts(artifactSessionId, { workflowRunId: wf })
         : Promise.resolve([]);
-      const [factorResult, strategyResult, scriptResult, backtestResult] = await Promise.allSettled([
-        listFactors({ workflowRunId: wf }),
-        listStrategyVersions({ workflowRunId: wf }),
-        scriptsRequest,
-        listBacktestJobs({ workflowRunId: wf }),
-      ]);
+      const [factorResult, strategyResult, scriptResult, backtestResult] = await Promise.allSettled(
+        [
+          listFactors({ workflowRunId: wf }),
+          listStrategyVersions({ workflowRunId: wf }),
+          scriptsRequest,
+          listBacktestJobs({ workflowRunId: wf }),
+        ]
+      );
       if (!alive) return;
 
       const next: OrchestratorArtifact[] = [];
@@ -1470,9 +1434,7 @@ export const TeamDashboardPanel: FC = () => {
 
       setTeamArtifacts(next);
       setTeamArtifactsError(
-        failures.length > 0
-          ? `${failures.join("、")} 产物暂时同步失败，已保留其他可用产物。`
-          : null
+        failures.length > 0 ? `${failures.join("、")} 产物暂时同步失败，已保留其他可用产物。` : null
       );
       if (initial) {
         initial = false;
@@ -1536,9 +1498,12 @@ export const TeamDashboardPanel: FC = () => {
       if (row.toRole === "__team__") {
         const payload = row.payloadJson;
         const targets =
-          payload && typeof payload === "object" && Array.isArray((payload as { targetRoles?: unknown }).targetRoles)
-            ? ((payload as { targetRoles?: unknown }).targetRoles as unknown[])
-                .filter((v): v is string => typeof v === "string" && v.length > 0)
+          payload &&
+          typeof payload === "object" &&
+          Array.isArray((payload as { targetRoles?: unknown }).targetRoles)
+            ? ((payload as { targetRoles?: unknown }).targetRoles as unknown[]).filter(
+                (v): v is string => typeof v === "string" && v.length > 0
+              )
             : [];
         for (const t of targets) {
           hotRoles.add(t);
@@ -1567,7 +1532,13 @@ export const TeamDashboardPanel: FC = () => {
       }
     }
     return { hotRoles, hotEdgeKeys, isRunning: running || hasAliveHeartbeat };
-  }, [filteredGraphDisplay?.interactions, running, agentHeartbeats, workflowOptions, workflowRunId]);
+  }, [
+    filteredGraphDisplay?.interactions,
+    running,
+    agentHeartbeats,
+    workflowOptions,
+    workflowRunId,
+  ]);
 
   const workflowSessionId = useMemo(() => {
     const row = workflowOptions.find((w) => String(w.id) === workflowRunId);
@@ -1591,22 +1562,13 @@ export const TeamDashboardPanel: FC = () => {
     return selectedWorkflowRow?.status ? String(selectedWorkflowRow.status) : null;
   }, [agentHeartbeats, selectedWorkflowRow, workflowRunId]);
   const authoritativeStatusObservedAt =
-    agentHeartbeats?.workflowRunId === workflowRunId.trim()
-      ? agentHeartbeats.summary.asOf
-      : null;
+    agentHeartbeats?.workflowRunId === workflowRunId.trim() ? agentHeartbeats.summary.asOf : null;
 
   useEffect(() => {
-    if (
-      workflowSessionId &&
-      workflowSessionId !== selectedConversationSessionId
-    ) {
+    if (workflowSessionId && workflowSessionId !== selectedConversationSessionId) {
       setSelectedConversationSessionId(workflowSessionId);
     }
-  }, [
-    workflowSessionId,
-    selectedConversationSessionId,
-    setSelectedConversationSessionId,
-  ]);
+  }, [workflowSessionId, selectedConversationSessionId, setSelectedConversationSessionId]);
 
   /**
    * 选中工作流是否已结束（completed/failed/cancelled）。用于右栏「继续研究」模式：
@@ -1618,11 +1580,6 @@ export const TeamDashboardPanel: FC = () => {
     const st = authoritativeWorkflowStatus;
     return st === "completed" || st === "partial" || st === "failed" || st === "cancelled";
   }, [authoritativeWorkflowStatus, running]);
-
-  const selectedWorkflowKind = useMemo(
-    () => (selectedWorkflowRow ? classifyWorkflow(selectedWorkflowRow) : null),
-    [selectedWorkflowRow]
-  );
 
   /**
    * 「研究产出」侧栏使用的有效 projectId：优先跟随当前选中工作流的 project_id，
@@ -1640,9 +1597,7 @@ export const TeamDashboardPanel: FC = () => {
    * 「新建工作流的归属 project」，保持用户在 UI 当前上下文新建的语义。
    */
   const effectiveResearchProjectId = useMemo(() => {
-    const wfPid = selectedWorkflowRow?.projectId
-      ? String(selectedWorkflowRow.projectId)
-      : "";
+    const wfPid = selectedWorkflowRow?.projectId ? String(selectedWorkflowRow.projectId) : "";
     return wfPid || teamResearchProjectId;
   }, [selectedWorkflowRow, teamResearchProjectId]);
 
@@ -1725,7 +1680,7 @@ export const TeamDashboardPanel: FC = () => {
    * 用 window.innerHeight + resize 监听简单直接。
    */
   const [viewportH, setViewportH] = useState(() =>
-    typeof window === "undefined" ? 900 : window.innerHeight,
+    typeof window === "undefined" ? 900 : window.innerHeight
   );
   useEffect(() => {
     const onResize = () => setViewportH(window.innerHeight);
@@ -1734,7 +1689,7 @@ export const TeamDashboardPanel: FC = () => {
   }, []);
   const graphHeight = useMemo(
     () => computeTopologyHeight(filteredGraphDisplay?.nodes?.length ?? 0, viewportH),
-    [filteredGraphDisplay?.nodes?.length, viewportH],
+    [filteredGraphDisplay?.nodes?.length, viewportH]
   );
   const [graphSize, setGraphSize] = useState({ w: 720, h: graphHeight });
 
@@ -1743,7 +1698,9 @@ export const TeamDashboardPanel: FC = () => {
     if (!el) return;
     const applyWidth = (width: number) => {
       const w = Math.max(320, Math.floor(width));
-      setGraphSize((prev) => (prev.w === w && prev.h === graphHeight ? prev : { w, h: graphHeight }));
+      setGraphSize((prev) =>
+        prev.w === w && prev.h === graphHeight ? prev : { w, h: graphHeight }
+      );
     };
     const ro = new ResizeObserver((entries) => {
       const cr = entries[0]?.contentRect;
@@ -1885,14 +1842,15 @@ export const TeamDashboardPanel: FC = () => {
   /**
    * 中栏底部「研究产出」抽屉的折叠态（因子/策略/脚本/草稿）。
    * 从右栏迁移而来：右栏现在是 Orchestrator 主对话框，产物下移到中栏底部，可隐去。
-   * 持久化到 localStorage，默认折叠（不挤占对话/拓扑）。
+   * 持久化到 localStorage，默认展开，让研究产出在分析首屏保持可见。
    */
   const OUTPUTS_DRAWER_LS_KEY = "qb.team-outputs-drawer-open";
   const [outputsDrawerOpen, setOutputsDrawerOpen] = useState<boolean>(() => {
     try {
-      return localStorage.getItem(OUTPUTS_DRAWER_LS_KEY) === "1";
+      const stored = localStorage.getItem(OUTPUTS_DRAWER_LS_KEY);
+      return stored == null ? true : stored === "1";
     } catch {
-      return false;
+      return true;
     }
   });
   useEffect(() => {
@@ -1982,7 +1940,7 @@ export const TeamDashboardPanel: FC = () => {
     setCreatingTeamWorkflow(true);
     try {
       const dft = await getDefaultWorkspace();
-      const title = `研究团队 · ${scopeModeLabel(scopeMode)} · ${ticker.trim() || sectorName || "标的"} · ${new Date().toLocaleString()}`;
+      const title = `研究团队 · ${scopeModeLabel(scopeMode)} · ${ticker.trim() || "标的"} · ${new Date().toLocaleString()}`;
       const session = await createChatSession({
         workspaceId: dft.id,
         projectId: teamResearchProjectId,
@@ -2098,7 +2056,6 @@ export const TeamDashboardPanel: FC = () => {
     }, 3000);
   };
 
-
   const handleLinkWorkflowToDefaultSession = async () => {
     if (!workflowRunId.trim() || !teamResearchSessionId) return;
     setError(null);
@@ -2110,50 +2067,6 @@ export const TeamDashboardPanel: FC = () => {
       setError((e as Error).message);
     }
   };
-
-
-  const researchSettingsPanel = (
-    <TeamResearchSettingsPanel
-      styles={teamStyles}
-      compact
-      scopeMode={scopeMode}
-      onScopeModeChange={handleScopeModeChange}
-      researchInstrument={researchInstrument}
-      onResearchInstrumentChange={handleResearchInstrumentChange}
-      roleReasoner={roleReasoner}
-      onRoleReasonerChange={setRoleReasoner}
-      ticker={ticker}
-      onTickerChange={setTicker}
-      basketTickers={basketTickers}
-      onBasketTickersChange={setBasketTickers}
-      sectorName={sectorName}
-      onSectorNameChange={setSectorName}
-      sectorPeers={sectorPeers}
-      onSectorPeersChange={setSectorPeers}
-      exploreTheme={exploreTheme}
-      onExploreThemeChange={setExploreTheme}
-      exploreCandidates={exploreCandidates}
-      onExploreCandidatesChange={setExploreCandidates}
-      optionUnderlying={optionUnderlying}
-      onOptionUnderlyingChange={setOptionUnderlying}
-      optionContract={optionContract}
-      onOptionContractChange={setOptionContract}
-      optionExpiry={optionExpiry}
-      onOptionExpiryChange={setOptionExpiry}
-      optionStrike={optionStrike}
-      onOptionStrikeChange={setOptionStrike}
-      optionRight={optionRight}
-      onOptionRightChange={setOptionRight}
-      promptTemplateId={promptTemplateId}
-      onApplyPromptTemplate={applyPromptTemplate}
-      availablePromptTemplates={availablePromptTemplates}
-      teamAnalysisContext={teamAnalysisContext}
-      onTeamAnalysisContextChange={setTeamAnalysisContext}
-      onClearPromptTemplateId={() => setPromptTemplateId("")}
-      scopeModeLabel={scopeModeLabel}
-      instrumentLabel={instrumentLabel}
-    />
-  );
 
   return (
     <div style={teamStyles.container}>
@@ -2205,1418 +2118,1434 @@ export const TeamDashboardPanel: FC = () => {
          *   - 仅 right 唯一可见：right 改成 flex:1 撑满（截图反馈过：300px 右栏 + 大片留白）。
          */}
         <div ref={teamTriRef} style={teamStyles.teamTriRow}>
-        {teamPaneVisible("left") ? (
-        <aside
-          style={{
-            ...teamStyles.leftRail,
-            ...(!teamPaneVisible("center") && !teamPaneVisible("right")
-              ? { flex: 1, minWidth: 0, width: "auto" }
-              : { width: teamLeftW, flexShrink: 0 }),
-            alignSelf: "stretch",
-          }}
-        >
-          {/**
-           * 左栏顶：视图切换。工作区 = FS 课题树；工作流 = 原研究设置 + 列表。
-           */}
-          <div style={{ fontSize: 13, fontWeight: 600, color: "var(--qb-team-section-fg, #e4e4e7)", marginBottom: 8 }}>
-            研究
-          </div>
-          <div
-            className="qb-team-graph-view-toggle"
-            role="tablist"
-            aria-label="左栏视图"
-            style={{ marginBottom: 10, alignSelf: "flex-start" }}
-          >
-            <button
-              type="button"
-              role="tab"
-              aria-selected={leftRailMode === "workspace"}
-              className={leftRailMode === "workspace" ? "is-active" : ""}
-              onClick={() => setLeftRailMode("workspace")}
-            >
-              工作区
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={leftRailMode === "workflow"}
-              className={leftRailMode === "workflow" ? "is-active" : ""}
-              onClick={() => setLeftRailMode("workflow")}
-            >
-              工作流
-            </button>
-          </div>
-          {leftRailMode === "workspace" ? (
-            <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-            <FsWorkspaceExplorer
-              createDefaults={fsWorkspaceCreateDefaults}
-              onOpenWorkflowSettings={() => {
-                setLeftRailMode("workflow");
-              }}
-              activeRunId={workflowRunId.trim() || null}
-              projectId={effectiveResearchProjectId || teamResearchProjectId || null}
-              onOpenFile={({ workspaceId, path }) => {
-                setOpenWsFile({ workspaceId, path });
-                setResearchCanvasTab("file");
-              }}
-            />
-            </div>
-          ) : (
-            <div style={teamStyles.leftRailWorkflowPane}>
-          <div style={teamStyles.leftRailSettings}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--qb-team-meta, #a1a1aa)", marginBottom: 8 }}>
-            研究设置
-          </div>
-          {researchSettingsPanel}
-          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--qb-team-meta, #a1a1aa)", margin: "14px 0 8px" }}>
-            工作流列表
-          </div>
-          <p style={{ fontSize: 11, color: "#71717a", marginBottom: 10, lineHeight: 1.45 }}>
-            在此配置研究范围 / 标的 / 提示，再选择或新建研究会话；右侧 Orchestrator 仅负责对话与执行。
-          </p>
-          </div>
-          {/**
-           * 下半工作流区独立滚动容器：工作流筛选 + 列表 + 新建按钮 + 拓扑。
-           * flex: 1 占据余高。
-           * 子组件 workflow list / 拓扑 ul 取消了自身 maxHeight —— 让本容器作为唯一滚动条。
-           */}
-          <div style={teamStyles.leftRailWorkflows}>
-          <div style={{ ...teamStyles.field }}>
-            <div
+          {teamPaneVisible("left") ? (
+            <aside
               style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 8,
-                marginBottom: 6,
+                ...teamStyles.leftRail,
+                ...(!teamPaneVisible("center") && !teamPaneVisible("right")
+                  ? { flex: 1, minWidth: 0, width: "auto" }
+                  : { width: teamLeftW, flexShrink: 0 }),
+                alignSelf: "stretch",
               }}
             >
-              <label style={teamStyles.label}>工作流</label>
-              <button
-                type="button"
-                className="qb-btn-secondary"
-                style={{ fontSize: 11, padding: "3px 8px" }}
-                onClick={() => void refreshWorkflowOptions()}
-                title="刷新工作流列表"
+              {/**
+               * 左栏顶：视图切换。工作区 = FS 课题树；工作流 = 任务列表。
+               */}
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: "var(--qb-team-section-fg, #e4e4e7)",
+                  marginBottom: 8,
+                }}
               >
-                刷新
-              </button>
-            </div>
-            {/* 会话检索：类型 + 关键字。执行状态仅用于后台监控与失败诊断。 */}
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-              <select
-                style={{ ...teamStyles.input, flex: "1 1 110px", minWidth: 110, fontSize: 12 }}
-                value={workflowKindFilter}
-                onChange={(e) => setWorkflowKindFilter(e.target.value as WorkflowKind | "all")}
-                aria-label="工作流类型筛选"
+                研究
+              </div>
+              <div
+                className="qb-team-graph-view-toggle"
+                role="tablist"
+                aria-label="左栏视图"
+                style={{ marginBottom: 8, alignSelf: "flex-start" }}
               >
-                <option value="all">全部类型</option>
-                {(Object.keys(WORKFLOW_KIND_LABEL) as WorkflowKind[]).map((k) => (
-                  <option key={k} value={k}>
-                    {WORKFLOW_KIND_LABEL[k]}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="search"
-                style={{ ...teamStyles.input, flex: "2 1 140px", minWidth: 120, fontSize: 12 }}
-                value={workflowListQuery}
-                onChange={(e) => setWorkflowListQuery(e.target.value)}
-                placeholder="搜索 goal / ID…"
-                aria-label="工作流关键字搜索"
-              />
-            </div>
-            {/*
-              二级操作（新建 / 关联默认会话）放在列表**上方**，与筛选条同区。
-              原因：之前放在列表下方时，用户要先把列表滚到底才能点到「新建工作流」，
-              非常反直觉。抬到上方后按钮一直可见，无需依赖列表滚动位置。
-              "取消 / 硬删除"仍下放到每个 list 行内，按工作流即可操作。
-            */}
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
-              {pendingCreateWorkflow ? (
-                <>
-                  <button
-                    type="button"
-                    className="qb-btn-primary-brand"
-                    style={{ fontSize: 12, padding: "6px 10px" }}
-                    onClick={() => void handleCreateTeamWorkflow()}
-                    disabled={
-                      creatingTeamWorkflow ||
-                      !teamResearchProjectId ||
-                      !teamResearchSessionId
-                    }
-                    title="确认后将创建一条新的研究工作流（等同新研究回合）"
-                  >
-                    {creatingTeamWorkflow ? "创建中…" : "确认新建会话"}
-                  </button>
-                  <button
-                    type="button"
-                    className="qb-btn-secondary"
-                    style={{ fontSize: 12, padding: "6px 10px" }}
-                    onClick={cancelPendingCreateWorkflow}
-                    disabled={creatingTeamWorkflow}
-                  >
-                    取消
-                  </button>
-                  <span style={{ fontSize: 11, color: "#fbbf24", alignSelf: "center" }}>
-                    新建会话 = 新研究回合（自动绑定唯一 workflow），确认后才会创建
-                  </span>
-                </>
-              ) : (
                 <button
                   type="button"
-                  className="qb-btn-secondary"
-                  style={{ fontSize: 12, padding: "6px 10px" }}
-                  onClick={requestCreateTeamWorkflow}
-                  disabled={!teamResearchProjectId || !teamResearchSessionId}
-                  title={
-                    !teamResearchSessionId
-                      ? "正在解析默认会话…"
-                      : "创建仅用于研究团队的工作流（不触发总控编排）"
-                  }
+                  role="tab"
+                  aria-selected={leftRailMode === "workspace"}
+                  className={leftRailMode === "workspace" ? "is-active" : ""}
+                  onClick={() => setLeftRailMode("workspace")}
                 >
-                  新建会话
+                  工作区
                 </button>
-              )}
-              {workflowRunId.trim() && !workflowSessionId && teamResearchSessionId ? (
                 <button
                   type="button"
-                  className="qb-btn-secondary"
-                  style={{ fontSize: 12, padding: "6px 10px" }}
-                  onClick={() => void handleLinkWorkflowToDefaultSession()}
+                  role="tab"
+                  aria-selected={leftRailMode === "workflow"}
+                  className={leftRailMode === "workflow" ? "is-active" : ""}
+                  onClick={() => setLeftRailMode("workflow")}
                 >
-                  关联默认会话
+                  工作流
                 </button>
-              ) : null}
-            </div>
-            {/* 滚动 list，按 kind 分组（沿用既有 groupedWorkflowOptions），但每组用关键字进一步过滤。 */}
-            <div
-              role="listbox"
-              aria-label="工作流列表"
-              style={workflowListStyles.list}
-            >
-              {filteredGroupedWorkflowList.length === 0 ? (
-                <div style={workflowListStyles.empty}>
-                  {workflowOptions.length === 0
-                    ? "暂无工作流。点击上方「新建会话」开始一次研究团队任务。"
-                    : "没有匹配的工作流。试试清空搜索 / 切换筛选条件。"}
-                </div>
-              ) : (
-                filteredGroupedWorkflowList.map((group) => (
-                  <div key={group.kind} style={workflowListStyles.group}>
-                    <div style={workflowListStyles.groupHeader}>
-                      <span>{group.label}</span>
-                      <span style={workflowListStyles.groupCount}>{group.rows.length}</span>
-                    </div>
-                    {group.rows.map((row) => {
-                      const id = String(row.id ?? "");
-                      const goal = typeof row.goal === "string" ? row.goal.trim() : "";
-                      const status = String(row.status ?? "—");
-                      const sid = typeof row.sessionId === "string" ? row.sessionId.trim() : "";
-                      const startedAt =
-                        typeof row.startedAt === "string" && row.startedAt
-                          ? new Date(row.startedAt).toLocaleString()
-                          : "";
-                      const selected = id === workflowRunId;
-                      const pendingDel = pendingHardDeleteWfId === id;
-                      return (
-                        <div
-                          key={id}
-                          style={{
-                            ...workflowListStyles.item,
-                            ...(selected ? workflowListStyles.itemSelected : null),
-                          }}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setWorkflowRunId(id);
-                              if (sid) setSelectedConversationSessionId(sid);
-                              setWorkflowNotice(null);
-                            }}
-                            style={workflowListStyles.itemMain}
-                            title={goal || id}
-                            aria-pressed={selected}
-                          >
-                            {status === "failed" ? (
-                              <span style={{ color: "#fca5a5", fontSize: 11, marginBottom: 4 }} role="status">
-                                本次执行未能完成，可在下方继续补充问题
-                              </span>
-                            ) : null}
-                            <div style={workflowListStyles.itemTitleRow}>
-                              <span style={workflowListStyles.itemTitle}>
-                                {goal || `(no goal) ${id.slice(0, 8)}`}
-                              </span>
-                            </div>
-                            <div style={workflowListStyles.itemMeta}>
-                              <code style={workflowListStyles.itemId}>{id.slice(0, 8)}…</code>
-                              {startedAt ? <span>{startedAt}</span> : null}
-                              {!sid ? (
-                                <span style={{ color: "#a78bfa" }} title="该工作流尚未关联会话">
-                                  no-session
-                                </span>
-                              ) : null}
-                            </div>
-                          </button>
-                          <div style={workflowListStyles.itemActions}>
-                            <button
-                              type="button"
-                              className="qb-btn-secondary"
-                              style={workflowListStyles.actionBtn}
-                              onClick={() => void handleCancelOneWorkflow(id)}
-                              disabled={status === "cancelled"}
-                              title="软删除：标记 cancelled，保留审计数据"
-                            >
-                              取消
-                            </button>
-                            <button
-                              type="button"
-                              className="qb-btn-secondary"
-                              style={{
-                                ...workflowListStyles.actionBtn,
-                                color: pendingDel ? "#fff" : "#fecaca",
-                                background: pendingDel ? "#7f1d1d" : "transparent",
-                                borderColor: "#7f1d1d",
-                              }}
-                              onClick={() => handleClickHardDeleteWorkflow(id)}
-                              title={
-                                pendingDel
-                                  ? "再次点击执行硬删除（3 秒内未点击自动撤销）"
-                                  : "硬删除：连同 agent / 步骤 / a2a / 订单 / checkpoint 等衍生数据一并清理，不可恢复"
-                              }
-                            >
-                              {pendingDel ? "再次点击确认" : "硬删除"}
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ))
-              )}
-            </div>
-            {/*
-              新建 / 关联默认会话按钮已上移到筛选条下方（list 上方），
-              避免用户必须把 list 滚到底才能点到。这里只保留 notice / 当前选中 / 提示文案。
-            */}
-            {workflowNotice ? (
-              <div
-                className="qb-callout qb-callout--success"
-                role="status"
-                style={{ marginTop: 10 }}
-              >
-                <div className="qb-callout__row">
-                  <span style={{ flex: 1, minWidth: 0 }}>{workflowNotice}</span>
-                  <button
-                    type="button"
-                    className="qb-callout__dismiss"
-                    onClick={() => setWorkflowNotice(null)}
-                    aria-label="关闭提示"
-                  >
-                    ×
-                  </button>
-                </div>
               </div>
-            ) : null}
-            {selectedWorkflowRow ? (
-              <p style={{ fontSize: 11, color: "#71717a", marginTop: 6, lineHeight: 1.45, wordBreak: "break-all" }}>
-                当前选中：
-                <strong style={{ color: "#a1a1aa", marginRight: 6 }}>
-                  {selectedWorkflowKind ? WORKFLOW_KIND_LABEL[selectedWorkflowKind] : "—"}
-                </strong>
-                <code style={{ fontSize: 10 }}>{String(selectedWorkflowRow.id)}</code>
-              </p>
-            ) : null}
-            {/**
-             * 注：原「Agent 心跳」明细列表已删除。
-             * 心跳数据 `agentHeartbeats` 仍由 SSE 推流维持，已合并进
-             * `teamGraphActivity.hotRoles` —— 拓扑画布上 alive 且 silenceMs<60s
-             * 的 Agent 节点会高亮 + 脉冲，作为活跃可视化的唯一信号源。
-             */}
-            {agentHeartbeats && agentHeartbeats.summary.aliveAgents > 0 && running ? (
-              <div
-                style={{
-                  marginTop: 8,
-                  padding: "5px 10px",
-                  borderRadius: 6,
-                  background: "rgba(34, 197, 94, 0.08)",
-                  border: "1px solid rgba(34, 197, 94, 0.25)",
-                  fontSize: 10,
-                  color: "#86efac",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                }}
-                title="拓扑画布节点会脉冲高亮显示活跃 Agent"
-              >
-                <span
-                  style={{
-                    display: "inline-block",
-                    width: 6,
-                    height: 6,
-                    borderRadius: "50%",
-                    background: "#22c55e",
-                    boxShadow: "0 0 6px rgba(34, 197, 94, 0.65)",
-                  }}
-                />
-                {agentHeartbeats.summary.aliveAgents}/{agentHeartbeats.summary.totalAgents} Agent
-                活跃中（详见画布脉冲节点）
-              </div>
-            ) : null}
-            {workflowRunId.trim() && !workflowSessionId ? (
-              <p
-                style={{
-                  fontSize: 11,
-                  color: "var(--qb-hint-accent-fg, #a78bfa)",
-                  marginTop: 6,
-                  lineHeight: 1.45,
-                }}
-              >
-                当前工作流未绑定会话：右侧「保存脚本 / 实盘」需会话。可点「关联默认会话」或新建工作流（已自动带会话）。
-              </p>
-            ) : null}
-          </div>
-
-          {/** 左栏只保留工作流选择与拓扑只读视图。 */}
-          <div style={{ marginTop: 14, borderTop: "1px solid var(--qb-team-shell-border, #27272a)", paddingTop: 12 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--qb-body-fg, #cbd5e1)", marginBottom: 6 }}>工作流对话拓扑（只读）</div>
-            <p style={{ fontSize: 11, color: "var(--qb-body-muted, #71717a)", marginBottom: 8 }}>
-              运行期轨迹：含 LLM 交互、Tool/MCP 及 Agent <strong>通信拓扑</strong>产生的 handoff。
-              无数据时请在「研究画布」刷新。
-            </p>
-            {!teamGraph?.edges?.length ? (
-              <div style={{ fontSize: 11, color: "var(--qb-body-muted, #52525b)" }}>暂无边记录</div>
-            ) : (
-              <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11, color: "var(--qb-body-fg, #d4d4d8)" }}>
-                {teamGraph.edges.slice(0, 24).map((ed) => (
-                  <li key={ed.key} style={{ marginBottom: 4 }}>
-                    {ed.a} ↔ {ed.b} · 消息 {ed.messageCount} · 工具 {ed.toolCount}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-          </div>
-            </div>
-          )}
-        </aside>
-        ) : null}
-        {/**
-         * gutter1：左栏存在且其右侧至少还有一栏可见（center 或 right）。
-         * 当 center 被隐藏只剩 left + right 时，gutter1 仍承担 left/right 分隔 —— 它绑定的
-         * onMouseDown(1) 调整的是 teamLeftW，拖动左栏宽度本来就符合直觉。
-         */}
-        {teamPaneVisible("left") && (teamPaneVisible("center") || teamPaneVisible("right")) ? (
-          <div
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="调整左侧栏宽度"
-            onMouseDown={onTeamColGutterDown(1)}
-            style={teamStyles.teamColGutter}
-          />
-        ) : null}
-
-        {teamPaneVisible("center") ? (
-        <div style={teamStyles.centerCol}>
-          <div style={teamStyles.ideCenterWrap}>
-            <div className="qb-team-main-stage" style={teamStyles.teamMainStage}>
-              <header className="qb-team-editor-titlebar" style={teamStyles.teamEditorTitleBar}>
-                <span style={{ fontWeight: 600, color: "var(--qb-team-titlebar-fg, #e4e4e7)" }}>
-                  研究画布 · 拓扑 / 行情 / 新闻 / 工具
-                </span>
-                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  {researchMarketSymbols.length > 0 ? (
-                    <span style={{ color: "#94a3b8", fontSize: 11 }}>
-                      {researchMarketSymbols.length > 1
-                        ? `${researchMarketSymbols.length} 个标的 · 焦点 ${chartSpec.symbol || "—"}${
-                            chartSpec.exchange ? `.${chartSpec.exchange}` : ""
-                          }`
-                        : `联动标的 ${chartSpec.symbol || researchMarketSymbols[0]?.symbol}${
-                            chartSpec.exchange || researchMarketSymbols[0]?.exchange
-                              ? `.${chartSpec.exchange || researchMarketSymbols[0]?.exchange}`
-                              : ""
-                          }`}
-                    </span>
-                  ) : null}
-                  {running ? (
-                    <span style={{ color: "#38bdf8", fontSize: 11 }}>
-                      ● 分析进行中 · 拓扑与工具每 2.5s 刷新
-                    </span>
-                  ) : null}
-                  {graphLoading ? (
-                    <span style={{ color: "#a1a1aa", fontSize: 11 }}>加载图数据…</span>
-                  ) : null}
-                </span>
-              </header>
-              <div
-                style={{
-                  ...teamStyles.teamEditorBody,
-                  display: "flex",
-                  flexDirection: "column",
-                  overflow: "hidden",
-                }}
-              >
-        <div
-          data-qb-team-research-panel
-          style={{
-            ...teamStyles.panel,
-            display: "flex",
-            flexDirection: "column",
-            flex: 1,
-            minHeight: 0,
-            overflow: "hidden",
-          }}
-        >
-          <div
-            className="qb-team-graph-view-toggle"
-            role="tablist"
-            aria-label="研究画布视图"
-            style={{ marginBottom: 10, alignSelf: "flex-start" }}
-          >
-            {(
-              [
-                ["topology", "对话拓扑"],
-                ["market", "行情 K 线"],
-                ["news", "新闻资讯"],
-                ["strategy", "策略契约"],
-                ["tools", `工具结果${researchCanvasToolHits.length ? ` (${researchCanvasToolHits.length})` : ""}`],
-                ...(openWsFile
-                  ? [["file", `文件 · ${openWsFile.path.split("/").pop() || "编辑"}`] as const]
-                  : []),
-              ] as const
-            ).map(([id, label]) => (
-              <button
-                key={id}
-                type="button"
-                role="tab"
-                aria-selected={researchCanvasTab === id}
-                className={researchCanvasTab === id ? "is-active" : ""}
-                onClick={() => setResearchCanvasTab(id)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-
-          {researchCanvasTab === "strategy" ? (
-            <TeamStrategyContractPane
-              key={`${workflowSessionId || teamResearchSessionId}:${workflowRunId.trim()}`}
-              sessionId={workflowSessionId || teamResearchSessionId}
-              workflowRunId={workflowRunId.trim()}
-            />
-          ) : null}
-
-          {researchCanvasTab === "file" && openWsFile ? (
-            <WorkspaceFilePane
-              workspaceId={openWsFile.workspaceId}
-              path={openWsFile.path}
-              onClose={() => {
-                setOpenWsFile(null);
-                setResearchCanvasTab("topology");
-              }}
-            />
-          ) : null}
-          {researchCanvasTab === "market" ? (
-            <div
-              style={{
-                flex: 1,
-                minHeight: 420,
-                display: "flex",
-                flexDirection: "column",
-                gap: 8,
-                padding: 10,
-                border: "1px solid var(--qb-team-live-feed-border, #2a2a30)",
-                borderRadius: 8,
-                overflow: "hidden",
-                background: "var(--qb-team-live-feed-bg, #08080a)",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 10,
-                  flexShrink: 0,
-                }}
-              >
-                <div
-                  className="qb-team-graph-view-toggle"
-                  role="group"
-                  aria-label="K 线布局"
-                >
-                  <button
-                    type="button"
-                    className={marketKlineLayout === "grid" ? "is-active" : ""}
-                    onClick={() => setMarketKlineLayout("grid")}
-                  >
-                    多标的网格
-                    {researchMarketSymbols.length > 1
-                      ? ` (${researchMarketSymbols.length})`
-                      : ""}
-                  </button>
-                  <button
-                    type="button"
-                    className={marketKlineLayout === "single" ? "is-active" : ""}
-                    onClick={() => setMarketKlineLayout("single")}
-                  >
-                    单图焦点
-                  </button>
-                </div>
-                <span style={{ fontSize: 11, color: "#71717a" }}>
-                  {chartSpec.timeframe} · {chartSpec.limit} 根
-                </span>
-              </div>
-              {marketKlineLayout === "grid" ? (
-                <ResearchMultiKlineGrid
-                  symbols={researchMarketSymbols}
-                  timeframe={chartSpec.timeframe}
-                  limit={chartSpec.limit}
-                  reloadNonce={chartReloadNonce}
-                  focusKey={
-                    chartSpec.symbol
-                      ? `${chartSpec.symbol.toUpperCase()}@@${coerceChartMarketExchange(
-                          chartSpec.exchange || ""
-                        ).toUpperCase()}`
-                      : null
-                  }
-                  onFocus={(row) => {
-                    setChartSpec({
-                      symbol: row.symbol,
-                      exchange: coerceChartMarketExchange(row.exchange),
-                    });
-                    requestChartReload();
-                  }}
-                />
-              ) : (
-                <div
-                  style={{
-                    flex: 1,
-                    minHeight: 360,
-                    display: "flex",
-                    flexDirection: "column",
-                    overflow: "hidden",
-                    borderRadius: 8,
-                  }}
-                >
-                  <KlinePanel embedded />
-                </div>
-              )}
-            </div>
-          ) : null}
-
-          {researchCanvasTab === "news" ? (
-            <div
-              style={{
-                flex: 1,
-                minHeight: 360,
-                display: "flex",
-                flexDirection: "column",
-                border: "1px solid var(--qb-team-live-feed-border, #2a2a30)",
-                borderRadius: 8,
-                overflow: "hidden",
-              }}
-            >
-              <NewsBriefSection
-                symbol={chartSpec.symbol}
-                exchange={chartSpec.exchange}
-                reloadNonce={chartReloadNonce}
-              />
-            </div>
-          ) : null}
-
-          {researchCanvasTab === "tools" ? (
-            <div
-              style={{
-                flex: 1,
-                minHeight: 0,
-                display: "flex",
-                flexDirection: "column",
-                overflow: "hidden",
-              }}
-            >
-              <ResearchToolResultsPanel
-                hits={researchCanvasToolHits}
-                onOpenMarket={(hit) => applyCanvasMarketLink(hit, "market")}
-                onOpenNews={(hit) => applyCanvasMarketLink(hit, "news")}
-              />
-            </div>
-          ) : null}
-
-          {researchCanvasTab === "topology" ? (
-            <>
-          <h3 style={{ ...teamStyles.sectionTitle, marginTop: 0 }}>多 Agent 对话拓扑</h3>
-          <p style={{ fontSize: 12, color: "var(--qb-team-meta, #a1a1aa)", marginBottom: 12 }}>
-            默认只显示用户与编排器，其它 Agent 被调用后才入图。工具调用会联动到「行情 / 新闻 / 工具结果」视图。
-          </p>
-          {!workflowRunId.trim() ? (
-            <div style={teamStyles.empty}>请先在左侧栏选择或新建工作流</div>
-          ) : (
-            <>
-              <div style={{ ...teamStyles.row, flexWrap: "wrap", gap: 8 }}>
-                <button
-                  type="button"
-                  className="qb-btn-primary-brand"
-                  style={{ fontSize: 12, padding: "6px 12px" }}
-                  disabled={graphLoading}
-                  onClick={() => void loadTeamGraph({ preserveSelection: true })}
-                >
-                  {graphLoading ? "加载中…" : "刷新拓扑"}
-                </button>
-                <div className="qb-team-graph-view-toggle" role="tablist" aria-label="拓扑视图切换">
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={teamGraphView === "topology"}
-                    className={teamGraphView === "topology" ? "is-active" : ""}
-                    onClick={() => setTeamGraphView("topology")}
-                  >
-                    拓扑图
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={teamGraphView === "office"}
-                    className={teamGraphView === "office" ? "is-active" : ""}
-                    onClick={() => setTeamGraphView("office")}
-                  >
-                    像素办公室
-                  </button>
-                </div>
-                <span style={{ fontSize: 12, color: "var(--qb-team-meta, #71717a)" }}>
-                  {filteredGraphDisplay
-                    ? `展示 ${filteredGraphDisplay.nodes.filter((n) => n.role !== "__tools__").length} 个 Agent`
-                    : ""}
-                </span>
-              </div>
-              {filteredGraphDisplay && filteredGraphDisplay.nodes.length > 0 ? (
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 12,
-                    marginTop: 12,
-                    flex: 1,
-                    minHeight: 0,
-                  }}
-                >
-                  <div
-                    ref={graphWrapRef}
-                    data-qb-team-graph-host
-                    style={{
-                      ...teamStyles.graphCanvasHost,
-                      flex: teamGraphView === "office" ? "1 1 auto" : "0 0 auto",
-                      height: teamGraphView === "office" ? "min(72vh, 860px)" : graphHeight,
-                      minHeight: teamGraphView === "office" ? 520 : graphHeight,
-                      maxHeight: teamGraphView === "office" ? "min(72vh, 860px)" : graphHeight,
-                      overflow: "hidden",
-                      flexDirection: "column",
-                      justifyContent: teamGraphView === "office" ? "stretch" : "center",
-                      alignItems: teamGraphView === "office" ? "stretch" : "center",
+              {leftRailMode === "workspace" ? (
+                <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+                  <FsWorkspaceExplorer
+                    createDefaults={fsWorkspaceCreateDefaults}
+                    onOpenWorkflowSettings={() => {
+                      setLeftRailMode("workflow");
                     }}
-                  >
-                    {teamGraphView === "topology" ? (
-                      <TeamAgentGraph
-                        nodes={filteredGraphDisplay.nodes}
-                        edges={filteredGraphDisplay.edges}
-                        width={graphSize.w}
-                        height={graphSize.h}
-                        selection={graphSelection}
-                        activity={teamGraphActivity}
-                        onSelectNode={(role) => setGraphSelection({ kind: "node", role })}
-                        onSelectEdge={(a, b) => setGraphSelection({ kind: "edge", a, b })}
-                        onClear={() => setGraphSelection(null)}
-                      />
-                    ) : (
-                      <TeamAgentPixelOffice
-                        key={workflowRunId}
-                        graph={filteredGraphDisplay}
-                        nodes={filteredGraphDisplay.nodes}
-                        edges={filteredGraphDisplay.edges}
-                        selection={graphSelection}
-                        activity={teamGraphActivity}
-                        isRunning={running}
-                        onSelectNode={(role) => setGraphSelection({ kind: "node", role })}
-                        onClear={() => setGraphSelection(null)}
-                      />
-                    )}
-                    {teamGraphView === "topology" ? (
-                      <p style={{ fontSize: 10, color: "var(--qb-team-meta, #71717a)", marginTop: 6 }}>
-                        箭头表示消息方向；双向为两条弧线。工具/MCP 连线：绿色=成功、红色=全失败、琥珀=部分失败。
-                      </p>
-                    ) : null}
-                  </div>
-                </div>
-              ) : (
-                <div style={{ ...teamStyles.empty, marginTop: 12 }}>
-                  {graphLoading
-                    ? "…"
-                    : "暂无拓扑节点：分析刚开始或未落库时可能短暂为空；下方仍可查看实时对话流。"}
-                </div>
-              )}
-              {graphEdgeDetail ? (
-                <div
-                  style={{
-                    marginTop: 10,
-                    padding: "8px 12px",
-                    borderRadius: 8,
-                    border: "1px solid #3b82f6",
-                    background: "rgba(37, 99, 235, 0.08)",
-                    fontSize: 12,
-                    color: "#cbd5e1",
-                  }}
-                >
-                  已选连线：<strong>{graphEdgeDetail.a}</strong>
-                  {graphEdgeDetail.edge && isToolGraphEdge(graphEdgeDetail.edge) ? " → " : " · "}
-                  <strong>{graphEdgeDetail.b}</strong>
-                  {" · "}
-                  {formatEdgeSelectionSummary(
-                    graphEdgeDetail.a,
-                    graphEdgeDetail.b,
-                    graphEdgeDetail.edge,
-                    graphEdgeDetail.messageCount
-                  )}
-                  <button
-                    type="button"
-                    className="qb-btn-secondary"
-                    style={{ fontSize: 11, padding: "2px 8px", marginLeft: 10 }}
-                    onClick={() => setGraphSelection(null)}
-                  >
-                    显示全部对话
-                  </button>
-                </div>
-              ) : null}
-              <div style={{ marginTop: 14 }} data-qb-team-hitl-banner>
-                {/**
-                 * HITL 主入口已迁到右栏 Orchestrator 对话框（内联卡片）。
-                 * 这里仅在右栏被隐藏时作为兜底，避免同一询问出现两张卡片。
-                 */}
-                {!rightEffectivelyPresent && workflowRunId.trim() ? (
-                  /**
-                   * v2 修复：Banner 只要 workflowRunId 有效就常驻挂载，由 banner 内部用
-                   * listPendingWorkflowHitl 自动发现 pending。这样即使 `teamPendingHitl`
-                   * state 还没被 onAwaitingApproval 回调填充（例如刷新页面 / 切换工作流 /
-                   * 自动触发的硬规则 HITL 尚未回填本地 state），
-                   * 红框位置也能看到询问卡片，而不是"看不到按钮只能再输一句继续"。
-                   *
-                   * triggerKey 用 workflowRunId 兜底；当 onAwaitingApproval 回调发生时
-                   * 优先用 requestId 触发 banner 内部 refresh，拿到最新 pending 内容。
-                   */
-                  <TeamHitlBanner
-                    workflowRunId={workflowRunId.trim()}
-                    triggerKey={teamPendingHitl?.requestId ?? workflowRunId.trim()}
-                    onResolved={(decision) => {
-                      setTeamPendingHitl(null);
-                      setRunProgress(
-                        decision === "approved" ? "已批准，分析师团队继续执行…" : "已拒绝，工作流终止"
-                      );
+                    activeRunId={workflowRunId.trim() || null}
+                    projectId={effectiveResearchProjectId || teamResearchProjectId || null}
+                    onOpenFile={({ workspaceId, path }) => {
+                      setOpenWsFile({ workspaceId, path });
+                      setResearchCanvasTab("file");
                     }}
                   />
-                ) : null}
-                {!rightEffectivelyPresent ? (
-                  <ResizableY
-                  defaultHeight={360}
-                  minHeight={200}
-                  maxHeight={1200}
-                  storageKey="qb.live-feed-h"
-                  collapsed={liveFeedCollapsed}
-                  wrapperData={{ "data-qb-team-live-feed-shell": "" }}
-                  style={{
-                    border: "1px solid var(--qb-team-live-feed-border, #2a2a30)",
-                    borderRadius: 8,
-                    background: "var(--qb-team-live-feed-bg, #08080a)",
-                    color: "var(--qb-team-live-feed-fg, #e4e4e7)",
-                  }}
-                >
-                  <div
-                    style={{
-                      ...teamStyles.sectionTitle,
-                      margin: 0,
-                      padding: "8px 10px",
-                      flexShrink: 0,
-                      borderBottom:
-                        "1px solid var(--qb-team-live-feed-row-border, var(--qb-team-live-feed-border, #2a2a30))",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    实时对话流
-                    {graphSelection?.kind === "edge" ? "（已按连线筛选）" : ""}
-                    {running ? (
-                      <span
-                        style={{
-                          fontSize: 10,
-                          padding: "1px 6px",
-                          borderRadius: 999,
-                          border: "1px solid rgba(34,197,94,0.45)",
-                          background: "rgba(34,197,94,0.12)",
-                          color: "#86efac",
-                          fontWeight: 600,
-                          letterSpacing: 0.2,
-                        }}
-                      >
-                        正在轮询
-                      </span>
-                    ) : null}
-                    <label
-                      title="关闭后新消息进来不会再自动滚到底，便于回看上方对话"
-                      style={{
-                        marginLeft: "auto",
-                        display: liveFeedCollapsed ? "none" : "inline-flex",
-                        alignItems: "center",
-                        gap: 5,
-                        fontSize: 11,
-                        fontWeight: 400,
-                        color: "var(--qb-team-meta, #a1a1aa)",
-                        cursor: "pointer",
-                        userSelect: "none",
-                      }}
+                </div>
+              ) : (
+                <div className="qb-wf-explorer" style={teamStyles.leftRailWorkflowPane}>
+                  <div className="qb-wf-explorer__toolbar">
+                    <input
+                      type="search"
+                      className="qb-wf-explorer__search"
+                      value={workflowListQuery}
+                      onChange={(e) => setWorkflowListQuery(e.target.value)}
+                      placeholder="搜索…"
+                      aria-label="搜索工作流"
+                    />
+                    <select
+                      className="qb-wf-explorer__filter"
+                      value={workflowKindFilter}
+                      onChange={(e) =>
+                        setWorkflowKindFilter(e.target.value as WorkflowKind | "all")
+                      }
+                      aria-label="工作流类型筛选"
                     >
-                      <input
-                        type="checkbox"
-                        checked={liveFeedAutoFollow}
-                        onChange={(e) => {
-                          const next = e.target.checked;
-                          setLiveFeedAutoFollow(next);
-                          if (next) scrollLiveFeedToBottom();
-                        }}
-                        style={{ accentColor: "#3b82f6", cursor: "pointer" }}
-                      />
-                      自动跟随{liveFeedAutoFollow ? "" : "（已暂停）"}
-                    </label>
-                    {liveFeedCollapsed ? <span style={{ marginLeft: "auto" }} /> : null}
+                      <option value="all">全部</option>
+                      {(Object.keys(WORKFLOW_KIND_LABEL) as WorkflowKind[]).map((k) => (
+                        <option key={k} value={k}>
+                          {WORKFLOW_KIND_LABEL[k]}
+                        </option>
+                      ))}
+                    </select>
                     <button
                       type="button"
-                      onClick={() => setLiveFeedCollapsed((v) => !v)}
-                      title={liveFeedCollapsed ? "展开实时对话流窗口" : "折叠实时对话流窗口"}
-                      aria-label={liveFeedCollapsed ? "展开实时对话流窗口" : "折叠实时对话流窗口"}
-                      aria-expanded={!liveFeedCollapsed}
-                      style={{
-                        padding: "2px 8px",
-                        background: "transparent",
-                        color: "var(--qb-team-meta, #a1a1aa)",
-                        border:
-                          "1px solid var(--qb-team-live-feed-row-border, var(--qb-team-live-feed-border, #3f3f46))",
-                        borderRadius: 6,
-                        cursor: "pointer",
-                        fontSize: 11,
-                        lineHeight: 1.4,
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 4,
-                      }}
+                      className="qb-wf-explorer__icon-btn"
+                      onClick={() => void refreshWorkflowOptions()}
+                      title="刷新"
+                      aria-label="刷新工作流列表"
                     >
-                      <span aria-hidden style={{ fontSize: 10 }}>
-                        {liveFeedCollapsed ? "▸" : "▾"}
-                      </span>
-                      {liveFeedCollapsed ? "展开" : "折叠"}
+                      <RefreshCw size={14} />
                     </button>
-                    {liveFeedCollapsed ? null : (
-                      <span
-                        style={{
-                          fontSize: 10,
-                          color: "var(--qb-team-meta, #71717a)",
-                          fontWeight: 400,
-                        }}
+                    <button
+                      type="button"
+                      className="qb-wf-explorer__icon-btn"
+                      onClick={requestCreateTeamWorkflow}
+                      disabled={
+                        !teamResearchProjectId || !teamResearchSessionId || creatingTeamWorkflow
+                      }
+                      title={!teamResearchSessionId ? "正在解析默认会话…" : "新建研究会话"}
+                      aria-label="新建会话"
+                    >
+                      <Plus size={15} />
+                    </button>
+                  </div>
+                  {pendingCreateWorkflow ? (
+                    <div className="qb-wf-explorer__confirm" role="status">
+                      <span style={{ flex: 1, minWidth: 0 }}>新建一次研究回合？</span>
+                      <button
+                        type="button"
+                        className="qb-btn-primary-brand"
+                        style={{ fontSize: 11, padding: "3px 8px" }}
+                        onClick={() => void handleCreateTeamWorkflow()}
+                        disabled={
+                          creatingTeamWorkflow || !teamResearchProjectId || !teamResearchSessionId
+                        }
                       >
-                        拖底边调整高度
-                      </span>
+                        {creatingTeamWorkflow ? "创建中…" : "确认"}
+                      </button>
+                      <button
+                        type="button"
+                        className="qb-btn-secondary"
+                        style={{ fontSize: 11, padding: "3px 8px" }}
+                        onClick={cancelPendingCreateWorkflow}
+                        disabled={creatingTeamWorkflow}
+                      >
+                        取消
+                      </button>
+                    </div>
+                  ) : null}
+                  {workflowRunId.trim() && !workflowSessionId && teamResearchSessionId ? (
+                    <div className="qb-wf-explorer__confirm" role="status">
+                      <span style={{ flex: 1, minWidth: 0 }}>当前工作流未绑定会话</span>
+                      <button
+                        type="button"
+                        className="qb-btn-secondary"
+                        style={{ fontSize: 11, padding: "3px 8px" }}
+                        onClick={() => void handleLinkWorkflowToDefaultSession()}
+                      >
+                        关联
+                      </button>
+                    </div>
+                  ) : null}
+                  <div className="qb-wf-explorer__list" role="listbox" aria-label="工作流列表">
+                    {filteredGroupedWorkflowList.length === 0 ? (
+                      <div className="qb-wf-explorer__empty">
+                        {workflowOptions.length === 0
+                          ? "暂无工作流。点 + 新建一次研究。"
+                          : "没有匹配项。"}
+                      </div>
+                    ) : (
+                      filteredGroupedWorkflowList.map((group) => (
+                        <div key={group.kind}>
+                          <div className="qb-wf-group__head">
+                            <span>{group.label}</span>
+                            <span>{group.rows.length}</span>
+                          </div>
+                          {group.rows.map((row) => {
+                            const id = String(row.id ?? "");
+                            const goal = typeof row.goal === "string" ? row.goal.trim() : "";
+                            const status = String(row.status ?? "—");
+                            const sid =
+                              typeof row.sessionId === "string" ? row.sessionId.trim() : "";
+                            const startedAt =
+                              typeof row.startedAt === "string" && row.startedAt
+                                ? formatWorkflowListTime(row.startedAt)
+                                : "";
+                            const selected = id === workflowRunId;
+                            const pendingDel = pendingHardDeleteWfId === id;
+                            const tone = workflowStatusDot(status);
+                            const title = workflowListTitle(goal, id);
+                            return (
+                              <div
+                                key={id}
+                                className={`qb-wf-row${selected ? " is-selected" : ""}${pendingDel ? " is-pending-delete" : ""}`}
+                              >
+                                <span
+                                  className="qb-wf-row__dot"
+                                  style={{ background: tone.color }}
+                                  title={tone.label}
+                                  aria-hidden
+                                />
+                                <button
+                                  type="button"
+                                  className="qb-wf-row__main"
+                                  onClick={() => {
+                                    setWorkflowRunId(id);
+                                    if (sid) setSelectedConversationSessionId(sid);
+                                    setWorkflowNotice(null);
+                                  }}
+                                  title={
+                                    status === "failed"
+                                      ? `${title}（未能完成，可在右侧继续补充）`
+                                      : title
+                                  }
+                                  aria-pressed={selected}
+                                >
+                                  <div className="qb-wf-row__title">{title}</div>
+                                  <div className="qb-wf-row__meta">
+                                    {tone.label}
+                                    {startedAt ? ` · ${startedAt}` : ""}
+                                    {!sid ? " · 未绑会话" : ""}
+                                  </div>
+                                </button>
+                                <div className="qb-wf-row__actions">
+                                  <button
+                                    type="button"
+                                    className="qb-wf-row__action"
+                                    onClick={() => void handleCancelOneWorkflow(id)}
+                                    disabled={status === "cancelled"}
+                                    title="取消（软删除，保留审计）"
+                                    aria-label="取消工作流"
+                                  >
+                                    <Ban size={13} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={`qb-wf-row__action${pendingDel ? " is-confirm" : " is-danger"}`}
+                                    onClick={() => handleClickHardDeleteWorkflow(id)}
+                                    title={
+                                      pendingDel
+                                        ? "再次点击确认硬删除（3 秒内有效）"
+                                        : "硬删除，不可恢复"
+                                    }
+                                    aria-label={pendingDel ? "确认硬删除" : "硬删除工作流"}
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ))
                     )}
                   </div>
-                  {liveFeedCollapsed ? null : (
+                  {workflowNotice ? (
+                    <div
+                      className="qb-callout qb-callout--success"
+                      role="status"
+                      style={{ margin: "0 0 8px" }}
+                    >
+                      <div className="qb-callout__row">
+                        <span style={{ flex: 1, minWidth: 0 }}>{workflowNotice}</span>
+                        <button
+                          type="button"
+                          className="qb-callout__dismiss"
+                          onClick={() => setWorkflowNotice(null)}
+                          aria-label="关闭提示"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                  {agentHeartbeats && agentHeartbeats.summary.aliveAgents > 0 && running ? (
                     <div
                       style={{
-                        position: "relative",
-                        flex: "1 1 0",
-                        minHeight: 0,
+                        flexShrink: 0,
+                        padding: "4px 8px",
+                        fontSize: 10,
+                        color: "#86efac",
+                      }}
+                      title="拓扑画布节点会脉冲高亮显示活跃 Agent"
+                    >
+                      {agentHeartbeats.summary.aliveAgents}/{agentHeartbeats.summary.totalAgents}{" "}
+                      Agent 活跃
+                    </div>
+                  ) : null}
+                  <details className="qb-wf-explorer__topology">
+                    <summary>
+                      执行图
+                      {teamGraph?.edges?.length ? ` · ${Math.min(teamGraph.edges.length, 24)}` : ""}
+                    </summary>
+                    {!teamGraph?.edges?.length ? (
+                      <div className="qb-wf-explorer__topology-body">暂无边记录</div>
+                    ) : (
+                      <ul className="qb-wf-explorer__topology-body">
+                        {teamGraph.edges.slice(0, 24).map((ed) => (
+                          <li key={ed.key}>
+                            {ed.a} ↔ {ed.b} · 消息 {ed.messageCount} · 工具 {ed.toolCount}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </details>
+                </div>
+              )}
+            </aside>
+          ) : null}
+          {/**
+           * gutter1：左栏存在且其右侧至少还有一栏可见（center 或 right）。
+           * 当 center 被隐藏只剩 left + right 时，gutter1 仍承担 left/right 分隔 —— 它绑定的
+           * onMouseDown(1) 调整的是 teamLeftW，拖动左栏宽度本来就符合直觉。
+           */}
+          {teamPaneVisible("left") && (teamPaneVisible("center") || teamPaneVisible("right")) ? (
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="调整左侧栏宽度"
+              onMouseDown={onTeamColGutterDown(1)}
+              style={teamStyles.teamColGutter}
+            />
+          ) : null}
+
+          {teamPaneVisible("center") ? (
+            <div style={teamStyles.centerCol}>
+              <div style={teamStyles.ideCenterWrap}>
+                <div className="qb-team-main-stage" style={teamStyles.teamMainStage}>
+                  <header className="qb-team-editor-titlebar" style={teamStyles.teamEditorTitleBar}>
+                    <span style={{ fontWeight: 600, color: "var(--qb-team-titlebar-fg, #e4e4e7)" }}>
+                      研究工作区 · 分析流 / 行情 / 新闻 / 工具 / 执行图
+                    </span>
+                    <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      {researchMarketSymbols.length > 0 ? (
+                        <span style={{ color: "#94a3b8", fontSize: 11 }}>
+                          {researchMarketSymbols.length > 1
+                            ? `${researchMarketSymbols.length} 个标的 · 焦点 ${chartSpec.symbol || "—"}${
+                                chartSpec.exchange ? `.${chartSpec.exchange}` : ""
+                              }`
+                            : `联动标的 ${chartSpec.symbol || researchMarketSymbols[0]?.symbol}${
+                                chartSpec.exchange || researchMarketSymbols[0]?.exchange
+                                  ? `.${chartSpec.exchange || researchMarketSymbols[0]?.exchange}`
+                                  : ""
+                              }`}
+                        </span>
+                      ) : null}
+                      {running ? (
+                        <span style={{ color: "#38bdf8", fontSize: 11 }}>
+                          ● 分析进行中 · 拓扑与工具每 2.5s 刷新
+                        </span>
+                      ) : null}
+                      {graphLoading ? (
+                        <span style={{ color: "#a1a1aa", fontSize: 11 }}>加载图数据…</span>
+                      ) : null}
+                    </span>
+                  </header>
+                  <div
+                    style={{
+                      ...teamStyles.teamEditorBody,
+                      display: "flex",
+                      flexDirection: "column",
+                      overflow: "hidden",
+                    }}
+                  >
+                    <div
+                      data-qb-team-research-panel
+                      style={{
                         display: "flex",
                         flexDirection: "column",
+                        flex: 1,
+                        minHeight: 0,
+                        overflow: "hidden",
+                        background: "transparent",
                       }}
                     >
                       <div
-                        ref={liveFeedScrollRef}
-                        onScroll={handleLiveFeedScroll}
-                        data-qb-team-live-feed
-                        className="qb-team-live-feed-scroll"
+                        className="qb-team-graph-view-toggle"
+                        role="tablist"
+                        aria-label="研究画布视图"
                         style={{
-                          flex: "1 1 0",
-                          minHeight: 0,
-                          overflowY: "auto",
-                          overflowX: "hidden",
-                          padding: 10,
-                          paddingBottom: 16,
+                          marginBottom: 10,
+                          alignSelf: "stretch",
+                          width: "100%",
+                          flexShrink: 0,
                         }}
                       >
-                        <LiveConversationView
-                          events={displayedLiveFeedEvents}
-                          selfRole="orchestrator"
-                          contentMaxLength={4000}
-                          emptyText={
-                            graphSelection?.kind === "edge"
-                              ? "该连线暂无对话记录。"
-                              : running
-                                ? "等待各分析师与系统写入交互记录（轮询中）…"
-                                : "暂无记录。启动分析后，研究队交互与辩论事件将按时间显示在此。"
-                          }
-                        />
+                        {(
+                          [
+                            ["analysis", "分析流"],
+                            ["topology", "执行图"],
+                            ["market", "行情 K 线"],
+                            ["news", "新闻资讯"],
+                            ["strategy", "策略契约"],
+                            [
+                              "tools",
+                              `工具结果${researchCanvasToolHits.length ? ` (${researchCanvasToolHits.length})` : ""}`,
+                            ],
+                            ...(openWsFile
+                              ? [
+                                  [
+                                    "file",
+                                    `文件 · ${openWsFile.path.split("/").pop() || "编辑"}`,
+                                  ] as const,
+                                ]
+                              : []),
+                          ] as const
+                        ).map(([id, label]) => (
+                          <button
+                            key={id}
+                            type="button"
+                            role="tab"
+                            aria-selected={researchCanvasTab === id}
+                            className={researchCanvasTab === id ? "is-active" : ""}
+                            onClick={() => setResearchCanvasTab(id)}
+                          >
+                            {label}
+                          </button>
+                        ))}
                       </div>
-                      {!liveFeedAtBottom ? (
-                        <button
-                          type="button"
-                          onClick={scrollLiveFeedToBottom}
-                          title="跳到最新消息并恢复自动跟随"
+
+                      {researchCanvasTab === "analysis" ? (
+                        <ResearchAnalysisWorkspace
+                          events={displayedLiveFeedEvents}
+                          running={running || orchestratorChatInFlight}
+                          runProgress={runProgress}
+                          researchPhase={teamPlan?.researchPhase}
+                          researchPhases={teamPlan?.researchPhases}
+                          focusSymbol={chartSpec.symbol || researchMarketSymbols[0]?.symbol || null}
+                          focusExchange={
+                            chartSpec.exchange || researchMarketSymbols[0]?.exchange || null
+                          }
+                          activeRationale={activeRationale}
+                          toolHits={researchCanvasToolHits}
+                          artifacts={teamArtifacts}
+                          artifactsLoading={teamArtifactsLoading}
+                          artifactsError={teamArtifactsError}
+                          onOpenMarketEvidence={(hit) => applyCanvasMarketLink(hit, "market")}
+                          onOpenNewsEvidence={(hit) => applyCanvasMarketLink(hit, "news")}
+                          onOpenArtifact={(artifact) => {
+                            const target = quantNavigationForArtifact(
+                              artifact,
+                              effectiveResearchProjectId,
+                              workflowRunId
+                            );
+                            if (target.context) setQuantContext(target.context);
+                            setQuantHandoff(target.handoff);
+                            setActiveView("quant");
+                            setQuantTab(target.tab);
+                          }}
+                        />
+                      ) : null}
+
+                      {researchCanvasTab === "strategy" ? (
+                        <TeamStrategyContractPane
+                          key={`${workflowSessionId || teamResearchSessionId}:${workflowRunId.trim()}`}
+                          sessionId={workflowSessionId || teamResearchSessionId}
+                          workflowRunId={workflowRunId.trim()}
+                        />
+                      ) : null}
+
+                      {researchCanvasTab === "file" && openWsFile ? (
+                        <WorkspaceFilePane
+                          workspaceId={openWsFile.workspaceId}
+                          path={openWsFile.path}
+                          onClose={() => {
+                            setOpenWsFile(null);
+                            setResearchCanvasTab("analysis");
+                          }}
+                        />
+                      ) : null}
+                      {researchCanvasTab === "market" ? (
+                        <div
                           style={{
-                            position: "absolute",
-                            right: 16,
-                            bottom: 14,
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 5,
-                            padding: "5px 11px",
-                            borderRadius: 999,
-                            border: "1px solid var(--qb-blue, #007acc)",
-                            background: "var(--qb-team-panel-bg, #252526)",
-                            color: "var(--qb-body-fg, #cccccc)",
-                            fontSize: 11,
-                            fontWeight: 600,
-                            cursor: "pointer",
-                            boxShadow: "none",
-                            backdropFilter: "none",
+                            flex: 1,
+                            minHeight: 420,
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 8,
+                            padding: 10,
+                            border: "1px solid var(--qb-team-live-feed-border, #2a2a30)",
+                            borderRadius: 8,
+                            overflow: "hidden",
+                            background: "var(--qb-team-live-feed-bg, #08080a)",
                           }}
                         >
-                          <span aria-hidden style={{ fontSize: 12, lineHeight: 1 }}>
-                            ↓
-                          </span>
-                          跳到最新
-                        </button>
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              gap: 10,
+                              flexShrink: 0,
+                            }}
+                          >
+                            <div
+                              className="qb-team-graph-view-toggle"
+                              role="group"
+                              aria-label="K 线布局"
+                            >
+                              <button
+                                type="button"
+                                className={marketKlineLayout === "grid" ? "is-active" : ""}
+                                onClick={() => setMarketKlineLayout("grid")}
+                              >
+                                多标的网格
+                                {researchMarketSymbols.length > 1
+                                  ? ` (${researchMarketSymbols.length})`
+                                  : ""}
+                              </button>
+                              <button
+                                type="button"
+                                className={marketKlineLayout === "single" ? "is-active" : ""}
+                                onClick={() => setMarketKlineLayout("single")}
+                              >
+                                单图焦点
+                              </button>
+                            </div>
+                            <span style={{ fontSize: 11, color: "#71717a" }}>
+                              {chartSpec.timeframe} · {chartSpec.limit} 根
+                            </span>
+                          </div>
+                          {marketKlineLayout === "grid" ? (
+                            <ResearchMultiKlineGrid
+                              symbols={researchMarketSymbols}
+                              timeframe={chartSpec.timeframe}
+                              limit={chartSpec.limit}
+                              reloadNonce={chartReloadNonce}
+                              focusKey={
+                                chartSpec.symbol
+                                  ? `${chartSpec.symbol.toUpperCase()}@@${coerceChartMarketExchange(
+                                      chartSpec.exchange || ""
+                                    ).toUpperCase()}`
+                                  : null
+                              }
+                              onFocus={(row) => {
+                                setChartSpec({
+                                  symbol: row.symbol,
+                                  exchange: coerceChartMarketExchange(row.exchange),
+                                });
+                                requestChartReload();
+                              }}
+                            />
+                          ) : (
+                            <div
+                              style={{
+                                flex: 1,
+                                minHeight: 360,
+                                display: "flex",
+                                flexDirection: "column",
+                                overflow: "hidden",
+                                borderRadius: 8,
+                              }}
+                            >
+                              <KlinePanel embedded />
+                            </div>
+                          )}
+                        </div>
+                      ) : null}
+
+                      {researchCanvasTab === "news" ? (
+                        <div
+                          style={{
+                            flex: 1,
+                            minHeight: 360,
+                            display: "flex",
+                            flexDirection: "column",
+                            border: "1px solid var(--qb-team-live-feed-border, #2a2a30)",
+                            borderRadius: 8,
+                            overflow: "hidden",
+                          }}
+                        >
+                          <NewsBriefSection
+                            symbol={chartSpec.symbol}
+                            exchange={chartSpec.exchange}
+                            reloadNonce={chartReloadNonce}
+                          />
+                        </div>
+                      ) : null}
+
+                      {researchCanvasTab === "tools" ? (
+                        <div
+                          style={{
+                            flex: 1,
+                            minHeight: 0,
+                            display: "flex",
+                            flexDirection: "column",
+                            overflow: "hidden",
+                          }}
+                        >
+                          <ResearchToolResultsPanel
+                            hits={researchCanvasToolHits}
+                            onOpenMarket={(hit) => applyCanvasMarketLink(hit, "market")}
+                            onOpenNews={(hit) => applyCanvasMarketLink(hit, "news")}
+                          />
+                        </div>
+                      ) : null}
+
+                      {researchCanvasTab === "topology" ? (
+                        <>
+                          <h3 style={{ ...teamStyles.sectionTitle, marginTop: 0 }}>
+                            Execution Map · 团队执行图
+                          </h3>
+                          <p
+                            style={{
+                              fontSize: 12,
+                              color: "var(--qb-team-meta, #a1a1aa)",
+                              marginBottom: 12,
+                            }}
+                          >
+                            默认只显示用户与编排器，其它 Agent
+                            被调用后才入图。工具调用会联动到「行情 / 新闻 / 工具结果」视图。
+                          </p>
+                          {!workflowRunId.trim() ? (
+                            <div style={teamStyles.empty}>请先在左侧栏选择或新建工作流</div>
+                          ) : (
+                            <>
+                              <div style={{ ...teamStyles.row, flexWrap: "wrap", gap: 8 }}>
+                                <button
+                                  type="button"
+                                  className="qb-btn-primary-brand"
+                                  style={{ fontSize: 12, padding: "6px 12px" }}
+                                  disabled={graphLoading}
+                                  onClick={() => void loadTeamGraph({ preserveSelection: true })}
+                                >
+                                  {graphLoading ? "加载中…" : "刷新拓扑"}
+                                </button>
+                                <div
+                                  className="qb-team-graph-view-toggle"
+                                  role="tablist"
+                                  aria-label="拓扑视图切换"
+                                >
+                                  <button
+                                    type="button"
+                                    role="tab"
+                                    aria-selected={teamGraphView === "topology"}
+                                    className={teamGraphView === "topology" ? "is-active" : ""}
+                                    onClick={() => setTeamGraphView("topology")}
+                                  >
+                                    拓扑图
+                                  </button>
+                                  <button
+                                    type="button"
+                                    role="tab"
+                                    aria-selected={teamGraphView === "office"}
+                                    className={teamGraphView === "office" ? "is-active" : ""}
+                                    onClick={() => setTeamGraphView("office")}
+                                  >
+                                    像素办公室
+                                  </button>
+                                </div>
+                                <span
+                                  style={{ fontSize: 12, color: "var(--qb-team-meta, #71717a)" }}
+                                >
+                                  {filteredGraphDisplay
+                                    ? `展示 ${filteredGraphDisplay.nodes.filter((n) => n.role !== "__tools__").length} 个 Agent`
+                                    : ""}
+                                </span>
+                              </div>
+                              {filteredGraphDisplay && filteredGraphDisplay.nodes.length > 0 ? (
+                                <div
+                                  style={{
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    gap: 12,
+                                    marginTop: 12,
+                                    flex: 1,
+                                    minHeight: 0,
+                                  }}
+                                >
+                                  <div
+                                    ref={graphWrapRef}
+                                    data-qb-team-graph-host
+                                    style={{
+                                      ...teamStyles.graphCanvasHost,
+                                      flex: teamGraphView === "office" ? "1 1 auto" : "0 0 auto",
+                                      height:
+                                        teamGraphView === "office"
+                                          ? "min(72vh, 860px)"
+                                          : graphHeight,
+                                      minHeight: teamGraphView === "office" ? 520 : graphHeight,
+                                      maxHeight:
+                                        teamGraphView === "office"
+                                          ? "min(72vh, 860px)"
+                                          : graphHeight,
+                                      overflow: "hidden",
+                                      flexDirection: "column",
+                                      justifyContent:
+                                        teamGraphView === "office" ? "stretch" : "center",
+                                      alignItems: teamGraphView === "office" ? "stretch" : "center",
+                                    }}
+                                  >
+                                    {teamGraphView === "topology" ? (
+                                      <TeamAgentGraph
+                                        nodes={filteredGraphDisplay.nodes}
+                                        edges={filteredGraphDisplay.edges}
+                                        width={graphSize.w}
+                                        height={graphSize.h}
+                                        selection={graphSelection}
+                                        activity={teamGraphActivity}
+                                        onSelectNode={(role) =>
+                                          setGraphSelection({ kind: "node", role })
+                                        }
+                                        onSelectEdge={(a, b) =>
+                                          setGraphSelection({ kind: "edge", a, b })
+                                        }
+                                        onClear={() => setGraphSelection(null)}
+                                      />
+                                    ) : (
+                                      <TeamAgentPixelOffice
+                                        key={workflowRunId}
+                                        graph={filteredGraphDisplay}
+                                        nodes={filteredGraphDisplay.nodes}
+                                        edges={filteredGraphDisplay.edges}
+                                        selection={graphSelection}
+                                        activity={teamGraphActivity}
+                                        isRunning={running}
+                                        onSelectNode={(role) =>
+                                          setGraphSelection({ kind: "node", role })
+                                        }
+                                        onClear={() => setGraphSelection(null)}
+                                      />
+                                    )}
+                                    {teamGraphView === "topology" ? (
+                                      <p
+                                        style={{
+                                          fontSize: 10,
+                                          color: "var(--qb-team-meta, #71717a)",
+                                          marginTop: 6,
+                                        }}
+                                      >
+                                        箭头表示消息方向；双向为两条弧线。工具/MCP
+                                        连线：绿色=成功、红色=全失败、琥珀=部分失败。
+                                      </p>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div style={{ ...teamStyles.empty, marginTop: 12 }}>
+                                  {graphLoading
+                                    ? "…"
+                                    : "暂无拓扑节点：分析刚开始或未落库时可能短暂为空；下方仍可查看实时对话流。"}
+                                </div>
+                              )}
+                              {graphEdgeDetail ? (
+                                <div
+                                  style={{
+                                    marginTop: 10,
+                                    padding: "8px 12px",
+                                    borderRadius: 8,
+                                    border: "1px solid #3b82f6",
+                                    background: "rgba(37, 99, 235, 0.08)",
+                                    fontSize: 12,
+                                    color: "#cbd5e1",
+                                  }}
+                                >
+                                  已选连线：<strong>{graphEdgeDetail.a}</strong>
+                                  {graphEdgeDetail.edge && isToolGraphEdge(graphEdgeDetail.edge)
+                                    ? " → "
+                                    : " · "}
+                                  <strong>{graphEdgeDetail.b}</strong>
+                                  {" · "}
+                                  {formatEdgeSelectionSummary(
+                                    graphEdgeDetail.a,
+                                    graphEdgeDetail.b,
+                                    graphEdgeDetail.edge,
+                                    graphEdgeDetail.messageCount
+                                  )}
+                                  <button
+                                    type="button"
+                                    className="qb-btn-secondary"
+                                    style={{ fontSize: 11, padding: "2px 8px", marginLeft: 10 }}
+                                    onClick={() => setGraphSelection(null)}
+                                  >
+                                    显示全部对话
+                                  </button>
+                                </div>
+                              ) : null}
+                              <div style={{ marginTop: 14 }} data-qb-team-hitl-banner>
+                                {/**
+                                 * HITL 主入口已迁到右栏 Orchestrator 对话框（内联卡片）。
+                                 * 这里仅在右栏被隐藏时作为兜底，避免同一询问出现两张卡片。
+                                 */}
+                                {!rightEffectivelyPresent && workflowRunId.trim() ? (
+                                  /**
+                                   * v2 修复：Banner 只要 workflowRunId 有效就常驻挂载，由 banner 内部用
+                                   * listPendingWorkflowHitl 自动发现 pending。这样即使 `teamPendingHitl`
+                                   * state 还没被 onAwaitingApproval 回调填充（例如刷新页面 / 切换工作流 /
+                                   * 自动触发的硬规则 HITL 尚未回填本地 state），
+                                   * 红框位置也能看到询问卡片，而不是"看不到按钮只能再输一句继续"。
+                                   *
+                                   * triggerKey 用 workflowRunId 兜底；当 onAwaitingApproval 回调发生时
+                                   * 优先用 requestId 触发 banner 内部 refresh，拿到最新 pending 内容。
+                                   */
+                                  <TeamHitlBanner
+                                    workflowRunId={workflowRunId.trim()}
+                                    triggerKey={teamPendingHitl?.requestId ?? workflowRunId.trim()}
+                                    onResolved={(decision) => {
+                                      setTeamPendingHitl(null);
+                                      setRunProgress(
+                                        decision === "approved"
+                                          ? "已批准，分析师团队继续执行…"
+                                          : "已拒绝，工作流终止"
+                                      );
+                                    }}
+                                  />
+                                ) : null}
+                                {!rightEffectivelyPresent ? (
+                                  <ResizableY
+                                    defaultHeight={360}
+                                    minHeight={200}
+                                    maxHeight={1200}
+                                    storageKey="qb.live-feed-h"
+                                    collapsed={liveFeedCollapsed}
+                                    wrapperData={{ "data-qb-team-live-feed-shell": "" }}
+                                    style={{
+                                      border: "1px solid var(--qb-team-live-feed-border, #2a2a30)",
+                                      borderRadius: 8,
+                                      background: "var(--qb-team-live-feed-bg, #08080a)",
+                                      color: "var(--qb-team-live-feed-fg, #e4e4e7)",
+                                    }}
+                                  >
+                                    <div
+                                      style={{
+                                        ...teamStyles.sectionTitle,
+                                        margin: 0,
+                                        padding: "8px 10px",
+                                        flexShrink: 0,
+                                        borderBottom:
+                                          "1px solid var(--qb-team-live-feed-row-border, var(--qb-team-live-feed-border, #2a2a30))",
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 8,
+                                        flexWrap: "wrap",
+                                      }}
+                                    >
+                                      实时对话流
+                                      {graphSelection?.kind === "edge" ? "（已按连线筛选）" : ""}
+                                      {running ? (
+                                        <span
+                                          style={{
+                                            fontSize: 10,
+                                            padding: "1px 6px",
+                                            borderRadius: 999,
+                                            border: "1px solid rgba(34,197,94,0.45)",
+                                            background: "rgba(34,197,94,0.12)",
+                                            color: "#86efac",
+                                            fontWeight: 600,
+                                            letterSpacing: 0.2,
+                                          }}
+                                        >
+                                          正在轮询
+                                        </span>
+                                      ) : null}
+                                      <label
+                                        title="关闭后新消息进来不会再自动滚到底，便于回看上方对话"
+                                        style={{
+                                          marginLeft: "auto",
+                                          display: liveFeedCollapsed ? "none" : "inline-flex",
+                                          alignItems: "center",
+                                          gap: 5,
+                                          fontSize: 11,
+                                          fontWeight: 400,
+                                          color: "var(--qb-team-meta, #a1a1aa)",
+                                          cursor: "pointer",
+                                          userSelect: "none",
+                                        }}
+                                      >
+                                        <input
+                                          type="checkbox"
+                                          checked={liveFeedAutoFollow}
+                                          onChange={(e) => {
+                                            const next = e.target.checked;
+                                            setLiveFeedAutoFollow(next);
+                                            if (next) scrollLiveFeedToBottom();
+                                          }}
+                                          style={{ accentColor: "#3b82f6", cursor: "pointer" }}
+                                        />
+                                        自动跟随{liveFeedAutoFollow ? "" : "（已暂停）"}
+                                      </label>
+                                      {liveFeedCollapsed ? (
+                                        <span style={{ marginLeft: "auto" }} />
+                                      ) : null}
+                                      <button
+                                        type="button"
+                                        onClick={() => setLiveFeedCollapsed((v) => !v)}
+                                        title={
+                                          liveFeedCollapsed
+                                            ? "展开实时对话流窗口"
+                                            : "折叠实时对话流窗口"
+                                        }
+                                        aria-label={
+                                          liveFeedCollapsed
+                                            ? "展开实时对话流窗口"
+                                            : "折叠实时对话流窗口"
+                                        }
+                                        aria-expanded={!liveFeedCollapsed}
+                                        style={{
+                                          padding: "2px 8px",
+                                          background: "transparent",
+                                          color: "var(--qb-team-meta, #a1a1aa)",
+                                          border:
+                                            "1px solid var(--qb-team-live-feed-row-border, var(--qb-team-live-feed-border, #3f3f46))",
+                                          borderRadius: 6,
+                                          cursor: "pointer",
+                                          fontSize: 11,
+                                          lineHeight: 1.4,
+                                          display: "inline-flex",
+                                          alignItems: "center",
+                                          gap: 4,
+                                        }}
+                                      >
+                                        <span aria-hidden style={{ fontSize: 10 }}>
+                                          {liveFeedCollapsed ? "▸" : "▾"}
+                                        </span>
+                                        {liveFeedCollapsed ? "展开" : "折叠"}
+                                      </button>
+                                      {liveFeedCollapsed ? null : (
+                                        <span
+                                          style={{
+                                            fontSize: 10,
+                                            color: "var(--qb-team-meta, #71717a)",
+                                            fontWeight: 400,
+                                          }}
+                                        >
+                                          拖底边调整高度
+                                        </span>
+                                      )}
+                                    </div>
+                                    {liveFeedCollapsed ? null : (
+                                      <div
+                                        style={{
+                                          position: "relative",
+                                          flex: "1 1 0",
+                                          minHeight: 0,
+                                          display: "flex",
+                                          flexDirection: "column",
+                                        }}
+                                      >
+                                        <div
+                                          ref={liveFeedScrollRef}
+                                          onScroll={handleLiveFeedScroll}
+                                          data-qb-team-live-feed
+                                          className="qb-team-live-feed-scroll"
+                                          style={{
+                                            flex: "1 1 0",
+                                            minHeight: 0,
+                                            overflowY: "auto",
+                                            overflowX: "hidden",
+                                            padding: 10,
+                                            paddingBottom: 16,
+                                          }}
+                                        >
+                                          <LiveConversationView
+                                            events={displayedLiveFeedEvents}
+                                            selfRole="orchestrator"
+                                            contentMaxLength={4000}
+                                            emptyText={
+                                              graphSelection?.kind === "edge"
+                                                ? "该连线暂无对话记录。"
+                                                : running
+                                                  ? "等待各分析师与系统写入交互记录（轮询中）…"
+                                                  : "暂无记录。启动分析后，研究队交互与辩论事件将按时间显示在此。"
+                                            }
+                                          />
+                                        </div>
+                                        {!liveFeedAtBottom ? (
+                                          <button
+                                            type="button"
+                                            onClick={scrollLiveFeedToBottom}
+                                            title="跳到最新消息并恢复自动跟随"
+                                            style={{
+                                              position: "absolute",
+                                              right: 16,
+                                              bottom: 14,
+                                              display: "inline-flex",
+                                              alignItems: "center",
+                                              gap: 5,
+                                              padding: "5px 11px",
+                                              borderRadius: 999,
+                                              border: "1px solid var(--qb-blue, #007acc)",
+                                              background: "var(--qb-team-panel-bg, #252526)",
+                                              color: "var(--qb-body-fg, #cccccc)",
+                                              fontSize: 11,
+                                              fontWeight: 600,
+                                              cursor: "pointer",
+                                              boxShadow: "none",
+                                              backdropFilter: "none",
+                                            }}
+                                          >
+                                            <span
+                                              aria-hidden
+                                              style={{ fontSize: 12, lineHeight: 1 }}
+                                            >
+                                              ↓
+                                            </span>
+                                            跳到最新
+                                          </button>
+                                        ) : null}
+                                      </div>
+                                    )}
+                                  </ResizableY>
+                                ) : null}
+                              </div>
+                              {graphSelection?.kind === "node" ? (
+                                <div style={{ marginTop: 14 }} data-qb-team-agent-dialogue-shell>
+                                  <ResizableY
+                                    defaultHeight={420}
+                                    minHeight={220}
+                                    maxHeight={1400}
+                                    storageKey="qb.agent-run-h"
+                                    collapsed={agentRunCollapsed}
+                                    style={{
+                                      border: "1px solid var(--qb-team-live-feed-border, #2a2a30)",
+                                      borderRadius: 8,
+                                      background: "var(--qb-team-live-feed-bg, #08080a)",
+                                      color: "var(--qb-team-live-feed-fg, #e4e4e7)",
+                                    }}
+                                  >
+                                    <AgentRunPanel
+                                      data={{
+                                        role: graphSelection.role,
+                                        inbound: graphNodeDetail.inbound,
+                                        outbound: graphNodeDetail.outbound,
+                                        steps: graphNodeDetail.steps,
+                                        tools: graphNodeDetail.tools,
+                                        mcps: graphNodeDetail.mcps,
+                                      }}
+                                      collapsed={agentRunCollapsed}
+                                      onToggleCollapsed={() => setAgentRunCollapsed((v) => !v)}
+                                      onOpenInCanvas={(target) => {
+                                        if (target.symbol) {
+                                          setChartSpec({
+                                            symbol: target.symbol,
+                                            ...(target.exchange
+                                              ? {
+                                                  exchange: coerceChartMarketExchange(
+                                                    target.exchange
+                                                  ),
+                                                }
+                                              : {}),
+                                          });
+                                          requestChartReload();
+                                        }
+                                        setResearchCanvasTab(
+                                          target.kind === "news" ? "news" : "market"
+                                        );
+                                      }}
+                                    />
+                                  </ResizableY>
+                                </div>
+                              ) : (
+                                <div
+                                  style={{
+                                    marginTop: 14,
+                                    padding: "14px 16px",
+                                    border:
+                                      "1px dashed var(--qb-team-live-feed-row-border, var(--qb-sidebar-border, #3f3f46))",
+                                    borderRadius: 8,
+                                    color: "var(--qb-team-meta, #a1a1aa)",
+                                    fontSize: 12,
+                                  }}
+                                >
+                                  点击研究画布中的 Agent 节点，查看该 Agent
+                                  的对话、工具调用与执行轨迹。
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </>
                       ) : null}
                     </div>
-                  )}
-                  </ResizableY>
-                ) : null}
+                  </div>
+                </div>
               </div>
-              {graphSelection?.kind === "node" ? (
-                <div style={{ marginTop: 14 }} data-qb-team-agent-dialogue-shell>
-                  <ResizableY
-                    defaultHeight={420}
-                    minHeight={220}
-                    maxHeight={1400}
-                    storageKey="qb.agent-run-h"
-                    collapsed={agentRunCollapsed}
+              {/**
+               * 中栏底部「研究产出」抽屉（从右栏迁移）：因子 / 策略 / 脚本 / 草稿。
+               * 可折叠隐去；flexShrink:0 贴在中栏底部，不参与主区滚动。
+               */}
+              <details
+                className="qb-mcp-details"
+                style={teamStyles.runControlsFooter}
+                open={outputsDrawerOpen}
+                onToggle={(e) => {
+                  const isOpen = (e.currentTarget as HTMLDetailsElement).open;
+                  if (isOpen !== outputsDrawerOpen) setOutputsDrawerOpen(isOpen);
+                }}
+              >
+                <summary style={teamStyles.runControlsSummary}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span
+                      style={{ fontSize: 13, fontWeight: 600, color: "var(--qb-blue, #93c5fd)" }}
+                    >
+                      OUTPUTS · 因子 / 策略 / 脚本 / 草稿
+                    </span>
+                  </span>
+                  <span style={{ fontSize: 11, color: "var(--qb-body-muted, #a1a1aa)" }}>
+                    点击折叠/展开
+                  </span>
+                </summary>
+                <div style={{ padding: "10px 16px 14px" }}>
+                  <p
                     style={{
-                      border: "1px solid var(--qb-team-live-feed-border, #2a2a30)",
-                      borderRadius: 8,
-                      background: "var(--qb-team-live-feed-bg, #08080a)",
-                      color: "var(--qb-team-live-feed-fg, #e4e4e7)",
+                      fontSize: 11,
+                      color: "var(--qb-body-muted, #71717a)",
+                      marginTop: 0,
+                      marginBottom: 10,
+                      lineHeight: 1.45,
                     }}
                   >
-                    <AgentRunPanel
-                      data={{
-                        role: graphSelection.role,
-                        inbound: graphNodeDetail.inbound,
-                        outbound: graphNodeDetail.outbound,
-                        steps: graphNodeDetail.steps,
-                        tools: graphNodeDetail.tools,
-                        mcps: graphNodeDetail.mcps,
-                      }}
-                      collapsed={agentRunCollapsed}
-                      onToggleCollapsed={() => setAgentRunCollapsed((v) => !v)}
-                      onOpenInCanvas={(target) => {
-                        if (target.symbol) {
-                          setChartSpec({
-                            symbol: target.symbol,
-                            ...(target.exchange
-                              ? { exchange: coerceChartMarketExchange(target.exchange) }
-                              : {}),
-                          });
-                          requestChartReload();
-                        }
-                        setResearchCanvasTab(target.kind === "news" ? "news" : "market");
-                      }}
-                    />
-                  </ResizableY>
+                    展示当前工作流下 Agent 生成的
+                    <strong>推荐 / 草稿 / 因子 / 策略 / 回测 / 脚本</strong>。
+                    因子可进因子工坊或回测工坊试跑；策略组合可一键进回测工坊看
+                    equity；回测结果可直接打开可视化。
+                  </p>
+                  <ResearchOutputTabs
+                    projectId={effectiveResearchProjectId}
+                    workflowRunId={workflowRunId}
+                    sessionId={workflowSessionId || teamResearchSessionId}
+                    onOpenFactorInWorkbench={(factor) => {
+                      setQuantContext({
+                        projectId: factor.projectId,
+                        workflowRunId: factor.workflowRunId ?? workflowRunId,
+                        sourceLabel: factor.name,
+                      });
+                      setQuantHandoff({
+                        kind: "factor-to-workbench",
+                        factorId: factor.id,
+                        projectId: factor.projectId,
+                        workflowRunId: factor.workflowRunId,
+                        note: `来自研究产出 · ${factor.name}`,
+                      });
+                      setActiveView("quant");
+                      setQuantTab("factor");
+                    }}
+                    onOpenFactorInBacktest={(factor) => {
+                      setQuantContext({
+                        projectId: factor.projectId,
+                        workflowRunId: factor.workflowRunId ?? workflowRunId,
+                        sourceLabel: factor.name,
+                      });
+                      setQuantHandoff({
+                        kind: "raw",
+                        expr: factor.expr,
+                        lang: "qlib_expr",
+                        note: `来自研究产出 · ${factor.name}`,
+                      });
+                      setActiveView("quant");
+                      setQuantTab("backtest");
+                    }}
+                    onOpenStrategyInComposer={(version) => {
+                      if (version?.id) {
+                        setQuantContext({
+                          projectId: version.projectId,
+                          workflowRunId: version.workflowRunId ?? workflowRunId,
+                          sourceLabel: version.strategyName,
+                        });
+                        setQuantHandoff({
+                          kind: "strategy-version-to-composer",
+                          strategyVersionId: version.id,
+                          workflowRunId: version.workflowRunId ?? null,
+                        });
+                      }
+                      setActiveView("quant");
+                      setQuantTab("composer");
+                    }}
+                    onOpenCompositionInBacktest={(version, composition) => {
+                      setQuantContext({
+                        projectId: version.projectId,
+                        workflowRunId: version.workflowRunId ?? workflowRunId,
+                        sourceLabel: version.strategyName,
+                      });
+                      setQuantHandoff({
+                        kind: "composition",
+                        compositionId: composition.id,
+                        strategyVersionId: version.id,
+                        note: `来自研究产出 · ${version.strategyName}`,
+                      });
+                      setActiveView("quant");
+                      setQuantTab("backtest");
+                    }}
+                    onOpenBacktestInStudio={(job) => {
+                      if (effectiveResearchProjectId) {
+                        setQuantContext({
+                          projectId: effectiveResearchProjectId,
+                          workflowRunId: job.workflowRunId ?? workflowRunId,
+                          sourceLabel: `回测 ${job.id.slice(0, 8)}`,
+                        });
+                      }
+                      setQuantHandoff({
+                        kind: "backtest-job",
+                        jobId: job.id,
+                        note: `来自研究产出 · ${job.status}`,
+                      });
+                      setActiveView("quant");
+                      setQuantTab("backtest");
+                    }}
+                    onOpenScriptInWorkbench={(script) => {
+                      const projectId = effectiveResearchProjectId;
+                      if (projectId) {
+                        setQuantContext({
+                          projectId,
+                          workflowRunId: script.workflowRunId ?? workflowRunId,
+                          sourceLabel: script.name,
+                        });
+                      }
+                      setQuantHandoff({
+                        kind: "script-to-workbench",
+                        scriptId: script.id,
+                        projectId,
+                        workflowRunId: script.workflowRunId ?? workflowRunId,
+                        note: `来自研究产出 · ${script.name}`,
+                      });
+                      setActiveView("quant");
+                      setQuantTab("script");
+                    }}
+                  />
                 </div>
-              ) : (
-                <div
-                  style={{
-                    marginTop: 14,
-                    padding: "14px 16px",
-                    border: "1px dashed var(--qb-team-live-feed-row-border, var(--qb-sidebar-border, #3f3f46))",
-                    borderRadius: 8,
-                    color: "var(--qb-team-meta, #a1a1aa)",
-                    fontSize: 12,
-                  }}
-                >
-                  点击研究画布中的 Agent 节点，查看该 Agent 的对话、工具调用与执行轨迹。
-                </div>
-              )}
-            </>
-          )}
-            </>
+              </details>
+            </div>
           ) : null}
-        </div>
-              </div>
-            </div>
-          </div>
-          {/**
-           * 中栏底部「研究产出」抽屉（从右栏迁移）：因子 / 策略 / 脚本 / 草稿。
-           * 可折叠隐去；flexShrink:0 贴在中栏底部，不参与主区滚动。
-           */}
-          <details
-            className="qb-mcp-details"
-            style={teamStyles.runControlsFooter}
-            open={outputsDrawerOpen}
-            onToggle={(e) => {
-              const isOpen = (e.currentTarget as HTMLDetailsElement).open;
-              if (isOpen !== outputsDrawerOpen) setOutputsDrawerOpen(isOpen);
-            }}
-          >
-            <summary style={teamStyles.runControlsSummary}>
-              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--qb-blue, #93c5fd)" }}>
-                  📦 研究产出 · 因子 / 策略 / 脚本 / 草稿
-                </span>
-              </span>
-              <span style={{ fontSize: 11, color: "var(--qb-body-muted, #a1a1aa)" }}>点击折叠/展开</span>
-            </summary>
-            <div style={{ padding: "10px 16px 14px" }}>
-              <p style={{ fontSize: 11, color: "var(--qb-body-muted, #71717a)", marginTop: 0, marginBottom: 10, lineHeight: 1.45 }}>
-                展示当前工作流下 Agent 生成的<strong>推荐 / 草稿 / 因子 / 策略 / 回测 / 脚本</strong>。
-                因子可进因子工坊或回测工坊试跑；策略组合可一键进回测工坊看 equity；回测结果可直接打开可视化。
-              </p>
-              <ResearchOutputTabs
-                projectId={effectiveResearchProjectId}
+
+          {teamPaneVisible("center") && showInlineTeamRight ? (
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="调整右侧策略栏宽度"
+              onMouseDown={onTeamColGutterDown(2)}
+              style={teamStyles.teamColGutter}
+            />
+          ) : null}
+
+          {(() => {
+            const orchestratorPanel = (
+              <OrchestratorChatPanel
                 workflowRunId={workflowRunId}
-                sessionId={workflowSessionId || teamResearchSessionId}
-                onOpenFactorInWorkbench={(factor) => {
-                  setQuantContext({
-                    projectId: factor.projectId,
-                    workflowRunId: factor.workflowRunId ?? workflowRunId,
-                    sourceLabel: factor.name,
-                  });
-                  setQuantHandoff({
-                    kind: "factor-to-workbench",
-                    factorId: factor.id,
-                    projectId: factor.projectId,
-                    workflowRunId: factor.workflowRunId,
-                    note: `来自研究产出 · ${factor.name}`,
-                  });
-                  setActiveView("quant");
-                  setQuantTab("factor");
-                }}
-                onOpenFactorInBacktest={(factor) => {
-                  setQuantContext({
-                    projectId: factor.projectId,
-                    workflowRunId: factor.workflowRunId ?? workflowRunId,
-                    sourceLabel: factor.name,
-                  });
-                  setQuantHandoff({
-                    kind: "raw",
-                    expr: factor.expr,
-                    lang: "qlib_expr",
-                    note: `来自研究产出 · ${factor.name}`,
-                  });
-                  setActiveView("quant");
-                  setQuantTab("backtest");
-                }}
-                onOpenStrategyInComposer={(version) => {
-                  if (version?.id) {
-                    setQuantContext({
-                      projectId: version.projectId,
-                      workflowRunId: version.workflowRunId ?? workflowRunId,
-                      sourceLabel: version.strategyName,
-                    });
-                    setQuantHandoff({
-                      kind: "strategy-version-to-composer",
-                      strategyVersionId: version.id,
-                      workflowRunId: version.workflowRunId ?? null,
-                    });
-                  }
-                  setActiveView("quant");
-                  setQuantTab("composer");
-                }}
-                onOpenCompositionInBacktest={(version, composition) => {
-                  setQuantContext({
-                    projectId: version.projectId,
-                    workflowRunId: version.workflowRunId ?? workflowRunId,
-                    sourceLabel: version.strategyName,
-                  });
-                  setQuantHandoff({
-                    kind: "composition",
-                    compositionId: composition.id,
-                    strategyVersionId: version.id,
-                    note: `来自研究产出 · ${version.strategyName}`,
-                  });
-                  setActiveView("quant");
-                  setQuantTab("backtest");
-                }}
-                onOpenBacktestInStudio={(job) => {
-                  if (effectiveResearchProjectId) {
-                    setQuantContext({
-                      projectId: effectiveResearchProjectId,
-                      workflowRunId: job.workflowRunId ?? workflowRunId,
-                      sourceLabel: `回测 ${job.id.slice(0, 8)}`,
-                    });
-                  }
-                  setQuantHandoff({
-                    kind: "backtest-job",
-                    jobId: job.id,
-                    note: `来自研究产出 · ${job.status}`,
-                  });
-                  setActiveView("quant");
-                  setQuantTab("backtest");
-                }}
-                onOpenScriptInWorkbench={(script) => {
-                  const projectId = effectiveResearchProjectId;
-                  if (projectId) {
-                    setQuantContext({
-                      projectId,
-                      workflowRunId: script.workflowRunId ?? workflowRunId,
-                      sourceLabel: script.name,
-                    });
-                  }
-                  setQuantHandoff({
-                    kind: "script-to-workbench",
-                    scriptId: script.id,
-                    projectId,
-                    workflowRunId: script.workflowRunId ?? workflowRunId,
-                    note: `来自研究产出 · ${script.name}`,
-                  });
-                  setActiveView("quant");
-                  setQuantTab("script");
-                }}
-              />
-            </div>
-          </details>
-        </div>
-        ) : null}
-
-        {teamPaneVisible("center") && showInlineTeamRight ? (
-          <div
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="调整右侧策略栏宽度"
-            onMouseDown={onTeamColGutterDown(2)}
-            style={teamStyles.teamColGutter}
-          />
-        ) : null}
-
-        {(() => {
-          const orchestratorPanel = (
-          <OrchestratorChatPanel
-            workflowRunId={workflowRunId}
-            events={displayedLiveFeedEvents}
-            running={running}
-            chatInFlight={orchestratorChatInFlight}
-            completed={selectedWorkflowCompleted}
-            runProgress={runProgress}
-            errorMessage={error}
-            onErrorDismiss={() => setError(null)}
-            hitlMode={teamHitlMode}
-            onHitlModeChange={setTeamHitlMode}
-            agentMode={teamAgentMode}
-            onAgentModeChange={setTeamAgentMode}
-            pendingHitlRequestId={teamPendingHitl?.requestId ?? null}
-            onHitlResolved={(decision) => {
-              setTeamPendingHitl(null);
-              setRunProgress(
-                decision === "approved" ? "已批准，分析师团队继续执行…" : "已拒绝，工作流终止"
-              );
-            }}
-            onWorkflowResumed={() => {
-              setStoppedWorkflowId(null);
-              setRunning(true);
-              setOrchestratorChatInFlight(true);
-              setRunProgress("正在从检查点继续…");
-              setError(null);
-              void refreshWorkflowOptions();
-            }}
-            workflowStatus={
-              authoritativeWorkflowStatus
-            }
-            runtimeSyncState={heartbeatSyncState}
-            runtimeObservedAt={authoritativeStatusObservedAt}
-            composerValue={teamAnalysisContext}
-            onComposerChange={setTeamAnalysisContext}
-            fsWorkspaceId={activeFsWorkspaceId}
-            onSend={(message) => {
-              // 唯一执行入口：交给 Orchestrator 自主判断（答 / 派单 / 全队）。
-              void handleOrchestratorChat(message ? { message } : undefined);
-            }}
-            onInject={async (content) => {
-              const wf = workflowRunId.trim();
-              if (!wf) throw new Error("请先选择工作流");
-              pushUserEcho(content);
-              pendingFollowUpsRef.current.push(content);
-              /**
-               * 广播（targetRole=null）：团队跑动时 orchestrator 不跑 react-loop（只一次规划调用），
-               * 真正在跑 loop 的是各分析师 slot——由它们在下一轮 reason 前 drain 并采纳。
-               * Core 路径额外靠 pendingFollowUpsRef 在 final 后自动续跑。
-               */
-              try {
-                const res = await injectWorkflowMessage(wf, content, null);
-                return Math.max(res.queued, pendingFollowUpsRef.current.length);
-              } catch {
-                return pendingFollowUpsRef.current.length;
-              }
-            }}
-            onInterrupt={async () => {
-              const wf = workflowRunId.trim();
-              if (!wf) throw new Error("请先选择工作流");
-              // 乐观空闲：按钮立刻反馈，不等后端 cancel 回包
-              pendingFollowUpsRef.current = [];
-              setStoppedWorkflowId(wf);
-              setOrchestratorChatInFlight(false);
-              setRunning(false);
-              setRunProgress("");
-              setActiveRationale(null);
-              setOrchestratorStreamEvents((prev) => {
-                const open = new Map<string, StepStreamEvent>();
-                for (const ev of prev) {
-                  const id = String(
-                    ev.payload.toolCallId ?? `${ev.runId}:${ev.stepIndex}`
+                events={displayedLiveFeedEvents}
+                running={running}
+                chatInFlight={orchestratorChatInFlight}
+                completed={selectedWorkflowCompleted}
+                runProgress={runProgress}
+                errorMessage={error}
+                onErrorDismiss={() => setError(null)}
+                hitlMode={teamHitlMode}
+                onHitlModeChange={setTeamHitlMode}
+                agentMode={teamAgentMode}
+                onAgentModeChange={setTeamAgentMode}
+                pendingHitlRequestId={teamPendingHitl?.requestId ?? null}
+                onHitlResolved={(decision) => {
+                  setTeamPendingHitl(null);
+                  setRunProgress(
+                    decision === "approved" ? "已批准，分析师团队继续执行…" : "已拒绝，工作流终止"
                   );
-                  if (ev.type === "tool_call_start") open.set(id, ev);
-                  if (ev.type === "tool_call_end") open.delete(id);
-                }
-                if (open.size === 0) return prev;
-                const now = Date.now();
-                return [
-                  ...prev,
-                  ...[...open.entries()].map(([id, start]) => ({
-                    ...start,
-                    type: "tool_call_end" as const,
-                    ts: now,
-                    payload: { ...start.payload, toolCallId: id, status: "cancelled" },
-                  })),
-                ];
-              });
-              try {
-                const interrupted = await interruptWorkflow(wf);
-                // Stop 与已自然结束的竞态：不要把 completed/failed 误标成“已停止”。
-                if (interrupted.status !== "cancelled") {
-                  setStoppedWorkflowId((current) => (current === wf ? null : current));
-                  throw new Error(`工作流已处于 ${interrupted.status}，未执行停止操作`);
-                }
-                void loadTeamGraph({ preserveSelection: true });
-                void refreshWorkflowOptions();
-              } catch (error) {
-                setStoppedWorkflowId((current) => current === wf ? null : current);
-                throw error;
-              }
-            }}
-            plan={teamPlan}
-            planSegments={teamPlanSegments}
-            onExecutePlan={() => {
-              const approvedMessage =
-                "计划已确认。请严格按照当前 workflow 已保存的计划开始执行，持续更新每一步状态，并在完成后给出证据、结论和未完成项。";
-              setTeamAgentMode("goal");
-              void handleOrchestratorChat({
-                message: approvedMessage,
-                agentMode: "goal",
-              });
-            }}
-            onGoalAction={(action) => {
-              const wf = workflowRunId.trim();
-              if (!wf) return;
-              void (async () => {
-                try {
-                  let text: string | undefined;
-                  if (action === "edit") {
-                    text =
-                      window
-                        .prompt(
-                          "编辑 Goal（结果、约束和完成标准）",
-                          teamPlan?.goal?.text ?? ""
-                        )
-                        ?.trim() || undefined;
-                    if (!text) return;
+                }}
+                onWorkflowResumed={() => {
+                  setStoppedWorkflowId(null);
+                  setRunning(true);
+                  setOrchestratorChatInFlight(true);
+                  setRunProgress("正在从检查点继续…");
+                  setError(null);
+                  void refreshWorkflowOptions();
+                }}
+                workflowStatus={authoritativeWorkflowStatus}
+                runtimeSyncState={heartbeatSyncState}
+                runtimeObservedAt={authoritativeStatusObservedAt}
+                composerValue={teamAnalysisContext}
+                onComposerChange={setTeamAnalysisContext}
+                fsWorkspaceId={activeFsWorkspaceId}
+                onSend={(message) => {
+                  // 唯一执行入口：交给 Orchestrator 自主判断（答 / 派单 / 全队）。
+                  void handleOrchestratorChat(message ? { message } : undefined);
+                }}
+                onInject={async (content) => {
+                  const wf = workflowRunId.trim();
+                  if (!wf) throw new Error("请先选择工作流");
+                  pushUserEcho(content);
+                  pendingFollowUpsRef.current.push(content);
+                  /**
+                   * 广播（targetRole=null）：团队跑动时 orchestrator 不跑 react-loop（只一次规划调用），
+                   * 真正在跑 loop 的是各分析师 slot——由它们在下一轮 reason 前 drain 并采纳。
+                   * Core 路径额外靠 pendingFollowUpsRef 在 final 后自动续跑。
+                   */
+                  try {
+                    const res = await injectWorkflowMessage(wf, content, null);
+                    return Math.max(res.queued, pendingFollowUpsRef.current.length);
+                  } catch {
+                    return pendingFollowUpsRef.current.length;
                   }
-                  const result = await updateWorkflowGoal(wf, {
-                    action,
-                    ...(text ? { text } : {}),
+                }}
+                onInterrupt={async () => {
+                  const wf = workflowRunId.trim();
+                  if (!wf) throw new Error("请先选择工作流");
+                  // 乐观空闲：按钮立刻反馈，不等后端 cancel 回包
+                  pendingFollowUpsRef.current = [];
+                  setStoppedWorkflowId(wf);
+                  setOrchestratorChatInFlight(false);
+                  setRunning(false);
+                  setRunProgress("");
+                  setActiveRationale(null);
+                  setOrchestratorStreamEvents((prev) => {
+                    const open = new Map<string, StepStreamEvent>();
+                    for (const ev of prev) {
+                      const id = String(ev.payload.toolCallId ?? `${ev.runId}:${ev.stepIndex}`);
+                      if (ev.type === "tool_call_start") open.set(id, ev);
+                      if (ev.type === "tool_call_end") open.delete(id);
+                    }
+                    if (open.size === 0) return prev;
+                    const now = Date.now();
+                    return [
+                      ...prev,
+                      ...[...open.entries()].map(([id, start]) => ({
+                        ...start,
+                        type: "tool_call_end" as const,
+                        ts: now,
+                        payload: { ...start.payload, toolCallId: id, status: "cancelled" },
+                      })),
+                    ];
                   });
-                  if (result.data) {
-                    setTeamPlanSegments((prev) =>
-                      upsertPlanSegment(prev, result.data!, result.data!.updatedAt ?? new Date().toISOString())
-                    );
+                  try {
+                    const interrupted = await interruptWorkflow(wf);
+                    // Stop 与已自然结束的竞态：不要把 completed/failed 误标成“已停止”。
+                    if (interrupted.status !== "cancelled") {
+                      setStoppedWorkflowId((current) => (current === wf ? null : current));
+                      throw new Error(`工作流已处于 ${interrupted.status}，未执行停止操作`);
+                    }
+                    void loadTeamGraph({ preserveSelection: true });
+                    void refreshWorkflowOptions();
+                  } catch (error) {
+                    setStoppedWorkflowId((current) => (current === wf ? null : current));
+                    throw error;
                   }
-                  if (action === "resume") {
-                    setTeamAgentMode("goal");
-                    await handleOrchestratorChat({
-                      message: "请从当前 Goal 的已保存计划和进度继续执行，直到满足完成标准。",
-                      agentMode: "goal",
-                      preserveGoal: true,
-                    });
-                  } else if (action === "pause") {
-                    setRunProgress("Goal 已暂停");
-                    setOrchestratorChatInFlight(false);
-                  } else if (action === "clear") {
-                    setRunProgress("");
-                  }
-                } catch (e) {
-                  setError(`Goal 操作失败：${(e as Error).message}`);
+                }}
+                plan={teamPlan}
+                planSegments={teamPlanSegments}
+                onExecutePlan={() => {
+                  const approvedMessage =
+                    "计划已确认。请严格按照当前 workflow 已保存的计划开始执行，持续更新每一步状态，并在完成后给出证据、结论和未完成项。";
+                  setTeamAgentMode("goal");
+                  void handleOrchestratorChat({
+                    message: approvedMessage,
+                    agentMode: "goal",
+                  });
+                }}
+                onGoalAction={(action) => {
+                  const wf = workflowRunId.trim();
+                  if (!wf) return;
+                  void (async () => {
+                    try {
+                      let text: string | undefined;
+                      if (action === "edit") {
+                        text =
+                          window
+                            .prompt("编辑 Goal（结果、约束和完成标准）", teamPlan?.goal?.text ?? "")
+                            ?.trim() || undefined;
+                        if (!text) return;
+                      }
+                      const result = await updateWorkflowGoal(wf, {
+                        action,
+                        ...(text ? { text } : {}),
+                      });
+                      if (result.data) {
+                        setTeamPlanSegments((prev) =>
+                          upsertPlanSegment(
+                            prev,
+                            result.data!,
+                            result.data!.updatedAt ?? new Date().toISOString()
+                          )
+                        );
+                      }
+                      if (action === "resume") {
+                        setTeamAgentMode("goal");
+                        await handleOrchestratorChat({
+                          message: "请从当前 Goal 的已保存计划和进度继续执行，直到满足完成标准。",
+                          agentMode: "goal",
+                          preserveGoal: true,
+                        });
+                      } else if (action === "pause") {
+                        setRunProgress("Goal 已暂停");
+                        setOrchestratorChatInFlight(false);
+                      } else if (action === "clear") {
+                        setRunProgress("");
+                      }
+                    } catch (e) {
+                      setError(`Goal 操作失败：${(e as Error).message}`);
+                    }
+                  })();
+                }}
+                activity={activeRationale}
+                streamEvents={orchestratorStreamEvents}
+                thinkingText={
+                  running || orchestratorChatInFlight
+                    ? (streamingByRole.orchestrator?.text ?? null)
+                    : null
                 }
-              })();
-            }}
-            activity={activeRationale}
-            streamEvents={orchestratorStreamEvents}
-            thinkingText={
-              running || orchestratorChatInFlight
-                ? streamingByRole.orchestrator?.text ?? null
-                : null
-            }
-            liveReasoning={
-              running || orchestratorChatInFlight || liveReasoning?.status === "streaming"
-                ? liveReasoning
-                : null
-            }
-            subAgentRuns={subAgentRuns}
-            artifacts={teamArtifacts}
-            artifactsLoading={teamArtifactsLoading}
-            artifactsError={teamArtifactsError}
-            onOpenArtifact={(a) => {
-              const target = quantNavigationForArtifact(
-                a,
-                effectiveResearchProjectId,
-                workflowRunId
-              );
-              if (target.context) setQuantContext(target.context);
-              setQuantHandoff(target.handoff);
-              setActiveView("quant");
-              setQuantTab(target.tab);
-            }}
-            sendDisabled={!workflowRunId.trim()}
-            sendDisabledReason={!workflowRunId.trim() ? "请先选择工作流" : ""}
-          />
-          );
+                liveReasoning={
+                  running || orchestratorChatInFlight || liveReasoning?.status === "streaming"
+                    ? liveReasoning
+                    : null
+                }
+                subAgentRuns={subAgentRuns}
+                artifacts={teamArtifacts}
+                artifactsLoading={teamArtifactsLoading}
+                artifactsError={teamArtifactsError}
+                onOpenArtifact={(a) => {
+                  const target = quantNavigationForArtifact(
+                    a,
+                    effectiveResearchProjectId,
+                    workflowRunId
+                  );
+                  if (target.context) setQuantContext(target.context);
+                  setQuantHandoff(target.handoff);
+                  setActiveView("quant");
+                  setQuantTab(target.tab);
+                }}
+                sendDisabled={!workflowRunId.trim()}
+                sendDisabledReason={!workflowRunId.trim() ? "请先选择工作流" : ""}
+              />
+            );
 
-          if (proDockAgent && agentDock?.hostEl) {
-            return createPortal(orchestratorPanel, agentDock.hostEl);
-          }
-          if (!showInlineTeamRight) return null;
-          return (
-        <aside
-          style={{
-            ...teamStyles.rightRail,
-            ...(!teamPaneVisible("center")
-              ? { flex: 1, minWidth: 0, width: "auto" }
-              : { width: teamRightW, flexShrink: 0 }),
-            alignSelf: "stretch",
-          }}
-        >
-          {orchestratorPanel}
-        </aside>
-          );
-        })()}
-      </div>
+            if (proDockAgent && agentDock?.hostEl) {
+              return createPortal(orchestratorPanel, agentDock.hostEl);
+            }
+            if (!showInlineTeamRight) return null;
+            return (
+              <aside
+                style={{
+                  ...teamStyles.rightRail,
+                  ...(!teamPaneVisible("center")
+                    ? { flex: 1, minWidth: 0, width: "auto" }
+                    : { width: teamRightW, flexShrink: 0 }),
+                  alignSelf: "stretch",
+                }}
+              >
+                {orchestratorPanel}
+              </aside>
+            );
+          })()}
+        </div>
       </div>
     </div>
   );
 };
-
 
 const teamStyles: Record<string, CSSProperties> = {
   container: {
@@ -3706,7 +3635,7 @@ const teamStyles: Record<string, CSSProperties> = {
     background: "var(--qb-team-left-bg, #252526)",
     borderRight: "1px solid var(--qb-team-shell-border, #2d2d2d)",
     borderRadius: 0,
-    padding: 14,
+    padding: 8,
     /**
      * 外层 flex 列：标题 + 工作区/工作流 Tab 贴顶；
      * 下方内容区 flex:1。勿再用 2 行 grid 包整栏——否则 Tab 会占满 1fr，
@@ -3719,32 +3648,13 @@ const teamStyles: Record<string, CSSProperties> = {
     minHeight: 0,
     overflow: "hidden",
   },
-  /** 工作流模式下：设置提示 + 列表的内层 grid */
+  /** 工作流模式：工具条贴顶，列表吃满剩余高度。 */
   leftRailWorkflowPane: {
     flex: 1,
     minHeight: 0,
-    display: "grid",
-    gridTemplateRows: "auto minmax(180px, 1fr)",
+    display: "flex",
+    flexDirection: "column",
     overflow: "hidden",
-  },
-  /**
-   * 上半「设置区」：研究范围 / 标的 / 提示表单。
-   */
-  leftRailSettings: {
-    minHeight: 0,
-    overflowY: "auto",
-    paddingRight: 4,
-    paddingBottom: 8,
-  },
-  /**
-   * 下半「工作流」滚动容器。
-   */
-  leftRailWorkflows: {
-    minHeight: 0,
-    overflowY: "auto",
-    paddingRight: 4,
-    paddingTop: 8,
-    borderTop: "1px solid var(--qb-team-shell-border, #2d2d32)",
   },
   centerCol: {
     flex: 1,
@@ -3771,7 +3681,8 @@ const teamStyles: Record<string, CSSProperties> = {
     background: "var(--qb-team-run-footer-bg, rgba(255, 255, 255, 0.02))",
     margin: 0,
     borderRadius: 0,
-    maxHeight: "55%",
+    /** 产出区保持为底部 dock，最多占 42%，避免运行流被压到不可读。 */
+    maxHeight: "42%",
     overflow: "auto",
   },
   runControlsSummary: {
@@ -3903,7 +3814,13 @@ const teamStyles: Record<string, CSSProperties> = {
     fontFamily: "inherit",
   },
   row: { display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 12 },
-  configRow: { display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 14 },
+  configRow: {
+    display: "flex",
+    gap: 12,
+    alignItems: "flex-end",
+    flexWrap: "wrap",
+    marginBottom: 14,
+  },
   field: { display: "flex", flexDirection: "column", gap: 4, flex: 1, minWidth: 160 },
   label: { fontSize: 12, color: "var(--qb-team-meta, #a1a1aa)" },
   input: {
@@ -4005,7 +3922,11 @@ const teamStyles: Record<string, CSSProperties> = {
   },
   groupBlock: { marginBottom: 16 },
   groupTitle: { fontSize: 14, fontWeight: 600, marginBottom: 8 },
-  memberGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 8 },
+  memberGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+    gap: 8,
+  },
   memberCard: {
     background: "var(--qb-team-member-bg, #18181b)",
     border: "1px solid var(--qb-team-input-border, #27272a)",
@@ -4027,7 +3948,12 @@ const teamStyles: Record<string, CSSProperties> = {
     width: "fit-content",
   },
   memberEmpty: { color: "var(--qb-team-member-tag-fg, #52525b)", fontSize: 12 },
-  empty: { color: "var(--qb-team-member-tag-fg, #52525b)", fontSize: 13, textAlign: "center", padding: 30 },
+  empty: {
+    color: "var(--qb-team-member-tag-fg, #52525b)",
+    fontSize: 13,
+    textAlign: "center",
+    padding: 30,
+  },
   table: { width: "100%", borderCollapse: "collapse" },
   th: {
     textAlign: "left",
@@ -4044,146 +3970,39 @@ const teamStyles: Record<string, CSSProperties> = {
   },
 };
 
-/**
- * 工作流列表样式：单独抽出避免与 teamStyles 中其它共用样式互相污染。
- * 设计目标：
- *   - 列表容器有固定 maxHeight + overflow，避免一旦工作流多起来把左栏撑爆
- *   - 每行 item 是一个"主区按钮 + 末尾操作按钮组"的两段式布局
- *   - 选中态用左侧的紫色色条 + 背景变化突出，区别于 hover
- */
-const workflowListStyles: Record<string, CSSProperties> = {
-  list: {
-    border: "1px solid var(--qb-team-input-border, #27272a)",
-    borderRadius: 8,
-    background: "var(--qb-team-input-bg, #111114)",
-    padding: 4,
-    display: "flex",
-    flexDirection: "column",
-    gap: 6,
-    /**
-     * 不再设 maxHeight：列表跟随父级 leftRailWorkflows 一起滚动，
-     * 避免「外层 + 内层」两个滚动条同时存在导致 thumb 卡顿、视觉上左栏满是滚动条。
-     */
-    /**
-     * 禁止水平方向溢出滚动：之前长标题（如 "研究团队·单标的·AAPL·2026/5/25 18:23:38"）
-     * 会把卡片撑宽、状态徽章被推到视野外，必须拖动横向滚动条才能看到。
-     * 现在状态徽章已移到标题行最前面，再加一层兜底保险。
-     */
-    overflowX: "hidden",
-  },
-  empty: {
-    padding: "16px 12px",
-    textAlign: "center",
-    fontSize: 12,
-    color: "var(--qb-team-meta, #71717a)",
-    lineHeight: 1.5,
-  },
-  group: { display: "flex", flexDirection: "column", gap: 4 },
-  groupHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: "4px 6px",
-    fontSize: 10,
-    fontWeight: 600,
-    letterSpacing: "0.04em",
-    color: "var(--qb-team-meta, #a1a1aa)",
-    textTransform: "uppercase" as const,
-    background: "var(--qb-team-table-row-border, #1a1a1d)",
-    borderRadius: 4,
-  },
-  groupCount: {
-    background: "rgba(255,255,255,0.06)",
-    borderRadius: 8,
-    padding: "0 6px",
-    fontSize: 10,
-  },
-  item: {
-    /**
-     * 改为纵向布局：上方是文字（标题 + 元信息），下方是操作按钮行。
-     * 之前用左右两段式时，操作按钮列会以"按钮内容宽度"占用空间，
-     * 在左栏宽度只有 ~268px 时，按钮区压占了标题行导致文字被遮挡。
-     */
-    display: "flex",
-    flexDirection: "column" as const,
-    gap: 6,
-    padding: "8px 10px",
-    // Avoid mixing border shorthand with borderColor / borderLeftColor on select.
-    borderTopWidth: 1,
-    borderRightWidth: 1,
-    borderBottomWidth: 1,
-    borderLeftWidth: 3,
-    borderStyle: "solid",
-    borderTopColor: "transparent",
-    borderRightColor: "transparent",
-    borderBottomColor: "transparent",
-    borderLeftColor: "transparent",
-    borderRadius: 6,
-    background: "transparent",
-    minWidth: 0,
-  },
-  itemSelected: {
-    background: "var(--qb-team-screener-btn-active-bg, #221838)",
-    borderTopColor: "var(--qb-team-screener-btn-active-border, #7c3aed)",
-    borderRightColor: "var(--qb-team-screener-btn-active-border, #7c3aed)",
-    borderBottomColor: "var(--qb-team-screener-btn-active-border, #7c3aed)",
-    borderLeftColor: "var(--qb-team-screener-btn-active-border, #7c3aed)",
-  },
-  /** 主区按钮：撑满一行，display:block 让内部 flex 子元素自由排列。 */
-  itemMain: {
-    width: "100%",
-    minWidth: 0,
-    border: "none",
-    background: "transparent",
-    color: "var(--qb-team-input-fg, #e4e4e7)",
-    textAlign: "left" as const,
-    cursor: "pointer",
-    padding: 0,
-    display: "flex",
-    flexDirection: "column" as const,
-    gap: 3,
-  },
-  itemTitleRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
-    fontSize: 12,
-    fontWeight: 500,
-    minWidth: 0,
-  },
-  itemTitle: {
-    flex: 1,
-    minWidth: 0,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap" as const,
-  },
-  itemMeta: {
-    display: "flex",
-    flexWrap: "wrap" as const,
-    gap: 8,
-    fontSize: 10.5,
-    color: "var(--qb-team-meta, #71717a)",
-    minWidth: 0,
-  },
-  itemId: {
-    fontSize: 10,
-    color: "var(--qb-team-meta, #a1a1aa)",
-  },
-  /** 操作按钮行：横向、右对齐，紧贴卡片底部，不再与文字争空间。 */
-  itemActions: {
-    display: "flex",
-    flexDirection: "row" as const,
-    gap: 6,
-    justifyContent: "flex-end",
-    alignItems: "center",
-    paddingTop: 2,
-    borderTop: "1px dashed var(--qb-team-table-row-border, #27272a)",
-  },
-  actionBtn: {
-    fontSize: 11,
-    padding: "3px 10px",
-    minWidth: 0,
-    lineHeight: 1.4,
-  },
-};
+function formatWorkflowListTime(iso: string): string {
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return "";
+  const now = new Date();
+  const mm = d.getMonth() + 1;
+  const dd = d.getDate();
+  const hh = String(d.getHours()).padStart(2, "0");
+  const min = String(d.getMinutes()).padStart(2, "0");
+  if (d.getFullYear() !== now.getFullYear()) return `${d.getFullYear()}/${mm}/${dd}`;
+  return `${mm}/${dd} ${hh}:${min}`;
+}
+
+function workflowListTitle(goal: string, id: string): string {
+  const cleaned = goal.replace(/^研究团队\s*[·•]\s*/, "").trim();
+  return cleaned || `(无标题) ${id.slice(0, 8)}`;
+}
+
+function workflowStatusDot(status: string): { color: string; label: string } {
+  switch (status) {
+    case "running":
+      return { color: "#22c55e", label: "运行中" };
+    case "failed":
+      return { color: "#f87171", label: "失败" };
+    case "cancelled":
+      return { color: "#71717a", label: "已取消" };
+    case "completed":
+      return { color: "#60a5fa", label: "已完成" };
+    case "awaiting_approval":
+      return { color: "#fbbf24", label: "待审批" };
+    case "pending":
+    case "queued":
+      return { color: "#a1a1aa", label: "排队" };
+    default:
+      return { color: "#71717a", label: status || "未知" };
+  }
+}

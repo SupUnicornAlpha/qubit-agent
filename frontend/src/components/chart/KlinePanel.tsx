@@ -441,19 +441,18 @@ export const KlinePanel: FC<{
     setError(null);
     setKlinesError(null);
     try {
-      const [res, control] = await Promise.all([
-        getKlines({
-          symbol: spec.symbol.trim(),
-          exchange: spec.exchange.trim() || undefined,
-          timeframe: spec.timeframe,
-          limit: spec.limit,
-        }),
-        listMarketDataSources().catch(() => null),
-      ]);
-      if (control) {
-        setSourceRows(control.data);
-        setReadiness(control.readiness);
-      }
+      const res = await getKlines({
+        symbol: spec.symbol.trim(),
+        exchange: spec.exchange.trim() || undefined,
+        timeframe: spec.timeframe,
+        limit: spec.limit,
+      });
+      void listMarketDataSources()
+        .then((control) => {
+          setSourceRows(control.data);
+          setReadiness(control.readiness);
+        })
+        .catch(() => undefined);
       if (!res.ok || !Array.isArray(res.data)) {
         const wrapped = parseKlinesApiError(res);
         if (wrapped) {

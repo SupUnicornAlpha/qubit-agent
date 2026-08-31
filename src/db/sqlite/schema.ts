@@ -3083,9 +3083,13 @@ export const componentEvalRun = sqliteTable(
     workflowRunId: text("workflow_run_id").references(() => workflowRun.id, {
       onDelete: "set null",
     }),
-    componentKind: text("component_kind", { enum: ["agent", "prompt", "tool", "model"] }).notNull(),
+    componentKind: text("component_kind", {
+      enum: ["agent", "prompt", "tool", "model", "skill", "data_source", "harness"],
+    }).notNull(),
     componentId: text("component_id").notNull(),
     versionId: text("version_id").notNull(),
+    /** Immutable benchmark suite/dataset/config fingerprint; missing legacy rows never promote. */
+    comparisonCohortId: text("comparison_cohort_id"),
     evalKind: text("eval_kind", { enum: ["offline", "shadow", "paper"] }).notNull(),
     sampleSize: integer("sample_size").notNull().default(0),
     metricsJson: text("metrics_json", { mode: "json" }).notNull().default("{}"),
@@ -3099,6 +3103,7 @@ export const componentEvalRun = sqliteTable(
       table.projectId,
       table.componentKind,
       table.componentId,
+      table.comparisonCohortId,
       table.createdAt
     ),
   ]

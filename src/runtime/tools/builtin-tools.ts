@@ -22,6 +22,7 @@ import { MEMORY_HANDLERS } from "./memory-handlers";
 import { PRIME_MEMORY_HANDLERS } from "./prime-memory-handlers";
 import { REPORTING_HANDLERS } from "./reporting-handlers";
 import { RESEARCH_THESIS_HANDLERS } from "./research-thesis-handlers";
+import { SIGNAL_FUSION_HANDLERS } from "./signal-fusion-handlers";
 import { SKILL_HANDLERS } from "./skill-handlers";
 import { STRATEGY_EXECUTION_HANDLERS } from "./strategy-execution-handlers";
 import { resolveConnectorForTool } from "./tool-routes";
@@ -34,6 +35,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
   ...ORCHESTRATION_HANDLERS,
   ...MARKET_ANALYSIS_HANDLERS,
   ...RESEARCH_THESIS_HANDLERS,
+  ...SIGNAL_FUSION_HANDLERS,
   ...MEMORY_HANDLERS,
   ...PRIME_MEMORY_HANDLERS,
   ...SKILL_HANDLERS,

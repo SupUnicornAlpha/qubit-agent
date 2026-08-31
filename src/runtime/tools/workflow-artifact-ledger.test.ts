@@ -7,6 +7,7 @@ import { listHarnessTraceProjection } from "../harness/event-ledger";
 import {
   classifyWorkflowArtifactKind,
   findWorkflowArtifactByFingerprint,
+  findWorkflowArtifactById,
   listWorkflowArtifactsForContext,
   recordWorkflowDataGap,
   recordWorkflowToolArtifact,
@@ -49,7 +50,30 @@ describe("workflow artifact ledger", () => {
       "FundamentalSnapshot"
     );
     expect(classifyWorkflowArtifactKind("recommendation.record")).toBe("Recommendation");
+    expect(classifyWorkflowArtifactKind("research.framework.assess")).toBe(
+      "InvestmentFrameworkAssessment"
+    );
     expect(classifyWorkflowArtifactKind("factor.register")).toBeNull();
+  });
+
+  test("binds framework assessment evidence to its producing workflow only", async () => {
+    const written = await recordWorkflowToolArtifact({
+      workflowRunId: workflowId,
+      fingerprint: "framework-assessment-aapl",
+      toolName: "research.framework.assess",
+      result: {
+        thesisId: "thesis_framework_aapl",
+        snapshotId: "mkt_snapshot_framework_aapl",
+        assessments: [{ symbol: "AAPL", status: "qualified" }],
+      },
+    });
+    expect(written?.kind).toBe("InvestmentFrameworkAssessment");
+    if (!written) throw new Error("expected framework artifact");
+    expect(await findWorkflowArtifactById(workflowId, written.id)).toMatchObject({
+      kind: "InvestmentFrameworkAssessment",
+      payload: { thesisId: "thesis_framework_aapl" },
+    });
+    expect(await findWorkflowArtifactById(`${workflowId}-other`, written.id)).toBeNull();
   });
 
   test("persists a workflow fact and makes it reusable across a new execution run", async () => {

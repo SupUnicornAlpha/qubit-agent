@@ -1,7 +1,7 @@
 [
   {
     "id": "def-orchestrator",
-    "version": "4.3.1",
+    "version": "4.3.2",
     "display_name": "编排器",
     "execution_kind": "primary",
     "labels": [
@@ -159,7 +159,7 @@
   },
   {
     "id": "def-backtest",
-    "version": "4.14.0",
+    "version": "4.15.0",
     "display_name": "回测",
     "execution_kind": "subagent",
     "labels": [
@@ -199,7 +199,7 @@
   },
   {
     "id": "def-walk-forward-validator",
-    "version": "1.6.0",
+    "version": "1.7.0",
     "display_name": "Walk-Forward 验证师",
     "execution_kind": "subagent",
     "labels": [

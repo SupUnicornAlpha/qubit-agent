@@ -71,9 +71,10 @@ let stubBacktestProvider: StubBacktestProvider;
 
 async function seedDatasetSnapshot(
   symbols: string[],
-  options: { includeHoldoutBars?: boolean } = {}
+  options: { includeHoldoutBars?: boolean; timeframe?: string } = {}
 ): Promise<string> {
   const includeHoldoutBars = options.includeHoldoutBars ?? true;
+  const timeframe = options.timeframe ?? "1d";
   const barsByInstrument = Object.fromEntries(
     symbols.map((symbol, offset) => [
       `US:${symbol}`,
@@ -119,7 +120,7 @@ async function seedDatasetSnapshot(
     window: { start: "2026-01-01", end: includeHoldoutBars ? "2026-02-28" : "2026-01-31" },
     sources: [{ provider: "test_dataset", feed: "fixture", upstreamFamily: "fixture" }],
     barsByInstrument,
-    timeframe: "1d",
+    timeframe,
     limit: includeHoldoutBars ? 3 : 2,
   });
   const root = join(defaultDataDir(), "market-snapshots");
@@ -167,6 +168,24 @@ beforeAll(async () => {
 });
 
 describe("BacktestJobService", () => {
+  test("preserves an explicitly requested intraday timeframe through snapshot binding", async () => {
+    const intradaySnapshotId = await seedDatasetSnapshot(["INTRA"], { timeframe: "5m" });
+    const job = await backtestJobService.submitAndRun({
+      strategyVersionId,
+      signals: { kind: "factor_score", expr: "close", lang: "qlib_expr" },
+      symbols: ["INTRA"],
+      datasetSnapshotId: intradaySnapshotId,
+      timeframe: "5m",
+      startDate: "2026-01-01",
+      endDate: "2026-02-28",
+      providerKey: "stub_bt",
+    });
+
+    expect(job.status).toBe("completed");
+    expect(job.config.dataset.timeframe).toBe("5m");
+    expect(stubBacktestProvider.lastRequest?.dataset.timeframe).toBe("5m");
+  });
+
   test("submit + run：状态机 pending → running → completed，结果落 performanceJson", async () => {
     const job = await backtestJobService.submit({
       strategyVersionId,

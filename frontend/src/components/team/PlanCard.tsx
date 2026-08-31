@@ -6,7 +6,12 @@
  */
 import type { CSSProperties } from "react";
 import { useState } from "react";
-import type { AgentControlMode } from "../../api/types";
+import type {
+  AgentControlMode,
+  ResearchPhase,
+  ResearchPhaseState,
+  ResearchPhaseStatus,
+} from "../../api/types";
 
 export type PlanStepStatus = "pending" | "in_progress" | "done" | "skipped";
 
@@ -15,10 +20,13 @@ export interface PlanStep {
   title: string;
   status: PlanStepStatus;
   note?: string;
+  researchPhase?: ResearchPhase;
 }
 
 export interface OrchestratorPlan {
   mode?: AgentControlMode;
+  researchPhase?: ResearchPhase;
+  researchPhases?: ResearchPhaseState[];
   goal?: {
     text?: string;
     status?: "planning" | "executing" | "paused" | "completed" | "blocked" | "cleared";
@@ -45,6 +53,23 @@ const STATUS_COLOR: Record<PlanStepStatus, string> = {
   in_progress: "#38bdf8",
   done: "#4ade80",
   skipped: "#a1a1aa",
+};
+
+const RESEARCH_PHASE_LABEL: Record<ResearchPhase, string> = {
+  scope: "范围",
+  plan: "计划",
+  evidence: "证据",
+  analysis: "分析",
+  validation: "验证",
+  delivery: "交付",
+};
+
+const RESEARCH_PHASE_STATUS_LABEL: Record<ResearchPhaseStatus, string> = {
+  pending: "待开始",
+  active: "进行中",
+  completed: "已完成",
+  revisited: "回访",
+  blocked: "受阻",
 };
 
 export function PlanCard({
@@ -115,12 +140,24 @@ export function PlanCard({
         </span>
         {segmentLabel ? <span style={styles.segmentBadge}>{segmentLabel}</span> : null}
         <span style={styles.modeBadge}>{modeLabel}</span>
+        {plan?.researchPhase ? (
+          <span style={styles.phaseBadge}>研究·{RESEARCH_PHASE_LABEL[plan.researchPhase]}</span>
+        ) : null}
         {headerLabel}（{done}/{steps.length}）
         {mode === "goal" ? <span style={styles.goalStatus}>{goalStatusLabel}</span> : null}
         {!open && active ? <span style={styles.activeHint}>· {active.title}</span> : null}
       </button>
       {open ? (
         <>
+          {plan?.researchPhases && plan.researchPhases.length > 0 ? (
+            <div style={styles.phaseStates}>
+              {plan.researchPhases.map((state) => (
+                <span key={state.phase} style={styles.phaseState}>
+                  {RESEARCH_PHASE_LABEL[state.phase]}·{RESEARCH_PHASE_STATUS_LABEL[state.status]}
+                </span>
+              ))}
+            </div>
+          ) : null}
           {mode === "goal" && plan?.goal?.text ? (
             <div style={styles.goalText}>{plan.goal.text}</div>
           ) : null}
@@ -148,6 +185,9 @@ export function PlanCard({
                   }}
                 >
                   {s.title}
+                  {s.researchPhase ? (
+                    <span style={styles.stepPhase}> · {RESEARCH_PHASE_LABEL[s.researchPhase]}</span>
+                  ) : null}
                   {s.note ? <span style={styles.note}> — {s.note}</span> : null}
                 </span>
               </li>
@@ -253,6 +293,28 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 9,
     letterSpacing: "0.08em",
   },
+  phaseBadge: {
+    padding: "1px 5px",
+    borderRadius: 4,
+    border: "1px solid rgba(74,222,128,0.38)",
+    color: "#86efac",
+    fontSize: 9,
+    letterSpacing: "0.04em",
+    fontWeight: 500,
+  },
+  phaseStates: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 4,
+    padding: "0 10px 7px 32px",
+  },
+  phaseState: {
+    padding: "2px 5px",
+    borderRadius: 4,
+    border: "1px solid rgba(161,161,170,0.28)",
+    color: "#a1a1aa",
+    fontSize: 9,
+  },
   goalStatus: {
     marginLeft: "auto",
     color: "#a5f3fc",
@@ -288,6 +350,7 @@ const styles: Record<string, CSSProperties> = {
   title: { fontSize: 12, color: "#d4d4d8", minWidth: 0 },
   titleDone: { color: "#71717a", textDecoration: "line-through" },
   titleActive: { color: "#e4e4e7", fontWeight: 600 },
+  stepPhase: { color: "#86efac", fontSize: 10, fontWeight: 500 },
   note: { color: "#71717a", fontWeight: 400 },
   actions: {
     display: "flex",

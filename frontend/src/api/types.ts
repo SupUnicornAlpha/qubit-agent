@@ -405,6 +405,14 @@ export interface RecommendationStats {
 
 export type AgentLoopKind = "native" | "claude_cli" | "codex_cli";
 export type AgentControlMode = "agent" | "plan" | "goal" | "ask" | "diagnose";
+export type ResearchPhase = "scope" | "plan" | "evidence" | "analysis" | "validation" | "delivery";
+export type ResearchPhaseStatus = "pending" | "active" | "completed" | "revisited" | "blocked";
+
+export interface ResearchPhaseState {
+  phase: ResearchPhase;
+  status: ResearchPhaseStatus;
+  note?: string;
+}
 
 export interface WorkflowSopStep {
   id: string;
@@ -1162,6 +1170,8 @@ export interface AnalystTeamGraphPayload {
   /** update_plan 的持久化快照；用于刷新/重连后恢复计划卡片。 */
   plan?: {
     mode?: AgentControlMode;
+    researchPhase?: ResearchPhase;
+    researchPhases?: ResearchPhaseState[];
     goal?: {
       text?: string;
       status?: "planning" | "executing" | "completed" | "blocked";
@@ -1173,6 +1183,7 @@ export interface AnalystTeamGraphPayload {
       title: string;
       status: "pending" | "in_progress" | "done" | "skipped";
       note?: string;
+      researchPhase?: ResearchPhase;
     }>;
     updatedAt?: string;
   } | null;

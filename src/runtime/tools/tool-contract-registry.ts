@@ -208,6 +208,26 @@ const MARKET_CONTRACTS: ToolContract[] = [
     lifecycle: "active",
   },
   {
+    name: "discovery.promote",
+    kind: "builtin",
+    category: "research",
+    arity: "one",
+    requiredAfterNormalize: ["job_id", "candidate_id", "name"],
+    normalize: (raw) => ({
+      ...raw,
+      job_id: raw.job_id ?? raw.jobId,
+      candidate_id: raw.candidate_id ?? raw.candidateId,
+    }),
+    errorCodes: {
+      candidate_not_found: "permanent",
+      candidate_has_error_cannot_promote: "permanent",
+      discovery_promote_requires_draft: "permanent",
+    },
+    timeoutClass: "light",
+    sideEffects: "write",
+    lifecycle: "active",
+  },
+  {
     name: "backtest.run",
     kind: "builtin",
     category: "backtest",

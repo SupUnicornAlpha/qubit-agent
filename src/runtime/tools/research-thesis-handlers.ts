@@ -1,14 +1,15 @@
+import { createHash } from "node:crypto";
+import { recommendationService } from "../effect-validation/recommendation-service";
 import {
-  ensureForecastBookForThesis,
   ForecastHoldingResultSchema,
+  ensureForecastBookForThesis,
   getForecastBookEntry,
   linkForecastBookEntry,
 } from "../market/contracts/forecast-book-service";
+import { assessInvestmentFrameworkCandidate } from "../market/contracts/investment-framework-assessment";
+import { ResearchFrameworkSchema } from "../market/contracts/market-event-v2";
 import { getOrCreateMarketSnapshot } from "../market/contracts/market-snapshot-service";
 import { constructTargetPortfolio } from "../market/contracts/portfolio-construct-service";
-import { ResearchFrameworkSchema } from "../market/contracts/market-event-v2";
-import { assessInvestmentFrameworkCandidate } from "../market/contracts/investment-framework-assessment";
-import { recommendationService } from "../effect-validation/recommendation-service";
 import {
   getResearchThesisById,
   isResearchThesisWriteEnabled,
@@ -25,6 +26,7 @@ import {
 import { applyToolContract, isToolContractEnabled } from "./tool-contract";
 import { getToolContract } from "./tool-contract-registry";
 import type { BuiltinToolHandler } from "./types";
+import { recordWorkflowToolArtifact } from "./workflow-artifact-ledger";
 
 function unboundSnapshotId(symbols: string[], direction: string): string {
   const key = [...symbols].sort().join("|") || "unknown";
@@ -155,9 +157,7 @@ export const RESEARCH_THESIS_HANDLERS: Record<string, BuiltinToolHandler> = {
       }
     }
 
-    const frameworkCard = parseFrameworkCard(
-      canonical.frameworkCard ?? canonical.framework_card
-    );
+    const frameworkCard = parseFrameworkCard(canonical.frameworkCard ?? canonical.framework_card);
     const explicitThesisId =
       typeof canonical.thesisId === "string"
         ? canonical.thesisId
@@ -203,13 +203,14 @@ export const RESEARCH_THESIS_HANDLERS: Record<string, BuiltinToolHandler> = {
     };
   },
 
-  "research.framework.assess": async (_ctx, params) => {
+  "research.framework.assess": async (ctx, params) => {
     const thesisId = String(params.thesisId ?? params.thesis_id ?? "").trim();
     if (!thesisId) throw new Error("research.framework.assess: thesis_id is required");
     const record = await getResearchThesisById(thesisId);
     if (!record?.thesis.frameworkCard) {
       throw new Error("research.framework.assess: thesis_framework_card_missing");
     }
+    const frameworkCard = record.thesis.frameworkCard;
     const candidatesRaw = params.candidates;
     if (!Array.isArray(candidatesRaw) || candidatesRaw.length === 0) {
       throw new Error("research.framework.assess: candidates is required");
@@ -244,7 +245,7 @@ export const RESEARCH_THESIS_HANDLERS: Record<string, BuiltinToolHandler> = {
           ];
         })
       );
-      return assessInvestmentFrameworkCandidate(record.thesis.frameworkCard!, {
+      return assessInvestmentFrameworkCandidate(frameworkCard, {
         symbol: String(candidate.symbol ?? "").trim(),
         assetClass: String(candidate.assetClass ?? candidate.asset_class ?? "").trim(),
         market: String(candidate.market ?? "").trim(),
@@ -252,13 +253,39 @@ export const RESEARCH_THESIS_HANDLERS: Record<string, BuiltinToolHandler> = {
         observations,
       });
     });
-    return {
+    const result = {
       thesisId,
-      framework: record.thesis.frameworkCard.framework,
+      snapshotId: record.thesis.snapshotId,
+      framework: frameworkCard.framework,
       assessments,
       qualifiedSymbols: assessments
         .filter((assessment) => assessment.status === "qualified")
         .map((assessment) => assessment.symbol),
+    };
+    const artifact = ctx.workflowId
+      ? await recordWorkflowToolArtifact({
+          workflowRunId: ctx.workflowId,
+          fingerprint: `framework-assessment:${thesisId}:${createHash("sha256")
+            .update(
+              JSON.stringify(
+                assessments.map((assessment) => ({
+                  symbol: assessment.symbol,
+                  status: assessment.status,
+                  score: assessment.score,
+                  coverage: assessment.coverage,
+                }))
+              )
+            )
+            .digest("hex")}`,
+          toolName: "research.framework.assess",
+          result,
+        })
+      : null;
+    return {
+      ...result,
+      assessmentArtifact: artifact
+        ? { id: artifact.id, kind: artifact.kind, fingerprint: artifact.fingerprint }
+        : null,
     };
   },
 

@@ -189,6 +189,19 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
       .set({ executionMode: "live" })
       .where(eq(schema.strategyRuntime.id, runtime.id));
     await expect(startStrategyRuntime(runtime.id, db)).rejects.toThrow(
+      /live_runtime_evidence_missing/
+    );
+    await db
+      .update(schema.strategyRuntime)
+      .set({
+        paramsJson: {
+          orderQty: 5,
+          thesisId: "thesis_runtime_test",
+          snapshotId: "snapshot_validation_fixture",
+        },
+      })
+      .where(eq(schema.strategyRuntime.id, runtime.id));
+    await expect(startStrategyRuntime(runtime.id, db)).rejects.toThrow(
       /live_promotion_gate_blocked/
     );
     const comparisonCohort = { id: "strategy_cohort_0123456789abcdef01234567" };
@@ -261,8 +274,12 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
       },
       pass: true,
     });
+    await expect(
+      strategyPromotionService.assertStrategyVersionLiveEligible(paper.strategyVersionId, db)
+    ).rejects.toThrow("live_promotion_gate_blocked");
     const approved = await strategyPromotionService.approveRuntime(runtime.id, "tester", db);
     expect(approved.liveEligible).toBe(true);
+    await strategyPromotionService.assertStrategyVersionLiveEligible(paper.strategyVersionId, db);
     await startStrategyRuntime(runtime.id, db);
     const runningLive = await db
       .select()
@@ -367,5 +384,29 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
       db
     );
     expect(autoResolved.brokerAccountId).toBe(brokerAccountId);
+  });
+
+  test("live runtime creation requires persisted thesis evidence", async () => {
+    const sqlite = new Database(":memory:");
+    sqlite.exec("PRAGMA foreign_keys=ON;");
+    const db = drizzle(sqlite, { schema });
+    const migrationsFolder = join(
+      dirname(fileURLToPath(import.meta.url)),
+      "../../db/sqlite/migrations"
+    );
+    await migrate(db, { migrationsFolder });
+    const { scriptId } = await seedBase(db);
+
+    await expect(
+      createStrategyRuntime(
+        {
+          strategyScriptId: scriptId,
+          market: "US",
+          symbol: "TEST",
+          executionMode: "live",
+        },
+        db
+      )
+    ).rejects.toThrow(/live_runtime_evidence_missing/);
   });
 });

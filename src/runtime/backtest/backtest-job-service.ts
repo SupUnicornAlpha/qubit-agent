@@ -29,16 +29,16 @@ import { factorService } from "../factor/factor-service";
 import { providerResolver } from "../provider/resolver";
 import type {
   BacktestCosts,
+  BacktestInstrumentSpec,
   BacktestProvider,
   BacktestRequest,
   BacktestResult,
   BacktestSignalSpec,
-  BacktestInstrumentSpec,
   ProviderScope,
 } from "../provider/types";
 import { strategyComposer } from "../strategy/strategy-composer";
 import { compactBacktestResult } from "../util/compact-heavy-json";
-import { bindBacktestDataset, DatasetSnapshotBindingError } from "./dataset-snapshot-binding";
+import { DatasetSnapshotBindingError, bindBacktestDataset } from "./dataset-snapshot-binding";
 
 // ─── 类型 ───────────────────────────────────────────────────────────────────
 
@@ -50,6 +50,8 @@ export interface BacktestJobSubmitInput {
   compositionId?: string;
   signals?: BacktestSignalSpec;
   symbols: string[];
+  /** Must exactly match the immutable market snapshot's bar frequency. */
+  timeframe?: string;
   /** 冻结的合约元数据；期权/期货/永续回测必须显式提供。 */
   instruments?: Record<string, BacktestInstrumentSpec>;
   universe?: string;
@@ -174,7 +176,8 @@ export class BacktestJobService {
     const signals = await this.resolveSignals(input);
 
     // 3) 在提交时绑定不可变快照。Provider 只能消费此数据，不能运行时重新取行情。
-    let dataset;
+    const timeframe = input.timeframe?.trim() || "1d";
+    let dataset: BacktestRequest["dataset"];
     try {
       dataset = await bindBacktestDataset({
         ...(input.datasetSnapshotId ? { snapshotId: input.datasetSnapshotId } : {}),
@@ -182,7 +185,7 @@ export class BacktestJobService {
         ...(input.benchmark ? { benchmark: input.benchmark } : {}),
         startDate: input.startDate,
         endDate: input.endDate,
-        timeframe: "1d",
+        timeframe,
       });
     } catch (error) {
       if (error instanceof DatasetSnapshotBindingError) {
@@ -320,7 +323,8 @@ export class BacktestJobService {
     if (filter.status) conds.push(eq(backtestRunTable.status, filter.status));
     if (filter.workflowRunId) conds.push(eq(backtestRunTable.workflowRunId, filter.workflowRunId));
 
-    const withProject = Boolean(filter.projectId);
+    const projectId = filter.projectId?.trim();
+    const withProject = Boolean(projectId);
     const rows = withProject
       ? await db
           .select({ run: backtestRunTable })
@@ -331,7 +335,7 @@ export class BacktestJobService {
           )
           .innerJoin(strategyTable, eq(strategyTable.id, strategyVersionTable.strategyId))
           .where(
-            and(eq(strategyTable.projectId, filter.projectId!), ...(conds.length > 0 ? conds : []))
+            and(eq(strategyTable.projectId, projectId ?? ""), ...(conds.length > 0 ? conds : []))
           )
           .orderBy(desc(backtestRunTable.startedAt))
           .then((items) => items.map((item) => item.run))
@@ -388,7 +392,8 @@ export class BacktestJobService {
       );
     }
     if (factors.length === 1) {
-      const factor = factors[0]!;
+      const factor = factors[0];
+      if (!factor) throw new BacktestJobError("validation_failed", "composition_factor_missing");
       return { kind: "factor_score", factorId: factor.id, expr: factor.expr, lang: "qlib_expr" };
     }
     const weights = await this.resolveCompositionWeights(

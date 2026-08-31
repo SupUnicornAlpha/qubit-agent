@@ -23,8 +23,8 @@ import { getDb } from "../../db/sqlite/client";
 import { discoveryJob as discoveryJobTable } from "../../db/sqlite/schema";
 import { generateGbmTicks } from "../../util/synthesize-gbm";
 import {
-  benjaminiHochberg,
   type FalseDiscoveryRateResult,
+  benjaminiHochberg,
 } from "../backtest/statistical-validation-report";
 import { type FactorRecord, factorService } from "../factor/factor-service";
 import { queryBarsRange } from "../market/klines-query";
@@ -111,10 +111,7 @@ export interface DiscoveryCandidate {
     status: "shortlisted" | "rejected";
     shortlistRank?: number;
     reasons: Array<
-      | "evaluation_error"
-      | "statistical_evidence_missing"
-      | "fdr_not_passed"
-      | "ranked_below_top_k"
+      "evaluation_error" | "statistical_evidence_missing" | "fdr_not_passed" | "ranked_below_top_k"
     >;
   };
 }
@@ -248,9 +245,12 @@ export class DiscoveryService {
               Number((a.metrics.adjustedPValue ?? 1) <= 0.05) || b.metrics.score - a.metrics.score
         );
       const shortlisted = ranked.slice(0, job.input.topK ?? 10);
-      const shortlistIndex = new Map(shortlisted.map((candidate, index) => [candidate.id, index + 1]));
+      const shortlistIndex = new Map(
+        shortlisted.map((candidate, index) => [candidate.id, index + 1])
+      );
       const candidateAudit = evidenceBound.map((candidate) => {
         const shortlistRank = shortlistIndex.get(candidate.id);
+        const adjustedPValue = candidate.metrics.adjustedPValue;
         if (shortlistRank !== undefined) {
           return {
             ...candidate,
@@ -258,9 +258,9 @@ export class DiscoveryService {
               status: "shortlisted" as const,
               shortlistRank,
               reasons:
-                (candidate.metrics.adjustedPValue ?? null) === null
+                adjustedPValue === undefined || adjustedPValue === null
                   ? (["statistical_evidence_missing"] as const)
-                  : candidate.metrics.adjustedPValue! <= 0.05
+                  : adjustedPValue <= 0.05
                     ? ([] as const)
                     : (["fdr_not_passed"] as const),
             },
@@ -280,16 +280,25 @@ export class DiscoveryService {
           discoveryDecision: {
             status: "rejected" as const,
             reasons:
-              (candidate.metrics.adjustedPValue ?? null) === null
+              adjustedPValue === undefined || adjustedPValue === null
                 ? (["statistical_evidence_missing", "ranked_below_top_k"] as const)
-                : candidate.metrics.adjustedPValue! > 0.05
+                : adjustedPValue > 0.05
                   ? (["fdr_not_passed", "ranked_below_top_k"] as const)
                   : (["ranked_below_top_k"] as const),
           },
         };
       });
       const shortlistedById = new Map(candidateAudit.map((candidate) => [candidate.id, candidate]));
-      const candidatesForPromotion = shortlisted.map((candidate) => shortlistedById.get(candidate.id)!);
+      const candidatesForPromotion = shortlisted.map((candidate) => {
+        const audited = shortlistedById.get(candidate.id);
+        if (!audited) {
+          throw new DiscoveryError(
+            "execute_failed",
+            `shortlisted_candidate_missing_audit:${candidate.id}`
+          );
+        }
+        return audited;
+      });
 
       await db
         .update(discoveryJobTable)
@@ -339,7 +348,8 @@ export class DiscoveryService {
   /**
    * 把候选表达式 promote 成 project 下的正式 FactorRecord
    *
-   * 默认 category 走候选自带（GP 候选无 → 用 "momentum"），status=draft（用户可后续 active）。
+   * 默认 category 走候选自带（GP 候选无 → 用 "momentum"）。Discovery 只能创建
+   * draft；成为 active 必须单独走 factor.activate 的合同与冻结数据闸门。
    */
   async promoteCandidate(
     jobId: string,
@@ -367,6 +377,12 @@ export class DiscoveryService {
     if (!body.name?.trim()) {
       throw new DiscoveryError("validation_failed", "name_required");
     }
+    if (body.status !== undefined && body.status !== "draft") {
+      throw new DiscoveryError(
+        "validation_failed",
+        "discovery_promote_requires_draft: use factor.activate after contract and frozen-snapshot evaluation"
+      );
+    }
     const category =
       body.category ?? (cand.category as FactorRecord["category"] | undefined) ?? "momentum";
 
@@ -377,7 +393,7 @@ export class DiscoveryService {
       expr: cand.expr,
       lang: "qlib_expr",
       horizon: job.input.horizonDays ?? 5,
-      status: body.status ?? "draft",
+      status: "draft",
       providerKey: "qlib_expr",
       /**
        * 把发起 discovery 时记下的 workflow_run.id 透传给 factor，使前端「研究产出」
@@ -402,6 +418,8 @@ export class DiscoveryService {
           rankIc: cand.metrics.rankIc,
           score: cand.metrics.score,
           sampleSize: cand.metrics.sampleSize,
+          candidateTrials: job.candidateAudit.length,
+          multipleTesting: job.multipleTesting,
         },
       },
     });
@@ -555,11 +573,18 @@ export class DiscoveryService {
         for (let i = 0; i + horizon < ent.closes.length; i++) {
           const v = factorSeries[i];
           if (typeof v !== "number" || !Number.isFinite(v)) continue;
-          const a = ent.closes[i]!;
-          const b = ent.closes[i + horizon]!;
-          if (a > 0 && Number.isFinite(b)) {
-            values.push({ symbol: sym, date: ent.dates[i]!, value: v });
-            futures.push({ symbol: sym, date: ent.dates[i]!, value: b / a - 1 });
+          const a = ent.closes[i];
+          const b = ent.closes[i + horizon];
+          const date = ent.dates[i];
+          if (
+            typeof a === "number" &&
+            typeof b === "number" &&
+            date &&
+            a > 0 &&
+            Number.isFinite(b)
+          ) {
+            values.push({ symbol: sym, date, value: v });
+            futures.push({ symbol: sym, date, value: b / a - 1 });
           }
         }
       }
@@ -614,12 +639,11 @@ export class DiscoveryService {
   }
 
   private rowToRecord(r: typeof discoveryJobTable.$inferSelect): DiscoveryJobRecord {
-    const output =
-      (r.outputJson as {
-        candidates?: DiscoveryCandidate[];
-        candidateAudit?: DiscoveryCandidate[];
-        multipleTesting?: FalseDiscoveryRateResult;
-      }) ?? { candidates: [] };
+    const output = (r.outputJson as {
+      candidates?: DiscoveryCandidate[];
+      candidateAudit?: DiscoveryCandidate[];
+      multipleTesting?: FalseDiscoveryRateResult;
+    }) ?? { candidates: [] };
     return {
       id: r.id,
       projectId: r.projectId,

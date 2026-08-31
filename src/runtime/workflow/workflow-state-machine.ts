@@ -173,6 +173,16 @@ export async function setWorkflowState(
    */
   if (TERMINAL_STATUSES.has(toStatus)) {
     try {
+      const { releaseWorkflowHarnessLease } = await import("../harness/workflow-harness");
+      await releaseWorkflowHarnessLease(workflowId);
+    } catch (error) {
+      console.warn(
+        `[workflow-state] harness lease release failed (workflowId=${workflowId}): ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+    try {
       await db
         .update(agentInstance)
         .set({ status: "stopped", endedAt: new Date().toISOString() })

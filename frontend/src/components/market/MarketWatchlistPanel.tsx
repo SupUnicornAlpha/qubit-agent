@@ -19,7 +19,9 @@ type SparklineState = Record<string, SparklineData | undefined>;
 const SPARKLINE_TIMEFRAME = "5m";
 /** 小 K 线只需最近 16 根；limit 24 留余量 */
 const SPARKLINE_LIMIT = 24;
-const SPARKLINE_DEFER_MS = 600;
+/** 列表必须先画出来；sparkline 是装饰，等首屏自选返回后再拉。 */
+const SPARKLINE_DEFER_MS = 1_200;
+const WATCHLIST_CACHE_KEY = "qubit-market-watchlist-v1";
 const quoteKey = (entry: Pick<MarketWatchlistEntry, "symbol" | "exchange">) =>
   `${entry.symbol}:${entry.exchange}`;
 const positionKey = (entry: MarketWatchlistEntry) =>
@@ -74,6 +76,37 @@ function MiniCandles({ bars, symbol }: { bars: KlineBar[] | undefined; symbol: s
 
 type MarketFilter = { id: string; label: string; count: number };
 
+function readCachedWatchlist(): MarketWatchlistSnapshot | null {
+  try {
+    const raw = localStorage.getItem(WATCHLIST_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<MarketWatchlistSnapshot>;
+    if (!Array.isArray(parsed.watchlistEntries)) return null;
+    const watchlistEntries = parsed.watchlistEntries;
+    return {
+      entries: watchlistEntries,
+      watchlistEntries,
+      positionEntries: [],
+      connectedAccounts: 0,
+      brokerErrors: [],
+      brokerWatchlistSupported: false,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function persistWatchlistCache(snapshot: MarketWatchlistSnapshot): void {
+  try {
+    localStorage.setItem(
+      WATCHLIST_CACHE_KEY,
+      JSON.stringify({ watchlistEntries: snapshot.watchlistEntries }),
+    );
+  } catch {
+    /* quota */
+  }
+}
+
 function marketFilterFor(entry: Pick<MarketWatchlistEntry, "exchange">): Omit<MarketFilter, "count"> {
   const exchange = entry.exchange.trim().toUpperCase();
   if (["OPRA", "OCC"].includes(exchange)) return { id: "options-us", label: "美股期权" };
@@ -93,7 +126,9 @@ function marketFilterFor(entry: Pick<MarketWatchlistEntry, "exchange">): Omit<Ma
 export const MarketWatchlistPanel: FC<{ compact?: boolean }> = ({ compact = false }) => {
   const setChartSpec = useAppStore((s) => s.setChartSpec);
   const requestChartReload = useAppStore((s) => s.requestChartReload);
-  const [snapshot, setSnapshot] = useState<MarketWatchlistSnapshot | null>(null);
+  const [snapshot, setSnapshot] = useState<MarketWatchlistSnapshot | null>(() =>
+    typeof localStorage === "undefined" ? null : readCachedWatchlist(),
+  );
   const [quotes, setQuotes] = useState<QuoteState>({});
   const [symbol, setSymbol] = useState("");
   const [exchange, setExchange] = useState("");
@@ -108,12 +143,15 @@ export const MarketWatchlistPanel: FC<{ compact?: boolean }> = ({ compact = fals
   const [pendingRemoval, setPendingRemoval] = useState<MarketWatchlistEntry | null>(null);
   const [sparklines, setSparklines] = useState<SparklineState>({});
   const [sparklineRefresh, setSparklineRefresh] = useState(0);
+  const [listReady, setListReady] = useState(false);
 
-  const load = useCallback(async (opts?: { includePositions?: boolean }) => {
+  const load = useCallback(async (opts?: { includePositions?: boolean; mutating?: boolean }) => {
     const includePositions = opts?.includePositions ?? false;
-    setBusy(true);
+    if (opts?.mutating) setBusy(true);
     try {
       const next = await getMarketWatchlist({ includePositions });
+      persistWatchlistCache(next);
+      setListReady(true);
       setSnapshot((previous) => {
         if (!includePositions && previous?.positionEntries.length) {
           return {
@@ -192,13 +230,14 @@ export const MarketWatchlistPanel: FC<{ compact?: boolean }> = ({ compact = fals
 
   useEffect(() => {
     const uniqueEntries = [...new Map([...watchlistEntries, ...positionEntries].map((entry) => [quoteKey(entry), entry])).values()];
-    if (!uniqueEntries.length) {
-      setSparklines({});
+    if (!listReady || !uniqueEntries.length) {
+      if (!uniqueEntries.length) setSparklines({});
       return;
     }
     let cancelled = false;
     const timer = window.setTimeout(() => {
       void getKlinesBatch({
+        fast: true,
         requests: uniqueEntries.slice(0, 30).map((entry) => ({
           symbol: entry.symbol,
           exchange: entry.exchange,
@@ -222,7 +261,7 @@ export const MarketWatchlistPanel: FC<{ compact?: boolean }> = ({ compact = fals
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [sparklineEntriesKey, sparklineRefresh, watchlistEntries, positionEntries]);
+  }, [sparklineEntriesKey, sparklineRefresh, watchlistEntries, positionEntries, listReady]);
 
   const subscriptionKey = visibleEntries
     .slice(0, 30)
@@ -230,15 +269,19 @@ export const MarketWatchlistPanel: FC<{ compact?: boolean }> = ({ compact = fals
     .join("|");
 
   useEffect(() => {
-    const subscribedEntries = visibleEntries.slice(0, 30);
+    const subscribedEntries = listReady ? visibleEntries.slice(0, 30) : [];
     if (subscribedEntries.length === 0) {
-      setStreamStatus("closed");
+      setStreamStatus(listReady ? "closed" : "connecting");
       setStreamSource(null);
       setStreamTransport("push");
       return;
     }
     return subscribeMarketQuoteStream({
-      subscriptions: subscribedEntries.map((entry) => ({ symbol: entry.symbol, exchange: entry.exchange })),
+      subscriptions: subscribedEntries.map((entry) => ({
+        symbol: entry.symbol,
+        exchange: entry.exchange,
+        channels: ["quote"],
+      })),
       onConnectionChange: setStreamStatus,
       onEvent: (event) => {
         if (event.kind !== "quote" || !event.data || typeof event.data !== "object") return;
@@ -265,13 +308,15 @@ export const MarketWatchlistPanel: FC<{ compact?: boolean }> = ({ compact = fals
         setLastQuoteAt(event.emittedAt);
       },
     });
-  }, [subscriptionKey, visibleEntries]);
+  }, [subscriptionKey, visibleEntries, listReady]);
 
   const add = async () => {
     if (!symbol.trim()) return;
     setBusy(true);
     try {
       const next = await addMarketWatchlistItem({ symbol, ...(exchange.trim() ? { exchange } : {}) });
+      persistWatchlistCache(next);
+      setListReady(true);
       setSnapshot((previous) => ({
         ...next,
         ...(previous?.positionEntries.length
@@ -298,6 +343,7 @@ export const MarketWatchlistPanel: FC<{ compact?: boolean }> = ({ compact = fals
     setBusy(true);
     try {
       const next = await removeMarketWatchlistItem(entry.symbol, entry.exchange || undefined);
+      persistWatchlistCache(next);
       setSnapshot(next);
       setPendingRemoval(null);
       setSparklineRefresh((value) => value + 1);
@@ -350,7 +396,7 @@ export const MarketWatchlistPanel: FC<{ compact?: boolean }> = ({ compact = fals
                     ? "未订阅"
                     : "连接中"}
           </span>
-          <button type="button" className="qb-btn-secondary qb-btn--compact" onClick={() => void load({ includePositions: activeTab === "positions" })} disabled={busy} title="刷新自选、K 线和券商持仓">
+          <button type="button" className="qb-btn-secondary qb-btn--compact" onClick={() => void load({ includePositions: activeTab === "positions" })} disabled={busy} title="刷新自选列表（K 线在后台补）">
             <RefreshCw size={14} aria-hidden /> 刷新
           </button>
         </div>
@@ -429,7 +475,11 @@ export const MarketWatchlistPanel: FC<{ compact?: boolean }> = ({ compact = fals
             </article>
           );
         })}
-        {!busy && entries.length === 0 ? <div style={styles.empty}>{activeTab === "watchlist" ? "还没有自选。添加代码后，它会成为你和 Agent 共用的行情上下文。" : snapshot?.connectedAccounts ? "券商暂未返回非零持仓；点击刷新可再次读取。" : "配置券商并启用账户后，持仓将自动从券商读取。"}</div> : null}
+        {!snapshot ? (
+          <div style={styles.empty}>正在读取本机自选…</div>
+        ) : !busy && entries.length === 0 ? (
+          <div style={styles.empty}>{activeTab === "watchlist" ? "还没有自选。添加代码后，它会成为你和 Agent 共用的行情上下文。" : snapshot?.connectedAccounts ? "券商暂未返回非零持仓；点击刷新可再次读取。" : "配置券商并启用账户后，持仓将自动从券商读取。"}</div>
+        ) : null}
         {!busy && entries.length > 0 && visibleEntries.length === 0 ? <div style={styles.empty}>当前市场没有{activeTab === "watchlist" ? "自选" : "持仓"}标的。切换到“全部”或选择其他市场。</div> : null}
       </div>
       <footer style={styles.footer}>{activeTab === "watchlist" ? <>自选由本机维护：Agent 可用 <code>market.ide_subscription.get</code> 读取。</> : <>持仓为只读券商数据：刷新时通过已配置的券商账户重新读取，不会写回券商。</>}</footer>

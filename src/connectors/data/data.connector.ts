@@ -97,6 +97,11 @@ export interface FetchBarsParams {
   adjustType?: "none" | "pre" | "post";
   /** ReAct harness 注入；用于 workflow 级 K 线缓存 */
   workflowRunId?: string;
+  /**
+   * 自选 sparkline 等非关键路径：只试计划里的第一个源，空结果返回 [] 而不是
+   * 再去 Yahoo / yfinance 瀑布（那会把本机自选列表接口拖成几十秒）。
+   */
+  bestEffort?: boolean;
 }
 
 export interface BarData {

@@ -8,7 +8,7 @@ import {
   brokerHealthCheck,
   resolveBrokerAccount,
 } from "../../runtime/execution/broker/broker-service";
-import { executeIntentLive, executeIntentPaper } from "../../runtime/reia/intent-engine";
+import { executeIntentPaper } from "../../runtime/reia/intent-engine";
 import { type BrokerProvider, isBrokerProvider } from "../../types/broker";
 import type {
   ConnectorFill,
@@ -87,17 +87,14 @@ export class QubitBrokerConnector extends ExecutionConnector {
       throw new Error(`intent order ${intentOrderId} is not approved (status=${order.status})`);
     }
 
-    const provider = asProvider(intent.metadata?.provider);
-    const accountRef = intent.metadata?.accountRef as string | undefined;
     const paper = intent.metadata?.paper === true || intent.metadata?.executionMode === "paper";
 
-    const result = paper
-      ? await executeIntentPaper({ intentOrderId })
-      : await executeIntentLive({
-          intentOrderId,
-          provider,
-          ...(accountRef ? { accountRef } : {}),
-        });
+    if (!paper) {
+      throw new Error(
+        "legacy_live_execution_retired: use order.create_intent or POST /api/v1/execution/intents for governed live execution"
+      );
+    }
+    const result = await executeIntentPaper({ intentOrderId });
 
     const brokerOrderId =
       "brokerOrderId" in result && result.brokerOrderId

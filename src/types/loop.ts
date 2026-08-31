@@ -54,6 +54,33 @@ export const WorkflowTokenBudgetSchema = z.object({
 
 export type WorkflowTokenBudget = z.infer<typeof WorkflowTokenBudgetSchema>;
 
+/**
+ * Workflow-scoped QUBIT Harness admission. This is deliberately structured
+ * metadata rather than a natural-language classifier: expensive or blocking
+ * verification must never be activated merely because a conversation happens
+ * to mention a formula.
+ */
+/** Shared, workflow-owned Harness mode. The `reason` is audit metadata, never prompt text. */
+export const WorkflowHarnessModeConfigSchema = z.object({
+  mode: z.enum(["off", "advisory", "required"]),
+  reason: z.string().min(1).max(500),
+});
+
+/** Backward-compatible name for callers that only configure math verification. */
+export const WorkflowMathHarnessConfigSchema = WorkflowHarnessModeConfigSchema;
+
+export const WorkflowHarnessConfigSchema = z.object({
+  mathAudit: WorkflowMathHarnessConfigSchema.optional(),
+  /**
+   * Enables the workflow-scoped research-integrity audit composition. `off`
+   * only removes its advisory/audit projection; it cannot weaken Host-side
+   * paper, promotion or live-execution gates.
+   */
+  researchIntegrity: WorkflowHarnessModeConfigSchema.optional(),
+});
+
+export type WorkflowHarnessConfig = z.infer<typeof WorkflowHarnessConfigSchema>;
+
 /** Per-workflow overrides for external CLI loops (stored in workflow_run.loop_options_json). */
 export const LoopOptionsJsonSchema = z
   .object({
@@ -159,6 +186,8 @@ export const LoopOptionsJsonSchema = z
         isolatedAt: z.string(),
       })
       .optional(),
+    /** Optional, workflow-owned capability leases. */
+    harness: WorkflowHarnessConfigSchema.optional(),
   })
   .strip();
 

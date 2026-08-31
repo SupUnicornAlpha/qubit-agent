@@ -18,7 +18,7 @@ import {
   brokerModifyOrder,
 } from "../execution/broker/broker-service";
 import { scanPositionReconciliation } from "../execution/position-reconciliation-service";
-import { executeIntentLive, executeIntentPaper } from "../reia/intent-engine";
+import { executeIntentPaper } from "../reia/intent-engine";
 import { negotiateServerProtocolVersion } from "./mcp-protocol";
 
 function writeMcpMessage(obj: Record<string, unknown>): void {
@@ -223,16 +223,13 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
     case "broker_submit_order": {
       const intentOrderId = String(args.intentOrderId ?? "");
       if (!intentOrderId) throw new Error("intentOrderId is required");
-      const provider = providerFromArgs(args);
-      const accountRef = typeof args.accountRef === "string" ? args.accountRef : undefined;
       const paper = args.paper === true;
-      return paper
-        ? executeIntentPaper({ intentOrderId })
-        : executeIntentLive({
-            intentOrderId,
-            provider,
-            ...(accountRef !== undefined ? { accountRef } : {}),
-          });
+      if (!paper) {
+        throw new Error(
+          "legacy_live_execution_retired: use order.create_intent or POST /api/v1/execution/intents for governed live execution"
+        );
+      }
+      return executeIntentPaper({ intentOrderId });
     }
     case "broker_cancel_order": {
       const provider = providerFromArgs(args);

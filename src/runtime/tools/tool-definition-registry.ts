@@ -34,6 +34,30 @@ const SCHEMAS: Record<string, Record<string, unknown>> = {
       mode: { type: "string", enum: ["agent", "plan", "goal", "ask", "diagnose"] },
       goal: { type: "object" },
       steps: { type: "array", items: { type: "object" }, minItems: 1 },
+      research_phase: {
+        type: "string",
+        enum: ["scope", "plan", "evidence", "analysis", "validation", "delivery"],
+      },
+      research_phases: {
+        type: "array",
+        maxItems: 6,
+        items: {
+          type: "object",
+          properties: {
+            phase: {
+              type: "string",
+              enum: ["scope", "plan", "evidence", "analysis", "validation", "delivery"],
+            },
+            status: {
+              type: "string",
+              enum: ["pending", "active", "completed", "revisited", "blocked"],
+            },
+            note: { type: "string", maxLength: 300 },
+          },
+          required: ["phase", "status"],
+          additionalProperties: false,
+        },
+      },
     },
     required: ["steps"],
     additionalProperties: true,
@@ -160,7 +184,5 @@ export function getRegisteredToolDefinition(name: string): RegisteredToolDefinit
 }
 
 export function getRegisteredToolDefinitions(names: string[]): RegisteredToolDefinition[] {
-  return [...new Set(names.filter((name) => name.trim()))]
-    .sort()
-    .map(getRegisteredToolDefinition);
+  return [...new Set(names.filter((name) => name.trim()))].sort().map(getRegisteredToolDefinition);
 }

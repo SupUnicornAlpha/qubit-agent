@@ -14,6 +14,7 @@ export type WorkflowArtifactKind =
   | "FactorInventory"
   | "Recommendation"
   | "ResearchThesis"
+  | "InvestmentFrameworkAssessment"
   | "MathDerivation"
   | "DataGap";
 
@@ -45,6 +46,7 @@ export function classifyWorkflowArtifactKind(toolName: string): WorkflowArtifact
   if (/news|sentiment|filing/.test(tool)) return "NewsEvidence";
   if (/factor\.list|list_factors/.test(tool)) return "FactorInventory";
   if (/recommendation\.record|record_recommendation/.test(tool)) return "Recommendation";
+  if (/framework\.assess/.test(tool)) return "InvestmentFrameworkAssessment";
   if (/thesis\.write|research\.thesis/.test(tool)) return "ResearchThesis";
   if (/math\.derivation\.verify/.test(tool)) return "MathDerivation";
   return null;
@@ -231,6 +233,51 @@ export async function findWorkflowArtifactByFingerprint(
     // they simply cannot reuse cross-run evidence until migration completes.
     console.warn(
       `[workflow-artifact-ledger] lookup skipped: ${error instanceof Error ? error.message : String(error)}`
+    );
+    return null;
+  }
+}
+
+/** Read a durable artifact only inside its producing workflow scope. */
+export async function findWorkflowArtifactById(
+  workflowRunId: string,
+  artifactId: string,
+  now = new Date()
+): Promise<WorkflowArtifact | null> {
+  try {
+    const db = await getDb();
+    const rows = await db
+      .select()
+      .from(workflowArtifactLedger)
+      .where(
+        and(
+          eq(workflowArtifactLedger.id, artifactId),
+          eq(workflowArtifactLedger.workflowRunId, workflowRunId),
+          or(
+            isNull(workflowArtifactLedger.expiresAt),
+            gt(workflowArtifactLedger.expiresAt, now.toISOString())
+          )
+        )
+      )
+      .limit(1);
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      id: row.id,
+      workflowRunId: row.workflowRunId,
+      fingerprint: row.fingerprint,
+      kind: row.artifactKind as WorkflowArtifactKind,
+      toolName: row.toolName,
+      payload: asRecord(row.payloadJson),
+      producerTaskId: row.producerTaskId,
+      asOf: row.asOf,
+      freshnessMs: row.freshnessMs,
+      expiresAt: row.expiresAt,
+      createdAt: row.createdAt,
+    };
+  } catch (error) {
+    console.warn(
+      `[workflow-artifact-ledger] id lookup skipped: ${error instanceof Error ? error.message : String(error)}`
     );
     return null;
   }

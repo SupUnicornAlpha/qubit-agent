@@ -131,6 +131,8 @@ export async function queryKlines(params: {
   limit?: number;
   /** Point-in-time anchor for the requested window (ms since epoch). */
   asOfMs?: number;
+  /** Sparkline / preview: one upstream attempt, empty instead of fallback waterfall. */
+  bestEffort?: boolean;
 }): Promise<{ bars: BarData[]; meta: KlinesMeta; error?: KlinesErrorPayload }> {
   const symbol = params.symbol?.trim();
   if (!symbol) {
@@ -195,6 +197,7 @@ export async function queryKlines(params: {
     period,
     startDate,
     endDate,
+    ...(params.bestEffort ? { bestEffort: true } : {}),
   };
 
   const queryKey = buildKlinesQueryKey({

@@ -38,6 +38,8 @@ function hasAny(tools: readonly string[], candidates: readonly string[]): boolea
 export function selectHarnessShadowProfiles(input: {
   role: RuntimeAgentDefinition["role"];
   legacyTools: readonly string[];
+  /** Workflow-scoped, non-tool profiles admitted by the Host. */
+  additionalProfileIds?: readonly string[];
 }): string[] {
   const tools = canonicalize(input.legacyTools);
   const profiles: string[] = [];
@@ -58,7 +60,13 @@ export function selectHarnessShadowProfiles(input: {
   if (hasAny(tools, ["run_backtest", "backtest.run"])) profiles.push("paper-trading");
   if (hasAny(tools, ["math.derivation.verify"])) profiles.push("math-audit");
   if (hasAny(tools, ["shell.exec", "cli_agent.run"])) profiles.push("developer-assist");
-  return [...new Set([...profiles, ...getActiveHarnessPackageProfiles()])].sort();
+  return [
+    ...new Set([
+      ...profiles,
+      ...(input.additionalProfileIds ?? []),
+      ...getActiveHarnessPackageProfiles(),
+    ]),
+  ].sort();
 }
 
 /**
@@ -69,6 +77,7 @@ export function selectHarnessShadowProfiles(input: {
 export function buildHarnessToolSurfaceShadow(input: {
   role: RuntimeAgentDefinition["role"];
   legacyTools: readonly string[];
+  additionalProfileIds?: readonly string[];
 }): HarnessToolSurfaceShadow {
   const legacyTools = canonicalize(input.legacyTools);
   const requestedProfileIds = selectHarnessShadowProfiles(input);
