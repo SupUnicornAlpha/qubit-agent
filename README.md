@@ -2,7 +2,7 @@
 
 [English](README.en.md)
 
-**量化研究多 Agent 平台** — 对话驱动研究、多分析师协作、真实行情治理、量化工坊、回测与实盘编排，一体化交付。
+**对话驱动的量化研究 Agent 平台** — Rust Core 负责 Agent 执行，Bun Host 提供 API、SSE、持久化与外部能力，覆盖研究、量化工程、回测和交易治理。
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Bun](https://img.shields.io/badge/runtime-Bun-000000?logo=bun&logoColor=white)](https://bun.sh)
@@ -12,15 +12,15 @@
 
 ## 简介
 
-QUBIT 面向量化研究与交易自动化场景，将 **自研 ReAct Agent Runtime**、**A2A 多角色分析师团队**、**MCP 工具市场** 与 **可视化 IDE** 整合在同一工作台中。你可以：
+QUBIT 面向量化研究与交易自动化场景，将 **Rust Prime Core**、**对话式 Agent 调度**、**MCP / Connector 工具** 与 **可视化 IDE** 整合在同一工作台中。你可以：
 
-- 在对话中带入 K 线上下文，由编排 Agent 调度研究 / 回测 / 风控等角色
-- 在「研究团队」画布上勾选参与分析的 Agent，查看拓扑与 A2A 协作轨迹
+- 通过统一对话入口提出研究问题，由 Orchestrator 按需调用 `agent.invoke` / `call_team_*`
+- 在「研究团队」工作台查看 Agent 分析流、工具调用、行情证据、结构化指标和研究产物
 - 在量化工坊中查看 Agent 产出的因子 / 策略 / 脚本，编辑指标与 Python 信号并运行回测
 - 在行情中心维护本机自选、读取已配置券商的持仓；自选可直接作为 Agent 研究上下文
 - 覆盖股票、期权、期货与加密资产的行情研究路径，并通过行情源控制面管理 Wind、Tushare、EastMoney、AKShare、yfinance、Yahoo 与 Binance
 - 将已选策略绑定到匹配的标的与 K 线周期，在图表上发起回测并回写信号 / 成交标记
-- 用内置 10 场景 benchmark 对 Agent 的终态、证据、工具治理、研究产物和执行能力持续评分
+- 用内置 benchmark 对 Agent 的终态、证据、工具治理、研究产物和执行能力持续评分
 - 通过配置中心接入 MCP（Anthropic Registry）、Skills（SkillsMP）与券商（Futu / IB）
 
 数据与策略脚本默认落在本地 `~/.quant-agent`（可通过 `QUBIT_DATA_DIR` 修改）。
@@ -47,9 +47,9 @@ QUBIT 面向量化研究与交易自动化场景，将 **自研 ReAct Agent Runt
 
 ![AAPL 期权链：策略工具、Greeks 与到期情景](docs/screenshots/market-options-chain.png)
 
-### 研究团队 · 多 Agent 拓扑
+### 研究团队 · Agent 研究工作台
 
-按工作流组织研究任务；可配置分析师编组、启动团队分析，并在右侧绑定策略与代码（落盘至工作流目录）。
+研究通过对话启动；工作台实时展示分析流、研究阶段、行情证据、工具指标、Agent 调用链和因子 / 策略 / 回测产物。拓扑图作为执行图查看，而不是研究首屏。
 
 ![研究团队：成员目录、拓扑画布与策略代码](docs/screenshots/research-team.png)
 
@@ -65,9 +65,9 @@ QUBIT 面向量化研究与交易自动化场景，将 **自研 ReAct Agent Runt
 
 | 模块 | 说明 |
 |------|------|
-| **Agent Runtime** | 自研 `perceive → reason → act → observe` ReAct 状态机；工具语义校验、失败域熔断、有限重试与 Sandbox 审计 |
-| **工作模式** | Agent：直接回答 / 按需执行；Plan：只生成可验证计划并硬性禁用业务工具；Goal：自主规划、执行、验证并经完成门禁闭环 |
-| **研究团队** | Orchestrator 定向调度专家，A2A 结果回收、超时隔离、辩论 / 风控与信号融合 |
+| **Agent Core** | Rust Prime Core 负责 turn loop、工具准入、HITL、计划、Goal 门禁、`agent.invoke` 和交付；Bun 只保留 Host / 外部能力 |
+| **工作模式** | Agent：通用自主执行；Plan：只生成可验证计划；Goal：自主规划、执行、验证并经完成门禁闭环；Ask / Diagnose：问答与诊断 |
+| **研究工作流** | 统一通过对话 turn 启动；Orchestrator 按需调用 Agent / subagent，研究阶段和 Plan 状态由后端下发 |
 | **行情治理** | 按市场 / 周期 / 凭证 / 健康度 / 优先级路由；成功率、P95、最近错误、熔断与 fallback 可观测 |
 | **自选与持仓** | 本机自选由 `market.ide_subscription.get` 统一读取；每行支持日内迷你 K 线、涨跌与删除确认。配置券商后可从券商桥读取持仓 |
 | **多资产行情** | 股票 / ETF、OPRA 美股期权链、期货连续合约与 Binance 现货在同一行情工作台呈现；具体可用市场取决于已配置的数据源 |
@@ -82,12 +82,12 @@ QUBIT 面向量化研究与交易自动化场景，将 **自研 ReAct Agent Runt
 | **实盘与券商** | Intent → 风控 → 执行；Futu / IB（mock / sandbox / live） |
 | **桌面端** | Tauri v2 客户端，生产 Sidecar、迁移 / seed、DuckDB 原生依赖与后端 readiness 状态 |
 
-三种工作模式与研究团队角色的推理引擎配置相互独立；团队角色仍可选择自研进程内
-ReAct、Claude CLI 或 Codex CLI。Plan 的“只规划”由运行时工具权限强制执行；Goal 把目标文本
+Agent 工作模式与执行类型（primary / subagent / reactor）正交。Plan 的“只规划”由 Rust Core
+工具权限强制执行；Goal 把目标文本
 作为完成条件，持久化结果、约束、验证标准和证据，并支持暂停、恢复、编辑与清除。计划仍有
 `pending / in_progress` 步骤、全部步骤被跳过或缺少实际执行证据时不会提前结束。旧工作流中的
 `experience: native / coding_agent` 会分别兼容映射为 Agent / Goal，新接口统一使用
-`loopOptionsJson.agentMode`。
+`loopOptionsJson.agentMode`。研究阶段字段是研究工作流的可选扩展；普通 Agent 不需要维护研究阶段。
 
 ### 自选、持仓与研究数据边界
 
@@ -102,8 +102,9 @@ ReAct、Claude CLI 或 Codex CLI。Plan 的“只规划”由运行时工具权�
 
 | 层级 | 技术 |
 |------|------|
-| 后端 | Bun · TypeScript · Hono · Drizzle · SQLite · DuckDB · Rust Prime Core |
-| 编排 | 自研 ReAct 状态机 · A2A 消息总线 · OpenAI SDK（多 Provider） |
+| 后端 Host | Bun · TypeScript · Hono · Drizzle · SQLite · DuckDB |
+| Agent Core | Rust Prime Core · turn loop · tool gate · HITL · Agent invoke |
+| 编排与外部能力 | 对话 turn · A2A 审计总线 · MCP · Connector · OpenAI-compatible Provider |
 | 前端 | Vite · React · Zustand |
 | 桌面 | Tauri v2（Rust） |
 | 连接器 | Python（`python_connectors/`，行情 / 券商桥） |
@@ -147,11 +148,14 @@ bun run seed:agent-definitions    # 预置 Agent 定义与研究团队编组
 bun run seed:recommended-mcp      # 推荐 MCP（数学 / 金融等）
 ```
 
-### 2. 后端（必启）
+### 2. 后端（必启，默认自动启动 Rust Core）
 
-自研 ReAct / A2A runtime + Hono HTTP/WS 服务，默认 **http://localhost:3000**。
+启动 Bun Host + Hono HTTP/WS 服务，默认 **http://localhost:3000**。Bun 默认会自动构建并拉起
+`qubit-app-server` Rust Core，默认 Core 地址为 **http://127.0.0.1:8787**；Rust Core 不健康时
+不会静默回退到旧的 TypeScript Agent Runtime。
 
-**前置条件**：完成步骤 1；如需调用云端大模型，至少配置一个 Provider 的 Key（见下文「[配置](#配置)」）。
+**前置条件**：完成步骤 1；如需调用真实模型，至少在配置中心或 `.qubit/model.json`
+配置一个 Provider（见下文「[配置](#配置)」）。
 
 ```bash
 # 终端 1
@@ -164,10 +168,15 @@ bun run dev
 PORT=3000 HOST=localhost bun run dev
 ```
 
-启动成功后会看到 `Server listening on http://localhost:3000`，并可访问 `GET /api/v1/system/health`。
+启动成功后会看到 Bun Host 和 Rust Core 的启动日志，并可访问：
 
-桌面联调建议使用带 watch 的后端脚本。它复用 Tauri 数据目录，默认监听
-`127.0.0.1:17385`，修改 `src/**` 后会自动重启：
+```bash
+curl http://localhost:3000/api/v1/system/health
+curl http://127.0.0.1:8787/health
+```
+
+桌面联调或需要监听 TypeScript 改动时，使用带 watch 的后端脚本。它复用 Tauri 数据目录，
+默认监听 `127.0.0.1:17385`，修改 `src/**` 后会自动重启：
 
 ```bash
 bun run dev:backend
@@ -189,15 +198,14 @@ bun run dev:frontend
 
 ### 4. 桌面客户端（Tauri v2，可选）
 
-Tauri 仅作为壳，`tauri dev` 会自动启动前端 dev server 并加载 `http://localhost:3041`；
-Debug 构建会由 Tauri 内置逻辑拉起 Bun 后端 fallback，不需要另外启动 `bun run dev`。
-启动前会自动创建一个被 git 忽略的 sidecar 占位文件，满足 Tauri 对 `externalBin` 的开发态校验；
-实际开发后端仍使用源码 watch 模式。
+Tauri 作为桌面壳，`tauri dev` 会自动启动前端 dev server 并加载 `http://localhost:3041`；
+开发态由 Tauri 侧启动 Bun Host，Bun 再管理 Rust Core，不需要另外启动 `bun run dev`。
+启动前会自动创建一个被 git 忽略的 sidecar 占位文件，满足 Tauri 对 `externalBin` 的开发态校验。
 
 **前置条件**：
 - 已安装 Rust（`rustup` 推荐）与平台原生编译工具链
 - 步骤 1 完成依赖与迁移
-- 如果要使用预编译 sidecar，先执行 `bun run build:app`；否则直接使用下面的开发命令即可
+- 开发态不需要预编译 sidecar；生产打包使用 `bun run build:app:release`
 
 ```bash
 # 终端 1
@@ -239,7 +247,7 @@ python broker_http_server.py             # 默认 http://127.0.0.1:18765
 | 场景 | 终端 1 | 终端 2 | 终端 3 |
 |------|--------|--------|--------|
 | 仅 Web 调试 | `bun run dev` | `bun run dev:frontend` | — |
-| 桌面客户端调试 | `bun run dev` | — | `bun run dev:tauri` |
+| 桌面客户端调试 | — | — | `bun run dev:tauri` |
 | 完整链路（含实盘桥） | `bun run dev` | `bun run dev:frontend` | `python broker_http_server.py` |
 
 ### 修改后端代码后什么会发生？
@@ -284,6 +292,10 @@ curl -s http://localhost:17385/api/v1/_meta/build-info | jq
 |------|--------|------|
 | `QUBIT_DATA_DIR` | `~/.quant-agent` | SQLite、Agent Pack、工作流策略落盘目录 |
 | `PORT` / `HOST` | `3000` / `localhost` | 后端监听 |
+| `QUBIT_CORE_BACKEND` | `rust` | Rust Core 后端；`ts` 仅用于紧急兼容，不建议使用 |
+| `QUBIT_RUST_CORE_URL` | `http://127.0.0.1:8787` | Rust Core 地址 |
+| `QUBIT_SKIP_CORE_SPAWN=1` | — | 不由 Bun 自动拉起 Core，适用于手动运行 `qubit-app-server` |
+| `QUBIT_CORE_STRICT=1` | — | Core 不健康时拒绝静默降级 |
 | `SKILLSMP_API_KEY` | — | SkillsMP 搜索配额（可选） |
 | `TOPOLOGY_TASK_TIMEOUT_MS` | `120000` | Orchestrator 等待单个专家 A2A 结果的上限（10s–300s） |
 
@@ -333,15 +345,41 @@ curl -s http://localhost:3000/api/v1/market/readiness | jq
 
 ```
 qubit-agent/
-├── src/                 # 后端 API、自研 ReAct / A2A runtime、路由
+├── crates/
+│   ├── qubit-protocol/  # Rust Core 与 Host 共用的协议、事件、计划和 RPC 类型
+│   ├── qubit-runtime/   # Agent turn loop、工具准入、HITL、计划和 Agent invoke
+│   ├── qubit-tool-host/ # Rust Core 的工具宿主与外部能力桥
+│   └── qubit-app-server/ # Rust Core HTTP / SSE 服务
+├── src/                 # Bun Host：API、SSE、持久化、MCP、Connector、交易与适配器
+│   ├── routes/          # Hono REST 路由
+│   └── runtime/         # 按 agent / quant / trading / host / evaluation /
+│                        # compatibility 路由的索引与 Host 业务模块
 ├── frontend/            # Web UI（Vite + React）
-├── src-tauri/           # Tauri 桌面壳
-├── python_connectors/   # 行情 / 券商 HTTP 桥
-├── docs/
-│   ├── ARCHITECTURE.md  # 平台架构说明
-│   ├── screenshots/     # README 用图
-│   └── LOOP_DRIVERS.md  # Loop 驱动说明
-└── drizzle/             # 迁移产物
+├── src-tauri/           # Tauri v2 桌面壳
+├── python_connectors/   # 可选行情 / 券商 HTTP 桥
+├── scripts/             # 开发、构建、迁移、测试与 benchmark 脚本
+├── docs/                # 架构、运行时与研究完整性文档
+└── drizzle/             # Drizzle 迁移产物
+```
+
+`src/runtime/` 的一级业务域通过 `index.ts` 统一路由：
+
+| 域 | 责任 |
+|---|---|
+| `agent` | 对话、Agent 调度、A2A、Harness、Plan、Workflow、工具和技能 |
+| `quant` | 因子、策略、筛选、回测、发现与量化评估 |
+| `trading` | REIA、风险、订单执行、模拟盘、交易归因 |
+| `host` | SSE、MCP、行情、外部调用、工作区和平台适配 |
+| `evaluation` | benchmark、readiness、monitor、审计和 lineage |
+| `compatibility` | 旧数据、旧 Loop 和历史路径的兼容出口 |
+
+研究调用统一使用对话接口，不再通过独立的“启动研究”接口：
+
+```text
+POST /api/v1/chat/sessions/:sessionId/turns
+  → Bun Host 持久化会话与工作流
+  → Rust Core 执行 turn / tool / agent.invoke
+  → Bun 投影 SSE、Plan、指标、证据和产物
 ```
 
 ---
@@ -355,9 +393,10 @@ bun test              # 集成测试
 bun run build         # 编译生产后端（含项目约定的 DuckDB external 处理）
 ```
 
-> **执行链路**：自研 ReAct 状态机在 `src/runtime/react/`（`run-react-loop.ts` + `nodes/*`）。
-> Agent 间派发统一走 A2A 消息总线，恢复使用自研 `agent_checkpoint_snapshot`。
-> 已不再依赖 LangGraph 框架。
+> **执行链路**：Agent turn loop、工具准入、HITL、计划和 Agent delegation 在
+> `crates/qubit-runtime/` 的 Rust Core 中执行；Bun `src/runtime/prime/` 负责启动、桥接和
+> 将 Core 活动投影为 workflow / SSE。Bun Host 保留 API、持久化、MCP、Connector、行情、
+> 交易和 UI 适配能力。
 
 ### Agent Benchmark
 
@@ -394,11 +433,13 @@ bun run scripts/agent-readiness-runner.ts \
 <details>
 <summary>展开 REST 端点列表</summary>
 
-- `GET /api/v1/workflows/:id/stream/:runId` — 步骤流
+- `GET /api/v1/system/health` — Bun Host 健康检查
+- `GET /api/v1/workflows/:id/events` — 工作流 SSE 步骤流
+- `GET /api/v1/workflows/:id/stream/:runId` — 指定运行的步骤流
 - `GET /api/v1/agents/definitions` — Agent 定义与草稿
 - `GET /api/v1/chat/sessions` · `POST /api/v1/chat/sessions/:sessionId/turns` — 唯一对话执行入口
 - `GET /api/v1/monitor/sessions/:id/overview` — 会话监控聚合
-- `GET /api/v1/research-artifacts/fusion/:workflowId` — 历史研究产物融合结果
+- `GET /api/v1/research-artifacts/workflow/:workflowId/team-graph` — 研究执行图、Plan 与历史活动
 - `GET /api/v1/market/data-sources` — 行情源能力、健康、延迟、熔断与优先级
 - `POST /api/v1/market/data-sources/health` — 执行真实样本健康检查
 - `GET /api/v1/market/readiness` — 启动行情 readiness gate 状态
