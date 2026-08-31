@@ -6,6 +6,7 @@ import {
   type TraderSessionContext,
   cancelTraderOrder,
   ensureTraderSession,
+  getMarketNewsBrief,
   placeTraderBracketOrder as placeTraderBracketOrderApi,
   placeTraderOrder,
   pollTraderFeed,
@@ -175,6 +176,8 @@ export function useTraderAgentEngine(
   const [lastPollAt, setLastPollAt] = useState<string | null>(null);
   const seenIds = useRef(new Set<string>());
   const sinceRef = useRef(loadSince());
+  const newsRequestRef = useRef<Promise<void> | null>(null);
+  const lastNewsAtRef = useRef(0);
 
   useEffect(() => {
     if (!enabled || !projectId || !sessionId) return;
@@ -211,6 +214,36 @@ export function useTraderAgentEngine(
       !chartSpec.symbol.trim()
     )
       return;
+    if (!newsRequestRef.current && Date.now() - lastNewsAtRef.current >= 60_000) {
+      lastNewsAtRef.current = Date.now();
+      newsRequestRef.current = getMarketNewsBrief({
+        symbol: chartSpec.symbol.trim(),
+        exchange: chartSpec.exchange,
+        limit: 5,
+      })
+        .then((response) => {
+          for (const news of response.data?.symbolNews ?? []) {
+            if (seenIds.current.has(`news-${news.id}`)) continue;
+            seenIds.current.add(`news-${news.id}`);
+            ingestDriver(
+              {
+                type: "driver",
+                id: `news-${news.id}`,
+                ts: news.publishedAt,
+                driverKind: "news",
+                title: `资讯驱动 · ${news.source}`,
+                detail: news.title,
+                payload: { symbol: chartSpec.symbol.trim(), url: news.url ?? null },
+              },
+              pushTraderDriver
+            );
+          }
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          newsRequestRef.current = null;
+        });
+    }
     try {
       const { events, drivers, agentMessages, contextMessages, serverTime } =
         await pollTraderFeed({
@@ -219,7 +252,8 @@ export function useTraderAgentEngine(
           symbol: chartSpec.symbol.trim(),
           exchange: chartSpec.exchange,
           since: sinceRef.current,
-          includeNews: true,
+          // 资讯是独立的慢上游；交易 feed 只返回本地决策/订单/上下文。
+          includeNews: false,
         });
       for (const ev of events) {
         if (seenIds.current.has(ev.id)) continue;

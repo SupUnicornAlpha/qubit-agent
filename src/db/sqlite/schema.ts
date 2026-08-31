@@ -1710,6 +1710,10 @@ export const orderIntent = sqliteTable("order_intent", {
   timeframe: text("timeframe"),
   strategyRuntimeId: text("strategy_runtime_id"),
   signalBarTime: text("signal_bar_time"),
+  /** Immutable execution evidence retained for pre-dispatch revalidation. */
+  thesisId: text("thesis_id"),
+  snapshotId: text("snapshot_id"),
+  frameworkAssessmentArtifactId: text("framework_assessment_artifact_id"),
   lifecycleStatus: text("lifecycle_status", {
     enum: [
       "created",
@@ -2134,8 +2138,9 @@ export const connectorInstance = sqliteTable("connector_instance", {
  *   - migration 0072 恢复（去掉了原来 dangling 的 `acp_call_id` FK，因为
  *     acp_call 已被 0070 删除）
  *
- * 当前状态：**表已建好但暂无写入路径**。未来给 BaseConnector 加 audit hook 时
- * 直接写本表（独立任务，不在本次 schema 收敛范围内）。
+ * 当前状态：connector registry 的 init / execute / shutdown，以及 environment
+ * connector probe 已统一写入本表；request/response 只保留结构摘要，避免把 token、
+ * 行情参数或上游响应原文写进审计库。工作流级工具调用仍以 tool_call_log 为 SoT。
  */
 export const connectorCallLog = sqliteTable(
   "connector_call_log",

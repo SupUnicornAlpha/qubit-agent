@@ -17,6 +17,7 @@ import {
   fetchEastMoneyQuote,
   fetchEastMoneyTrades,
 } from "./eastmoney-microstructure";
+import { fetchYahooDelayedQuote } from "./klines-data-source";
 import { recordMarketDataSourceAttempt } from "./market-data-source-control";
 import { resolveTickerMarket } from "./resolve-ticker-market";
 import { fetchTencentQuote } from "./tencent-quote";
@@ -106,9 +107,35 @@ export async function queryMarketQuote(params: FetchQuoteParams): Promise<QuoteD
     }
     throw new Error(`market_data_unavailable: realtime CN quote failed: ${failures.join(" | ")}`);
   }
-  throw new Error(
-    `market_data_unavailable: real-time quote source is not configured for market=${resolution.market}`
-  );
+
+  // US / HK / global equities: delayed last price when broker WS is unavailable.
+  const started = Date.now();
+  try {
+    const quote = await fetchYahooDelayedQuote(normalizedParams, settings);
+    await recordMarketDataSourceAttempt({
+      sourceId: "yahoo_chart",
+      market: resolution.market,
+      timeframe: "quote",
+      symbol: params.symbol,
+      status: "success",
+      latencyMs: Date.now() - started,
+    });
+    return quote;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await recordMarketDataSourceAttempt({
+      sourceId: "yahoo_chart",
+      market: resolution.market,
+      timeframe: "quote",
+      symbol: params.symbol,
+      status: "error",
+      latencyMs: Date.now() - started,
+      error: message,
+    });
+    throw new Error(
+      `market_data_unavailable: delayed quote failed for market=${resolution.market}: ${message}`
+    );
+  }
 }
 
 export async function queryMarketOrderBook(params: FetchOrderBookParams): Promise<OrderBookData> {

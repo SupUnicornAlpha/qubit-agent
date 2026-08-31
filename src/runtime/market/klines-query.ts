@@ -33,6 +33,7 @@ const TIMEFRAME_TO_PERIOD: Record<string, FetchBarsParams["period"]> = {
 };
 
 const DEFAULT_TIMEFRAME = "1d";
+const inFlightKlines = new Map<string, Promise<BarData[]>>();
 
 function normalizeTimeframe(raw: string | undefined): string {
   const t = (raw ?? DEFAULT_TIMEFRAME).trim().toLowerCase();
@@ -54,6 +55,34 @@ const D_MS = 86_400_000;
  * 252-trading-day year without asking callers to know the exchange calendar.
  */
 const DAILY_BAR_CALENDAR_BUFFER = 1.55;
+/**
+ * Intraday bars only exist during regular sessions (~6.5h US equity day).
+ * `limit * barMs` alone collapses into overnight/weekend emptiness — e.g. Monday
+ * morning asking for 250×5m ≈ 21 wall-clock hours that contain almost no prints.
+ * Expand by session denseness and a weekend pad, with a per-period floor lookback
+ * (still within Yahoo's typical intraday history caps).
+ */
+const INTRADAY_SESSION_DENSITY = 24 / 6.5;
+const INTRADAY_WEEKEND_PAD_MS = 3 * D_MS;
+const INTRADAY_MIN_LOOKBACK_MS: Record<FetchBarsParams["period"], number> = {
+  "1m": 7 * D_MS,
+  "5m": 10 * D_MS,
+  "15m": 14 * D_MS,
+  "30m": 21 * D_MS,
+  "1h": 30 * D_MS,
+  "4h": 60 * D_MS,
+  "1d": 0,
+};
+/** Soft cap so we do not request ranges Yahoo silently truncates to empty. */
+const INTRADAY_MAX_LOOKBACK_MS: Record<FetchBarsParams["period"], number> = {
+  "1m": 30 * D_MS,
+  "5m": 60 * D_MS,
+  "15m": 60 * D_MS,
+  "30m": 60 * D_MS,
+  "1h": 730 * D_MS,
+  "4h": 730 * D_MS,
+  "1d": Number.POSITIVE_INFINITY,
+};
 
 /** Bar duration in ms for expanding `limit` into a calendar window (approximate for 1w). */
 export function timeframeWindowMs(timeframe: string, period: FetchBarsParams["period"]): number {
@@ -77,6 +106,13 @@ export function timeframeWindowMs(timeframe: string, period: FetchBarsParams["pe
   }
 }
 
+function intradayLookbackMs(period: FetchBarsParams["period"], barCount: number): number {
+  const raw = timeframeWindowMs(period, period) * Math.max(0, barCount - 1) * INTRADAY_SESSION_DENSITY;
+  const floored = Math.max(raw + INTRADAY_WEEKEND_PAD_MS, INTRADAY_MIN_LOOKBACK_MS[period] ?? 7 * D_MS);
+  const capped = INTRADAY_MAX_LOOKBACK_MS[period] ?? 60 * D_MS;
+  return Math.min(floored, capped);
+}
+
 /**
  * Computes inclusive-ish [startDate, endDate] in ISO8601 for `fetch_bars`.
  * End anchors to UTC start-of-day for daily+; intraday uses current UTC time as end.
@@ -92,7 +128,9 @@ export function computeDateRangeForLimit(
   const win =
     period === "1d" && tf !== "1w"
       ? Math.ceil((n - 1) * DAILY_BAR_CALENDAR_BUFFER) * D_MS
-      : timeframeWindowMs(tf, period) * (n - 1);
+      : period === "1d"
+        ? timeframeWindowMs(tf, period) * (n - 1)
+        : intradayLookbackMs(period, n);
 
   if (period === "1d") {
     const endDaily = new Date(asOfMs);
@@ -129,6 +167,8 @@ export async function queryKlines(params: {
   exchange?: string;
   timeframe?: string;
   limit?: number;
+  /** 行情控制面已解析的首选源；优先访问该源，失败时仍会回退其它可用源。 */
+  source?: string;
   /** Point-in-time anchor for the requested window (ms since epoch). */
   asOfMs?: number;
   /** Sparkline / preview: one upstream attempt, empty instead of fallback waterfall. */
@@ -151,6 +191,10 @@ export async function queryKlines(params: {
   const exchange = params.exchange?.trim() ?? "";
   const timeframe = normalizeTimeframe(params.timeframe);
   const requestedLimit = Math.max(1, Math.min(params.limit ?? 300, 2000));
+  const routedSource =
+    params.source && params.source !== "synthetic"
+      ? (params.source as Exclude<KlinesDataSourceMeta, "synthetic">)
+      : undefined;
 
   const { startDate, endDate, period } = computeDateRangeForLimit(
     timeframe,
@@ -182,14 +226,16 @@ export async function queryKlines(params: {
   const windCfg = windConfigFromSettings(settings);
   const hasWindAvailable =
     klinesMode === "wind" || (klinesMode === "auto" && Boolean(windCfg.username));
-  const configuredDataSource = resolveEffectiveKlinesSource({
-    settings,
-    period,
-    hasTushareToken: hasTushare,
-    hasWindAvailable,
-    symbol,
-    exchange,
-  });
+  const configuredDataSource =
+    routedSource ??
+    resolveEffectiveKlinesSource({
+      settings,
+      period,
+      hasTushareToken: hasTushare,
+      hasWindAvailable,
+      symbol,
+      exchange,
+    });
 
   const fetchParams: FetchBarsParams = {
     symbol,
@@ -197,6 +243,7 @@ export async function queryKlines(params: {
     period,
     startDate,
     endDate,
+    ...(routedSource ? { dataSource: routedSource } : {}),
     ...(params.bestEffort ? { bestEffort: true } : {}),
   };
 
@@ -208,7 +255,24 @@ export async function queryKlines(params: {
     endDate,
   });
   const cached = getCachedKlinesBars(queryKey);
-  const bars = cached ?? ((await connector.execute("fetch_bars", fetchParams)) as BarData[]);
+  const inFlightKey = `${queryKey}|${routedSource ?? "auto"}`;
+  let bars: BarData[];
+  if (cached) {
+    bars = cached;
+  } else {
+    let pending = inFlightKlines.get(inFlightKey);
+    if (!pending) {
+      pending = connector.execute("fetch_bars", fetchParams) as Promise<BarData[]>;
+      inFlightKlines.set(inFlightKey, pending);
+    }
+    try {
+      bars = await pending;
+    } finally {
+      if (inFlightKlines.get(inFlightKey) === pending) {
+        inFlightKlines.delete(inFlightKey);
+      }
+    }
+  }
   const actualDataSource = getCachedKlinesSource(queryKey);
   if (!cached && bars.length > 0) {
     setCachedKlinesBars(queryKey, bars, undefined, actualDataSource);

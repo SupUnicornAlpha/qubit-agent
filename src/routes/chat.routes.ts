@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { Hono } from "hono";
 import { getDb } from "../db/sqlite/client";
 import {
@@ -48,6 +48,10 @@ chatRouter.get("/sessions", async (c) => {
   const workspaceId = c.req.query("workspaceId");
   const projectId = c.req.query("projectId");
   if (!workspaceId) return c.json({ error: "workspaceId is required" }, 400);
+  const requestedLimit = Number(c.req.query("limit") ?? 100);
+  const limit = Number.isFinite(requestedLimit)
+    ? Math.min(200, Math.max(1, Math.floor(requestedLimit)))
+    : 100;
   const db = await getDb();
   const whereClause = projectId
     ? and(eq(chatSession.workspaceId, workspaceId), eq(chatSession.projectId, projectId))
@@ -56,7 +60,8 @@ chatRouter.get("/sessions", async (c) => {
     .select()
     .from(chatSession)
     .where(whereClause)
-    .orderBy(desc(chatSession.updatedAt));
+    .orderBy(desc(chatSession.updatedAt))
+    .limit(limit);
   return c.json({ data: rows });
 });
 
@@ -467,7 +472,14 @@ chatRouter.get("/sessions/:id/messages", async (c) => {
     .from(chatMessage)
     .where(eq(chatMessage.sessionId, sessionId))
     .orderBy(chatMessage.createdAt);
-  const allLinks = await db.select().from(chatMessageWorkflowLink);
+  const messageIds = messages.map((item) => item.id);
+  const allLinks =
+    messageIds.length > 0
+      ? await db
+          .select()
+          .from(chatMessageWorkflowLink)
+          .where(inArray(chatMessageWorkflowLink.chatMessageId, messageIds))
+      : [];
   const linkByMessage = new Map<string, string[]>();
   for (const link of allLinks) {
     const list = linkByMessage.get(link.chatMessageId) ?? [];

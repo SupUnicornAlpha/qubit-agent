@@ -46,6 +46,7 @@ const PERMANENT_PATTERNS: RegExp[] = [
   /\b(?:fundamentals|market)_data_unavailable\b/i,
   /\b(?:fundamentals|quote|news)_source_unavailable\b/i,
   /real-time quote source is not configured/i,
+  /delayed quote failed for market=/i,
   /no_factor_values_written/i,
   /sample_size_too_small/i,
   /factor_not_found/i,

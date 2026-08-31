@@ -7,9 +7,12 @@ import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import * as schema from "../../db/sqlite/schema";
-import { processExecutionTasks } from "./execution-worker";
-import { createOrderIntentWithExecution } from "./order-intent-service";
 import { setTradingModuleEnabled } from "../trader/trading-module-control";
+import { processExecutionTasks } from "./execution-worker";
+import {
+  assertLiveOrderIntentEvidenceFresh,
+  createOrderIntentWithExecution,
+} from "./order-intent-service";
 
 describe("execution pipeline (memory sqlite)", () => {
   test("allows intent and paper-fills through worker", async () => {
@@ -92,6 +95,31 @@ describe("execution pipeline (memory sqlite)", () => {
       price: 100,
       timeInForce: "day",
     });
+
+    await expect(
+      assertLiveOrderIntentEvidenceFresh(db, {
+        workflowRunId: wrid,
+        instrumentId: iid,
+        symbol: "TEST",
+        thesisId: null,
+        snapshotId: null,
+        frameworkAssessmentArtifactId: null,
+      })
+    ).rejects.toThrow(/thesis_required|snapshot_required/);
+    await expect(
+      createOrderIntentWithExecution(db, {
+        workflowRunId: wrid,
+        strategyVersionId: svid,
+        instrumentId: iid,
+        side: "buy",
+        qty: 1,
+        orderType: "limit",
+        price: 100,
+        timeInForce: "day",
+        dispatchMode: "paper",
+        requireHumanConfirmation: true,
+      })
+    ).rejects.toThrow("human_confirmation_requires_live_dispatch");
 
     expect(created.riskOutcome).toBe("allow");
     expect(created.executionTaskId).toBeTruthy();

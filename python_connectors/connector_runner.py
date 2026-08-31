@@ -29,6 +29,29 @@ logging.basicConfig(
 logger = logging.getLogger("connector_runner")
 
 
+def _redirect_vendor_console_logs_to_stderr() -> None:
+    """Keep stdout JSON-RPC-only.
+
+    Vendor SDKs (notably futu-api) attach a StreamHandler(sys.stdout). Those
+    InitConnect / Disconnect lines would otherwise interleave with RPC responses
+    and wedge the TypeScript python-bridge reader until timeout.
+    """
+    try:
+        from futu.common.ft_logger import logger as futu_logger  # type: ignore
+    except Exception:
+        return
+    try:
+        console_level = getattr(futu_logger, "console_level", logging.WARNING)
+        # Prefer WARNING+: connection chatter is INFO and must not touch stdout.
+        if isinstance(console_level, int) and console_level <= logging.INFO:
+            futu_logger.console_level = logging.WARNING
+        handler = getattr(futu_logger, "consoleHandler", None)
+        if handler is not None:
+            handler.stream = sys.stderr
+    except Exception:
+        logger.debug("futu console log redirect skipped", exc_info=True)
+
+
 # ─── JSON-RPC helpers ─────────────────────────────────────────────────────────
 
 def send_response(id: Any, result: Any) -> None:
@@ -82,6 +105,7 @@ def main() -> None:
     parser.add_argument("--connector", required=True, help="Connector name to load")
     args = parser.parse_args()
 
+    _redirect_vendor_console_logs_to_stderr()
     logger.info(f"Loading connector: {args.connector}")
 
     try:
@@ -90,6 +114,8 @@ def main() -> None:
         logger.error(str(e))
         sys.exit(1)
 
+    # Futu attaches handlers lazily on first OpenQuoteContext; re-apply after import.
+    _redirect_vendor_console_logs_to_stderr()
     logger.info(f"Connector '{args.connector}' loaded. Listening on stdin...")
 
     for raw_line in sys.stdin:

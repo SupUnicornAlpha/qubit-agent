@@ -11,7 +11,10 @@ import { createFinalHoldoutContract } from "../backtest/final-holdout-contract";
 import { paperEvaluationService } from "../effect-validation/paper-evaluation-service";
 import { strategyPromotionService } from "../effect-validation/strategy-promotion-service";
 import { processExecutionTasks } from "../execution/execution-worker";
-import { createOrderIntentWithExecution } from "../execution/order-intent-service";
+import {
+  approveRiskReviewTicket,
+  createOrderIntentWithExecution,
+} from "../execution/order-intent-service";
 import { evaluateSignalCode } from "./signal-evaluator";
 import {
   createStrategyRuntime,
@@ -28,6 +31,8 @@ async function seedBase(db: ReturnType<typeof drizzle>) {
   const iid = randomUUID();
   const sessionId = randomUUID();
   const scriptId = randomUUID();
+  const sandboxPolicyId = randomUUID();
+  const definitionId = randomUUID();
 
   await db.insert(schema.workspace).values({ id: wid, name: "w", owner: "t" });
   await db.insert(schema.project).values({
@@ -44,6 +49,22 @@ async function seedBase(db: ReturnType<typeof drizzle>) {
     mode: "simulation",
     source: "api",
     status: "running",
+  });
+  await db.insert(schema.sandboxPolicy).values({ id: sandboxPolicyId, name: "test-policy" });
+  await db.insert(schema.agentDefinition).values({
+    id: definitionId,
+    role: "research",
+    name: "test-research-agent",
+    version: "test-agent-v1",
+    systemPrompt: "Use only audited evidence.",
+    llmProvider: "test-provider",
+    sandboxPolicyId,
+  });
+  await db.insert(schema.agentInstance).values({
+    id: randomUUID(),
+    definitionId,
+    workflowRunId: wrid,
+    status: "idle",
   });
   await db.insert(schema.chatSession).values({
     id: sessionId,
@@ -98,7 +119,7 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
     purpose: "both",
   });
 
-  return { pid, wrid, svid, iid, scriptId };
+  return { pid, wrid, svid, iid, scriptId, definitionId };
 }
 
 describe("strategy runtime", () => {
@@ -148,7 +169,7 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
     );
     await migrate(db, { migrationsFolder });
 
-    const { pid, scriptId, wrid, svid, iid } = await seedBase(db);
+    const { pid, scriptId, wrid, svid, iid, definitionId } = await seedBase(db);
 
     const runtime = await createStrategyRuntime(
       {
@@ -288,6 +309,106 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
       .limit(1);
     expect(runningLive[0]?.status).toBe("running");
     await startStrategyRuntime(runtime.id, db);
+
+    const previousOrderThesisGate = process.env.QUBIT_ORDER_REQUIRE_THESIS;
+    const previousMarketQualityGate = process.env.QUBIT_MARKET_QUALITY_GATE;
+    process.env.QUBIT_ORDER_REQUIRE_THESIS = "0";
+    process.env.QUBIT_MARKET_QUALITY_GATE = "0";
+    try {
+      const confirmation = await createOrderIntentWithExecution(db, {
+        workflowRunId: wrid,
+        strategyVersionId: paper.strategyVersionId,
+        instrumentId: iid,
+        side: "buy",
+        qty: 1,
+        orderType: "limit",
+        price: 100,
+        timeInForce: "day",
+        strategyRuntimeId: runtime.id,
+        dispatchMode: "live",
+        requireHumanConfirmation: true,
+      });
+      expect(confirmation.riskOutcome).toBe("review");
+      expect(confirmation.riskReason).toBe("live_confirmation_required");
+      expect(confirmation.riskReviewTicketId).toBeTruthy();
+      const pendingConfirmationTask = (
+        await db
+          .select()
+          .from(schema.executionTask)
+          .where(eq(schema.executionTask.id, confirmation.executionTaskId ?? ""))
+      )[0];
+      expect(pendingConfirmationTask?.status).toBe("awaiting_review");
+      await processExecutionTasks(db);
+      const stillHeldForConfirmation = (
+        await db
+          .select()
+          .from(schema.executionTask)
+          .where(eq(schema.executionTask.id, confirmation.executionTaskId ?? ""))
+      )[0];
+      expect(stillHeldForConfirmation?.status).toBe("awaiting_review");
+      const ticketId = confirmation.riskReviewTicketId;
+      if (!ticketId) throw new Error("test expected canonical live confirmation ticket");
+      expect((await approveRiskReviewTicket(db, ticketId, "operator")).ok).toBe(true);
+      const approvedForDispatch = (
+        await db
+          .select()
+          .from(schema.executionTask)
+          .where(eq(schema.executionTask.id, confirmation.executionTaskId ?? ""))
+      )[0];
+      expect(approvedForDispatch?.status).toBe("pending");
+    } finally {
+      if (previousOrderThesisGate === undefined) delete process.env.QUBIT_ORDER_REQUIRE_THESIS;
+      else process.env.QUBIT_ORDER_REQUIRE_THESIS = previousOrderThesisGate;
+      if (previousMarketQualityGate === undefined) delete process.env.QUBIT_MARKET_QUALITY_GATE;
+      else process.env.QUBIT_MARKET_QUALITY_GATE = previousMarketQualityGate;
+    }
+
+    // A paper evaluation on the already-verified frozen cohort is the only
+    // accepted source of `paper` component evidence. The model call is real
+    // workflow provenance, not a client-provided assertion.
+    await db.insert(schema.llmCallLog).values({
+      id: randomUUID(),
+      workflowRunId: wrid,
+      provider: "test-provider",
+      model: "test-model-v1",
+      latencyMs: 1,
+      status: "success",
+    });
+    await db
+      .update(schema.strategyRuntime)
+      .set({
+        executionMode: "paper",
+        paramsJson: { orderQty: 5, comparisonCohortId: comparisonCohort.id },
+      })
+      .where(eq(schema.strategyRuntime.id, runtime.id));
+    const cohortPaper = await paperEvaluationService.evaluate(runtime.id, db);
+    expect(cohortPaper.componentEvidenceRecorded).toBeGreaterThanOrEqual(1);
+    const paperComponentRows = await db
+      .select()
+      .from(schema.componentEvalRun)
+      .where(eq(schema.componentEvalRun.workflowRunId, wrid));
+    expect(
+      paperComponentRows.some(
+        (row) =>
+          row.componentKind === "model" &&
+          row.componentId === "test-provider" &&
+          row.versionId === "test-model-v1" &&
+          row.evalKind === "paper" &&
+          row.comparisonCohortId === comparisonCohort.id
+      )
+    ).toBe(true);
+    expect(
+      paperComponentRows.some(
+        (row) =>
+          row.componentKind === "prompt" &&
+          row.componentId === definitionId &&
+          row.versionId.startsWith("prompt_sha256_") &&
+          row.evalKind === "paper"
+      )
+    ).toBe(true);
+    expect((await paperEvaluationService.evaluate(runtime.id, db)).componentEvidenceRecorded).toBe(
+      0
+    );
 
     const created = await createOrderIntentWithExecution(db, {
       workflowRunId: wrid,

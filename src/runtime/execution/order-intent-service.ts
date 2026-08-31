@@ -58,6 +58,12 @@ export interface CreateOrderIntentInput {
   frameworkAssessmentArtifactId?: string | null;
   /** Force quality gate even for paper paths (auto strategies). */
   requireDataQualityGate?: boolean;
+  /**
+   * Hold an otherwise admissible live order behind the canonical human-review
+   * ticket. This is the graded `live_with_confirm` path; it never relies on
+   * legacy intent_order confirmation records.
+   */
+  requireHumanConfirmation?: boolean;
 }
 
 export interface CreateOrderIntentResult {
@@ -108,7 +114,10 @@ function asRecord(value: unknown): Record<string, unknown> {
  */
 async function assertFrameworkAssessmentForLiveIntent(
   db: DbClient,
-  input: CreateOrderIntentInput,
+  input: Pick<
+    CreateOrderIntentInput,
+    "workflowRunId" | "frameworkAssessmentArtifactId" | "symbol" | "instrumentId"
+  >,
   bound: { thesisId: string | null; snapshotId: string | null }
 ): Promise<void> {
   if (!bound.thesisId) return;
@@ -149,6 +158,47 @@ async function assertFrameworkAssessmentForLiveIntent(
     );
   });
   if (!qualified) throw new Error("framework_symbol_not_qualified_for_live");
+}
+
+/**
+ * Re-validate evidence immediately before a real broker dispatch.  A live
+ * confirmation may be approved minutes after intent creation, so creation-time
+ * validation alone is not a sufficient authorization.
+ */
+export async function assertLiveOrderIntentEvidenceFresh(
+  db: DbClient,
+  intent: Pick<
+    typeof orderIntent.$inferSelect,
+    | "workflowRunId"
+    | "instrumentId"
+    | "symbol"
+    | "thesisId"
+    | "snapshotId"
+    | "frameworkAssessmentArtifactId"
+  >
+): Promise<void> {
+  const evidence = await resolveExecutionEvidenceBinding({
+    thesisId: intent.thesisId,
+    snapshotId: intent.snapshotId,
+    dispatchMode: "live",
+    requireQualityGate: true,
+  });
+  if (!evidence.ok) {
+    throw new Error(`${evidence.code}:${evidence.reason}`);
+  }
+  await assertFrameworkAssessmentForLiveIntent(
+    db,
+    {
+      workflowRunId: intent.workflowRunId,
+      instrumentId: intent.instrumentId,
+      symbol: intent.symbol,
+      frameworkAssessmentArtifactId: intent.frameworkAssessmentArtifactId,
+    },
+    {
+      thesisId: evidence.thesisId,
+      snapshotId: evidence.snapshotId,
+    }
+  );
 }
 
 export async function createOrderIntentWithExecution(
@@ -193,6 +243,9 @@ export async function createOrderIntentWithExecution(
   const accountId = input.accountId ?? BUILTIN_PAPER_TRADING_ACCOUNT_ID;
   const requestedClientOrderId = input.clientOrderId?.trim() || null;
   const dispatchMode = input.dispatchMode ?? "paper";
+  if (input.requireHumanConfirmation === true && dispatchMode !== "live") {
+    throw new Error("human_confirmation_requires_live_dispatch");
+  }
 
   const evidence = await resolveExecutionEvidenceBinding({
     ...(input.thesisId !== undefined ? { thesisId: input.thesisId } : {}),
@@ -287,6 +340,9 @@ export async function createOrderIntentWithExecution(
     timeframe: input.timeframe ?? null,
     strategyRuntimeId: input.strategyRuntimeId ?? null,
     signalBarTime: input.signalBarTime ?? null,
+    thesisId: boundThesisId,
+    snapshotId: boundSnapshotId,
+    frameworkAssessmentArtifactId: input.frameworkAssessmentArtifactId ?? null,
     lifecycleStatus: "created",
     clientOrderId: requestedClientOrderId ?? orderIntentId,
     lifecycleUpdatedAt: new Date().toISOString(),
@@ -367,7 +423,8 @@ export async function createOrderIntentWithExecution(
     };
   }
 
-  if (risk.outcome === "review") {
+  const requiresHumanConfirmation = input.requireHumanConfirmation === true;
+  if (risk.outcome === "review" || requiresHumanConfirmation) {
     await db
       .update(orderIntent)
       .set({ lifecycleStatus: "pending_approval", lifecycleUpdatedAt: riskEvaluatedAt })
@@ -379,7 +436,7 @@ export async function createOrderIntentWithExecution(
       orderIntentId,
       status: "open",
       reviewer: null,
-      reviewNote: null,
+      reviewNote: requiresHumanConfirmation ? "live_confirmation_required" : null,
       expiresAt,
     });
 
@@ -401,18 +458,18 @@ export async function createOrderIntentWithExecution(
     await audit(db, {
       traceId,
       workflowRunId: input.workflowRunId,
-      action: "awaiting_risk_review",
+      action: requiresHumanConfirmation ? "awaiting_live_confirmation" : "awaiting_risk_review",
       resourceType: "risk_review_ticket",
       resourceId: riskReviewTicketId,
-      detail: { orderIntentId, executionTaskId: tid },
+      detail: { orderIntentId, executionTaskId: tid, requiresHumanConfirmation },
     });
 
     await linkBook();
     return {
       orderIntentId,
       executionTaskId,
-      riskOutcome: risk.outcome,
-      riskReason: risk.reason,
+      riskOutcome: requiresHumanConfirmation ? "review" : risk.outcome,
+      riskReason: requiresHumanConfirmation ? "live_confirmation_required" : risk.reason,
       riskReviewTicketId,
       dataQualityWarnings,
       snapshotId: boundSnapshotId,
@@ -525,6 +582,15 @@ export async function approveRiskReviewTicket(
   });
 
   return { ok: true };
+}
+
+/** Lists canonical risk/live-confirmation tickets for one canonical order intent. */
+export async function listRiskReviewTicketsForOrderIntent(db: DbClient, orderIntentId: string) {
+  return db
+    .select()
+    .from(riskReviewTicket)
+    .where(eq(riskReviewTicket.orderIntentId, orderIntentId))
+    .orderBy(riskReviewTicket.createdAt);
 }
 
 export async function rejectRiskReviewTicket(

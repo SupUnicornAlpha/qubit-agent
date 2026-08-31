@@ -109,6 +109,21 @@ def _row_timestamp(time_key: Any) -> str:
     return datetime.now(tz=_UTC).isoformat().replace("+00:00", "Z")
 
 
+def _silence_futu_stdout_logs() -> None:
+    """futu-api defaults console logs to stdout; keep RPC pipe clean."""
+    try:
+        from futu.common.ft_logger import logger as futu_logger  # type: ignore
+        import logging as _logging
+        import sys as _sys
+
+        futu_logger.console_level = _logging.WARNING
+        handler = getattr(futu_logger, "consoleHandler", None)
+        if handler is not None:
+            handler.stream = _sys.stderr
+    except Exception:  # noqa: BLE001
+        pass
+
+
 class FutuQuoteConnector(BaseConnector):
     @property
     def name(self) -> str:
@@ -119,6 +134,7 @@ class FutuQuoteConnector(BaseConnector):
         return "1.0.0"
 
     def init(self, config: dict[str, Any]) -> None:
+        _silence_futu_stdout_logs()
         self._host = str(
             config.get("opendHost")
             or config.get("opend_host")

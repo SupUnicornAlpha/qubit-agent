@@ -401,6 +401,28 @@ export async function listMarketDataSources(): Promise<{
   return { data: res.data, readiness: res.readiness };
 }
 
+export type MarketDataRouteResolution = {
+  sourceId: string | null;
+  plan: string[];
+  reason: "healthy" | "fallback" | "unavailable";
+  readiness: import("./types").MarketDataReadiness;
+};
+
+/** 只解析行情路由，不触发上游请求；实际取数由 getKlines 单独完成。 */
+export async function resolveMarketDataSource(params: {
+  symbol: string;
+  exchange?: string;
+  timeframe?: string;
+}): Promise<MarketDataRouteResolution> {
+  const q = new URLSearchParams({ symbol: params.symbol });
+  if (params.exchange) q.set("exchange", params.exchange);
+  if (params.timeframe) q.set("timeframe", params.timeframe);
+  const res = await httpGet<{ ok: boolean; data: MarketDataRouteResolution }>(
+    `/api/v1/market/data-sources/resolve?${q.toString()}`
+  );
+  return res.data;
+}
+
 export async function checkMarketDataSources(sourceId?: string): Promise<{
   data: import("./types").MarketDataSourceRecord[];
   readiness: import("./types").MarketDataReadiness;
@@ -425,6 +447,8 @@ export async function getKlines(params: {
   exchange?: string;
   timeframe?: string;
   limit?: number;
+  source?: string;
+  signal?: AbortSignal;
 }): Promise<{
   ok: boolean;
   data: KlineBar[];
@@ -436,12 +460,16 @@ export async function getKlines(params: {
   if (params.exchange) q.set("exchange", params.exchange);
   if (params.timeframe) q.set("timeframe", params.timeframe);
   if (params.limit !== undefined) q.set("limit", String(params.limit));
+  if (params.source) q.set("source", params.source);
   return httpGet<{
     ok: boolean;
     data: KlineBar[];
     meta: KlinesResponseMeta;
     error?: KlinesErrorPayload;
-  }>(`/api/v1/market/klines?${q.toString()}`);
+  }>(
+    `/api/v1/market/klines?${q.toString()}`,
+    params.signal ? { signal: params.signal } : undefined
+  );
 }
 
 export type KlinesBatchEntry = {
@@ -469,13 +497,15 @@ export async function getOptionChain(params: {
   exchange?: string;
   expiry?: string;
   source?: "auto" | "futu" | "alpaca" | "research";
+  signal?: AbortSignal;
 }): Promise<OptionChain> {
   const q = new URLSearchParams({ symbol: params.symbol });
   if (params.exchange) q.set("exchange", params.exchange);
   if (params.expiry) q.set("expiry", params.expiry);
   if (params.source) q.set("source", params.source);
   const response = await httpGet<{ ok: boolean; data: OptionChain }>(
-    `/api/v1/market/options/chain?${q.toString()}`
+    `/api/v1/market/options/chain?${q.toString()}`,
+    params.signal ? { signal: params.signal } : undefined
   );
   return response.data;
 }
@@ -894,16 +924,30 @@ export async function createProject(params: {
  * project，攒出重复。后端 get-or-create 天然幂等，并发多少次都返回同一行。
  * 详见 src/runtime/bootstrap/ensure-default-workspace.ts:ensureDefaultUserProject。
  */
-export async function getOrCreateDefaultProject(): Promise<{
+let defaultProjectPromise: Promise<{
+  id: string;
+  workspaceId: string;
+  name: string;
+  marketScope: string;
+}> | null = null;
+
+export function getOrCreateDefaultProject(): Promise<{
   id: string;
   workspaceId: string;
   name: string;
   marketScope: string;
 }> {
-  const res = await httpGet<{
-    data: { id: string; workspaceId: string; name: string; marketScope: string };
-  }>("/api/v1/workspaces/default/projects/default");
-  return res.data;
+  if (!defaultProjectPromise) {
+    defaultProjectPromise = httpGet<{
+      data: { id: string; workspaceId: string; name: string; marketScope: string };
+    }>("/api/v1/workspaces/default/projects/default")
+      .then((res) => res.data)
+      .catch((error) => {
+        defaultProjectPromise = null;
+        throw error;
+      });
+  }
+  return defaultProjectPromise;
 }
 
 /** FS-first 课题 Workspace（与 DB /workspaces 并列） */
@@ -1115,9 +1159,23 @@ export async function listFsWorkspaceDecisionFactors(
   return res.data;
 }
 
-export async function listAgents(): Promise<AgentSummary[]> {
-  const res = await httpGet<{ data: AgentSummary[] }>("/api/v1/agents");
-  return res.data;
+let agentsCache: { value: AgentSummary[]; expiresAt: number } | null = null;
+let agentsRequest: Promise<AgentSummary[]> | null = null;
+
+export function listAgents(): Promise<AgentSummary[]> {
+  if (agentsCache && agentsCache.expiresAt > Date.now()) {
+    return Promise.resolve(agentsCache.value);
+  }
+  if (agentsRequest) return agentsRequest;
+  agentsRequest = httpGet<{ data: AgentSummary[] }>("/api/v1/agents")
+    .then((res) => {
+      agentsCache = { value: res.data, expiresAt: Date.now() + 5_000 };
+      return res.data;
+    })
+    .finally(() => {
+      agentsRequest = null;
+    });
+  return agentsRequest;
 }
 
 export async function createConversationTurn(input: {
@@ -1839,14 +1897,30 @@ export async function saveBuiltinConnectorConfig(
   return res.data;
 }
 
-export async function listChatSessions(params: {
+const chatSessionsRequests = new Map<string, Promise<ChatSession[]>>();
+
+export function listChatSessions(params: {
   workspaceId: string;
   projectId?: string;
+  limit?: number;
 }): Promise<ChatSession[]> {
   const query = new URLSearchParams({ workspaceId: params.workspaceId });
   if (params.projectId) query.set("projectId", params.projectId);
-  const res = await httpGet<{ data: ChatSession[] }>(`/api/v1/chat/sessions?${query.toString()}`);
-  return res.data;
+  if (params.limit !== undefined) {
+    query.set("limit", String(Math.max(1, Math.min(200, Math.floor(params.limit)))));
+  }
+  const key = query.toString();
+  const pending = chatSessionsRequests.get(key);
+  if (pending) return pending;
+  const request = httpGet<{ data: ChatSession[] }>(
+    `/api/v1/chat/sessions?${query.toString()}`
+  )
+    .then((res) => res.data)
+    .finally(() => {
+      if (chatSessionsRequests.get(key) === request) chatSessionsRequests.delete(key);
+    });
+  chatSessionsRequests.set(key, request);
+  return request;
 }
 
 export async function createChatSession(input: {
@@ -5001,6 +5075,7 @@ export async function placeTraderOrder(input: {
   timeframe?: string;
   rationale?: string;
   executionMode?: "paper" | "live" | "sim";
+  brokerAccountId?: string;
   strategyRuntimeId?: string;
   signalBarTime?: string;
   thesisId?: string;
@@ -5039,6 +5114,7 @@ export async function placeTraderBracketOrder(input: {
   timeframe?: string;
   executionMode?: "paper" | "live" | "sim";
   brokerAccountId?: string;
+  strategyRuntimeId?: string;
   thesisId?: string;
   snapshotId?: string;
   frameworkAssessmentArtifactId?: string;

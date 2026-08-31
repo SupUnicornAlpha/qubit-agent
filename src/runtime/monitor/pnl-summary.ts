@@ -11,7 +11,13 @@
 
 import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
-import { agentSkill, strategyPnlSnapshot, strategyRuntime } from "../../db/sqlite/schema";
+import {
+  agentSkill,
+  indicatorStrategyScript,
+  strategyPnlSnapshot,
+  strategyRuntime,
+  workflowRun,
+} from "../../db/sqlite/schema";
 
 export interface StrategyPnlSummaryInput {
   /** project_id 过滤；不传则不过滤（汇总全部） */
@@ -61,18 +67,35 @@ export async function getStrategyPnlSummary(input: StrategyPnlSummaryInput): Pro
   if (input.runtimeIds && input.runtimeIds.length > 0) {
     rtConditions.push(inArray(strategyRuntime.id, input.runtimeIds));
   }
-  // project_id：strategy_runtime → indicator_strategy_script → chat_session →
-  // workspace_id；当前 schema 没有直接 runtime.projectId 列，前端要按 project 看时
-  // 需要预先拿 runtimeIds 走过来；为简单 v0 暂不过滤 projectId（前端来排）。
-  const runtimes = await db
-    .select({
-      id: strategyRuntime.id,
-      market: strategyRuntime.market,
-      symbol: strategyRuntime.symbol,
-    })
-    .from(strategyRuntime)
-    .where(rtConditions.length === 0 ? undefined : and(...rtConditions))
-    .all();
+  const runtimeFields = {
+    id: strategyRuntime.id,
+    market: strategyRuntime.market,
+    symbol: strategyRuntime.symbol,
+  };
+  // Runtime → script → workflow is the authoritative project lineage. Legacy
+  // runtimes without a workflow remain observable only in an unscoped view;
+  // they must never leak into a project-scoped report.
+  const runtimes = input.projectId
+    ? await db
+        .select(runtimeFields)
+        .from(strategyRuntime)
+        .innerJoin(
+          indicatorStrategyScript,
+          eq(strategyRuntime.strategyScriptId, indicatorStrategyScript.id)
+        )
+        .innerJoin(workflowRun, eq(indicatorStrategyScript.workflowRunId, workflowRun.id))
+        .where(
+          and(
+            eq(workflowRun.projectId, input.projectId),
+            ...(rtConditions.length > 0 ? rtConditions : [])
+          )
+        )
+        .all()
+    : await db
+        .select(runtimeFields)
+        .from(strategyRuntime)
+        .where(rtConditions.length === 0 ? undefined : and(...rtConditions))
+        .all();
   if (runtimes.length === 0) {
     return { fromDay, toDay, rows: [] };
   }

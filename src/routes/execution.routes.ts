@@ -28,6 +28,7 @@ import {
   type CreateOrderIntentInput,
   approveRiskReviewTicket,
   createOrderIntentWithExecution,
+  listRiskReviewTicketsForOrderIntent,
   rejectRiskReviewTicket,
 } from "../runtime/execution/order-intent-service";
 import {
@@ -696,4 +697,12 @@ executionRouter.post("/review/:ticketId/reject", async (c) => {
   const result = await rejectRiskReviewTicket(db, ticketId, body.reviewer, body.note);
   if (!result.ok) return c.json({ ok: false, error: result.error }, 400);
   return c.json({ ok: true });
+});
+
+executionRouter.get("/intents/:orderIntentId/review-tickets", async (c) => {
+  const orderIntentId = c.req.param("orderIntentId").trim();
+  if (!orderIntentId) return c.json({ ok: false, error: "orderIntentId is required" }, 400);
+  const db = await getDb();
+  const data = await listRiskReviewTicketsForOrderIntent(db, orderIntentId);
+  return c.json({ ok: true, data });
 });

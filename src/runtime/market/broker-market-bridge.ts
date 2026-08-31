@@ -173,7 +173,10 @@ export function getBrokerBridgeHealthHint(
 
 function bridgeHealthRank(sourceId: BrokerMarketBridgeSourceId): number {
   const hint = bridgeHealthHints.get(sourceId);
-  if (!hint || !hint.credentialsReady) return 0;
+  // No control-plane hint yet: treat as unknown so a configured bridge can still
+  // be selected; down bridges are filtered out by isBridgeAutoEligible.
+  if (!hint) return 3;
+  if (!hint.credentialsReady) return 0;
   switch (hint.healthStatus) {
     case "healthy":
       return 4;
@@ -182,10 +185,17 @@ function bridgeHealthRank(sourceId: BrokerMarketBridgeSourceId): number {
     case "degraded":
       return 2;
     case "down":
-      return 1;
+      return 0;
     default:
       return 0;
   }
+}
+
+function isBridgeAutoEligible(sourceId: BrokerMarketBridgeSourceId): boolean {
+  const hint = bridgeHealthHints.get(sourceId);
+  if (!hint) return true;
+  if (!hint.credentialsReady) return false;
+  return hint.healthStatus !== "down";
 }
 
 /**
@@ -206,10 +216,10 @@ export function selectBrokerMarketBridge(input: {
     const desc = registry.get(preferred);
     if (url && desc) {
       const hint = bridgeHealthHints.get(desc.sourceId);
-      // Explicit env override still wins even if health is unknown; only skip when
-      // control plane has marked credentials missing after a recent sync.
-      if (hint && hint.credentialsReady === false) {
-        /* fall through to market auto */
+      // Explicit env override still wins when health is unknown/degraded; skip when
+      // credentials are missing or the control plane has marked the bridge down.
+      if (hint && (hint.credentialsReady === false || hint.healthStatus === "down")) {
+        /* fall through to market auto / polling */
       } else {
         return {
           id: desc.id,
@@ -242,8 +252,7 @@ export function selectBrokerMarketBridge(input: {
     if (!desc) continue;
     const url = resolveBridgeWsUrl(desc.id);
     if (!url) continue;
-    const hint = bridgeHealthHints.get(desc.sourceId);
-    if (hint && !hint.credentialsReady) continue;
+    if (!isBridgeAutoEligible(desc.sourceId)) continue;
     scored.push({
       desc,
       url,

@@ -17,6 +17,16 @@ describe("data gap taxonomy", () => {
     ).toMatchObject({ kind: "unconfigured", market: "US", retryable: false });
   });
 
+  test("treats delayed quote upstream failures as transient", () => {
+    expect(
+      classifyDataGap({
+        ...base,
+        message:
+          "market_data_unavailable: delayed quote failed for market=US: yahoo_chart quote: The socket connection was closed unexpectedly",
+      })
+    ).toMatchObject({ kind: "transient", retryable: true });
+  });
+
   test("classifies empty fundamentals as coverage rather than a permanent transport failure", () => {
     expect(
       classifyDataGap({

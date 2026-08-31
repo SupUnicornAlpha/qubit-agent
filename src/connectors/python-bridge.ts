@@ -70,6 +70,7 @@ export class PythonConnectorBridgeImpl extends BaseConnector {
   }
 
   protected async onHealthcheck() {
+    await this.ensureChildRunning();
     const result = await this._call<{ healthy: boolean; message?: string }>("healthcheck", {});
     return {
       status: result.healthy ? ("healthy" as const) : ("unhealthy" as const),
@@ -78,7 +79,15 @@ export class PythonConnectorBridgeImpl extends BaseConnector {
   }
 
   protected async onExecute<TOutput>(operation: string, payload: unknown): Promise<TOutput> {
+    await this.ensureChildRunning();
     return this._call<TOutput>("execute", { operation, payload });
+  }
+
+  /** Re-spawn the child if a prior timeout/kill left process=null. */
+  private async ensureChildRunning(): Promise<void> {
+    if (this.process) return;
+    await this.onInit(this.config);
+    this.initialized = true;
   }
 
   protected async onShutdown(): Promise<void> {
@@ -106,6 +115,17 @@ export class PythonConnectorBridgeImpl extends BaseConnector {
             new Error(
               `python-bridge[${this.connectorName}] ${method} timed out after ${PYTHON_CALL_TIMEOUT_MS}ms (subprocess likely hung)`
             )
+          );
+          // A hung OpenD / SDK call leaves the child wedged; drop it so the next
+          // init() can spawn a fresh runner instead of writing into a dead pipe.
+          try {
+            this.process?.kill();
+          } catch {
+            /* ignore */
+          }
+          this.process = null;
+          this._rejectAllPending(
+            new Error(`python-bridge[${this.connectorName}] reset after ${method} timeout`)
           );
         }
       }, PYTHON_CALL_TIMEOUT_MS);

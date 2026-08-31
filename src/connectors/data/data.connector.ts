@@ -97,9 +97,11 @@ export interface FetchBarsParams {
   adjustType?: "none" | "pre" | "post";
   /** ReAct harness 注入；用于 workflow 级 K 线缓存 */
   workflowRunId?: string;
+  /** 已由行情控制面解析出的首选源；传入后优先尝试该源，失败/空结果仍回退计划中的其它源。 */
+  dataSource?: string;
   /**
-   * 自选 sparkline 等非关键路径：只试计划里的第一个源，空结果返回 [] 而不是
-   * 再去 Yahoo / yfinance 瀑布（那会把本机自选列表接口拖成几十秒）。
+   * 自选 sparkline 等非关键路径：最多试计划里前两个源，空结果返回 [] 而不是
+   * 再去整条瀑布（避免把自选列表拖成几十秒）。
    */
   bestEffort?: boolean;
 }

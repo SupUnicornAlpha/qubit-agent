@@ -1,6 +1,7 @@
 import type { BuiltinConnectorInitConfigs } from "../config/builtin-connector-settings";
 import { fetchFutuOptionChain } from "./futu-klines";
 import { marketDataFetch } from "./market-data-network";
+import { resolveMarketDataSourceRoute } from "./market-data-source-control";
 import { fetchYfinanceOptionChain } from "./yfinance-klines";
 
 export type OptionChainSource = "futu_opend" | "alpaca" | "yahoo_chart" | "yfinance";
@@ -130,13 +131,25 @@ export async function fetchOptionChain(input: {
   source?: OptionChainRequestSource;
   settings: BuiltinConnectorInitConfigs;
 }): Promise<OptionChain> {
-  const source = input.source ?? "auto";
+  const requestedSource = input.source ?? "auto";
+  const source =
+    requestedSource === "auto"
+      ? (
+          await resolveMarketDataSourceRoute({
+            symbol: input.symbol,
+            ...(input.exchange ? { exchange: input.exchange } : {}),
+            timeframe: "1d",
+          }).catch(() => null)
+        )?.sourceId === "futu_bridge"
+        ? "futu"
+        : "research"
+      : requestedSource;
   if (source === "research") {
     return fetchYahooOptionChain(input);
   }
 
   const errors: string[] = [];
-  if (source === "auto" || source === "futu") {
+  if (source === "futu") {
     try {
       return await fetchFutuOptionChain({
         symbol: input.symbol,
@@ -145,16 +158,20 @@ export async function fetchOptionChain(input: {
       });
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      if (source === "futu") throw new Error(`futu_option_chain_unavailable: ${reason}`);
+      if (requestedSource === "futu") {
+        throw new Error(`futu_option_chain_unavailable: ${reason}`);
+      }
       errors.push(`Futu OpenD unavailable: ${reason}`);
     }
   }
-  if (source === "auto" || source === "alpaca") {
+  if (source === "alpaca") {
     try {
       return await fetchAlpacaOptionChain(input);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      if (source === "alpaca") throw new Error(`alpaca_option_chain_unavailable: ${reason}`);
+      if (requestedSource === "alpaca") {
+        throw new Error(`alpaca_option_chain_unavailable: ${reason}`);
+      }
       errors.push(`Alpaca unavailable: ${reason}`);
     }
   }
@@ -185,7 +202,8 @@ export async function fetchAlpacaOptionChain(input: {
   const text = await response.text();
   if (!response.ok) throw new Error(`Alpaca HTTP ${response.status}: ${text.slice(0, 180)}`);
   const payload = JSON.parse(text) as { snapshots?: Record<string, Record<string, unknown>> };
-  const calls: OptionContract[] = [], puts: OptionContract[] = [];
+  const calls: OptionContract[] = [];
+  const puts: OptionContract[] = [];
   const expirations = new Set<string>();
   for (const [contractSymbol, snapshot] of Object.entries(payload.snapshots ?? {})) {
     const parsed = alpacaContract(snapshot, contractSymbol);
@@ -202,10 +220,12 @@ export async function fetchAlpacaOptionChain(input: {
 function alpacaContract(snapshot: Record<string, unknown>, contractSymbol: string): OptionContract | null {
   const match = contractSymbol.match(/(\d{6})([CP])(\d{8})$/);
   if (!match) return null;
+  const expiryCode = match[1];
+  if (!expiryCode) return null;
   const quote = (snapshot.latestQuote ?? snapshot.latest_quote ?? {}) as Record<string, unknown>;
   const trade = (snapshot.latestTrade ?? snapshot.latest_trade ?? {}) as Record<string, unknown>;
   const greeks = (snapshot.greeks ?? {}) as Record<string, unknown>;
-  const expiry = `20${match[1]!.slice(0, 2)}-${match[1]!.slice(2, 4)}-${match[1]!.slice(4, 6)}`;
+  const expiry = `20${expiryCode.slice(0, 2)}-${expiryCode.slice(2, 4)}-${expiryCode.slice(4, 6)}`;
   return {
     contractSymbol, right: match[2] === "C" ? "call" : "put", strike: Number(match[3]) / 1000,
     lastPrice: numberOrNull(trade.p), bid: numberOrNull(quote.bp), ask: numberOrNull(quote.ap),

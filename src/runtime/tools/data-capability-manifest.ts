@@ -24,13 +24,7 @@ export type RuntimeCapabilityManifest = {
   unavailable: CapabilityManifestEntry[];
 };
 
-const REALTIME_TOOLS = new Set([
-  "fetch_quote",
-  "fetch_ticks",
-  "fetch_order_book",
-  "fetch_trades",
-  "get_quote",
-]);
+const L2_REALTIME_TOOLS = new Set(["fetch_ticks", "fetch_order_book", "fetch_trades"]);
 const FUNDAMENTAL_TOOLS = new Set(["fetch_fundamentals", "fetch_financial_data"]);
 const NEWS_TOOLS = new Set(["fetch_news", "fetch_news_sentiment"]);
 
@@ -45,9 +39,9 @@ function canonicalToolName(toolName: string): string {
 }
 
 /**
- * The native microstructure connector currently has realtime implementations
- * for CN and crypto only. Make that explicit before the prompt is constructed
- * rather than letting the model discover it through a costly failed call.
+ * Native quote is available for CN (eastmoney/tencent), CRYPTO (binance), and a
+ * delayed Yahoo last-price fallback for other equity markets. True L2 realtime
+ * (ticks / book / trades) remains CN/CRYPTO-only unless a broker bridge is up.
  */
 export function buildRuntimeCapabilityManifest(input: {
   tools: string[];
@@ -66,7 +60,7 @@ export function buildRuntimeCapabilityManifest(input: {
   for (const toolName of input.tools) {
     const canonical = canonicalToolName(toolName);
     if (
-      REALTIME_TOOLS.has(canonical) &&
+      L2_REALTIME_TOOLS.has(canonical) &&
       market !== "UNKNOWN" &&
       market !== "CN" &&
       market !== "CRYPTO"
@@ -78,8 +72,8 @@ export function buildRuntimeCapabilityManifest(input: {
         provider: "qubit-data",
         dataType: "realtime",
         freshnessMs: null,
-        fallbackHistory: ["fetch_klines(timeframe=1m)", "fetch_klines(timeframe=5m)"],
-        reason: `当前原生实时行情仅配置 CN/CRYPTO；${market} 市场不可调用 ${canonical}。请改用历史 K 线，或明确配置该市场的实时 provider。`,
+        fallbackHistory: ["fetch_quote", "fetch_klines(timeframe=1m)", "fetch_klines(timeframe=5m)"],
+        reason: `当前原生 L2 实时行情仅配置 CN/CRYPTO；${market} 市场不可调用 ${canonical}。请改用 fetch_quote（延时价）或历史 K 线，或配置该市场的券商行情 bridge。`,
       });
       continue;
     }

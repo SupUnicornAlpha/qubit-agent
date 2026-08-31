@@ -252,6 +252,16 @@ interface YahooChartResponse {
   chart?: {
     error?: { description?: string };
     result?: Array<{
+      meta?: {
+        regularMarketPrice?: number;
+        previousClose?: number;
+        chartPreviousClose?: number;
+        regularMarketTime?: number;
+        regularMarketVolume?: number;
+        currency?: string;
+        exchangeName?: string;
+        symbol?: string;
+      };
       timestamp?: number[];
       indicators?: {
         quote?: Array<{
@@ -483,4 +493,73 @@ export async function fetchYahooFinanceBars(
     );
   }
   return bars;
+}
+
+/**
+ * Delayed / last-trade quote from Yahoo chart meta.
+ * Used when no broker realtime bridge is available for US/HK/global equities.
+ */
+export async function fetchYahooDelayedQuote(
+  params: { symbol: string; exchange?: string },
+  settings: BuiltinConnectorInitConfigs = {}
+): Promise<{
+  symbol: string;
+  exchange: string;
+  source: "yahoo_chart";
+  lastPrice: number;
+  previousClose?: number;
+  volume?: number;
+  timestamp: string;
+  freshnessMs: number;
+}> {
+  const ticker = symbolToYahooSymbol(params.symbol, params.exchange || "");
+  if (!ticker) throw new Error("yahoo_chart quote: empty symbol");
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=1d&interval=1m`;
+  const res = await marketDataFetch("yahoo_chart", settings, url, {
+    headers: { "User-Agent": UA, Accept: "application/json" },
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`yahoo_chart quote: HTTP ${res.status}: ${text.slice(0, 160)}`);
+  }
+  let json: YahooChartResponse;
+  try {
+    json = JSON.parse(text) as YahooChartResponse;
+  } catch {
+    throw new Error(`yahoo_chart quote: invalid JSON: ${text.slice(0, 160)}`);
+  }
+  if (json.chart?.error?.description) {
+    throw new Error(`yahoo_chart quote: ${json.chart.error.description}`);
+  }
+  const result = json.chart?.result?.[0];
+  const meta = result?.meta;
+  const closes = result?.indicators?.quote?.[0]?.close ?? [];
+  let lastFromBars: number | undefined;
+  for (let i = closes.length - 1; i >= 0; i -= 1) {
+    const c = closes[i];
+    if (typeof c === "number" && Number.isFinite(c) && c > 0) {
+      lastFromBars = c;
+      break;
+    }
+  }
+  const lastPrice = Number(meta?.regularMarketPrice ?? lastFromBars);
+  if (!Number.isFinite(lastPrice) || lastPrice <= 0) {
+    throw new Error("yahoo_chart quote: missing regularMarketPrice");
+  }
+  const tsSec = Number(meta?.regularMarketTime);
+  const timestamp = Number.isFinite(tsSec) && tsSec > 0
+    ? new Date(tsSec * 1000).toISOString()
+    : new Date().toISOString();
+  const previousClose = Number(meta?.previousClose ?? meta?.chartPreviousClose);
+  const volume = Number(meta?.regularMarketVolume);
+  return {
+    symbol: params.symbol,
+    exchange: params.exchange || "US",
+    source: "yahoo_chart",
+    lastPrice,
+    ...(Number.isFinite(previousClose) && previousClose > 0 ? { previousClose } : {}),
+    ...(Number.isFinite(volume) && volume >= 0 ? { volume } : {}),
+    timestamp,
+    freshnessMs: Math.max(0, Date.now() - Date.parse(timestamp)),
+  };
 }

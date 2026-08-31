@@ -51,6 +51,7 @@ export const MenuBarQuickChat: FC = () => {
         const sessions = await listChatSessions({
           workspaceId: project.workspaceId,
           projectId: project.id,
+          limit: 1,
         });
         const latest =
           sessions[0] ??

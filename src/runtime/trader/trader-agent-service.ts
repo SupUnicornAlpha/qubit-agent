@@ -17,6 +17,7 @@ import { processExecutionTasks } from "../execution/execution-worker";
 import {
   createOrderIntentFromReiaPayload,
   resolveExecutionStrategyContext,
+  resolveRuntimeBoundExecutionContext,
 } from "../execution/reia-bridge";
 import { queryMarketNewsBrief } from "../market/news-brief-query";
 import { listStrategyRuntimeLogs } from "../strategy/strategy-runtime-log";
@@ -82,6 +83,7 @@ export async function placeTraderOrder(input: {
   timeframe?: string;
   rationale?: string;
   executionMode?: "paper" | "live" | "sim";
+  brokerAccountId?: string;
   strategyRuntimeId?: string;
   signalBarTime?: string;
   thesisId?: string;
@@ -121,6 +123,7 @@ export async function placeTraderOrder(input: {
       rationale: input.rationale ?? `trader_ui:${input.side}`,
       market,
       executionMode: input.executionMode ?? "paper",
+      ...(input.brokerAccountId !== undefined ? { brokerAccountId: input.brokerAccountId } : {}),
       ...(input.timeframe !== undefined ? { timeframe: input.timeframe } : {}),
       ...(input.strategyRuntimeId !== undefined
         ? { strategyRuntimeId: input.strategyRuntimeId }
@@ -177,6 +180,7 @@ export async function placeTraderBracketOrder(input: {
   timeframe?: string;
   executionMode?: "paper" | "live" | "sim";
   brokerAccountId?: string;
+  strategyRuntimeId?: string;
   thesisId?: string;
   snapshotId?: string;
   frameworkAssessmentArtifactId?: string;
@@ -184,10 +188,21 @@ export async function placeTraderBracketOrder(input: {
   const symbol = input.symbol.trim().toUpperCase();
   const market = chartExchangeToMarket(input.exchange);
   const db = await getDb();
-  const context = await resolveExecutionStrategyContext(db, input.workflowRunId, symbol, market);
-  let brokerAccountId = input.brokerAccountId;
   const dispatchMode =
     input.executionMode === "live" ? "live" : input.executionMode === "sim" ? "sim" : "paper";
+  const runtimeContext = await resolveRuntimeBoundExecutionContext(db, {
+    ticker: symbol,
+    market,
+    executionMode: dispatchMode,
+    ...(input.strategyRuntimeId ? { strategyRuntimeId: input.strategyRuntimeId } : {}),
+    ...(input.brokerAccountId ? { brokerAccountId: input.brokerAccountId } : {}),
+  });
+  if (dispatchMode === "live" && !runtimeContext) {
+    throw new Error("live_execution_requires_strategy_runtime");
+  }
+  // A runtime owns its account, strategy version and evidence. Do not allow a
+  // bracket request to replace any one of those three independently.
+  let brokerAccountId = runtimeContext?.brokerAccountId ?? input.brokerAccountId;
   if (dispatchMode === "sim" && !brokerAccountId) {
     const { resolveDefaultSimBrokerAccountId } = await import(
       "../execution/resolve-sim-broker-account"
@@ -199,10 +214,13 @@ export async function placeTraderBracketOrder(input: {
       );
     }
   }
+  const resolvedContext =
+    runtimeContext ??
+    (await resolveExecutionStrategyContext(db, input.workflowRunId, symbol, market));
   const result = await createBracketOrder(db, {
-    workflowRunId: input.workflowRunId,
-    strategyVersionId: context.strategyVersionId,
-    instrumentId: context.instrumentId,
+    workflowRunId: runtimeContext?.workflowRunId ?? input.workflowRunId,
+    strategyVersionId: resolvedContext.strategyVersionId,
+    instrumentId: resolvedContext.instrumentId,
     side: input.side,
     qty: input.qty,
     entryOrderType: input.entryOrderType,
@@ -213,11 +231,21 @@ export async function placeTraderBracketOrder(input: {
     timeInForce: "gtc",
     dispatchMode,
     ...(brokerAccountId ? { brokerAccountId } : {}),
-    ...(input.thesisId !== undefined ? { thesisId: input.thesisId } : {}),
-    ...(input.snapshotId !== undefined ? { snapshotId: input.snapshotId } : {}),
-    ...(input.frameworkAssessmentArtifactId !== undefined
-      ? { frameworkAssessmentArtifactId: input.frameworkAssessmentArtifactId }
-      : {}),
+    ...(runtimeContext
+      ? { thesisId: runtimeContext.thesisId }
+      : input.thesisId !== undefined
+        ? { thesisId: input.thesisId }
+        : {}),
+    ...(runtimeContext
+      ? { snapshotId: runtimeContext.snapshotId }
+      : input.snapshotId !== undefined
+        ? { snapshotId: input.snapshotId }
+        : {}),
+    ...(runtimeContext
+      ? { frameworkAssessmentArtifactId: runtimeContext.frameworkAssessmentArtifactId }
+      : input.frameworkAssessmentArtifactId !== undefined
+        ? { frameworkAssessmentArtifactId: input.frameworkAssessmentArtifactId }
+        : {}),
     market,
     symbol,
   });

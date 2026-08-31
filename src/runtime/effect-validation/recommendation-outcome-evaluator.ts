@@ -4,6 +4,7 @@ import type { BarData } from "../../connectors/data/data.connector";
 import { getDb } from "../../db/sqlite/client";
 import { recommendationOutcome, recommendationSnapshot } from "../../db/sqlite/schema";
 import { queryBarsRange } from "../market/klines-query";
+import { applyRecommendationOutcomeToForecastBook } from "./recommendation-reflection";
 import { type RecommendationSide, recommendationService } from "./recommendation-service";
 
 export const RECOMMENDATION_ENGINE_VERSION = "decision-signal-v1";
@@ -213,7 +214,12 @@ export async function evaluateRecommendationOutcomes(
       const benchmarkBars = await loadBenchmarkBars(signal, now, benchmarkCache);
       for (const horizonDays of evaluationHorizons(signal.horizonDays)) {
         const previous = existingByKey.get(`${signal.id}:${horizonDays}`);
-        if (!input.force && previous && previous.outcome !== "pending") continue;
+        if (!input.force && previous && previous.outcome !== "pending") {
+          // Backfill the file-backed reflection after a deployment without
+          // re-evaluating (or overwriting) the canonical outcome row.
+          await reflectRecordedRecommendationOutcome(signal, horizonDays, previous);
+          continue;
+        }
         const result = evaluateDecisionSignal({ ...signal, horizonDays }, bars);
         if (result.kind === "not_ready") {
           summary.notReady += 1;
@@ -280,6 +286,16 @@ export async function evaluateRecommendationOutcomes(
         } catch {
           /* experience 写回失败不阻断 recommendation outcome */
         }
+        await reflectRecordedRecommendationOutcome(signal, horizonDays, {
+          outcome: result.outcome,
+          returnPct: result.returnPct,
+          excessReturnPct,
+          maxAdverseExcursionPct: result.maxAdverseExcursionPct,
+          stopLossTriggered: result.stopLossTriggered,
+          takeProfitTriggered: result.takeProfitTriggered,
+          evaluatedAt: now.toISOString(),
+          marketDataEvidenceJson: marketDataEvidence,
+        });
       }
       if (signal.status === "active" && signal.expiresAt && signal.expiresAt <= now.toISOString()) {
         await recommendationService.setStatus(signal.id, "expired");
@@ -297,6 +313,65 @@ export async function evaluateRecommendationOutcomes(
     }
   }
   return summary;
+}
+
+type RecordedRecommendationOutcome = Pick<
+  typeof recommendationOutcome.$inferSelect,
+  | "outcome"
+  | "returnPct"
+  | "excessReturnPct"
+  | "maxAdverseExcursionPct"
+  | "stopLossTriggered"
+  | "takeProfitTriggered"
+  | "evaluatedAt"
+  | "marketDataEvidenceJson"
+>;
+
+/**
+ * Outcome evaluation is canonical in SQLite; Forecast Book reflection is a
+ * best-effort, idempotent projection. Calling this for already-scored rows
+ * makes deploy-time backfills safe without modifying their original evidence.
+ */
+async function reflectRecordedRecommendationOutcome(
+  signal: typeof recommendationSnapshot.$inferSelect,
+  horizonDays: number,
+  outcome: RecordedRecommendationOutcome
+): Promise<void> {
+  if (horizonDays !== signal.horizonDays) return;
+  if (!isReflectableOutcome(outcome.outcome)) return;
+  try {
+    await applyRecommendationOutcomeToForecastBook({
+      recommendationId: signal.id,
+      sourceArtifactKind: signal.sourceArtifactKind,
+      sourceArtifactId: signal.sourceArtifactId,
+      horizonDays,
+      outcome: outcome.outcome,
+      returnPct: outcome.returnPct,
+      excessReturnPct: outcome.excessReturnPct,
+      maxAdverseExcursionPct: outcome.maxAdverseExcursionPct,
+      stopLossTriggered: outcome.stopLossTriggered ?? false,
+      takeProfitTriggered: outcome.takeProfitTriggered ?? false,
+      evaluatedAt: outcome.evaluatedAt ?? new Date().toISOString(),
+      marketDataFingerprint: marketDataFingerprintFromOutcome(outcome.marketDataEvidenceJson),
+    });
+  } catch {
+    // Like memory, a file-backed reflection must not downgrade the canonical
+    // database outcome. The next worker tick retries an idempotent projection.
+  }
+}
+
+function isReflectableOutcome(
+  outcome: typeof recommendationOutcome.$inferSelect.outcome
+): outcome is "win" | "loss" | "flat" | "invalid" {
+  return outcome === "win" || outcome === "loss" || outcome === "flat" || outcome === "invalid";
+}
+
+function marketDataFingerprintFromOutcome(evidence: unknown): string | null {
+  if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)) return null;
+  const target = (evidence as Record<string, unknown>).target;
+  if (!target || typeof target !== "object" || Array.isArray(target)) return null;
+  const fingerprint = (target as Record<string, unknown>).fingerprint;
+  return typeof fingerprint === "string" && fingerprint.trim() ? fingerprint : null;
 }
 
 function findEntryIndex(signal: DecisionSignalForEvaluation, bars: BarData[]): number {

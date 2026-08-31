@@ -300,12 +300,18 @@ export const MonitorDashboard: FC = () => {
     // projectId 作为粗粒度 default 过滤：保证打开监控面板的"默认列表"是
     // 「当前 project 的全部 workflow」而不再是「当前 project default session 的 workflow」。
     // sessionFilter 仍保留作为可选下钻，用户在 WorkflowTab 输入框填入 sessionId 即生效。
-    const rows = await listMonitorWorkflows({
-      projectId: projectId || undefined,
-      sessionId: sessionFilter || undefined,
-      status: statusFilter || undefined,
-      groupBySession: true,
-    });
+    const [rows, strategyRows] = await Promise.all([
+      listMonitorWorkflows({
+        projectId: projectId || undefined,
+        sessionId: sessionFilter || undefined,
+        status: statusFilter || undefined,
+        groupBySession: true,
+      }),
+      listStrategyRuntimes({
+        sessionId: sessionFilter || undefined,
+      }).catch(() => []),
+      refreshSummary(),
+    ]);
     if (Array.isArray(rows)) {
       const flat = asWorkflowRows(rows);
       setWorkflowGroups([]);
@@ -322,16 +328,7 @@ export const MonitorDashboard: FC = () => {
       setUnboundWorkflows(unbound);
       setWorkflowList(flattenMonitorWorkflowList({ mode: "grouped", groups, unbound }));
     }
-    await refreshSummary();
-    try {
-      setStrategyRuntimes(
-        await listStrategyRuntimes({
-          sessionId: sessionFilter || undefined,
-        })
-      );
-    } catch {
-      setStrategyRuntimes([]);
-    }
+    setStrategyRuntimes(strategyRows);
   }, [projectId, sessionFilter, statusFilter, refreshSummary]);
 
   const refreshAgents = useCallback(async () => {
@@ -361,8 +358,9 @@ export const MonitorDashboard: FC = () => {
   }, [sessionFilter]);
 
   useEffect(() => {
-    void refreshAgents();
-  }, [refreshAgents]);
+    if (scope !== "agent") return;
+    void Promise.all([refreshAgents(), refreshMetrics()]);
+  }, [refreshAgents, refreshMetrics, scope]);
 
   useEffect(() => {
     if (scope !== "agent") return;
@@ -428,18 +426,32 @@ export const MonitorDashboard: FC = () => {
 
   useEffect(() => {
     if (!projectId) return;
-    void (async () => {
-      await onSearch();
-      await refreshMetrics();
-      setAlerts(await listAlerts({ status: "open" }));
-      const datasets = await listEvalDatasets();
-      setEvalDatasets(datasets);
-      if (datasets[0]) {
-        setSelectedDatasetId(datasets[0].id);
-        setEvalRuns(await listEvalRuns(datasets[0].id));
-      }
-    })().catch(console.error);
-  }, [projectId, onSearch, refreshMetrics]);
+    void onSearch().catch(console.error);
+  }, [projectId, onSearch]);
+
+  useEffect(() => {
+    if (!projectId || scope !== "alerts_eval") return;
+    let cancelled = false;
+    void Promise.all([listAlerts({ status: "open" }), listEvalDatasets()])
+      .then(async ([nextAlerts, datasets]) => {
+        if (cancelled) return;
+        setAlerts(nextAlerts);
+        setEvalDatasets(datasets);
+        const firstDataset = datasets[0];
+        if (!firstDataset) {
+          setSelectedDatasetId("");
+          setEvalRuns([]);
+          return;
+        }
+        setSelectedDatasetId(firstDataset.id);
+        const runs = await listEvalRuns(firstDataset.id);
+        if (!cancelled) setEvalRuns(runs);
+      })
+      .catch(console.error);
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, scope]);
 
   useEffect(() => {
     if (!autoRefresh || !projectId) return;

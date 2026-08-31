@@ -13,6 +13,10 @@ import {
 import type { OrderSide } from "../../types/entities";
 import { strategyPromotionService } from "../effect-validation/strategy-promotion-service";
 import { createOrderIntentWithExecution } from "../execution/order-intent-service";
+import {
+  assertLiveRuntimeGuardrailsForSymbol,
+  type LiveRuntimeGuardrails,
+} from "../execution/live-runtime-guardrails";
 import { resolveInstrument } from "../market/instrument-router";
 import { assertTradingModuleEnabled } from "../trader/trading-module-control";
 import { appendStrategyRuntimeLog } from "./strategy-runtime-log";
@@ -57,6 +61,11 @@ export interface StrategyRuntimeParams {
   snapshotId?: string;
   /** Required when the configured thesis names an investment framework card. */
   frameworkAssessmentArtifactId?: string;
+  /**
+   * Required for real-money runtimes. This is a deployment-local envelope,
+   * intentionally narrower than project-wide risk rules.
+   */
+  liveGuardrails?: LiveRuntimeGuardrails;
 }
 
 function asRuntimeParams(value: unknown): StrategyRuntimeParams {
@@ -70,12 +79,16 @@ function asRuntimeParams(value: unknown): StrategyRuntimeParams {
  * snapshot freshness and data-quality validation again for every live order:
  * evidence can expire while a long-lived runtime is idle.
  */
-function assertLiveRuntimeEvidenceConfigured(params: StrategyRuntimeParams): void {
+function assertLiveRuntimeEvidenceConfigured(
+  params: StrategyRuntimeParams,
+  symbol?: string
+): void {
   if (!params.thesisId?.trim()) {
     throw new Error(
       "live_runtime_evidence_missing: params.thesisId is required for live strategy runtimes"
     );
   }
+  if (symbol) assertLiveRuntimeGuardrailsForSymbol(params.liveGuardrails, symbol);
 }
 
 async function ensureInstrumentForSymbol(
@@ -120,7 +133,7 @@ export async function createStrategyRuntime(
     throw new Error("strategy_script_not_enabled_for_live");
   }
   if (executionMode === "live") {
-    assertLiveRuntimeEvidenceConfigured(runtimeParams);
+    assertLiveRuntimeEvidenceConfigured(runtimeParams, input.symbol.trim().toUpperCase());
   }
 
   const resolved = await resolveInstrument({
@@ -206,7 +219,7 @@ export async function startStrategyRuntime(runtimeId: string, db?: DbClient): Pr
     strategyRuntimeId: runtime.id,
   });
   if (runtime.executionMode === "live") {
-    assertLiveRuntimeEvidenceConfigured(asRuntimeParams(runtime.paramsJson));
+    assertLiveRuntimeEvidenceConfigured(asRuntimeParams(runtime.paramsJson), runtime.symbol);
     await strategyPromotionService.assertRuntimeLiveEligible(runtimeId, client);
   }
   const now = new Date().toISOString();
@@ -346,6 +359,7 @@ export async function submitRuntimeOrder(
     // Live auto-trading always requires a tradable snapshot (Prime D3).
     // Sim (Futu sandbox) skips thesis gate for low-latency rule/factor loops.
     requireDataQualityGate: dispatchMode === "live",
+    requireHumanConfirmation: dispatchMode === "live",
   });
 
   if (result.riskOutcome === "block") {

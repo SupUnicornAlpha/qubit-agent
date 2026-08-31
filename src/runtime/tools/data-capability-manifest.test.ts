@@ -6,14 +6,16 @@ import {
 } from "./data-capability-manifest";
 
 describe("runtime data capability manifest", () => {
-  test("hides an unconfigured US realtime quote before prompt construction", () => {
+  test("allows delayed US quote while still hiding L2 realtime tools", () => {
     const manifest = buildRuntimeCapabilityManifest({
-      tools: ["fetch_quote", "fetch_klines", "market.resolve_symbol"],
+      tools: ["fetch_quote", "fetch_order_book", "fetch_klines", "market.resolve_symbol"],
       ticker: "AAPL",
     });
     expect(manifest.market).toBe("US");
-    expect(manifest.tools).toEqual(["fetch_klines", "market.resolve_symbol"]);
-    expect(isToolBlockedByRuntimeCapability(manifest, "fetch_quote")?.status).toBe("unconfigured");
+    expect(manifest.tools).toEqual(["fetch_quote", "fetch_klines", "market.resolve_symbol"]);
+    expect(isToolBlockedByRuntimeCapability(manifest, "fetch_order_book")?.status).toBe(
+      "unconfigured"
+    );
     expect(renderRuntimeCapabilityManifest(manifest)).toContain("US");
   });
 

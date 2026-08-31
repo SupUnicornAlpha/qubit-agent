@@ -27,6 +27,18 @@ governanceRouter.post("/component-evaluations", async (c) => {
   ) {
     return c.json({ ok: false, error: "missing_required_fields" }, 400);
   }
+  // Runtime evidence must be produced by the authoritative paper/shadow
+  // evaluators, not asserted by a generic API caller. Otherwise an arbitrary
+  // client could manufacture the second half of a promotion scorecard.
+  if (body.evalKind !== "offline") {
+    return c.json(
+      {
+        ok: false,
+        error: "component_runtime_evidence_must_be_captured_by_authoritative_evaluator",
+      },
+      403
+    );
+  }
   return c.json({ ok: true, data: await componentChallengerService.record(body) }, 201);
 });
 

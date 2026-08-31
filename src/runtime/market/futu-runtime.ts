@@ -11,11 +11,11 @@
 
 import { join } from "node:path";
 import { and, desc, eq } from "drizzle-orm";
+import { config } from "../../config";
 import { getDb } from "../../db/sqlite/client";
 import { brokerAccount } from "../../db/sqlite/schema";
 import type { FutuProviderConfig } from "../../types/broker";
-import { getPythonConnectorsDir } from "../app-paths";
-import { getPythonBin } from "../sandbox/python-runtime";
+import { getPythonConnectorsDir, resolvePythonBin } from "../app-paths";
 
 export const FUTU_DEFAULT_TRADE_BASE_URL = "http://127.0.0.1:18765";
 export const FUTU_DEFAULT_QUOTE_WS_URL = "ws://127.0.0.1:8765";
@@ -158,7 +158,7 @@ function killManaged(managed: ManagedProc | null): void {
 
 async function spawnTradeBridge(opend: FutuOpenDConfig): Promise<ManagedProc> {
   const { host, port, url } = parseTradeUrl(opend.baseUrl);
-  const pythonBin = getPythonBin();
+  const pythonBin = resolvePythonBin(config.dataDir);
   const cwd = getPythonConnectorsDir();
   const script = join(cwd, "broker_http_server.py");
   const proc = Bun.spawn([pythonBin, script], {
@@ -185,7 +185,7 @@ async function spawnTradeBridge(opend: FutuOpenDConfig): Promise<ManagedProc> {
 async function spawnQuoteBridge(opend: FutuOpenDConfig): Promise<ManagedProc> {
   const url = quoteUrlFromEnvOrDefault();
   const { host, port } = quoteListen(url);
-  const pythonBin = getPythonBin();
+  const pythonBin = resolvePythonBin(config.dataDir);
   const cwd = getPythonConnectorsDir();
   const proc = Bun.spawn(
     [
@@ -224,6 +224,30 @@ async function spawnQuoteBridge(opend: FutuOpenDConfig): Promise<ManagedProc> {
     startedAt: new Date().toISOString(),
     lastError: null,
   };
+}
+
+async function probeQuotePortOpen(url: string): Promise<boolean> {
+  try {
+    const u = new URL(url);
+    const port = Number(u.port || (u.protocol === "wss:" ? 443 : 80));
+    const host = u.hostname || "127.0.0.1";
+    const socket = await Bun.connect({
+      hostname: host,
+      port,
+      socket: {
+        data() {},
+        open(sock) {
+          sock.end();
+        },
+        close() {},
+        error() {},
+      },
+    });
+    void socket;
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function waitForTrade(url: string, timeoutMs = 8_000): Promise<boolean> {
@@ -346,23 +370,32 @@ export async function ensureFutuRuntime(options?: {
       }
 
       if (needQuote) {
-        const existingWs = process.env.QUBIT_FUTU_MARKET_WS_URL?.trim();
+        const quoteUrl = quoteUrlFromEnvOrDefault();
+        const portOpen = await probeQuotePortOpen(quoteUrl);
         const managedAlive = isProcAlive(quoteManaged);
-        if (!managedAlive) {
-          // If user already pointed env at an external bridge, don't spawn.
-          if (existingWs && existingWs !== FUTU_DEFAULT_QUOTE_WS_URL) {
-            // leave external
-          } else {
-            killManaged(quoteManaged);
-            quoteManaged = await spawnQuoteBridge(openD);
-            const ok = await waitForQuotePort(quoteManaged.url);
-            if (!ok) {
-              quoteManaged.lastError =
-                "quote bridge port not open (check websockets/futu-api + OpenD)";
-            }
+        if (portOpen) {
+          // External or previously spawned bridge already listening — publish URL.
+          process.env.QUBIT_FUTU_MARKET_WS_URL = quoteUrl;
+          if (!process.env.QUBIT_MARKET_STREAM_PROVIDER?.trim()) {
+            process.env.QUBIT_MARKET_STREAM_PROVIDER = "futu";
           }
-        } else if (!process.env.QUBIT_FUTU_MARKET_WS_URL?.trim() && quoteManaged) {
-          process.env.QUBIT_FUTU_MARKET_WS_URL = quoteManaged.url;
+        } else if (!managedAlive) {
+          killManaged(quoteManaged);
+          quoteManaged = await spawnQuoteBridge(openD);
+          const ok = await waitForQuotePort(quoteManaged.url);
+          if (!ok) {
+            quoteManaged.lastError =
+              "quote bridge port not open (check websockets/futu-api in app python-venv + OpenD)";
+          }
+        } else {
+          // Managed process claims alive but port is closed — respawn.
+          killManaged(quoteManaged);
+          quoteManaged = await spawnQuoteBridge(openD);
+          const ok = await waitForQuotePort(quoteManaged.url);
+          if (!ok) {
+            quoteManaged.lastError =
+              "quote bridge port not open (check websockets/futu-api in app python-venv + OpenD)";
+          }
         }
       }
 

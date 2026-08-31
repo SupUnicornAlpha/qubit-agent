@@ -101,7 +101,7 @@ export function computeNextRunAt(cronExpr: string, from = new Date()): string {
   return new Date(base.getTime() + 60_000).toISOString();
 }
 
-function parseScheduledPayload(raw: unknown): ScheduledExecutionPayload | null {
+export function parseScheduledPayload(raw: unknown): ScheduledExecutionPayload | null {
   if (!raw || typeof raw !== "object") return null;
   const payload = raw as Record<string, unknown>;
   const ticker = typeof payload.ticker === "string" ? payload.ticker : "";
@@ -118,6 +118,16 @@ function parseScheduledPayload(raw: unknown): ScheduledExecutionPayload | null {
   const expectedRisk = Number.isFinite(Number(payload.expectedRisk))
     ? Number(payload.expectedRisk)
     : undefined;
+  const brokerAccountId = readOptionalPayloadString(payload, "brokerAccountId");
+  const strategyRuntimeId = readOptionalPayloadString(payload, "strategyRuntimeId");
+  const market = readOptionalPayloadString(payload, "market");
+  const timeframe = readOptionalPayloadString(payload, "timeframe");
+  const thesisId = readOptionalPayloadString(payload, "thesisId");
+  const snapshotId = readOptionalPayloadString(payload, "snapshotId");
+  const frameworkAssessmentArtifactId = readOptionalPayloadString(
+    payload,
+    "frameworkAssessmentArtifactId"
+  );
   return {
     ticker,
     direction: direction as "long" | "short" | "close",
@@ -127,7 +137,22 @@ function parseScheduledPayload(raw: unknown): ScheduledExecutionPayload | null {
     ...(expectedReturn !== undefined ? { expectedReturn } : {}),
     ...(expectedRisk !== undefined ? { expectedRisk } : {}),
     brokerProvider: payload.brokerProvider === "ib" ? "ib" : "futu",
+    ...(brokerAccountId !== undefined ? { brokerAccountId } : {}),
+    ...(strategyRuntimeId !== undefined ? { strategyRuntimeId } : {}),
+    ...(market !== undefined ? { market } : {}),
+    ...(timeframe !== undefined ? { timeframe } : {}),
+    ...(thesisId !== undefined ? { thesisId } : {}),
+    ...(snapshotId !== undefined ? { snapshotId } : {}),
+    ...(frameworkAssessmentArtifactId !== undefined ? { frameworkAssessmentArtifactId } : {}),
   };
+}
+
+function readOptionalPayloadString(
+  payload: Record<string, unknown>,
+  key: string
+): string | undefined {
+  const value = payload[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function parseTradingGate(raw: unknown): TradingGateConfig {
@@ -281,6 +306,7 @@ export async function executeScheduledJobAction(
   workflowRunId?: string;
   intentOrderId?: string;
   executionReportId?: string;
+  riskReviewTicketId?: string;
 }> {
   const payload = (job.payloadJson ?? {}) as Record<string, unknown>;
   if (parseScheduledJobKind(payload) === "position_reconciliation") {
@@ -321,6 +347,7 @@ export async function executeScheduledJobAction(
 
   let intentOrderId: string | undefined;
   let executionReportId: string | undefined;
+  let riskReviewTicketId: string | undefined;
   const execPayload = parseScheduledPayload(job.payloadJson);
   if (execPayload) {
     const auto = await runAutoExecution({
@@ -330,11 +357,13 @@ export async function executeScheduledJobAction(
     });
     intentOrderId = auto.intentOrderId;
     executionReportId = auto.executionReportId;
+    riskReviewTicketId = auto.riskReviewTicketId ?? undefined;
   }
   return {
     workflowRunId: created.data.id,
     ...(intentOrderId !== undefined ? { intentOrderId } : {}),
     ...(executionReportId !== undefined ? { executionReportId } : {}),
+    ...(riskReviewTicketId !== undefined ? { riskReviewTicketId } : {}),
   };
 }
 

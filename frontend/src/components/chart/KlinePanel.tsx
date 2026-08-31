@@ -11,7 +11,12 @@ import {
   type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { getKlines, getOptionChain, listMarketDataSources } from "../../api/backend";
+import {
+  getKlines,
+  getOptionChain,
+  listMarketDataSources,
+  resolveMarketDataSource,
+} from "../../api/backend";
 import type {
   KlineBar,
   KlinesErrorPayload,
@@ -254,9 +259,11 @@ const IndicatorPane: FC<{
 export const KlinePanel: FC<{
   embedded?: boolean;
   linkTraderMarkers?: boolean;
+  /** 期权链是显式研究操作，默认不阻塞 K 线首屏。 */
+  showOptionChain?: boolean;
   /** Additional markers supplied by a strategy workspace (for example runtime signal logs). */
   strategyMarkers?: TraderMarkerRecord[];
-}> = ({ embedded, linkTraderMarkers, strategyMarkers = [] }) => {
+}> = ({ embedded, linkTraderMarkers, showOptionChain = false, strategyMarkers = [] }) => {
   const chartSpec = useAppStore((s) => s.chartSpec);
   const setChartSpec = useAppStore((s) => s.setChartSpec);
   const chartReloadNonce = useAppStore((s) => s.chartReloadNonce);
@@ -430,7 +437,7 @@ export const KlinePanel: FC<{
     bbLowerRef.current?.applyOptions({ color: colors.indicatorBand });
   }, [uiStyle]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     const spec = useAppStore.getState().chartSpec;
     const loadKey = `${spec.symbol}|${spec.exchange}|${spec.timeframe}`;
     if (klineLoadKeyRef.current !== loadKey) {
@@ -441,18 +448,21 @@ export const KlinePanel: FC<{
     setError(null);
     setKlinesError(null);
     try {
+      const route = await resolveMarketDataSource({
+        symbol: spec.symbol.trim(),
+        exchange: spec.exchange.trim() || undefined,
+        timeframe: spec.timeframe,
+      }).catch(() => null);
+      if (signal?.aborted) return;
       const res = await getKlines({
         symbol: spec.symbol.trim(),
         exchange: spec.exchange.trim() || undefined,
         timeframe: spec.timeframe,
         limit: spec.limit,
+        ...(route?.sourceId ? { source: route.sourceId } : {}),
+        signal,
       });
-      void listMarketDataSources()
-        .then((control) => {
-          setSourceRows(control.data);
-          setReadiness(control.readiness);
-        })
-        .catch(() => undefined);
+      if (signal?.aborted) return;
       if (!res.ok || !Array.isArray(res.data)) {
         const wrapped = parseKlinesApiError(res);
         if (wrapped) {
@@ -493,7 +503,8 @@ export const KlinePanel: FC<{
       fittedBarCountRef.current = 0;
       setLastBars(normalized);
     } catch (e) {
-      let msg = e instanceof Error ? e.message : String(e);
+      if (signal?.aborted) return;
+      const msg = e instanceof Error ? e.message : String(e);
       try {
         const jsonStart = msg.indexOf("{");
         if (jsonStart >= 0) {
@@ -512,12 +523,14 @@ export const KlinePanel: FC<{
       }
       setError(msg);
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void load();
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => controller.abort();
   }, [
     chartSpec.symbol,
     chartSpec.exchange,
@@ -527,35 +540,56 @@ export const KlinePanel: FC<{
   ]);
 
   useEffect(() => {
-    if (!["OPRA", "US", "HK", "HKEX"].includes(chartSpec.exchange) || !chartSpec.symbol.trim()) {
+    let cancelled = false;
+    void listMarketDataSources()
+      .then((control) => {
+        if (cancelled) return;
+        setSourceRows(control.data);
+        setReadiness(control.readiness);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (
+      !showOptionChain ||
+      !["OPRA", "US", "HK", "HKEX"].includes(chartSpec.exchange) ||
+      !chartSpec.symbol.trim()
+    ) {
       setOptionChain(null);
       setOptionChainError(null);
       return;
     }
-    let cancelled = false;
+    const controller = new AbortController();
     setOptionChain(null);
     setOptionChainError(null);
     void getOptionChain({
       symbol: chartSpec.symbol.trim(),
       exchange: chartSpec.exchange,
       source: "auto",
+      signal: controller.signal,
     })
       .then((chain) => {
-        if (!cancelled) setOptionChain(chain);
+        if (!controller.signal.aborted) setOptionChain(chain);
       })
       .catch((reason: unknown) => {
-        if (!cancelled) {
+        if (!controller.signal.aborted) {
           setOptionChainError(reason instanceof Error ? reason.message : String(reason));
         }
       });
     return () => {
-      cancelled = true;
+      controller.abort();
     };
-  }, [chartSpec.exchange, chartSpec.symbol]);
+  }, [chartSpec.exchange, chartSpec.symbol, showOptionChain]);
 
   useEffect(() => {
     if (chartReloadNonce === 0) return;
-    void load();
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => controller.abort();
   }, [chartReloadNonce, load]);
 
   useEffect(() => {
@@ -1035,7 +1069,7 @@ export const KlinePanel: FC<{
             </div>
           ) : null}
           {chartStack}
-          {["OPRA", "US", "HK", "HKEX"].includes(chartSpec.exchange) ? (
+          {showOptionChain && ["OPRA", "US", "HK", "HKEX"].includes(chartSpec.exchange) ? (
             <OptionChainPreview chain={optionChain} error={optionChainError} />
           ) : null}
         </div>

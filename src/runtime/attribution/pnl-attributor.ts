@@ -21,7 +21,7 @@
 import { randomUUID } from "node:crypto";
 import { and, between, eq, inArray, lt, sql } from "drizzle-orm";
 import type { DbClient } from "../../db/sqlite/client";
-import { runInTransaction } from "../../db/sqlite/client";
+import { getDb, runInTransaction } from "../../db/sqlite/client";
 import {
   brokerOrder,
   fill as fillTable,
@@ -622,6 +622,66 @@ export class PnlAttributor {
 export function createPnlAttributor(db: DbClient): PnlAttributor {
   return new PnlAttributor(db);
 }
+
+const DEFAULT_PNL_ATTRIBUTOR_TICK_MS = 15 * 60 * 1000;
+const DEFAULT_PNL_ATTRIBUTOR_LOOKBACK_DAYS = 7;
+
+/**
+ * Process-level materializer for fill → strategy PnL → skill/analyst outcome
+ * attribution. Kept separate from the execution worker because marks can be
+ * delayed and replays must be safe across restarts.
+ */
+export class PnlAttributionWorker {
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private startupTimer: ReturnType<typeof setTimeout> | null = null;
+  private running = false;
+
+  async tick(now = new Date()): Promise<void> {
+    if (this.running) return;
+    this.running = true;
+    try {
+      const db = await getDb();
+      const window = resolvePnlAttributionWindow(now);
+      await createPnlAttributor(db).runOnce(window);
+    } catch (error) {
+      console.warn(
+        `[pnl-attribution] tick failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    } finally {
+      this.running = false;
+    }
+  }
+
+  start(): void {
+    if (this.timer || process.env.QUBIT_PNL_ATTRIBUTOR_ENABLED === "0") return;
+    const configuredMs = Number(process.env.QUBIT_PNL_ATTRIBUTOR_TICK_MS);
+    const tickMs =
+      Number.isFinite(configuredMs) && configuredMs >= 60_000
+        ? configuredMs
+        : DEFAULT_PNL_ATTRIBUTOR_TICK_MS;
+    this.startupTimer = setTimeout(() => void this.tick(), 60_000);
+    this.timer = setInterval(() => void this.tick(), tickMs);
+  }
+
+  stop(): void {
+    if (this.startupTimer) clearTimeout(this.startupTimer);
+    if (this.timer) clearInterval(this.timer);
+    this.startupTimer = null;
+    this.timer = null;
+  }
+}
+
+/** The rolling window makes late broker fills/marks replay-safe. */
+export function resolvePnlAttributionWindow(
+  now: Date,
+  lookbackDays = DEFAULT_PNL_ATTRIBUTOR_LOOKBACK_DAYS
+) {
+  const toDay = now.toISOString().slice(0, 10);
+  const days = Number.isFinite(lookbackDays) ? Math.max(1, Math.floor(lookbackDays)) : 1;
+  return { fromDay: addDays(toDay, -(days - 1)), toDay };
+}
+
+export const pnlAttributionWorker = new PnlAttributionWorker();
 
 // ───────────────────────── helpers ─────────────────────────
 

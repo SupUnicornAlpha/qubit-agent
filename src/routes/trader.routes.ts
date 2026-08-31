@@ -165,6 +165,7 @@ traderRouter.post("/orders", async (c) => {
     timeframe?: string;
     rationale?: string;
     executionMode?: "paper" | "live" | "sim";
+    brokerAccountId?: string;
     strategyRuntimeId?: string;
     signalBarTime?: string;
     thesisId?: string;
@@ -213,6 +214,7 @@ traderRouter.post("/orders", async (c) => {
       ...(body.timeframe !== undefined ? { timeframe: body.timeframe } : {}),
       ...(body.rationale !== undefined ? { rationale: body.rationale } : {}),
       executionMode: body.executionMode ?? "paper",
+      ...(body.brokerAccountId !== undefined ? { brokerAccountId: body.brokerAccountId } : {}),
       ...(body.strategyRuntimeId !== undefined
         ? { strategyRuntimeId: body.strategyRuntimeId }
         : {}),
@@ -244,6 +246,7 @@ traderRouter.post("/orders/bracket", async (c) => {
     timeframe?: string;
     executionMode?: "paper" | "live" | "sim";
     brokerAccountId?: string;
+    strategyRuntimeId?: string;
     thesisId?: string;
     snapshotId?: string;
     frameworkAssessmentArtifactId?: string;
@@ -292,6 +295,7 @@ traderRouter.post("/orders/bracket", async (c) => {
       ...(body.timeframe ? { timeframe: body.timeframe } : {}),
       executionMode: body.executionMode ?? "paper",
       ...(body.brokerAccountId ? { brokerAccountId: body.brokerAccountId } : {}),
+      ...(body.strategyRuntimeId ? { strategyRuntimeId: body.strategyRuntimeId } : {}),
       ...(body.thesisId !== undefined ? { thesisId: body.thesisId } : {}),
       ...(body.snapshotId !== undefined ? { snapshotId: body.snapshotId } : {}),
       ...(body.frameworkAssessmentArtifactId !== undefined
@@ -329,7 +333,8 @@ traderRouter.get("/feed", async (c) => {
   const symbol = c.req.query("symbol") ?? "";
   const exchange = c.req.query("exchange") ?? "";
   const since = c.req.query("since") ?? undefined;
-  const includeNews = c.req.query("includeNews") !== "false";
+  // 资讯是独立慢上游；交易 feed 默认只返回本地事件，调用方显式传 true 才拼接新闻。
+  const includeNews = c.req.query("includeNews") === "true";
 
   if (!sessionId || !workflowRunId || !symbol) {
     return c.json({ ok: false, error: "sessionId, workflowRunId and symbol are required" }, 400);

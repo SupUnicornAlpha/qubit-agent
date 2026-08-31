@@ -21,6 +21,7 @@ import {
   sandboxPolicy,
   strategyPnlSnapshot,
   strategyRuntime,
+  workflowRun,
   workspace,
 } from "../db/sqlite/schema";
 
@@ -28,8 +29,9 @@ async function jsonOf(res: Response) {
   return (await res.json()) as Record<string, unknown>;
 }
 
-let app: { request: (req: Request) => Promise<Response> };
+let app: { request: (req: Request) => Response | Promise<Response> };
 let projectId = "";
+let workflowRunId = "";
 let runtimeUSId = "";
 let skillId = "";
 
@@ -47,6 +49,7 @@ beforeAll(async () => {
   const db = await getDb();
   const workspaceId = `ws_${randomUUID()}`;
   projectId = `prj_${randomUUID()}`;
+  workflowRunId = `wf_${randomUUID()}`;
   const chatSessionId = `cs_${randomUUID()}`;
   const scriptId = `script_${randomUUID()}`;
   runtimeUSId = `rt_${randomUUID()}`;
@@ -59,10 +62,19 @@ beforeAll(async () => {
     .insert(project)
     .values({ id: projectId, workspaceId, name: "p", marketScope: "US" })
     .run();
+  await db
+    .insert(workflowRun)
+    .values({ id: workflowRunId, projectId, goal: "pnl monitor", mode: "research" })
+    .run();
   await db.insert(chatSession).values({ id: chatSessionId, workspaceId, title: "t" }).run();
   await db
     .insert(indicatorStrategyScript)
-    .values({ id: scriptId, sessionId: chatSessionId, name: "test-script" })
+    .values({
+      id: scriptId,
+      sessionId: chatSessionId,
+      workflowRunId,
+      name: "test-script",
+    })
     .run();
   await db
     .insert(strategyRuntime)
@@ -79,7 +91,7 @@ beforeAll(async () => {
     .insert(agentDefinition)
     .values({
       id: definitionId,
-      role: "analyst",
+      role: "research",
       name: "a",
       systemPrompt: "sp",
       llmProvider: "openai",
@@ -177,6 +189,27 @@ describe("GET /api/v1/monitor/pnl/strategies", () => {
     const j = await jsonOf(res);
     const data = j.data as { rows: unknown[] };
     expect(data.rows).toHaveLength(0);
+  });
+
+  test("projectId 只返回该 project 的 runtime", async () => {
+    const res = await app.request(
+      new Request(
+        `http://test/api/v1/monitor/pnl/strategies?projectId=${projectId}&fromDay=2026-06-01&toDay=2026-06-03`
+      )
+    );
+    expect(res.status).toBe(200);
+    const j = await jsonOf(res);
+    const data = j.data as { rows: Array<Record<string, unknown>> };
+    expect(data.rows).toHaveLength(1);
+    expect(data.rows[0]?.strategyRuntimeId).toBe(runtimeUSId);
+
+    const missing = await app.request(
+      new Request(
+        "http://test/api/v1/monitor/pnl/strategies?projectId=unknown-project&fromDay=2026-06-01&toDay=2026-06-03"
+      )
+    );
+    const missingData = (await jsonOf(missing)).data as { rows: unknown[] };
+    expect(missingData.rows).toHaveLength(0);
   });
 
   test("limit 参数生效", async () => {

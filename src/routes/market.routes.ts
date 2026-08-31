@@ -27,6 +27,7 @@ import {
 import {
   listMarketDataSources,
   patchMarketDataSource,
+  resolveMarketDataSourceRoute,
 } from "../runtime/market/market-data-source-control";
 import { marketStreamGateway } from "../runtime/market/market-stream-gateway";
 import { getOrCreateMarketSnapshot } from "../runtime/market/contracts/market-snapshot-service";
@@ -67,6 +68,26 @@ export const marketRouter = new Hono();
 marketRouter.get("/data-sources", async (c) =>
   c.json({ ok: true, data: await listMarketDataSources(), readiness: getMarketDataReadiness() })
 );
+
+/** 只根据已登记的探活状态解析首选行情源，不触发外部行情请求。 */
+marketRouter.get("/data-sources/resolve", async (c) => {
+  const symbol = c.req.query("symbol")?.trim() ?? "";
+  const exchange = c.req.query("exchange")?.trim() ?? "";
+  const timeframe = c.req.query("timeframe")?.trim() || "1d";
+  if (!symbol) return c.json({ ok: false, error: "symbol is required" }, 400);
+  const route = await resolveMarketDataSourceRoute({
+    symbol,
+    ...(exchange ? { exchange } : {}),
+    timeframe,
+  });
+  return c.json({
+    ok: true,
+    data: {
+      ...route,
+      readiness: getMarketDataReadiness(),
+    },
+  });
+});
 
 marketRouter.patch("/data-sources/:id", async (c) => {
   const body = await c.req.json<{
@@ -187,6 +208,20 @@ marketRouter.get("/quote", async (c) => {
  * 期权链：默认券商优先（富途 OpenD），公开 Yahoo 仅作带来源标识的研究级降级。
  * `source=futu` 禁止降级，便于策略 / Agent 显式要求券商行情。
  */
+async function resolveOptionChainSource(
+  requestedSource: OptionChainRequestSource | undefined,
+  symbol: string,
+  exchange?: string
+): Promise<OptionChainRequestSource> {
+  if (requestedSource && requestedSource !== "auto") return requestedSource;
+  const route = await resolveMarketDataSourceRoute({
+    symbol,
+    ...(exchange ? { exchange } : {}),
+    timeframe: "1d",
+  });
+  return route.sourceId === "futu_bridge" ? "futu" : "research";
+}
+
 marketRouter.get("/options/chain", async (c) => {
   try {
     const symbol = c.req.query("symbol")?.trim() ?? c.req.query("underlying")?.trim() ?? "";
@@ -198,11 +233,16 @@ marketRouter.get("/options/chain", async (c) => {
       return c.json({ ok: false, error: "source must be auto, futu, alpaca, or research" }, 400);
     }
     const settings = await loadBuiltinConnectorSettings();
+    const source = await resolveOptionChainSource(
+      requestedSource as OptionChainRequestSource | undefined,
+      symbol,
+      exchange
+    );
     const data = await fetchOptionChain({
       symbol,
       ...(exchange ? { exchange } : {}),
       ...(expiry ? { expiry } : {}),
-      ...(requestedSource ? { source: requestedSource as OptionChainRequestSource } : {}),
+      source,
       settings,
     });
     return c.json({ ok: true, data });
@@ -237,7 +277,11 @@ marketRouter.get("/options/strategy-analyze", async (c) => {
       return Number.isFinite(value) ? value : undefined;
     };
     const settings = await loadBuiltinConnectorSettings();
-    const source = sourceRaw as OptionChainRequestSource;
+    const source = await resolveOptionChainSource(
+      sourceRaw as OptionChainRequestSource,
+      symbol,
+      exchange
+    );
     const chain = await fetchOptionChain({ symbol, ...(exchange ? { exchange } : {}), ...(expiry ? { expiry } : {}), source, settings });
     const needsFarExpiry = strategyRaw === "calendar" || strategyRaw === "diagonal";
     const inferredFarExpiry = chain.expirations.find((date) => !expiry || !date.startsWith(expiry));
@@ -392,6 +436,7 @@ marketRouter.get("/klines", async (c) => {
     const symbol = c.req.query("symbol") ?? "";
     const exchange = c.req.query("exchange") ?? "";
     const timeframe = c.req.query("timeframe") ?? c.req.query("tf") ?? undefined;
+    const source = c.req.query("source")?.trim() || undefined;
     const limitRaw = c.req.query("limit");
     const limit = limitRaw !== undefined && limitRaw !== "" ? Number(limitRaw) : undefined;
     if (!symbol.trim()) {
@@ -405,6 +450,7 @@ marketRouter.get("/klines", async (c) => {
       symbol,
       ...(exchange ? { exchange } : {}),
       ...(timeframe ? { timeframe } : {}),
+      ...(source ? { source } : {}),
       ...(Number.isFinite(limit as number) ? { limit: limit as number } : {}),
     });
     const latest = bars[bars.length - 1];
@@ -457,7 +503,8 @@ marketRouter.post("/klines/batch", async (c) => {
     const worker = async () => {
       while (cursor < requests.length) {
         const index = cursor++;
-        const req = requests[index]!;
+        const req = requests[index];
+        if (!req) continue;
         const symbol = String(req.symbol ?? "").trim();
         if (!symbol) continue;
         const exchange = req.exchange?.trim() ?? "";

@@ -159,7 +159,7 @@ export function classifyDataGap(input: {
     return gap("invalid_request", false);
   }
   if (
-    /timeout|timed out|etimedout|econnreset|eai_again|network|transport closed|all .*source\(s\) failed/.test(
+    /timeout|timed out|etimedout|econnreset|eai_again|network|transport closed|all .*source\(s\) failed|delayed quote failed/.test(
       lower
     )
   ) {

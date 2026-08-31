@@ -18,7 +18,9 @@ import { registerBuiltinConnectors } from "../connectors/bootstrap";
 import { connectorRegistry } from "../connectors/registry";
 import { getDb } from "../db/sqlite/client";
 import { workflowRun } from "../db/sqlite/schema";
+import { classifyToolError } from "../runtime/host/tool-error-classifier";
 import { dispatchMcpToolCall } from "../runtime/mcp/dispatcher";
+import { recordConnectorCall } from "../runtime/monitor/connector-call-log";
 import { loadOrchestratorTopologyForWorkflow } from "../runtime/orchestration/topology-dispatch";
 import {
   isMcpBridgeToolName,
@@ -32,17 +34,16 @@ import {
 } from "../runtime/prime/bridge-run-context";
 import { projectCoreBridgeToolCall } from "../runtime/prime/project-core-activity";
 import { getCoreMonitorHandle } from "../runtime/prime/project-core-monitor";
+import { dispatchBuiltinTool, isBuiltinTool } from "../runtime/tools/builtin-tools";
+import { detectSemanticToolFailure } from "../runtime/tools/semantic-tool-result";
+import { applyToolContract } from "../runtime/tools/tool-contract";
+import { getToolContract } from "../runtime/tools/tool-contract-registry";
 import { getRegisteredToolDefinition } from "../runtime/tools/tool-definition-registry";
-import { classifyToolError } from "../runtime/host/tool-error-classifier";
 import {
   evaluateToolGovernance,
   isCacheableWorkflowToolFailure,
   recordWorkflowToolFailure,
 } from "../runtime/tools/tool-governance-policy";
-import { dispatchBuiltinTool, isBuiltinTool } from "../runtime/tools/builtin-tools";
-import { detectSemanticToolFailure } from "../runtime/tools/semantic-tool-result";
-import { applyToolContract } from "../runtime/tools/tool-contract";
-import { getToolContract } from "../runtime/tools/tool-contract-registry";
 import { resolveConnectorForTool } from "../runtime/tools/tool-routes";
 import type { BuiltinToolContext } from "../runtime/tools/types";
 import type { RuntimeAgentDefinition } from "../runtime/types";
@@ -256,8 +257,7 @@ export function normalizeBridgeToolArgs(
     }
     if (next.composition_id == null) next.composition_id = next.compositionId;
     if (next.dataset_snapshot_id == null) {
-      next.dataset_snapshot_id =
-        next.datasetSnapshotId ?? next.snapshot_id ?? next.snapshotId;
+      next.dataset_snapshot_id = next.datasetSnapshotId ?? next.snapshot_id ?? next.snapshotId;
     }
     if (next.factor_ids == null) {
       next.factor_ids =
@@ -687,10 +687,9 @@ primeBridgeRouter.post("/rpc", async (c) => {
           tools: [
             ...names.map((name) => ({
               ...getRegisteredToolDefinition(name),
-              description:
-                name.startsWith("call_team_")
-                  ? `Dispatch specialist subagent via A2A (${name}). Prefer for context-split research; pass {goal}.`
-                  : getRegisteredToolDefinition(name).description,
+              description: name.startsWith("call_team_")
+                ? `Dispatch specialist subagent via A2A (${name}). Prefer for context-split research; pass {goal}.`
+                : getRegisteredToolDefinition(name).description,
             })),
             ...mcpTools.map((t) => ({
               name: t.name,
@@ -810,7 +809,39 @@ primeBridgeRouter.post("/rpc", async (c) => {
           if (!conn) {
             throw new Error(`connector not registered: ${connectorName}`);
           }
-          observation = await conn.execute(name, args);
+          const connectorStartedAt = Date.now();
+          try {
+            observation = await conn.execute(name, args);
+            void recordConnectorCall({
+              connectorName,
+              operation: "execute",
+              traceId: activity.traceId,
+              workflowRunId: activity.workflowId,
+              request: { operation: name, params: args },
+              response: observation,
+              latencyMs: Date.now() - connectorStartedAt,
+              status: "success",
+            }).catch((error) => {
+              console.warn(`[connector-monitor] failed to record bridge success: ${String(error)}`);
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            void recordConnectorCall({
+              connectorName,
+              operation: "execute",
+              traceId: activity.traceId,
+              workflowRunId: activity.workflowId,
+              request: { operation: name, params: args },
+              latencyMs: Date.now() - connectorStartedAt,
+              status: /timed?\s*out|timeout/i.test(message) ? "timeout" : "error",
+              errorMessage: message,
+            }).catch((recordError) => {
+              console.warn(
+                `[connector-monitor] failed to record bridge error: ${String(recordError)}`
+              );
+            });
+            throw error;
+          }
         }
         const semanticFailure = detectSemanticToolFailure(name, {
           connectorResult: observation,
@@ -890,8 +921,8 @@ primeBridgeRouter.post("/rpc", async (c) => {
             params: args,
             reason: message,
             cacheable:
-          (errorClass === "permanent" || errorClass === "blocked") &&
-          isCacheableWorkflowToolFailure(message),
+              (errorClass === "permanent" || errorClass === "blocked") &&
+              isCacheableWorkflowToolFailure(message),
           });
         }
         if (activity.workflowId !== "prime-bridge") {

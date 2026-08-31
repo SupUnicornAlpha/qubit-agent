@@ -34,6 +34,7 @@ import {
   resolveAlert,
   resolveAlertsByScope,
 } from "../runtime/monitor/alert-service";
+import { getConnectorCallSummary } from "../runtime/monitor/connector-call-log";
 import { type ExecKind, getExecSummary } from "../runtime/monitor/exec-summary";
 import { type FailureScope, listFailures } from "../runtime/monitor/failure-list";
 import { getLlmUsageSummary } from "../runtime/monitor/llm-usage";
@@ -112,6 +113,16 @@ monitorRouter.get("/summary", async (c) => {
   if (sessionId) input.sessionId = sessionId;
   if (stuckMinutes) input.stuckMinutes = Number(stuckMinutes);
   const data = await getMonitorSummary(input);
+  return c.json({ ok: true, data });
+});
+
+/**
+ * Connector 维度的调用监控。与 /environment/status 的即时探活分开：
+ * 这里只读历史调用记录，避免刷新监控页时重复触发上游请求。
+ */
+monitorRouter.get("/connectors/summary", async (c) => {
+  const windowMinutes = Number(c.req.query("windowMinutes") ?? 24 * 60);
+  const data = await getConnectorCallSummary({ windowMinutes });
   return c.json({ ok: true, data });
 });
 

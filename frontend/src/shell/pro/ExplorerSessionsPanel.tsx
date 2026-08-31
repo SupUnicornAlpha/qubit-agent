@@ -2,7 +2,6 @@ import { type FC, useEffect, useState } from "react";
 import {
   createChatSession,
   deleteChatSession,
-  getDefaultWorkspace,
   getOrCreateDefaultProject,
   listChatSessions,
 } from "../../api/backend";
@@ -24,20 +23,21 @@ export const ExplorerSessionsPanel: FC = () => {
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
   useEffect(() => {
+    if (chatSessions.length > 0) return;
     let cancelled = false;
     void (async () => {
       try {
-        const ws = await getDefaultWorkspace();
         const project = await getOrCreateDefaultProject();
         const sessions = await listChatSessions({
-          workspaceId: ws.id,
+          workspaceId: project.workspaceId,
           projectId: project.id,
+          limit: 100,
         });
         if (cancelled) return;
         setChatSessions(sessions);
         if (sessions.length === 0) {
           const created = await createChatSession({
-            workspaceId: ws.id,
+            workspaceId: project.workspaceId,
             projectId: project.id,
             title: t("chat.sidebar.newSession"),
           });
@@ -54,16 +54,13 @@ export const ExplorerSessionsPanel: FC = () => {
     return () => {
       cancelled = true;
     };
-    // 仅挂载拉取；会话变化由本面板内操作与 ChatPanel 写回 store
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [chatSessions.length, selectedSessionId, setChatSessions, setSelectedSessionId, t]);
 
   const onCreate = async () => {
     try {
-      const ws = await getDefaultWorkspace();
       const project = await getOrCreateDefaultProject();
       const created = await createChatSession({
-        workspaceId: ws.id,
+        workspaceId: project.workspaceId,
         projectId: project.id,
         title: `会话 ${chatSessions.length + 1}`,
       });

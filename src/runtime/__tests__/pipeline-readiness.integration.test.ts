@@ -294,6 +294,95 @@ describe("五产线就绪度（pipeline readiness）", () => {
     expect(rows).toHaveLength(1);
   });
 
+  test("运行时绑定订单沿用策略脚本版本，不回退为 auto-bridge", async () => {
+    const db = await getDb();
+    const sessionId = `session-${crypto.randomUUID()}`;
+    const scriptId = `script-${crypto.randomUUID()}`;
+    const runtimeId = `runtime-${crypto.randomUUID()}`;
+    const instrumentId = `instrument-${crypto.randomUUID()}`;
+    await db.insert(schema.chatSession).values({
+      id: sessionId,
+      workspaceId: WORKSPACE_ID,
+      projectId: PROJECT_ID,
+      title: "runtime-bound-order",
+      status: "active",
+    });
+    await db.insert(schema.indicatorStrategyScript).values({
+      id: scriptId,
+      sessionId,
+      workflowRunId,
+      name: "runtime-bound-strategy",
+      purpose: "both",
+    });
+    await db.insert(schema.instrument).values({
+      id: instrumentId,
+      symbol: "RUNTIME",
+      assetClass: "stock",
+      exchange: "US",
+      metaJson: {},
+    });
+    await db.insert(schema.strategyRuntime).values({
+      id: runtimeId,
+      strategyScriptId: scriptId,
+      executionMode: "paper",
+      market: "US",
+      symbol: "RUNTIME",
+      timeframe: "1d",
+      paramsJson: {},
+    });
+
+    const out = await createOrderIntentFromReiaPayload(
+      {
+        workflowRunId,
+        ticker: "RUNTIME",
+        direction: "long",
+        quantity: 1,
+        targetPrice: 100,
+        market: "US",
+        executionMode: "paper",
+        strategyRuntimeId: runtimeId,
+      },
+      db
+    );
+    const intent = (
+      await db
+        .select()
+        .from(schema.orderIntent)
+        .where(drizzle.eq(schema.orderIntent.id, out.orderIntentId))
+    )[0];
+    const version = intent
+      ? (
+          await db
+            .select()
+            .from(schema.strategyVersion)
+            .where(drizzle.eq(schema.strategyVersion.id, intent.strategyVersionId))
+        )[0]
+      : undefined;
+
+    expect(intent?.strategyRuntimeId).toBe(runtimeId);
+    expect(intent?.instrumentId).toBe(instrumentId);
+    expect(version?.logicHash).toBe(`script-${scriptId}`);
+    expect(version?.logicHash).not.toBe("reia-bridge");
+  });
+
+  test("实盘 REIA 订单不能再用 auto-bridge 绕过已晋级运行时", async () => {
+    const db = await getDb();
+    await expect(
+      createOrderIntentFromReiaPayload(
+        {
+          workflowRunId,
+          ticker: "AAPL",
+          direction: "long",
+          quantity: 1,
+          targetPrice: 180,
+          market: "US",
+          executionMode: "live",
+        },
+        db
+      )
+    ).rejects.toThrow("live_execution_requires_strategy_runtime");
+  });
+
   test("端到端 lineage：单 workflow 内五段产物可被串联", async () => {
     const db = await getDb();
 

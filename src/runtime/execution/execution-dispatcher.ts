@@ -17,6 +17,7 @@ import { executeWithPolicy } from "../external-call/policy";
 import { assertTradingModuleEnabled } from "../trader/trading-module-control";
 import { connectorForAccount, resolveBrokerAccount } from "./broker/broker-service";
 import { type DispatchMode, assertBrokerDispatchAllowed } from "./live-trading-gate";
+import { assertLiveOrderIntentEvidenceFresh } from "./order-intent-service";
 
 export type { DispatchMode };
 
@@ -297,6 +298,7 @@ export async function dispatchExecutionTask(
   // evidence changed; no stale task is allowed to bypass the current gate.
   if (input.dispatchMode === "live") {
     await strategyPromotionService.assertStrategyVersionLiveEligible(intent.strategyVersionId, db);
+    await assertLiveOrderIntentEvidenceFresh(db, intent);
   }
   const effectiveOrderType = resolveEffectiveOrderType(intent.orderType, intent.activationStatus);
 

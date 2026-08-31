@@ -9,6 +9,7 @@ import {
   strategyRuntime,
   workflowRun,
 } from "../../db/sqlite/schema";
+import { captureWorkflowComponentEvidence } from "../eval-platform/experiment/component-evidence-capture";
 import { ensureStrategyVersionForScript } from "../strategy/strategy-version-resolver";
 import { readStrategyComparisonCohortId } from "./strategy-comparison-cohort";
 
@@ -23,7 +24,14 @@ export interface PaperEvaluation {
   maxDrawdown: number;
   turnover: number;
   pass: boolean;
+  componentEvidenceRecorded: number;
 }
+
+type PaperEvaluationMetrics = Omit<PaperEvaluation, "id" | "componentEvidenceRecorded">;
+type PaperScoreInput = Pick<
+  PaperEvaluationMetrics,
+  "tradingDays" | "netReturn" | "sharpe" | "maxDrawdown"
+>;
 
 export class PaperEvaluationService {
   async evaluate(strategyRuntimeId: string, client?: DbClient): Promise<PaperEvaluation> {
@@ -117,6 +125,25 @@ export class PaperEvaluationService {
       pass,
       comparisonCohortId,
     });
+    const componentEvidenceRecorded = comparisonCohortId
+      ? await capturePaperComponentEvidence({
+          db,
+          projectId,
+          workflowRunId,
+          runtimeId: strategyRuntimeId,
+          comparisonCohortId,
+          tradingDays: days.length,
+          netReturn,
+          sharpe,
+          maxDrawdown,
+          turnover,
+          pass,
+          // Runtime params are user/config supplied and therefore cannot act
+          // as a cryptographic version for a Harness component. Harnesses get
+          // paper evidence only once their profile build identity is persisted.
+          harnessVersion: null,
+        })
+      : 0;
     return {
       id,
       strategyRuntimeId,
@@ -128,12 +155,13 @@ export class PaperEvaluationService {
       maxDrawdown,
       turnover,
       pass,
+      componentEvidenceRecorded,
     };
   }
 
   private async persist(
     db: DbClient,
-    input: Omit<PaperEvaluation, "id"> & {
+    input: PaperEvaluationMetrics & {
       projectId: string;
       workflowRunId: string;
       comparisonCohortId: string | null;
@@ -190,6 +218,59 @@ export class PaperEvaluationService {
   }
 }
 
+async function capturePaperComponentEvidence(input: {
+  db: DbClient;
+  projectId: string;
+  workflowRunId: string;
+  runtimeId: string;
+  comparisonCohortId: string;
+  tradingDays: number;
+  netReturn: number;
+  sharpe: number;
+  maxDrawdown: number;
+  turnover: number;
+  pass: boolean;
+  harnessVersion: string | null;
+}): Promise<number> {
+  try {
+    return await captureWorkflowComponentEvidence({
+      projectId: input.projectId,
+      workflowRunId: input.workflowRunId,
+      comparisonCohortId: input.comparisonCohortId,
+      harnessVersion: input.harnessVersion,
+      evalKind: "paper",
+      sampleSize: input.tradingDays,
+      metrics: {
+        source: "paper_evaluation",
+        strategyRuntimeId: input.runtimeId,
+        tradingDays: input.tradingDays,
+        netReturn: input.netReturn,
+        sharpe: input.sharpe,
+        maxDrawdown: input.maxDrawdown,
+        turnover: input.turnover,
+      },
+      qualityScore: paperScore({
+        tradingDays: input.tradingDays,
+        netReturn: input.netReturn,
+        sharpe: input.sharpe,
+        maxDrawdown: input.maxDrawdown,
+      }),
+      pass: input.pass,
+      createdBy: "paper_evaluation:component_capture",
+      client: input.db,
+    });
+  } catch (error) {
+    // The paper evaluation is canonical strategy evidence. Component capture
+    // is a non-authoritative projection and must not erase that result.
+    console.warn(
+      `[paper-evaluation] component evidence capture failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+    return 0;
+  }
+}
+
 /**
  * A paper runtime can bind a composition explicitly. For legacy runtimes we
  * infer only when the strategy version has exactly one composition; ambiguous
@@ -239,7 +320,7 @@ function drawdownFromReturns(returns: number[]): number {
   return drawdown;
 }
 
-function paperScore(input: Omit<PaperEvaluation, "id">): number {
+function paperScore(input: PaperScoreInput): number {
   const checks = [
     input.tradingDays >= 20,
     input.netReturn > 0,
@@ -250,3 +331,61 @@ function paperScore(input: Omit<PaperEvaluation, "id">): number {
 }
 
 export const paperEvaluationService = new PaperEvaluationService();
+
+const DEFAULT_PAPER_EVALUATION_TICK_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Re-evaluates paper runtimes after PnL materialization. It is deliberately
+ * separate from the execution worker: a broker fill is not itself a mature
+ * paper result, and the service already keeps writes idempotent per runtime.
+ */
+export class PaperEvaluationWorker {
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private startupTimer: ReturnType<typeof setTimeout> | null = null;
+  private running = false;
+
+  async tick(): Promise<void> {
+    if (this.running) return;
+    this.running = true;
+    try {
+      const db = await getDb();
+      const runtimes = await db
+        .select({ id: strategyRuntime.id })
+        .from(strategyRuntime)
+        .where(eq(strategyRuntime.executionMode, "paper"));
+      for (const runtime of runtimes) {
+        try {
+          await paperEvaluationService.evaluate(runtime.id, db);
+        } catch (error) {
+          console.warn(
+            `[paper-evaluation] runtime=${runtime.id} failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        }
+      }
+    } finally {
+      this.running = false;
+    }
+  }
+
+  start(): void {
+    if (this.timer || process.env.QUBIT_PAPER_EVALUATION_ENABLED === "0") return;
+    const configuredMs = Number(process.env.QUBIT_PAPER_EVALUATION_TICK_MS);
+    const tickMs =
+      Number.isFinite(configuredMs) && configuredMs >= 60_000
+        ? configuredMs
+        : DEFAULT_PAPER_EVALUATION_TICK_MS;
+    this.startupTimer = setTimeout(() => void this.tick(), 90_000);
+    this.timer = setInterval(() => void this.tick(), tickMs);
+  }
+
+  stop(): void {
+    if (this.startupTimer) clearTimeout(this.startupTimer);
+    if (this.timer) clearInterval(this.timer);
+    this.startupTimer = null;
+    this.timer = null;
+  }
+}
+
+export const paperEvaluationWorker = new PaperEvaluationWorker();

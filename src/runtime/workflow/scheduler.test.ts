@@ -5,6 +5,7 @@ import {
   parseMinuteStep,
   parsePositionReconciliationJobPayload,
   parseScheduledJobKind,
+  parseScheduledPayload,
   supportsCronExpression,
 } from "./scheduler";
 
@@ -79,6 +80,36 @@ describe("scheduled job actions", () => {
         provider: "invalid",
       })
     ).toBeNull();
+  });
+
+  test("preserves canonical runtime and evidence fields for scheduled orders", () => {
+    expect(
+      parseScheduledPayload({
+        ticker: " AAPL ",
+        direction: "long",
+        quantity: 2,
+        targetPrice: 100,
+        brokerAccountId: " broker-live ",
+        strategyRuntimeId: " runtime-promoted ",
+        market: " US ",
+        timeframe: " 5m ",
+        thesisId: " thesis-immutable ",
+        snapshotId: " snapshot-immutable ",
+        frameworkAssessmentArtifactId: " artifact-framework ",
+      })
+    ).toMatchObject({
+      ticker: " AAPL ",
+      direction: "long",
+      quantity: 2,
+      targetPrice: 100,
+      brokerAccountId: "broker-live",
+      strategyRuntimeId: "runtime-promoted",
+      market: "US",
+      timeframe: "5m",
+      thesisId: "thesis-immutable",
+      snapshotId: "snapshot-immutable",
+      frameworkAssessmentArtifactId: "artifact-framework",
+    });
   });
 
   test("runs reconciliation without creating a workflow", async () => {

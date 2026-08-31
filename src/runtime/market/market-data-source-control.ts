@@ -16,14 +16,18 @@ import type { MarketFeedClass, MarketLicenseUse } from "./contracts/market-event
 import { isFutuAccountConfiguredCached } from "./futu-klines";
 import { isIbAccountConfiguredCached } from "./ib-klines";
 import { isIfindConfiguredCached } from "./ifind-klines";
-import type { KlinesDataSourceMeta, KlinesDataSourceSetting } from "./klines-data-source";
+import {
+  type KlinesDataSourceMeta,
+  type KlinesDataSourceSetting,
+  parseKlinesDataSourceSetting,
+} from "./klines-data-source";
 import {
   type MarketDataFailureKind,
   classifyMarketDataFailure,
   formatMarketDataFailure,
 } from "./market-data-errors";
 import { type MarketDataNetworkMode, resolveMarketDataNetworkRoute } from "./market-data-network";
-import type { MarketCode } from "./resolve-ticker-market";
+import { type MarketCode, resolveTickerMarket } from "./resolve-ticker-market";
 
 export type HistoricalMarketDataSource = Exclude<KlinesDataSourceMeta, "synthetic">;
 export type OperationalMarketDataSource = HistoricalMarketDataSource | BrokerMarketBridgeSourceId;
@@ -649,6 +653,9 @@ export async function selectMarketDataSourcePlan(input: {
     )
       return false;
     if (row.availabilityStatus === "misconfigured") return false;
+    // Sticky "down" sources stay out of request plans until a probe recovers them.
+    // Circuit cooldown alone used to re-admit hung bridges (e.g. Futu 30s timeout).
+    if (row.healthStatus === "down") return false;
     if ((upstreamBackoffUntil.get(def.upstreamFamily) ?? 0) > now) return false;
     if (row.circuitState !== "open") return true;
     const openedAt = row.circuitOpenedAt ? Date.parse(row.circuitOpenedAt) : now;
@@ -688,6 +695,58 @@ export async function selectMarketDataSourcePlan(input: {
     return dedupeFamilies(healthOrdered).map((row) => row.id as HistoricalMarketDataSource);
   }
   return [explicit as HistoricalMarketDataSource, ...fallbackIds];
+}
+
+/**
+ * 解析一次行情请求应该使用的首选源，不执行任何上游请求。
+ *
+ * 自动模式优先使用最近探活成功的源；只有没有 healthy 源时才返回
+ * 当前 eligible 计划中的第一个候选，避免一次请求串行穿过整条瀑布。
+ */
+export async function resolveMarketDataSourceRoute(input: {
+  symbol: string;
+  exchange?: string;
+  timeframe?: string;
+}): Promise<{
+  sourceId: HistoricalMarketDataSource | null;
+  plan: HistoricalMarketDataSource[];
+  reason: "healthy" | "fallback" | "unavailable";
+}> {
+  const settings = await loadBuiltinConnectorSettings();
+  const dataConfig = (settings["qubit-data"] ?? {}) as Record<string, unknown>;
+  const mode = parseKlinesDataSourceSetting(dataConfig.klinesDataSource);
+  const market = resolveTickerMarket(input.symbol, {
+    hintExchange: input.exchange,
+  }).market;
+  const plan = await selectMarketDataSourcePlan({
+    market,
+    timeframe: input.timeframe?.trim() || "1d",
+    mode,
+    settings,
+  });
+  if (plan.length === 0) {
+    return { sourceId: null, plan, reason: "unavailable" };
+  }
+
+  const rows = await listMarketDataSources();
+  // Prefer healthy broker / high-priority sources first (Futu/IB over free Yahoo),
+  // then break ties by observed latency.
+  const healthy = plan
+    .map((sourceId) => rows.find((row) => row.id === sourceId))
+    .filter((row): row is NonNullable<typeof row> => row?.healthStatus === "healthy")
+    .sort((a, b) => {
+      const fallbackRank = Number(a.isFallback) - Number(b.isFallback);
+      if (fallbackRank !== 0) return fallbackRank;
+      const priorityDelta = (b.priority ?? 0) - (a.priority ?? 0);
+      if (priorityDelta !== 0) return priorityDelta;
+      const latencyA = a.p95LatencyMs ?? Number.MAX_SAFE_INTEGER;
+      const latencyB = b.p95LatencyMs ?? Number.MAX_SAFE_INTEGER;
+      return latencyA - latencyB;
+    });
+  if (healthy[0]) {
+    return { sourceId: healthy[0].id as HistoricalMarketDataSource, plan, reason: "healthy" };
+  }
+  return { sourceId: plan[0] ?? null, plan, reason: "fallback" };
 }
 
 /** Test helper: clear sticky circuit/health/backoff so plan ranking is deterministic. */

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { type DbClient, getDb } from "../../../db/sqlite/client";
 import {
@@ -23,6 +24,21 @@ type CapturedComponent = {
   versionId: string;
 };
 
+export type WorkflowComponentEvidenceInput = {
+  projectId: string;
+  workflowRunId: string;
+  comparisonCohortId: string;
+  /** A frozen experiment/config fingerprint; omit to avoid claiming a Harness version. */
+  harnessVersion?: string | null;
+  evalKind: "offline" | "shadow" | "paper";
+  sampleSize: number;
+  metrics: Record<string, unknown>;
+  qualityScore: number;
+  pass: boolean;
+  createdBy: string;
+  client?: DbClient;
+};
+
 /**
  * Converts a frozen experiment case into component evidence. This deliberately
  * records only `offline`: experiment output is reproducible evidence, but it
@@ -40,8 +56,44 @@ export async function captureExperimentComponentEvidence(input: {
   pass: boolean;
   client?: DbClient;
 }): Promise<number> {
+  return captureWorkflowComponentEvidence({
+    projectId: input.projectId,
+    workflowRunId: input.workflowRunId,
+    comparisonCohortId: input.comparisonCohortId,
+    harnessVersion: input.configFingerprint,
+    evalKind: "offline",
+    sampleSize: 1,
+    metrics: {
+      source: "eval_platform_experiment",
+      evalRunId: input.evalRunId,
+      caseKey: input.caseKey,
+      configFingerprint: input.configFingerprint,
+      score: input.score,
+    },
+    qualityScore: input.score,
+    pass: input.pass,
+    createdBy: "eval_platform:component_capture",
+    ...(input.client ? { client: input.client } : {}),
+  });
+}
+
+/**
+ * Shared capture path for trusted evaluators. The public governance route is
+ * intentionally not allowed to mint paper/shadow rows. Each component can
+ * contribute once per workflow, frozen cohort and evaluation stage, preventing
+ * repeated UI clicks from inflating its sample size.
+ */
+export async function captureWorkflowComponentEvidence(
+  input: WorkflowComponentEvidenceInput
+): Promise<number> {
   const db = input.client ?? (await getDb());
-  const components = await readWorkflowComponents(db, input.workflowRunId, input.configFingerprint);
+  const cohort = input.comparisonCohortId.trim();
+  if (!cohort) throw new Error("component_comparison_cohort_required");
+  const components = await readWorkflowComponents(
+    db,
+    input.workflowRunId,
+    input.harnessVersion?.trim() || null
+  );
   if (components.length === 0) return 0;
   const existing = await db
     .select({
@@ -49,37 +101,32 @@ export async function captureExperimentComponentEvidence(input: {
       componentId: componentEvalRun.componentId,
       versionId: componentEvalRun.versionId,
       comparisonCohortId: componentEvalRun.comparisonCohortId,
+      evalKind: componentEvalRun.evalKind,
     })
     .from(componentEvalRun)
     .where(eq(componentEvalRun.workflowRunId, input.workflowRunId));
   const existingKeys = new Set(
     existing.map(
       (row) =>
-        `${row.componentKind}\u0000${row.componentId}\u0000${row.versionId}\u0000${row.comparisonCohortId ?? ""}`
+        `${row.componentKind}\u0000${row.componentId}\u0000${row.versionId}\u0000${row.comparisonCohortId ?? ""}\u0000${row.evalKind}`
     )
   );
   let written = 0;
   for (const component of components) {
-    const key = `${component.componentKind}\u0000${component.componentId}\u0000${component.versionId}\u0000${input.comparisonCohortId}`;
+    const key = `${component.componentKind}\u0000${component.componentId}\u0000${component.versionId}\u0000${cohort}\u0000${input.evalKind}`;
     if (existingKeys.has(key)) continue;
     await componentChallengerService.record(
       {
         projectId: input.projectId,
         workflowRunId: input.workflowRunId,
         ...component,
-        comparisonCohortId: input.comparisonCohortId,
-        evalKind: "offline",
-        sampleSize: 1,
-        metrics: {
-          source: "eval_platform_experiment",
-          evalRunId: input.evalRunId,
-          caseKey: input.caseKey,
-          configFingerprint: input.configFingerprint,
-          score: input.score,
-        },
-        qualityScore: input.score,
+        comparisonCohortId: cohort,
+        evalKind: input.evalKind,
+        sampleSize: Math.max(0, Math.floor(input.sampleSize)),
+        metrics: input.metrics,
+        qualityScore: input.qualityScore,
         pass: input.pass,
-        createdBy: "eval_platform:component_capture",
+        createdBy: input.createdBy,
       },
       db
     );
@@ -92,11 +139,15 @@ export async function captureExperimentComponentEvidence(input: {
 async function readWorkflowComponents(
   db: DbClient,
   workflowRunId: string,
-  harnessVersion: string
+  harnessVersion: string | null
 ): Promise<CapturedComponent[]> {
   const [agents, models, tools, skills, harnesses, dataSources] = await Promise.all([
     db
-      .select({ id: agentDefinition.id, version: agentDefinition.version })
+      .select({
+        id: agentDefinition.id,
+        version: agentDefinition.version,
+        systemPrompt: agentDefinition.systemPrompt,
+      })
       .from(agentInstance)
       .innerJoin(agentDefinition, eq(agentDefinition.id, agentInstance.definitionId))
       .where(eq(agentInstance.workflowRunId, workflowRunId)),
@@ -130,6 +181,14 @@ async function readWorkflowComponents(
       componentId: row.id,
       versionId: row.version,
     })),
+    // Prompts are a separately governed component. Definition version alone
+    // is insufficient because a user override can change prompt content
+    // without changing the agent release tag.
+    ...agents.map((row) => ({
+      componentKind: "prompt" as const,
+      componentId: row.id,
+      versionId: promptContentFingerprint(row.systemPrompt),
+    })),
     ...models.map((row) => ({
       componentKind: "model" as const,
       componentId: row.provider,
@@ -146,7 +205,7 @@ async function readWorkflowComponents(
       versionId: row.version,
     })),
     ...harnesses.flatMap((row) =>
-      row.profileId && row.profileId !== "unprofiled"
+      harnessVersion && row.profileId && row.profileId !== "unprofiled"
         ? [
             {
               componentKind: "harness" as const,
@@ -166,6 +225,10 @@ async function readWorkflowComponents(
     );
   }
   return [...unique.values()];
+}
+
+function promptContentFingerprint(systemPrompt: string): string {
+  return `prompt_sha256_${createHash("sha256").update(systemPrompt).digest("hex").slice(0, 24)}`;
 }
 
 /**

@@ -116,6 +116,30 @@ describe("broker-market-bridge", () => {
     setBrokerBridgeHealthHints([]);
   });
 
+  test("auto skips sole down bridge so callers can fall back to polling", () => {
+    clearBridgeEnv();
+    process.env.QUBIT_FUTU_MARKET_WS_URL = "ws://futu";
+    setBrokerBridgeHealthHints([
+      { sourceId: "futu_bridge", credentialsReady: true, healthStatus: "down" },
+    ]);
+    expect(selectBrokerMarketBridge({ market: "US" })).toBeNull();
+    expect(selectBrokerMarketBridge({ market: "CN" })).toBeNull();
+    setBrokerBridgeHealthHints([]);
+  });
+
+  test("explicit preferred provider also skips when marked down", () => {
+    clearBridgeEnv();
+    process.env.QUBIT_FUTU_MARKET_WS_URL = "ws://futu";
+    process.env.QUBIT_IB_MARKET_WS_URL = "ws://ib";
+    process.env.QUBIT_MARKET_STREAM_PROVIDER = "futu";
+    setBrokerBridgeHealthHints([
+      { sourceId: "futu_bridge", credentialsReady: true, healthStatus: "down" },
+      { sourceId: "ib_bridge", credentialsReady: true, healthStatus: "healthy" },
+    ]);
+    expect(selectBrokerMarketBridge({ market: "US" })?.id).toBe("ib");
+    setBrokerBridgeHealthHints([]);
+  });
+
   test("skips broker marked credentials_missing in auto path", () => {
     clearBridgeEnv();
     process.env.QUBIT_FUTU_MARKET_WS_URL = "ws://futu";

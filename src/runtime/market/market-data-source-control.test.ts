@@ -5,6 +5,7 @@ import {
   listMarketDataSources,
   recordMarketDataSourceAttempt,
   resetMarketDataSourceRuntimeStateForTests,
+  resolveMarketDataSourceRoute,
   selectMarketDataSourcePlan,
 } from "./market-data-source-control";
 
@@ -76,6 +77,24 @@ describe("market data source control plane", () => {
     expect(us).toContain("yahoo_chart");
     expect(us.indexOf("yfinance")).toBeLessThan(us.indexOf("yahoo_chart"));
     expect(crypto).toEqual(["binance_crypto"]);
+  });
+
+  test("resolves a healthy source before an unprobed higher-priority source", async () => {
+    await recordMarketDataSourceAttempt({
+      sourceId: "yfinance",
+      market: "US",
+      timeframe: "1d",
+      symbol: "AAPL",
+      status: "success",
+      latencyMs: 120,
+    });
+    const route = await resolveMarketDataSourceRoute({
+      symbol: "AAPL",
+      exchange: "US",
+      timeframe: "1d",
+    });
+    expect(route.sourceId).toBe("yfinance");
+    expect(route.reason).toBe("healthy");
   });
 
   test("symbol-specific no-data does not trip the global source circuit", async () => {

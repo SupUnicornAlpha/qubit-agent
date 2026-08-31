@@ -48,8 +48,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
-export async function httpGet<T>(path: string): Promise<T> {
-  return request<T>(path, { method: "GET" });
+export async function httpGet<T>(path: string, init?: RequestInit): Promise<T> {
+  return request<T>(path, { ...init, method: "GET" });
 }
 
 export async function httpPost<T>(path: string, body?: unknown, init?: RequestInit): Promise<T> {

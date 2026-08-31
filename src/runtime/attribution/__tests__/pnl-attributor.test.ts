@@ -35,12 +35,17 @@ import {
   brokerOrder,
   chatSession,
   dailyMarkPrice,
+  executionTask,
+  executionTaskEvent,
   feeSchedule,
   fill,
   indicatorStrategyScript,
   instrument,
   orderIntent,
   project,
+  riskDecision,
+  riskHitLog,
+  riskReviewTicket,
   strategy,
   strategyPnlSnapshot,
   strategyRuntime,
@@ -179,6 +184,11 @@ beforeEach(async () => {
   const db = await getDb();
   // 清表，保留 fixture 链与 fee_schedule seed
   await db.delete(strategyPnlSnapshot).run();
+  await db.delete(executionTaskEvent).run();
+  await db.delete(executionTask).run();
+  await db.delete(riskHitLog).run();
+  await db.delete(riskReviewTicket).run();
+  await db.delete(riskDecision).run();
   await db.delete(fill).run();
   await db.delete(brokerOrder).run();
   await db.delete(orderIntent).run();

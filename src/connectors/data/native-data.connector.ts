@@ -45,8 +45,8 @@ import {
 } from "../../runtime/market/normalize-klines-request";
 import { extractSymbolArgs, receivedParamKeys } from "../../runtime/market/normalize-symbol-args";
 import {
-  fetchOptionChain,
   type OptionChainRequestSource,
+  fetchOptionChain,
 } from "../../runtime/market/options-chain";
 import { resolveTickerMarket } from "../../runtime/market/resolve-ticker-market";
 import { snapshotIndicators } from "../../runtime/market/technical-indicators";
@@ -347,6 +347,10 @@ export class QubitNativeDataConnector extends DataConnector {
     if (operation === "fetch_klines" || operation === "fetch_price_data") {
       const raw = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
       const p = raw as Record<string, unknown>;
+      const requestedSource =
+        typeof p.dataSource === "string" && p.dataSource.trim()
+          ? (p.dataSource.trim() as HistoricalMarketDataSource)
+          : undefined;
       const requestedSymbols = extractKlinesSymbols(p);
       if (operation === "fetch_klines" && requestedSymbols.length > 1) {
         const merged: BarData[] = [];
@@ -362,14 +366,17 @@ export class QubitNativeDataConnector extends DataConnector {
           const { period } = computedRange;
           try {
             merged.push(
-              ...(await this.fetchBars({
-                symbol: normalized.symbol,
-                exchange: normalized.exchange,
-                period,
-                startDate,
-                endDate,
-                ...(p.workflowRunId ? { workflowRunId: String(p.workflowRunId) } : {}),
-              }))
+              ...(await this.fetchBars(
+                {
+                  symbol: normalized.symbol,
+                  exchange: normalized.exchange,
+                  period,
+                  startDate,
+                  endDate,
+                  ...(p.workflowRunId ? { workflowRunId: String(p.workflowRunId) } : {}),
+                },
+                requestedSource
+              ))
             );
           } catch (error) {
             errors.push(
@@ -392,14 +399,17 @@ export class QubitNativeDataConnector extends DataConnector {
       const startDate = normalized.startDate ?? computedRange.startDate;
       const endDate = normalized.endDate ?? computedRange.endDate;
       const { period } = computedRange;
-      const bars = await this.fetchBars({
-        symbol,
-        exchange,
-        period,
-        startDate,
-        endDate,
-        ...(p.workflowRunId ? { workflowRunId: String(p.workflowRunId) } : {}),
-      });
+      const bars = await this.fetchBars(
+        {
+          symbol,
+          exchange,
+          period,
+          startDate,
+          endDate,
+          ...(p.workflowRunId ? { workflowRunId: String(p.workflowRunId) } : {}),
+        },
+        requestedSource
+      );
       if (operation === "fetch_price_data") {
         return {
           symbol,
@@ -579,7 +589,10 @@ export class QubitNativeDataConnector extends DataConnector {
     }
   }
 
-  async fetchBars(params: FetchBarsParams): Promise<BarData[]> {
+  async fetchBars(
+    params: FetchBarsParams,
+    forcedSource?: HistoricalMarketDataSource
+  ): Promise<BarData[]> {
     if (!params.symbol?.trim()) throw new Error("fetch_bars: symbol is required");
     const start = Date.parse(params.startDate);
     const end = Date.parse(params.endDate);
@@ -602,13 +615,23 @@ export class QubitNativeDataConnector extends DataConnector {
     const mode = parseKlinesDataSourceSetting(dataCfg.klinesDataSource);
     if (mode === "synthetic") return [];
     const market = resolveTickerMarket(params.symbol, { hintExchange: params.exchange }).market;
-    const plan = await selectMarketDataSourcePlan({
+    const preferredRaw = forcedSource ?? params.dataSource?.trim();
+    const preferred =
+      preferredRaw && preferredRaw !== "synthetic"
+        ? (preferredRaw as HistoricalMarketDataSource)
+        : undefined;
+    const autoPlan = await selectMarketDataSourcePlan({
       market,
       timeframe: params.period,
       mode,
       settings: liveSettings,
     });
-    const attempted = params.bestEffort ? plan.slice(0, 1) : plan;
+    // Prefer the control-plane tip first, but keep remaining eligible sources as
+    // short fallbacks so a single empty/error upstream does not blank the chart.
+    const plan = preferred
+      ? [preferred, ...autoPlan.filter((source) => source !== preferred)]
+      : autoPlan;
+    const attempted = params.bestEffort ? plan.slice(0, 2) : plan;
     const errors: string[] = [];
     for (const source of attempted) {
       const started = Date.now();
@@ -628,6 +651,7 @@ export class QubitNativeDataConnector extends DataConnector {
           setCachedKlinesBars(queryKey, bars, params.workflowRunId, source);
           return bars;
         }
+        errors.push(`${source}: no usable OHLCV rows`);
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
         errors.push(`${source}: ${message}`);

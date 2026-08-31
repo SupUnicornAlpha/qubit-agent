@@ -10,8 +10,8 @@ import {
 } from "../../db/sqlite/schema";
 import type { OrderSide, OrderType, TimeInForce } from "../../types/entities";
 import { recommendationService } from "../effect-validation/recommendation-service";
-import { strategyPromotionService } from "../effect-validation/strategy-promotion-service";
 import { strategyCandidateReviewService } from "../effect-validation/strategy-candidate-review-service";
+import { strategyPromotionService } from "../effect-validation/strategy-promotion-service";
 import { createOrderIntentWithExecution } from "../execution/order-intent-service";
 import { factorService } from "../factor/factor-service";
 import { isLikelyProjectIdFormat } from "./context-params";
@@ -514,6 +514,7 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
       "long";
     const horizonDays = Number(p.horizon_days ?? p.horizonDays ?? 20);
     const confidence = coerceConfidence01(p.confidence ?? p.conviction, 0.5);
+    const thesisId = String(p.thesis_id ?? p.thesisId ?? "").trim();
     const scoreRaw = p.score;
     const evidenceRaw = p.evidence ?? p.evidence_json;
     const evidence = Array.isArray(evidenceRaw) ? evidenceRaw : [];
@@ -549,8 +550,13 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
         expiresAt: typeof p.expires_at === "string" ? p.expires_at : null,
         dataAsof: typeof p.data_asof === "string" ? p.data_asof : null,
         sourceArtifactKind:
-          typeof p.source_artifact_kind === "string" ? p.source_artifact_kind : null,
-        sourceArtifactId: typeof p.source_artifact_id === "string" ? p.source_artifact_id : null,
+          typeof p.source_artifact_kind === "string"
+            ? p.source_artifact_kind
+            : thesisId
+              ? "research_thesis"
+              : null,
+        sourceArtifactId:
+          typeof p.source_artifact_id === "string" ? p.source_artifact_id : thesisId || null,
         createdBy: "agent",
         agentInstanceId: ctx.agentInstanceId || null,
         ...(typeof p.asof === "string" ? { asof: p.asof } : {}),

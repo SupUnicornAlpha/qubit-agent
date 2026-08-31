@@ -2,7 +2,9 @@ import { config } from "./config";
 import { formatStartupBanner } from "./routes/meta.routes";
 import { startAllAgents, stopAllAgents } from "./runtime/agent-pool";
 import { isPackagedRuntime } from "./runtime/app-paths";
+import { pnlAttributionWorker } from "./runtime/attribution/pnl-attributor";
 import { ensurePythonRuntime, runPlatformBootstrap } from "./runtime/bootstrap/packaged-setup";
+import { paperEvaluationWorker } from "./runtime/effect-validation/paper-evaluation-service";
 import { recommendationOutcomeWorker } from "./runtime/effect-validation/recommendation-outcome-evaluator";
 import { executionWorker } from "./runtime/execution/execution-worker";
 import { experienceMaintenanceWorker } from "./runtime/experience/maintenance-worker";
@@ -48,6 +50,8 @@ async function main() {
   }
   workflowScheduler.start();
   executionWorker.start();
+  pnlAttributionWorker.start();
+  paperEvaluationWorker.start();
   recommendationOutcomeWorker.start();
   strategyRuntimeWorker.start();
   const { startSimEventReactor } = await import("./runtime/trading/sim-event-reactor");
@@ -135,6 +139,8 @@ async function main() {
     stopOwnedRustCore();
     workflowScheduler.stop();
     executionWorker.stop();
+    pnlAttributionWorker.stop();
+    paperEvaluationWorker.stop();
     recommendationOutcomeWorker.stop();
     strategyRuntimeWorker.stop();
     const { stopSimEventReactor } = await import("./runtime/trading/sim-event-reactor");

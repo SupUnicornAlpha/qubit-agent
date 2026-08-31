@@ -69,7 +69,20 @@ async function getFutuBridge(): Promise<PythonConnectorBridgeImpl> {
     return await bridgeInit;
   } catch (e) {
     bridgeInit = null;
+    bridge = null;
     throw e;
+  }
+}
+
+async function resetFutuBridge(): Promise<void> {
+  const current = bridge;
+  bridge = null;
+  bridgeInit = null;
+  if (!current) return;
+  try {
+    await current.shutdown();
+  } catch {
+    /* ignore */
   }
 }
 
@@ -94,6 +107,7 @@ export async function probeFutuHistoryAvailable(): Promise<boolean> {
     const hc = await b.healthcheck();
     return hc.status === "healthy";
   } catch {
+    await resetFutuBridge();
     return false;
   }
 }
@@ -101,26 +115,31 @@ export async function probeFutuHistoryAvailable(): Promise<boolean> {
 export async function fetchFutuBars(params: FetchBarsParams): Promise<BarData[]> {
   const openD = await resolveFutuOpenDConfig();
   markFutuAccountConfigured(Boolean(openD));
-  const client = await getFutuBridge();
-  const bars = (await client.execute("fetch_bars", {
-    symbol: params.symbol,
-    exchange: params.exchange || "",
-    period: params.period,
-    startDate: params.startDate,
-    endDate: params.endDate,
-    ...(openD ? { opendHost: openD.opendHost, opendPort: openD.opendPort } : {}),
-  })) as BarData[];
+  try {
+    const client = await getFutuBridge();
+    const bars = (await client.execute("fetch_bars", {
+      symbol: params.symbol,
+      exchange: params.exchange || "",
+      period: params.period,
+      startDate: params.startDate,
+      endDate: params.endDate,
+      ...(openD ? { opendHost: openD.opendHost, opendPort: openD.opendPort } : {}),
+    })) as BarData[];
 
-  let sorted = [...bars].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-  const startMs = Date.parse(params.startDate);
-  const endMs = Date.parse(params.endDate);
-  if (Number.isFinite(startMs) && Number.isFinite(endMs)) {
-    const startIso = new Date(startMs).toISOString();
-    const endIso = new Date(endMs).toISOString();
-    // Daily bars often land at 00:00Z; keep inclusive window with day slack.
-    sorted = sorted.filter((b) => b.timestamp >= startIso && b.timestamp <= endIso);
+    let sorted = [...bars].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+    const startMs = Date.parse(params.startDate);
+    const endMs = Date.parse(params.endDate);
+    if (Number.isFinite(startMs) && Number.isFinite(endMs)) {
+      const startIso = new Date(startMs).toISOString();
+      const endIso = new Date(endMs).toISOString();
+      // Daily bars often land at 00:00Z; keep inclusive window with day slack.
+      sorted = sorted.filter((b) => b.timestamp >= startIso && b.timestamp <= endIso);
+    }
+    return sorted;
+  } catch (error) {
+    await resetFutuBridge();
+    throw error;
   }
-  return sorted;
 }
 
 /**
@@ -144,11 +163,16 @@ export async function fetchFutuOptionChain(params: {
     );
   }
   markFutuAccountConfigured(Boolean(openD || envHost));
-  const client = await getFutuBridge();
-  return (await client.execute("fetch_option_chain", {
-    symbol: params.symbol,
-    exchange: params.exchange ?? "US",
-    ...(params.expiry?.trim() ? { expiry: params.expiry } : {}),
-    ...(openD ? { opendHost: openD.opendHost, opendPort: openD.opendPort } : {}),
-  })) as OptionChain;
+  try {
+    const client = await getFutuBridge();
+    return (await client.execute("fetch_option_chain", {
+      symbol: params.symbol,
+      exchange: params.exchange ?? "US",
+      ...(params.expiry?.trim() ? { expiry: params.expiry } : {}),
+      ...(openD ? { opendHost: openD.opendHost, opendPort: openD.opendPort } : {}),
+    })) as OptionChain;
+  } catch (error) {
+    await resetFutuBridge();
+    throw error;
+  }
 }

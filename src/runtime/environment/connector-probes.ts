@@ -13,6 +13,7 @@
 
 import { connectorRegistry } from "../../connectors/registry";
 import type { HealthStatus } from "../../types/connector";
+import { recordConnectorCall } from "../monitor/connector-call-log";
 
 export interface ConnectorProbe {
   name: string;
@@ -43,6 +44,17 @@ export async function listConnectorProbes(): Promise<ConnectorProbe[]> {
         const startedAt = Date.now();
         try {
           const r = await withTimeout(connector.healthcheck(), PROBE_TIMEOUT_MS);
+          void recordConnectorCall({
+            connectorName: name,
+            operation: "healthcheck",
+            request: { probeTimeoutMs: PROBE_TIMEOUT_MS },
+            response: { status: r.status, message: r.message ?? null },
+            latencyMs: r.latencyMs ?? Date.now() - startedAt,
+            status: r.status === "healthy" ? "success" : "error",
+            ...(r.message ? { errorMessage: r.message } : {}),
+          }).catch((error) => {
+            console.warn(`[connector-monitor] failed to record probe: ${String(error)}`);
+          });
           return {
             name,
             type: connector.meta.connectorType,
@@ -52,12 +64,23 @@ export async function listConnectorProbes(): Promise<ConnectorProbe[]> {
             checkedAt: r.checkedAt,
           };
         } catch (e) {
+          const message = (e as Error).message;
+          void recordConnectorCall({
+            connectorName: name,
+            operation: "healthcheck",
+            request: { probeTimeoutMs: PROBE_TIMEOUT_MS },
+            latencyMs: Date.now() - startedAt,
+            status: /timed?\s*out|timeout/i.test(message) ? "timeout" : "error",
+            errorMessage: message,
+          }).catch((error) => {
+            console.warn(`[connector-monitor] failed to record probe error: ${String(error)}`);
+          });
           return {
             name,
             type: connector.meta.connectorType,
             status: "error" as const,
             latencyMs: null,
-            message: (e as Error).message,
+            message,
             checkedAt: new Date().toISOString(),
           };
         }

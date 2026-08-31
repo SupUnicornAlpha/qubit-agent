@@ -11,11 +11,9 @@ import {
   createConversationTurn,
   getChatSessionWorkflow,
   getOrCreateDefaultProject,
-  getDefaultWorkspace,
   deleteChatSession,
   deleteWorkflow,
   listChatSessions,
-  listProjects,
   listSessionMessages,
   patchSessionMessage,
   listPendingWorkflowHitl,
@@ -321,6 +319,7 @@ export const ChatPanel: FC<{
    */
   const activeStreamMessageIdsRef = useRef<Set<string>>(new Set());
   const activeStreamClosersRef = useRef<Map<string, () => void>>(new Map());
+  const sessionLoadSeqRef = useRef(0);
   const [streamRunByMessageId, setStreamRunByMessageId] = useState<Record<string, string>>({});
 
   const addImageFiles = useCallback(
@@ -425,46 +424,58 @@ export const ChatPanel: FC<{
 
   const reloadSessionMessages = useCallback(
     async (sessionId: string) => {
+      const loadSeq = ++sessionLoadSeqRef.current;
       const raw = await listSessionMessages(sessionId);
-      const hydrated = await hydrateStaleChatMessages(raw);
-      setChatMessages(hydrated);
-      const hitlMap: Record<string, string> = {};
-      for (const msg of hydrated) {
-        if (msg.status !== "awaiting_approval" || !msg.workflowRunIds?.[0]) continue;
-        try {
-          const pending = await listPendingWorkflowHitl(msg.workflowRunIds[0]);
-          if (pending[0]?.id) hitlMap[msg.id] = pending[0].id;
-        } catch {
-          /* ignore */
-        }
-      }
-      if (Object.keys(hitlMap).length > 0) {
-        setHitlRequestByMessageId((prev) => ({ ...prev, ...hitlMap }));
-      }
-      reconnectActiveChatStreams(hydrated, (workflowId, runId, assistantMessageId) => {
+      if (loadSeq !== sessionLoadSeqRef.current) return;
+      // 先显示数据库中的消息并恢复流，历史工作流补全文本放到后台，避免首屏等待所有 detail。
+      setChatMessages(raw);
+      reconnectActiveChatStreams(raw, (workflowId, runId, assistantMessageId) => {
         bindStreamRef.current?.(workflowId, runId, assistantMessageId);
       });
+      void hydrateStaleChatMessages(raw).then((hydrated) => {
+        if (loadSeq !== sessionLoadSeqRef.current) return;
+        const hydratedById = new Map(hydrated.map((message) => [message.id, message]));
+        setChatMessages((current) =>
+          current.map((message) => hydratedById.get(message.id) ?? message)
+        );
+      });
+      const pendingMessages = raw.filter(
+        (msg) => msg.status === "awaiting_approval" && Boolean(msg.workflowRunIds?.[0])
+      );
+      if (pendingMessages.length > 0) {
+        void Promise.all(
+          pendingMessages.map(async (msg) => {
+            try {
+              const pending = await listPendingWorkflowHitl(msg.workflowRunIds?.[0] ?? "");
+              return pending[0]?.id ? { messageId: msg.id, requestId: pending[0].id } : null;
+            } catch {
+              return null;
+            }
+          })
+        ).then((items) => {
+          if (loadSeq !== sessionLoadSeqRef.current) return;
+          const hitlMap = Object.fromEntries(
+            items
+              .filter((item): item is { messageId: string; requestId: string } => item !== null)
+              .map((item) => [item.messageId, item.requestId])
+          );
+          if (Object.keys(hitlMap).length > 0) {
+            setHitlRequestByMessageId((prev) => ({ ...prev, ...hitlMap }));
+          }
+        });
+      }
     },
     [setChatMessages]
   );
 
   useEffect(() => {
     const boot = async () => {
-      await chatHealth();
-      // 单租户兜底 workspace（详见 src/runtime/bootstrap/ensure-default-workspace.ts）。
-      // 旧实现 `workspaces[0]?.id + createWorkspace 兜底` 会落到 A2A Pool (system) 上。
-      const dft = await getDefaultWorkspace();
-      const wsId = dft.id;
-      const projects = await listProjects(wsId);
-      let pid = projects[0]?.id;
-      if (!pid) {
-        // 只读 get-or-create：后端写死稳定 ID 幂等，不再前端 createProject 兜底。
-        const dftProj = await getOrCreateDefaultProject();
-        pid = dftProj.id;
-      }
+      const [dftProj] = await Promise.all([getOrCreateDefaultProject(), chatHealth()]);
+      const wsId = dftProj.workspaceId;
+      const pid = dftProj.id;
       setWorkspaceId(wsId);
       setProjectId(pid);
-      const sessions = await listChatSessions({ workspaceId: wsId, projectId: pid });
+      const sessions = await listChatSessions({ workspaceId: wsId, projectId: pid, limit: 100 });
       if (sessions.length > 0) {
         setChatSessions(sessions);
         const currentSelected = useAppStore.getState().selectedSessionId;
