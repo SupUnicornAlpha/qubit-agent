@@ -91,10 +91,19 @@ export function summarizeTca(observations: TcaObservation[]) {
   };
 }
 
-export async function buildProjectTcaReport(input: { projectId: string; since?: string }) {
-  const db = await getDb();
+export async function buildProjectTcaReport(input: {
+  projectId: string;
+  since?: string;
+  /** Restrict the report to one deployable runtime instead of mixing strategies. */
+  strategyRuntimeId?: string;
+  client?: Awaited<ReturnType<typeof getDb>>;
+}) {
+  const db = input.client ?? (await getDb());
   const conditions = [eq(strategy.projectId, input.projectId)];
   if (input.since) conditions.push(gte(orderIntent.intentTime, input.since));
+  if (input.strategyRuntimeId) {
+    conditions.push(eq(orderIntent.strategyRuntimeId, input.strategyRuntimeId));
+  }
   const intents = await db
     .select({ intent: orderIntent })
     .from(orderIntent)
@@ -156,6 +165,7 @@ export async function buildProjectTcaReport(input: { projectId: string; since?: 
   return {
     projectId: input.projectId,
     since: input.since ?? null,
+    strategyRuntimeId: input.strategyRuntimeId ?? null,
     ...summarizeTca(observations),
     observations,
   };

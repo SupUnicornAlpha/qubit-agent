@@ -90,6 +90,14 @@ export class CapabilityRegistry {
     return this.plugins.get(capabilityId)?.manifest ?? null;
   }
 
+  getProfile(profileId: string): CapabilityProfile | null {
+    return this.profiles.get(profileId) ?? null;
+  }
+
+  listProfiles(): CapabilityProfile[] {
+    return [...this.profiles.values()].sort((left, right) => left.id.localeCompare(right.id));
+  }
+
   resolve(profileId: string): ResolvedCapabilityComposition {
     return this.resolveProfiles([profileId]);
   }

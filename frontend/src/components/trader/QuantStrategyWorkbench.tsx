@@ -2,10 +2,7 @@ import type { FC } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { listStrategyRuntimeLogs } from "../../api/backend";
 import type { StrategyRuntimeRecord } from "../../api/backend";
-import type {
-  BrokerAccountRecord,
-  IndicatorStrategyScriptRecord,
-} from "../../api/types";
+import type { BrokerAccountRecord, IndicatorStrategyScriptRecord } from "../../api/types";
 import { CHART_TIMEFRAMES, chartControlStyle } from "../../lib/chartSpec";
 import type { TraderMarkerRecord } from "../../store";
 import { useAppStore } from "../../store";
@@ -27,20 +24,20 @@ export type QuantStrategyWorkbenchProps = {
   runtimes: StrategyRuntimeRecord[];
   runtimeBusy: boolean;
   runtimeMsg: string | null;
-  strategyMode: "paper" | "sim" | "live";
-  setStrategyMode: (mode: "paper" | "sim" | "live") => void;
+  tradingModuleEnabled: boolean;
+  strategyMode: "paper" | "shadow" | "sim" | "live";
+  setStrategyMode: (mode: "paper" | "shadow" | "sim" | "live") => void;
   brokerAccounts: BrokerAccountRecord[];
   brokerAccountId: string;
   setBrokerAccountId: (id: string) => void;
   onStart: (scriptId: string, paperCapital: number, orderQty: number) => void;
   onStop: (runtimeId: string) => void;
   onEvaluatePaper: (runtimeId: string) => void;
+  onEvaluateShadow: (runtimeId: string) => void;
   onApproveLive: (runtimeId: string) => void;
 };
 
-function parseSnapshot(
-  script: IndicatorStrategyScriptRecord,
-): Record<string, unknown> {
+function parseSnapshot(script: IndicatorStrategyScriptRecord): Record<string, unknown> {
   const raw = script.chartSnapshotJson;
   if (!raw) return {};
   if (typeof raw === "object") return raw;
@@ -51,9 +48,7 @@ function parseSnapshot(
   }
 }
 
-function getManifest(
-  script: IndicatorStrategyScriptRecord,
-): Record<string, unknown> | null {
+function getManifest(script: IndicatorStrategyScriptRecord): Record<string, unknown> | null {
   const manifest = parseSnapshot(script).manifest;
   return manifest && typeof manifest === "object" && !Array.isArray(manifest)
     ? (manifest as Record<string, unknown>)
@@ -61,18 +56,13 @@ function getManifest(
 }
 
 function getInstrument(
-  script: IndicatorStrategyScriptRecord,
+  script: IndicatorStrategyScriptRecord
 ): { symbol: string; market: string } | null {
-  const universe = getManifest(script)?.universe as
-    { instruments?: unknown[] } | undefined;
-  const first = Array.isArray(universe?.instruments)
-    ? universe.instruments[0]
-    : null;
+  const universe = getManifest(script)?.universe as { instruments?: unknown[] } | undefined;
+  const first = Array.isArray(universe?.instruments) ? universe.instruments[0] : null;
   if (!first || typeof first !== "object") return null;
   const instrument = first as Record<string, unknown>;
-  const instrumentId = String(
-    instrument.instrumentId ?? instrument.symbol ?? "",
-  ).trim();
+  const instrumentId = String(instrument.instrumentId ?? instrument.symbol ?? "").trim();
   if (!instrumentId) return null;
   const [prefix, rest] = instrumentId.split(":", 2);
   return {
@@ -89,9 +79,7 @@ function getHighlights(code: string): string[] {
       (line) =>
         line &&
         !line.startsWith("#") &&
-        /(get_history|order_|context\.set_|context\.subscribe|buy\[|sell\[)/.test(
-          line,
-        ),
+        /(get_history|order_|context\.set_|context\.subscribe|buy\[|sell\[)/.test(line)
     );
   return useful.slice(0, 5);
 }
@@ -105,24 +93,17 @@ function runtimeStatus(runtime: StrategyRuntimeRecord | undefined): string {
 
 function markerFromLog(log: RuntimeLog): TraderMarkerRecord | null {
   const message = log.message.toLowerCase();
-  if (
-    !/(target_executed|buy_signal_executed|sell_signal_executed)/.test(message)
-  )
-    return null;
+  if (!/(target_executed|buy_signal_executed|sell_signal_executed)/.test(message)) return null;
   const payload = log.payloadJson ?? {};
   const targetQty = Number(payload.targetQty ?? 0);
   const currentQty = Number(payload.currentQty ?? 0);
-  const side =
-    message.includes("sell") || targetQty < currentQty ? "sell" : "buy";
+  const side = message.includes("sell") || targetQty < currentQty ? "sell" : "buy";
   return {
     id: `strategy-log-${log.id}`,
     side,
     source: "strategy",
     barTime: String(payload.barTime ?? log.createdAt),
-    orderIntentId:
-      typeof payload.orderIntentId === "string"
-        ? payload.orderIntentId
-        : undefined,
+    orderIntentId: typeof payload.orderIntentId === "string" ? payload.orderIntentId : undefined,
     text: side === "buy" ? "B · strategy signal" : "S · strategy signal",
   };
 }
@@ -145,6 +126,7 @@ export const QuantStrategyWorkbench: FC<QuantStrategyWorkbenchProps> = ({
   runtimes,
   runtimeBusy,
   runtimeMsg,
+  tradingModuleEnabled,
   strategyMode,
   setStrategyMode,
   brokerAccounts,
@@ -153,6 +135,7 @@ export const QuantStrategyWorkbench: FC<QuantStrategyWorkbenchProps> = ({
   onStart,
   onStop,
   onEvaluatePaper,
+  onEvaluateShadow,
   onApproveLive,
 }) => {
   const chartSpec = useAppStore((s) => s.chartSpec);
@@ -175,36 +158,30 @@ export const QuantStrategyWorkbench: FC<QuantStrategyWorkbenchProps> = ({
         }
         return true;
       }),
-    [brokerAccounts, strategyMode],
+    [brokerAccounts, strategyMode]
   );
 
-  const changeStrategyMode = (mode: "paper" | "sim" | "live") => {
+  const changeStrategyMode = (mode: "paper" | "shadow" | "sim" | "live") => {
+    if (!tradingModuleEnabled && mode !== "shadow") return;
     setStrategyMode(mode);
-    const currentAccount = brokerAccounts.find(
-      (account) => account.id === brokerAccountId,
-    );
+    const currentAccount = brokerAccounts.find((account) => account.id === brokerAccountId);
     const accountMatchesMode =
       currentAccount?.enabled &&
       (mode === "paper" ||
+        mode === "shadow" ||
         (mode === "live" && currentAccount.mode === "live") ||
-        (mode === "sim" &&
-          (currentAccount.mode === "sandbox" ||
-            currentAccount.mode === "mock")));
+        (mode === "sim" && (currentAccount.mode === "sandbox" || currentAccount.mode === "mock")));
     if (!accountMatchesMode) setBrokerAccountId("");
   };
 
   useEffect(() => {
     if (!selectedScriptId && scripts[0]?.id) setSelectedScriptId(scripts[0].id);
-    if (
-      selectedScriptId &&
-      !scripts.some((script) => script.id === selectedScriptId)
-    ) {
+    if (selectedScriptId && !scripts.some((script) => script.id === selectedScriptId)) {
       setSelectedScriptId(scripts[0]?.id ?? "");
     }
   }, [scripts, selectedScriptId]);
 
-  const selectedScript =
-    scripts.find((script) => script.id === selectedScriptId) ?? scripts[0];
+  const selectedScript = scripts.find((script) => script.id === selectedScriptId) ?? scripts[0];
   const selectedRuntime = selectedScript
     ? runtimes.find((runtime) => runtime.strategyScriptId === selectedScript.id)
     : undefined;
@@ -214,15 +191,12 @@ export const QuantStrategyWorkbench: FC<QuantStrategyWorkbenchProps> = ({
         const marker = markerFromLog(log);
         return marker ? [marker] : [];
       }),
-    [runtimeLogs],
+    [runtimeLogs]
   );
-  const code =
-    selectedScript?.ideCode?.trim() || selectedScript?.signalCode?.trim() || "";
+  const code = selectedScript?.ideCode?.trim() || selectedScript?.signalCode?.trim() || "";
   const manifest = selectedScript ? getManifest(selectedScript) : null;
   const highlights = useMemo(() => getHighlights(code), [code]);
-  const activeAccount = brokerAccounts.find(
-    (account) => account.id === brokerAccountId,
-  );
+  const activeAccount = brokerAccounts.find((account) => account.id === brokerAccountId);
 
   useEffect(() => {
     if (!selectedRuntime) {
@@ -237,8 +211,7 @@ export const QuantStrategyWorkbench: FC<QuantStrategyWorkbenchProps> = ({
         const logs = await listStrategyRuntimeLogs(selectedRuntime.id, 30);
         if (!cancelled) setRuntimeLogs(logs);
       } catch (error) {
-        if (!cancelled)
-          setLogsError(error instanceof Error ? error.message : String(error));
+        if (!cancelled) setLogsError(error instanceof Error ? error.message : String(error));
       }
     })();
     return () => {
@@ -276,9 +249,7 @@ export const QuantStrategyWorkbench: FC<QuantStrategyWorkbenchProps> = ({
           </div>
           <div>
             <span>当前信号</span>
-            <strong>
-              {signalMarkers.length ? `${signalMarkers.length} B/S` : "等待"}
-            </strong>
+            <strong>{signalMarkers.length ? `${signalMarkers.length} B/S` : "等待"}</strong>
           </div>
           <div>
             <span>图表标的</span>
@@ -300,9 +271,7 @@ export const QuantStrategyWorkbench: FC<QuantStrategyWorkbenchProps> = ({
               </div>
             ) : (
               scripts.map((script) => {
-                const runtime = runtimes.find(
-                  (row) => row.strategyScriptId === script.id,
-                );
+                const runtime = runtimes.find((row) => row.strategyScriptId === script.id);
                 const isActive = script.id === selectedScript?.id;
                 const instrument = getInstrument(script);
                 return (
@@ -313,16 +282,11 @@ export const QuantStrategyWorkbench: FC<QuantStrategyWorkbenchProps> = ({
                     data-active={isActive ? "true" : "false"}
                     onClick={() => chooseScript(script)}
                   >
-                    <span className="qb-strategy-book__name">
-                      {script.name}
-                    </span>
+                    <span className="qb-strategy-book__name">{script.name}</span>
                     <span className="qb-strategy-book__meta">
                       {instrument?.symbol ?? "MULTI"} · {script.purpose}
                     </span>
-                    <span
-                      className="qb-strategy-status"
-                      data-status={runtime?.status ?? "stopped"}
-                    >
+                    <span className="qb-strategy-status" data-status={runtime?.status ?? "stopped"}>
                       <i />
                       {runtimeStatus(runtime)}
                     </span>
@@ -343,8 +307,7 @@ export const QuantStrategyWorkbench: FC<QuantStrategyWorkbenchProps> = ({
               <span className="qb-strategy-eyebrow">SIGNAL CHART</span>
               <strong>{chartSpec.symbol || "未选择标的"}</strong>
               <small>
-                {chartSpec.exchange} · {chartSpec.timeframe} ·{" "}
-                {selectedScript?.name ?? "选择策略"}
+                {chartSpec.exchange} · {chartSpec.timeframe} · {selectedScript?.name ?? "选择策略"}
               </small>
             </div>
             <div className="qb-strategy-chart__controls">
@@ -356,9 +319,7 @@ export const QuantStrategyWorkbench: FC<QuantStrategyWorkbenchProps> = ({
               <select
                 style={chartControlStyle}
                 value={chartSpec.timeframe}
-                onChange={(event) =>
-                  setChartSpec({ timeframe: event.target.value })
-                }
+                onChange={(event) => setChartSpec({ timeframe: event.target.value })}
                 aria-label="K线周期"
               >
                 {CHART_TIMEFRAMES.map((timeframe) => (
@@ -394,11 +355,7 @@ export const QuantStrategyWorkbench: FC<QuantStrategyWorkbenchProps> = ({
             </small>
           </div>
           <div className="qb-strategy-chart__panel">
-            <KlinePanel
-              embedded
-              linkTraderMarkers
-              strategyMarkers={signalMarkers}
-            />
+            <KlinePanel embedded linkTraderMarkers strategyMarkers={signalMarkers} />
           </div>
           <div className="qb-strategy-chart__events">
             {runtimeLogs.filter((log) => markerFromLog(log)).length === 0 ? (
@@ -411,8 +368,7 @@ export const QuantStrategyWorkbench: FC<QuantStrategyWorkbenchProps> = ({
                   const marker = markerFromLog(log)!;
                   return (
                     <span key={log.id} data-side={marker.side}>
-                      {marker.side === "buy" ? "B" : "S"} ·{" "}
-                      {compactTime(marker.barTime)} ·{" "}
+                      {marker.side === "buy" ? "B" : "S"} · {compactTime(marker.barTime)} ·{" "}
                       {String(log.payloadJson?.reason ?? "strategy signal")}
                     </span>
                   );
@@ -439,11 +395,7 @@ export const QuantStrategyWorkbench: FC<QuantStrategyWorkbenchProps> = ({
                 data-active={inspectorTab === tab}
                 onClick={() => setInspectorTab(tab)}
               >
-                {tab === "logic"
-                  ? "表达式"
-                  : tab === "parameters"
-                    ? "参数"
-                    : "运行"}
+                {tab === "logic" ? "表达式" : tab === "parameters" ? "参数" : "运行"}
               </button>
             ))}
           </div>
@@ -469,9 +421,7 @@ export const QuantStrategyWorkbench: FC<QuantStrategyWorkbenchProps> = ({
               </div>
               <div>
                 <span>运行模式</span>
-                <strong>
-                  {selectedRuntime?.executionMode ?? strategyMode}
-                </strong>
+                <strong>{selectedRuntime?.executionMode ?? strategyMode}</strong>
               </div>
               <div>
                 <span>标的 / 周期</span>
@@ -487,18 +437,14 @@ export const QuantStrategyWorkbench: FC<QuantStrategyWorkbenchProps> = ({
               </div>
               <div>
                 <span>脚本参数</span>
-                <strong>
-                  {manifest ? "见 Strategy API Manifest" : "Indicator / Script"}
-                </strong>
+                <strong>{manifest ? "见 Strategy API Manifest" : "Indicator / Script"}</strong>
               </div>
             </div>
           ) : null}
           {inspectorTab === "activity" ? (
             <div className="qb-strategy-inspector__body qb-strategy-activity">
               {logsError ? <span className="is-error">{logsError}</span> : null}
-              {runtimeLogs.length === 0 && !logsError ? (
-                <span>暂无运行日志。</span>
-              ) : null}
+              {runtimeLogs.length === 0 && !logsError ? <span>暂无运行日志。</span> : null}
               {runtimeLogs.slice(0, 7).map((log) => (
                 <div key={log.id}>
                   <i data-level={log.level} /> <strong>{log.message}</strong>
@@ -521,14 +467,19 @@ export const QuantStrategyWorkbench: FC<QuantStrategyWorkbenchProps> = ({
             <select
               value={strategyMode}
               onChange={(event) =>
-                changeStrategyMode(
-                  event.target.value as "paper" | "sim" | "live",
-                )
+                changeStrategyMode(event.target.value as "paper" | "shadow" | "sim" | "live")
               }
             >
-              <option value="paper">纸面</option>
-              <option value="sim">券商模拟</option>
-              <option value="live">实盘</option>
+              <option disabled={!tradingModuleEnabled} value="paper">
+                纸面
+              </option>
+              <option value="shadow">影子观测（零下单）</option>
+              <option disabled={!tradingModuleEnabled} value="sim">
+                券商模拟
+              </option>
+              <option disabled={!tradingModuleEnabled} value="live">
+                实盘
+              </option>
             </select>
           </label>
           <label>
@@ -551,9 +502,7 @@ export const QuantStrategyWorkbench: FC<QuantStrategyWorkbenchProps> = ({
               min={1}
               type="number"
               value={paperCapital}
-              onChange={(event) =>
-                setPaperCapital(Math.max(1, Number(event.target.value) || 1))
-              }
+              onChange={(event) => setPaperCapital(Math.max(1, Number(event.target.value) || 1))}
             />
           </label>
           <label>
@@ -562,9 +511,7 @@ export const QuantStrategyWorkbench: FC<QuantStrategyWorkbenchProps> = ({
               min={1}
               type="number"
               value={orderQty}
-              onChange={(event) =>
-                setOrderQty(Math.max(1, Number(event.target.value) || 1))
-              }
+              onChange={(event) => setOrderQty(Math.max(1, Number(event.target.value) || 1))}
             />
           </label>
         </div>
@@ -582,21 +529,23 @@ export const QuantStrategyWorkbench: FC<QuantStrategyWorkbenchProps> = ({
             <button
               type="button"
               className="qb-btn-primary-brand"
-              disabled={runtimeBusy || !selectedScript}
-              onClick={() =>
-                selectedScript &&
-                onStart(selectedScript.id, paperCapital, orderQty)
+              disabled={
+                runtimeBusy ||
+                !selectedScript ||
+                (!tradingModuleEnabled && strategyMode !== "shadow")
               }
+              onClick={() => selectedScript && onStart(selectedScript.id, paperCapital, orderQty)}
             >
               {strategyMode === "sim"
                 ? "部署到模拟盘"
                 : strategyMode === "live"
                   ? "提交实盘部署"
-                  : "启动纸面策略"}
+                  : strategyMode === "shadow"
+                    ? "启动影子观测"
+                    : "启动纸面策略"}
             </button>
           )}
-          {selectedRuntime?.executionMode === "paper" &&
-          selectedRuntime.status !== "running" ? (
+          {selectedRuntime?.executionMode === "paper" && selectedRuntime.status !== "running" ? (
             <button
               type="button"
               className="qb-btn-ghost"
@@ -606,8 +555,17 @@ export const QuantStrategyWorkbench: FC<QuantStrategyWorkbenchProps> = ({
               评估 Paper
             </button>
           ) : null}
-          {selectedRuntime?.executionMode === "paper" &&
-          selectedRuntime.status !== "running" ? (
+          {selectedRuntime?.executionMode === "shadow" && selectedRuntime.status !== "running" ? (
+            <button
+              type="button"
+              className="qb-btn-ghost"
+              disabled={runtimeBusy}
+              onClick={() => onEvaluateShadow(selectedRuntime.id)}
+            >
+              审计 Shadow 观测
+            </button>
+          ) : null}
+          {selectedRuntime?.executionMode === "paper" && selectedRuntime.status !== "running" ? (
             <button
               type="button"
               className="qb-btn-ghost"
@@ -622,7 +580,9 @@ export const QuantStrategyWorkbench: FC<QuantStrategyWorkbenchProps> = ({
           {runtimeMsg ??
             (strategyMode === "sim"
               ? `模拟账户：${activeAccount ? `${activeAccount.provider} · ${activeAccount.accountRef}` : "自动解析 sandbox / mock"}`
-              : "策略信号仅在已收盘 K 线确认后入场。")}
+              : strategyMode === "shadow"
+                ? "影子模式只记录已确认 K 线上的信号与目标仓位；不创建订单、执行任务或券商请求，也不构成策略晋级证据。"
+                : "策略信号仅在已收盘 K 线确认后入场。")}
         </div>
       </footer>
     </section>

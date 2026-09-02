@@ -86,7 +86,7 @@ export const StrategyEvalMetaSchema = z.object({
   strategyVersionId: z.string().min(1).optional(),
   backtestRunId: z.string().min(1).optional(),
   evalKind: z
-    .enum(["backtest", "paper", "live", "walk_forward", "recommendation"])
+    .enum(["backtest", "paper", "shadow", "live", "walk_forward", "recommendation"])
     .default("backtest"),
   metrics: z.record(z.unknown()).default({}),
   universe: z.string().optional(),

@@ -7,20 +7,46 @@ import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import * as schema from "../../db/sqlite/schema";
+import { dateToTradingDay } from "../attribution/time-util";
 import { createFinalHoldoutContract } from "../backtest/final-holdout-contract";
 import { paperEvaluationService } from "../effect-validation/paper-evaluation-service";
+import { shadowEvaluationService } from "../effect-validation/shadow-evaluation-service";
 import { strategyPromotionService } from "../effect-validation/strategy-promotion-service";
 import { processExecutionTasks } from "../execution/execution-worker";
 import {
   approveRiskReviewTicket,
   createOrderIntentWithExecution,
 } from "../execution/order-intent-service";
+import { setTradingModuleEnabled } from "../trader/trading-module-control";
 import { evaluateSignalCode } from "./signal-evaluator";
+import { appendStrategyRuntimeLog } from "./strategy-runtime-log";
 import {
   createStrategyRuntime,
   startStrategyRuntime,
   stopStrategyRuntime,
+  submitRuntimeOrder,
 } from "./strategy-runtime-service";
+
+const liveCalendarRelease = {
+  schemaVersion: 1 as const,
+  sourceKind: "official_exchange" as const,
+  source: "test-exchange-calendar",
+  version: "test-us-calendar-v1",
+  venue: "US",
+  timezone: "America/New_York",
+  retrievedAt: "2024-01-01T00:00:00.000Z",
+  effectiveFrom: "2024-01-01",
+  effectiveThrough: "2030-12-31",
+  sessions: { [dateToTradingDay(new Date(), "US")]: "open" as const },
+};
+
+const liveAccountRisk = {
+  currency: "USD" as const,
+  minAvailableCashUsd: 1_000,
+  maxGrossNotionalUsd: 10_000,
+  maxSymbolNotionalUsd: 5_000,
+  maxOpenPositions: 3,
+};
 
 async function seedBase(db: ReturnType<typeof drizzle>) {
   const wid = randomUUID();
@@ -201,13 +227,31 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
     const paper = await paperEvaluationService.evaluate(runtime.id, db);
     expect(paper.tradingDays).toBe(20);
     expect(paper.netPnl).toBe(180);
+    expect(paper.executionQuality).toMatchObject({
+      orderCount: 0,
+      filledOrderCount: 0,
+      rejectedOrderCount: 0,
+    });
+    expect(paper.executionQualityAssessment).toMatchObject({
+      status: "not_configured",
+      pass: null,
+    });
     expect(paper.pass).toBe(true);
     const paperAgain = await paperEvaluationService.evaluate(runtime.id, db);
     expect(paperAgain.id).toBe(paper.id);
 
+    const liveBrokerAccountId = randomUUID();
+    await db.insert(schema.brokerAccount).values({
+      id: liveBrokerAccountId,
+      provider: "futu",
+      accountRef: "live-test",
+      mode: "live",
+      enabled: true,
+      providerConfigJson: { market: "US" },
+    });
     await db
       .update(schema.strategyRuntime)
-      .set({ executionMode: "live" })
+      .set({ executionMode: "live", brokerAccountId: liveBrokerAccountId })
       .where(eq(schema.strategyRuntime.id, runtime.id));
     await expect(startStrategyRuntime(runtime.id, db)).rejects.toThrow(
       /live_runtime_evidence_missing/
@@ -219,6 +263,40 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
           orderQty: 5,
           thesisId: "thesis_runtime_test",
           snapshotId: "snapshot_validation_fixture",
+          liveGuardrails: {
+            schemaVersion: 2,
+            allowedSymbols: ["TEST"],
+            maxOrderNotionalUsd: 1_000,
+            maxDailyNotionalUsd: 5_000,
+            maxOrdersPerDay: 1,
+            maxDailyLossUsd: 250,
+            requireHumanConfirmation: true,
+            accountRisk: liveAccountRisk,
+          },
+        },
+      })
+      .where(eq(schema.strategyRuntime.id, runtime.id));
+    await expect(startStrategyRuntime(runtime.id, db)).rejects.toThrow(
+      /live_runtime_calendar_release_missing/
+    );
+    await db
+      .update(schema.strategyRuntime)
+      .set({
+        paramsJson: {
+          orderQty: 5,
+          thesisId: "thesis_runtime_test",
+          snapshotId: "snapshot_validation_fixture",
+          liveGuardrails: {
+            schemaVersion: 2,
+            allowedSymbols: ["TEST"],
+            maxOrderNotionalUsd: 1_000,
+            maxDailyNotionalUsd: 5_000,
+            maxOrdersPerDay: 1,
+            maxDailyLossUsd: 250,
+            requireHumanConfirmation: true,
+            accountRisk: liveAccountRisk,
+          },
+          calendarRelease: liveCalendarRelease,
         },
       })
       .where(eq(schema.strategyRuntime.id, runtime.id));
@@ -326,6 +404,7 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
         timeInForce: "day",
         strategyRuntimeId: runtime.id,
         dispatchMode: "live",
+        brokerAccountId: liveBrokerAccountId,
         requireHumanConfirmation: true,
       });
       expect(confirmation.riskOutcome).toBe("review");
@@ -338,6 +417,78 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
           .where(eq(schema.executionTask.id, confirmation.executionTaskId ?? ""))
       )[0];
       expect(pendingConfirmationTask?.status).toBe("awaiting_review");
+      await expect(
+        createOrderIntentWithExecution(db, {
+          workflowRunId: wrid,
+          strategyVersionId: paper.strategyVersionId,
+          instrumentId: iid,
+          side: "buy",
+          qty: 1,
+          orderType: "limit",
+          price: 100,
+          timeInForce: "day",
+          strategyRuntimeId: runtime.id,
+          dispatchMode: "live",
+          brokerAccountId: liveBrokerAccountId,
+          requireHumanConfirmation: true,
+        })
+      ).rejects.toThrow("live_runtime_max_orders_per_day_exceeded");
+      const rejectedEnvelopeAudit = (
+        await db
+          .select()
+          .from(schema.auditLog)
+          .where(eq(schema.auditLog.action, "live_runtime_guardrail_rejected"))
+      )[0];
+      expect(rejectedEnvelopeAudit?.resourceType).toBe("strategy_runtime");
+      expect(rejectedEnvelopeAudit?.resourceId).toBe(runtime.id);
+      expect((rejectedEnvelopeAudit?.detailJson as { reason?: string } | undefined)?.reason).toBe(
+        "live_runtime_max_orders_per_day_exceeded"
+      );
+      await db
+        .update(schema.strategyRuntime)
+        .set({
+          paramsJson: {
+            orderQty: 5,
+            thesisId: "thesis_runtime_test",
+            snapshotId: "snapshot_validation_fixture",
+            liveGuardrails: {
+              schemaVersion: 2,
+              allowedSymbols: ["TEST"],
+              maxOrderNotionalUsd: 1_000,
+              maxDailyNotionalUsd: 5_000,
+              maxOrdersPerDay: 3,
+              maxDailyLossUsd: 250,
+              requireHumanConfirmation: true,
+              accountRisk: liveAccountRisk,
+            },
+            calendarRelease: liveCalendarRelease,
+          },
+        })
+        .where(eq(schema.strategyRuntime.id, runtime.id));
+      await db.insert(schema.strategyPnlSnapshot).values({
+        id: randomUUID(),
+        strategyRuntimeId: runtime.id,
+        tradingDay: dateToTradingDay(new Date(), "US"),
+        symbol: "TEST",
+        realizedPnlDaily: -250,
+        source: "test_live_guardrail",
+      });
+      await expect(
+        createOrderIntentWithExecution(db, {
+          workflowRunId: wrid,
+          strategyVersionId: paper.strategyVersionId,
+          instrumentId: iid,
+          side: "buy",
+          qty: 1,
+          orderType: "limit",
+          price: 100,
+          timeInForce: "day",
+          strategyRuntimeId: runtime.id,
+          dispatchMode: "live",
+          brokerAccountId: liveBrokerAccountId,
+          requireHumanConfirmation: true,
+        })
+      ).rejects.toThrow("live_runtime_max_daily_loss_exceeded");
       await processExecutionTasks(db);
       const stillHeldForConfirmation = (
         await db
@@ -505,6 +656,64 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
       db
     );
     expect(autoResolved.brokerAccountId).toBe(brokerAccountId);
+  });
+
+  test("shadow runtime records no executable order path", async () => {
+    const sqlite = new Database(":memory:");
+    sqlite.exec("PRAGMA foreign_keys=ON;");
+    const db = drizzle(sqlite, { schema });
+    const migrationsFolder = join(
+      dirname(fileURLToPath(import.meta.url)),
+      "../../db/sqlite/migrations"
+    );
+    await migrate(db, { migrationsFolder });
+    const { scriptId } = await seedBase(db);
+    await setTradingModuleEnabled(false, { reason: "shadow_research_only", db });
+    const runtime = await createStrategyRuntime(
+      {
+        strategyScriptId: scriptId,
+        market: "US",
+        symbol: "TEST",
+        executionMode: "shadow",
+      },
+      db
+    );
+
+    expect(runtime.brokerAccountId).toBeNull();
+    await startStrategyRuntime(runtime.id, db);
+    await expect(
+      submitRuntimeOrder(db, runtime, {
+        side: "buy",
+        qty: 1,
+        price: 100,
+        signalBarTime: "2024-01-02T00:00:00.000Z",
+      })
+    ).rejects.toThrow("shadow_runtime_does_not_submit_orders");
+    expect(await db.select().from(schema.orderIntent)).toHaveLength(0);
+    await appendStrategyRuntimeLog(db, {
+      strategyRuntimeId: runtime.id,
+      level: "info",
+      message: "shadow_signal_observed",
+      payload: {
+        barTime: "2024-01-02T00:00:00.000Z",
+        side: "buy",
+        executionGuarantee: "no_order_intent_no_execution_task_no_broker_request",
+      },
+    });
+    const shadowEvaluation = await shadowEvaluationService.evaluate(runtime.id, db);
+    expect(shadowEvaluation).toMatchObject({
+      observedSignalCount: 1,
+      buySignalCount: 1,
+      orderIntentCount: 0,
+      safetyStatus: "clean",
+      promotionEligible: false,
+      pass: null,
+    });
+    const [shadowRow] = await db
+      .select()
+      .from(schema.strategyEvalRun)
+      .where(eq(schema.strategyEvalRun.id, shadowEvaluation.id));
+    expect(shadowRow).toMatchObject({ evalKind: "shadow", pass: null });
   });
 
   test("live runtime creation requires persisted thesis evidence", async () => {

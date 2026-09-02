@@ -31,7 +31,20 @@ export type QuantResearchIntegrityAssessment = {
   missingChecks: Array<keyof QuantResearchIntegrityEvidence>;
 };
 
-const REQUIREMENTS: Record<
+export const QUANT_RESEARCH_INTEGRITY_CHECK_TITLES: Record<
+  keyof QuantResearchIntegrityEvidence,
+  string
+> = {
+  validationQualifiedDataset: "验证级数据集快照",
+  backtestIntegrity: "回测完整性",
+  factorRiskExposure: "因子风险暴露",
+  walkForward: "Walk-Forward OOS",
+  finalHoldout: "一次性 final holdout",
+  paper: "Paper 同 cohort 证据",
+  humanApproval: "人工批准",
+};
+
+export const REQUIREMENTS: Record<
   QuantResearchIntegrityStage,
   Array<keyof QuantResearchIntegrityEvidence>
 > = {
@@ -74,4 +87,19 @@ export function assessQuantResearchIntegrity(input: {
     requiredChecks: [...requiredChecks],
     missingChecks,
   };
+}
+
+export function listQuantResearchIntegrityStages(): Array<{
+  stage: QuantResearchIntegrityStage;
+  enforcement: "advisory" | "required";
+  checks: Array<{ id: keyof QuantResearchIntegrityEvidence; title: string }>;
+}> {
+  return (["research", "paper", "live"] as const).map((stage) => ({
+    stage,
+    enforcement: stage === "research" ? "advisory" : "required",
+    checks: REQUIREMENTS[stage].map((id) => ({
+      id,
+      title: QUANT_RESEARCH_INTEGRITY_CHECK_TITLES[id],
+    })),
+  }));
 }

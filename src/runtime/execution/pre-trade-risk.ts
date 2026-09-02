@@ -107,7 +107,8 @@ export function ruleDecisionForViolation(
 export async function evaluatePreTradeForIntent(
   db: DbClient,
   orderIntentId: string,
-  nowIso = new Date().toISOString()
+  nowIso = new Date().toISOString(),
+  options?: { requireExplicitRules?: boolean }
 ): Promise<PreTradeEvaluationSummary> {
   const intents = await db
     .select()
@@ -301,9 +302,16 @@ export async function evaluatePreTradeForIntent(
     reason = aggregateNotes.length ? aggregateNotes.join("; ") : "manual_review_required";
   }
 
-  // Benchmark / paper path: even with zero enabled rules, persist an allow
-  // decision so live_trading artifact + H8 telemetry contracts are observable.
+  // Paper/simulation may use an observable default allow. Real-money order
+  // admission must never inherit it: an operator has to explicitly configure
+  // at least one project-scoped pre-trade rule in addition to runtime limits.
   if (rules.length === 0) {
+    if (options?.requireExplicitRules) {
+      return {
+        outcome: "block",
+        reason: "live_pre_trade_rules_missing",
+      };
+    }
     const paperRuleId = randomUUID();
     await db.insert(riskRule).values({
       id: paperRuleId,

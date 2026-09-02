@@ -618,7 +618,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   },
   "strategy.champion_challenger.compare": {
     description:
-      "只读比较策略 challenger 与 champion；仅当 backtest、walk-forward 与 paper/shadow 都带相同、由冻结快照/窗口/标的池/成本生成的 comparison_cohort_id 时，才计算晋级分数。缺共同 cohort、数据资格、统计验证或 paper 证据均不能晋级；本工具绝不切换 live runtime，仍需人工审批。",
+      "只读比较策略 challenger 与 champion；仅当 backtest、walk-forward 与 paper 都带相同、由冻结快照/窗口/标的池/成本生成的 comparison_cohort_id 时，才计算晋级分数。shadow 仅为零下单观测审计，不能替代 paper 证据。缺共同 cohort、数据资格、统计验证或 paper 证据均不能晋级；本工具绝不切换 live runtime，仍需人工审批。",
     category: "research",
   },
   "strategy.candidate.review": {
@@ -712,6 +712,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
       "`start_date`/`end_date`（YYYY-MM-DD）强烈建议显式传；缺省则用近 365 天。" +
       "需要可审计结果时传 `dataset_snapshot_id`；快照必须额外覆盖最长 horizon 的未来收益窗口，否则会明确拒绝，绝不临时拉行情补齐。" +
       "IC 是横截面指标：symbols 建议 ≥3（更好 ≥10）；单标的请换 factor.compute。" +
+      "需要独立验证时传 `validation_start_date`：训练侧会按主 horizon 留出保守标签隔离区，结果将写入同一评估记录的 independentValidation，不能把全样本指标冒充 OOS。" +
       "已有 universe 时勿把指数代码当唯一 symbols。",
     category: "research",
   },
@@ -732,7 +733,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   },
   "factor.risk_exposure.regress": {
     description:
-      "在 `dataset_snapshot_id` 冻结的 `risk_exposure_ledger` 上，对单个因子进行 PIT 横截面 OLS 暴露回归。必填 factor_id + dataset_snapshot_id；仅使用该 K 线日期前已 available 的行业/风格/市场暴露版本，返回 beta/R²/覆盖缺口。没有账本或覆盖不足时只返回不完整证据，不能声称中性。",
+      "在 `dataset_snapshot_id` 冻结的 `risk_exposure_ledger` 上，对单个因子进行 PIT 外部风险暴露诊断。除保留逐暴露 OLS 视图外，还返回联合 Fama–MacBeth 横截面回归与系数均值的 Newey–West HAC 统计（可选 minimum_observations、minimum_cross_sections）。只使用该 K 线日期前已 available 的行业/风格/市场暴露版本；任一共同维度缺覆盖、截面过小或矩阵秩亏都会明确返回不完整证据，不能声称中性，也不会自动晋级或部署。",
     category: "research",
   },
   "factor.promote_backtest": {

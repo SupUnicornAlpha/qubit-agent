@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { type DbClient, getDb } from "../../db/sqlite/client";
 import {
+  brokerAccount,
   indicatorStrategyScript,
   strategyComposition,
   strategyEvalRun,
@@ -10,6 +11,11 @@ import {
   workflowRun,
 } from "../../db/sqlite/schema";
 import { captureWorkflowComponentEvidence } from "../eval-platform/experiment/component-evidence-capture";
+import {
+  type ExecutionQualityAssessment,
+  assessExecutionQualityAgainstContract,
+} from "../execution/execution-quality-contract";
+import { buildProjectTcaReport } from "../execution/tca-service";
 import { ensureStrategyVersionForScript } from "../strategy/strategy-version-resolver";
 import { readStrategyComparisonCohortId } from "./strategy-comparison-cohort";
 
@@ -23,6 +29,20 @@ export interface PaperEvaluation {
   sharpe: number;
   maxDrawdown: number;
   turnover: number;
+  executionQuality: {
+    orderCount: number;
+    filledOrderCount: number;
+    averageFillRatePct: number | null;
+    averageImplementationShortfallPct: number | null;
+    p95ImplementationShortfallPct: number | null;
+    averageSubmitLatencyMs: number | null;
+    p95TotalLatencyMs: number | null;
+    rejectedOrderCount: number;
+    rejectionRatePct: number;
+    totalFees: number;
+  };
+  /** Informational TCA contract result; intentionally not folded into paper pass. */
+  executionQualityAssessment: ExecutionQualityAssessment;
   pass: boolean;
   componentEvidenceRecorded: number;
 }
@@ -109,6 +129,32 @@ export class PaperEvaluationService {
     const sharpe = annualizedSharpe(returns);
     const maxDrawdown = drawdownFromReturns(returns);
     const turnover = days.reduce((sum, [, value]) => sum + value.turnover, 0) / capital;
+    const tca = await buildProjectTcaReport({
+      projectId,
+      strategyRuntimeId,
+      client: db,
+    });
+    const executionQuality = {
+      orderCount: tca.orderCount,
+      filledOrderCount: tca.filledOrderCount,
+      averageFillRatePct: tca.averageFillRatePct,
+      averageImplementationShortfallPct: tca.averageImplementationShortfallPct,
+      p95ImplementationShortfallPct: tca.p95ImplementationShortfallPct,
+      averageSubmitLatencyMs: tca.averageSubmitLatencyMs,
+      p95TotalLatencyMs: tca.p95TotalLatencyMs,
+      rejectedOrderCount: tca.rejectedOrderCount,
+      rejectionRatePct: tca.rejectionRatePct,
+      totalFees: tca.totalFees,
+    };
+    const executionQualityAssessment = assessExecutionQualityAgainstContract({
+      metrics: executionQuality,
+      contract: params.executionQualityContract,
+      runtimeScope: {
+        broker: await resolveRuntimeBrokerKey(db, runtime.brokerAccountId),
+        assetClass: assetClassForMarket(runtime.market),
+        timeframe: runtime.timeframe,
+      },
+    });
     const pass = days.length >= 20 && netReturn > 0 && sharpe >= 0.3 && maxDrawdown <= 0.2;
     const id = await this.persist(db, {
       projectId,
@@ -122,6 +168,8 @@ export class PaperEvaluationService {
       sharpe,
       maxDrawdown,
       turnover,
+      executionQuality,
+      executionQualityAssessment,
       pass,
       comparisonCohortId,
     });
@@ -137,6 +185,8 @@ export class PaperEvaluationService {
           sharpe,
           maxDrawdown,
           turnover,
+          executionQuality,
+          executionQualityAssessment,
           pass,
           // Runtime params are user/config supplied and therefore cannot act
           // as a cryptographic version for a Harness component. Harnesses get
@@ -154,6 +204,8 @@ export class PaperEvaluationService {
       sharpe,
       maxDrawdown,
       turnover,
+      executionQuality,
+      executionQualityAssessment,
       pass,
       componentEvidenceRecorded,
     };
@@ -190,6 +242,8 @@ export class PaperEvaluationService {
       sharpe: input.sharpe,
       maxDrawdown: input.maxDrawdown,
       turnover: input.turnover,
+      executionQuality: input.executionQuality,
+      executionQualityAssessment: input.executionQualityAssessment,
       ...(input.comparisonCohortId ? { comparisonCohort: { id: input.comparisonCohortId } } : {}),
       gateVersion: "paper-gate-v1",
     };
@@ -229,6 +283,8 @@ async function capturePaperComponentEvidence(input: {
   sharpe: number;
   maxDrawdown: number;
   turnover: number;
+  executionQuality: PaperEvaluation["executionQuality"];
+  executionQualityAssessment: PaperEvaluation["executionQualityAssessment"];
   pass: boolean;
   harnessVersion: string | null;
 }): Promise<number> {
@@ -248,6 +304,8 @@ async function capturePaperComponentEvidence(input: {
         sharpe: input.sharpe,
         maxDrawdown: input.maxDrawdown,
         turnover: input.turnover,
+        executionQuality: input.executionQuality,
+        executionQualityAssessment: input.executionQualityAssessment,
       },
       qualityScore: paperScore({
         tradingDays: input.tradingDays,
@@ -328,6 +386,31 @@ function paperScore(input: PaperScoreInput): number {
     input.maxDrawdown <= 0.2,
   ];
   return checks.filter(Boolean).length / checks.length;
+}
+
+async function resolveRuntimeBrokerKey(db: DbClient, brokerAccountId: string | null) {
+  if (!brokerAccountId) return "paper";
+  const rows = await db
+    .select({ provider: brokerAccount.provider })
+    .from(brokerAccount)
+    .where(eq(brokerAccount.id, brokerAccountId))
+    .limit(1);
+  return rows[0]?.provider ?? "broker_account_missing";
+}
+
+function assetClassForMarket(market: string): string {
+  switch (market.trim().toUpperCase()) {
+    case "CRYPTO":
+      return "crypto";
+    case "FUTURE":
+    case "FUTURES":
+      return "future";
+    case "OPTION":
+    case "OPTIONS":
+      return "option";
+    default:
+      return "equity";
+  }
 }
 
 export const paperEvaluationService = new PaperEvaluationService();

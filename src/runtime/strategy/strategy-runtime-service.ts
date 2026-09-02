@@ -12,11 +12,17 @@ import {
 } from "../../db/sqlite/schema";
 import type { OrderSide } from "../../types/entities";
 import { strategyPromotionService } from "../effect-validation/strategy-promotion-service";
+import type { ExecutionQualityAcceptanceContract } from "../execution/execution-quality-contract";
+import {
+  type LiveRuntimeGuardrails,
+  assertLiveRuntimeAccountRiskLimits,
+  assertLiveRuntimeGuardrailsForSymbol,
+} from "../execution/live-runtime-guardrails";
 import { createOrderIntentWithExecution } from "../execution/order-intent-service";
 import {
-  assertLiveRuntimeGuardrailsForSymbol,
-  type LiveRuntimeGuardrails,
-} from "../execution/live-runtime-guardrails";
+  type ExchangeCalendarRelease,
+  parseExchangeCalendarRelease,
+} from "../market/exchange-calendar-release";
 import { resolveInstrument } from "../market/instrument-router";
 import { assertTradingModuleEnabled } from "../trader/trading-module-control";
 import { appendStrategyRuntimeLog } from "./strategy-runtime-log";
@@ -27,7 +33,7 @@ export interface CreateStrategyRuntimeInput {
   market: string;
   symbol: string;
   timeframe?: string;
-  executionMode?: "paper" | "live" | "sim";
+  executionMode?: "paper" | "live" | "sim" | "shadow";
   brokerAccountId?: string | null;
   params?: Record<string, unknown>;
   autoStart?: boolean;
@@ -66,6 +72,15 @@ export interface StrategyRuntimeParams {
    * intentionally narrower than project-wide risk rules.
    */
   liveGuardrails?: LiveRuntimeGuardrails;
+  /** Immutable source/versioned calendar release for real-money scheduling. */
+  calendarRelease?: ExchangeCalendarRelease;
+  /** Exchange venue used to resolve the release; defaults to the runtime market. */
+  calendarVenue?: string;
+  /**
+   * Optional, explicitly calibrated TCA acceptance contract.  Evaluation is
+   * advisory until a separately approved promotion policy elects to consume it.
+   */
+  executionQualityContract?: ExecutionQualityAcceptanceContract;
 }
 
 function asRuntimeParams(value: unknown): StrategyRuntimeParams {
@@ -81,14 +96,21 @@ function asRuntimeParams(value: unknown): StrategyRuntimeParams {
  */
 function assertLiveRuntimeEvidenceConfigured(
   params: StrategyRuntimeParams,
-  symbol?: string
+  input?: { symbol?: string; market?: string }
 ): void {
   if (!params.thesisId?.trim()) {
     throw new Error(
       "live_runtime_evidence_missing: params.thesisId is required for live strategy runtimes"
     );
   }
-  if (symbol) assertLiveRuntimeGuardrailsForSymbol(params.liveGuardrails, symbol);
+  if (input?.symbol) assertLiveRuntimeGuardrailsForSymbol(params.liveGuardrails, input.symbol);
+  const calendar = parseExchangeCalendarRelease(params.calendarRelease);
+  if (!calendar.ok) throw new Error(`live_runtime_${calendar.error}`);
+  const venue = input?.market?.trim().toUpperCase();
+  if (venue && calendar.release.venue !== venue) {
+    throw new Error("live_runtime_calendar_release_venue_mismatch");
+  }
+  assertLiveRuntimeAccountRiskLimits(params.liveGuardrails);
 }
 
 async function ensureInstrumentForSymbol(
@@ -128,12 +150,16 @@ export async function createStrategyRuntime(
   const purpose = script.purpose ?? "both";
   const executionMode = input.executionMode ?? "paper";
   const runtimeParams = asRuntimeParams(input.params);
-  // research-only 脚本允许 paper 本地引擎；sim/live 仍须 both/live_trading
-  if (purpose === "research" && executionMode !== "paper") {
+  // Research-only scripts may run paper or signal-only shadow. Broker-sim and
+  // real-money modes still require a script explicitly enabled for trading.
+  if (purpose === "research" && executionMode !== "paper" && executionMode !== "shadow") {
     throw new Error("strategy_script_not_enabled_for_live");
   }
   if (executionMode === "live") {
-    assertLiveRuntimeEvidenceConfigured(runtimeParams, input.symbol.trim().toUpperCase());
+    assertLiveRuntimeEvidenceConfigured(runtimeParams, {
+      symbol: input.symbol.trim().toUpperCase(),
+      market: runtimeParams.calendarVenue ?? input.market,
+    });
   }
 
   const resolved = await resolveInstrument({
@@ -172,10 +198,27 @@ export async function createStrategyRuntime(
       throw new Error("sim_execution_requires_sandbox_or_mock_broker_account");
     }
   }
+  if (executionMode === "live" && brokerAccountId) {
+    const account = (
+      await client
+        .select({ enabled: brokerAccount.enabled, mode: brokerAccount.mode })
+        .from(brokerAccount)
+        .where(eq(brokerAccount.id, brokerAccountId))
+        .limit(1)
+    )[0];
+    if (!account?.enabled || account.mode !== "live") {
+      throw new Error("live_execution_requires_enabled_live_broker_account");
+    }
+  }
 
-  await assertTradingModuleEnabled(client, {
-    ...(brokerAccountId ? { brokerAccountId } : {}),
-  });
+  // Shadow is a read-only research observation runtime. Keeping its creation
+  // available during a trading pause lets operators investigate signals
+  // without reopening any executable order path.
+  if (executionMode !== "shadow") {
+    await assertTradingModuleEnabled(client, {
+      ...(brokerAccountId ? { brokerAccountId } : {}),
+    });
+  }
 
   const id = randomUUID();
   const now = new Date().toISOString();
@@ -214,12 +257,30 @@ export async function startStrategyRuntime(runtimeId: string, db?: DbClient): Pr
     .limit(1);
   const runtime = runtimeRows[0];
   if (!runtime) throw new Error("strategy_runtime_not_found");
-  await assertTradingModuleEnabled(client, {
-    ...(runtime.brokerAccountId ? { brokerAccountId: runtime.brokerAccountId } : {}),
-    strategyRuntimeId: runtime.id,
-  });
+  // Shadow is a research observation mode: it never reaches execution and
+  // therefore remains available while the trading module is paused.
+  if (runtime.executionMode !== "shadow") {
+    await assertTradingModuleEnabled(client, {
+      ...(runtime.brokerAccountId ? { brokerAccountId: runtime.brokerAccountId } : {}),
+      strategyRuntimeId: runtime.id,
+    });
+  }
   if (runtime.executionMode === "live") {
-    assertLiveRuntimeEvidenceConfigured(asRuntimeParams(runtime.paramsJson), runtime.symbol);
+    assertLiveRuntimeEvidenceConfigured(asRuntimeParams(runtime.paramsJson), {
+      symbol: runtime.symbol,
+      market: asRuntimeParams(runtime.paramsJson).calendarVenue ?? runtime.market,
+    });
+    if (!runtime.brokerAccountId) throw new Error("live_execution_requires_broker_account");
+    const account = (
+      await client
+        .select({ enabled: brokerAccount.enabled, mode: brokerAccount.mode })
+        .from(brokerAccount)
+        .where(eq(brokerAccount.id, runtime.brokerAccountId))
+        .limit(1)
+    )[0];
+    if (!account?.enabled || account.mode !== "live") {
+      throw new Error("live_execution_requires_enabled_live_broker_account");
+    }
     await strategyPromotionService.assertRuntimeLiveEligible(runtimeId, client);
   }
   const now = new Date().toISOString();
@@ -321,6 +382,9 @@ export async function submitRuntimeOrder(
     signalBarTime: string;
   }
 ): Promise<{ orderIntentId: string }> {
+  if (runtime.executionMode === "shadow") {
+    throw new Error("shadow_runtime_does_not_submit_orders");
+  }
   const scripts = await db
     .select()
     .from(indicatorStrategyScript)

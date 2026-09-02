@@ -13,6 +13,7 @@ import {
   assertLiveOrderIntentEvidenceFresh,
   createOrderIntentWithExecution,
 } from "./order-intent-service";
+import { evaluatePreTradeForIntent } from "./pre-trade-risk";
 
 describe("execution pipeline (memory sqlite)", () => {
   test("allows intent and paper-fills through worker", async () => {
@@ -351,6 +352,24 @@ describe("execution pipeline (memory sqlite)", () => {
       exchange: "NYSE",
       metaJson: {},
     });
+
+    const liveRiskProbeId = randomUUID();
+    await db.insert(schema.orderIntent).values({
+      id: liveRiskProbeId,
+      workflowRunId,
+      strategyVersionId,
+      instrumentId,
+      side: "buy",
+      qty: 1,
+      orderType: "market",
+      timeInForce: "day",
+      lifecycleStatus: "created",
+      clientOrderId: liveRiskProbeId,
+      lifecycleUpdatedAt: new Date().toISOString(),
+    });
+    await expect(
+      evaluatePreTradeForIntent(db, liveRiskProbeId, undefined, { requireExplicitRules: true })
+    ).resolves.toEqual({ outcome: "block", reason: "live_pre_trade_rules_missing" });
 
     const input = {
       workflowRunId,

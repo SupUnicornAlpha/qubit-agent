@@ -100,6 +100,9 @@ export interface BrokerPosition {
   symbol: string;
   qty: number;
   avgPrice: number;
+  /** Current broker mark or broker-calculated market value for live risk. */
+  lastPrice?: number;
+  marketValue?: number;
   market?: string;
 }
 
@@ -673,6 +676,8 @@ class HttpBrokerConnector implements BrokerConnector {
         symbol: String(row.symbol ?? ""),
         qty: Number(row.qty ?? 0),
         avgPrice: Number(row.avgPrice ?? 0),
+        ...(row.lastPrice == null ? {} : { lastPrice: Number(row.lastPrice) }),
+        ...(row.marketValue == null ? {} : { marketValue: Number(row.marketValue) }),
         ...(row.market != null ? { market: String(row.market) } : {}),
       };
     });

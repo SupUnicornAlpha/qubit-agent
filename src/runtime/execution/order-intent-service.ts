@@ -7,17 +7,27 @@ import {
   instrument,
   orderIntent,
   riskReviewTicket,
+  strategyPnlSnapshot,
+  strategyRuntime,
+  strategyVersion,
 } from "../../db/sqlite/schema";
 import type { OrderSide, OrderType, RiskDecisionResult, TimeInForce } from "../../types/entities";
+import { dateToTradingDay } from "../attribution/time-util";
 import { appendAuditLog } from "../audit/audit-chain-service";
 import { strategyPromotionService } from "../effect-validation/strategy-promotion-service";
 import { resolveExecutionEvidenceBinding } from "../market/contracts/evidence-binding";
 import { linkForecastBookEntry } from "../market/contracts/forecast-book-service";
 import { getResearchThesisById } from "../market/contracts/research-thesis-service";
+import { assessExchangeCalendarSession } from "../market/exchange-calendar-release";
 import { findWorkflowArtifactById } from "../tools/workflow-artifact-ledger";
 import { assertTradingModuleEnabled } from "../trader/trading-module-control";
+import { assertLiveRuntimeGuardrailsForSymbol } from "./live-runtime-guardrails";
 import type { DispatchMode } from "./live-trading-gate";
-import { evaluatePreTradeForIntent } from "./pre-trade-risk";
+import {
+  computeNotionalUsd,
+  evaluatePreTradeForIntent,
+  readContractMultiplier,
+} from "./pre-trade-risk";
 
 export type { DispatchMode };
 
@@ -104,6 +114,184 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+/**
+ * An order submitted through the generic intent API must not be able to evade
+ * the runtime binding normally supplied by REIA or StrategyRuntimeWorker.
+ *
+ * The checks run before the intent is persisted, so a rejected live request
+ * cannot leave an unowned order waiting for a later execution worker.
+ */
+async function assertLiveRuntimeOrderEnvelope(
+  db: DbClient,
+  input: CreateOrderIntentInput,
+  inst: typeof instrument.$inferSelect,
+  options?: { excludeOrderIntentId?: string; now?: Date }
+): Promise<void> {
+  const runtimeId = input.strategyRuntimeId?.trim();
+  if (!runtimeId) throw new Error("live_execution_requires_strategy_runtime");
+  const runtime = (
+    await db.select().from(strategyRuntime).where(eq(strategyRuntime.id, runtimeId)).limit(1)
+  )[0];
+  if (!runtime) throw new Error("strategy_runtime_not_found");
+  if (runtime.executionMode !== "live") throw new Error("strategy_runtime_execution_mode_mismatch");
+  if (runtime.status !== "running") throw new Error("live_strategy_runtime_not_running");
+  const version = (
+    await db
+      .select({ logicHash: strategyVersion.logicHash })
+      .from(strategyVersion)
+      .where(eq(strategyVersion.id, input.strategyVersionId))
+      .limit(1)
+  )[0];
+  if (!version || version.logicHash !== `script-${runtime.strategyScriptId}`) {
+    throw new Error("strategy_runtime_version_mismatch");
+  }
+  if (!runtime.brokerAccountId) throw new Error("live_execution_requires_broker_account");
+  if (input.brokerAccountId?.trim() !== runtime.brokerAccountId) {
+    throw new Error("strategy_runtime_broker_account_mismatch");
+  }
+  const symbol = (input.symbol ?? inst.symbol).trim().toUpperCase();
+  const market = (input.market ?? inst.exchange ?? "").trim().toUpperCase();
+  if (
+    runtime.symbol.trim().toUpperCase() !== symbol ||
+    runtime.market.trim().toUpperCase() !== market
+  ) {
+    throw new Error("strategy_runtime_instrument_mismatch");
+  }
+  if (input.requireHumanConfirmation !== true) {
+    throw new Error("live_runtime_human_confirmation_required");
+  }
+  const params = asRecord(runtime.paramsJson);
+  const calendar = assessExchangeCalendarSession({
+    release: params.calendarRelease,
+    venue: typeof params.calendarVenue === "string" ? params.calendarVenue : runtime.market,
+    now: options?.now ?? new Date(),
+  });
+  if (!calendar.executable) {
+    throw new Error(`live_runtime_${calendar.reason}`);
+  }
+  const guardrails = assertLiveRuntimeGuardrailsForSymbol(params.liveGuardrails, symbol);
+  const notional = computeNotionalUsd(
+    input.qty,
+    input.price ?? null,
+    readContractMultiplier(inst.metaJson)
+  );
+  if (notional === null)
+    throw new Error("live_runtime_guardrails_require_positive_reference_price");
+  if (notional > guardrails.maxOrderNotionalUsd) {
+    throw new Error("live_runtime_max_order_notional_exceeded");
+  }
+
+  const tradingDay = dateToTradingDay(options?.now ?? new Date(), runtime.market);
+  const priorLiveIntents = await db
+    .select({
+      id: orderIntent.id,
+      qty: orderIntent.qty,
+      price: orderIntent.price,
+      intentTime: orderIntent.intentTime,
+      taskStatus: executionTask.status,
+      metaJson: instrument.metaJson,
+    })
+    .from(orderIntent)
+    .innerJoin(executionTask, eq(executionTask.orderIntentId, orderIntent.id))
+    .innerJoin(instrument, eq(instrument.id, orderIntent.instrumentId))
+    .where(
+      and(eq(orderIntent.strategyRuntimeId, runtime.id), eq(executionTask.dispatchMode, "live"))
+    );
+  const activeToday = priorLiveIntents.filter((item) => {
+    if (["rejected", "failed", "cancelled"].includes(item.taskStatus)) return false;
+    return (
+      item.id !== options?.excludeOrderIntentId &&
+      dateToTradingDay(new Date(item.intentTime), runtime.market) === tradingDay
+    );
+  });
+  if (activeToday.length >= guardrails.maxOrdersPerDay) {
+    throw new Error("live_runtime_max_orders_per_day_exceeded");
+  }
+  const priorNotional = activeToday.reduce((total, item) => {
+    return (
+      total + (computeNotionalUsd(item.qty, item.price, readContractMultiplier(item.metaJson)) ?? 0)
+    );
+  }, 0);
+  if (priorNotional + notional > guardrails.maxDailyNotionalUsd) {
+    throw new Error("live_runtime_max_daily_notional_exceeded");
+  }
+  const dailyPnl = await db
+    .select({
+      realized: strategyPnlSnapshot.realizedPnlDaily,
+      unrealized: strategyPnlSnapshot.unrealizedPnlDaily,
+      fee: strategyPnlSnapshot.feeDaily,
+    })
+    .from(strategyPnlSnapshot)
+    .where(
+      and(
+        eq(strategyPnlSnapshot.strategyRuntimeId, runtime.id),
+        eq(strategyPnlSnapshot.tradingDay, tradingDay)
+      )
+    );
+  const netPnl = dailyPnl.reduce(
+    (total, item) => total + item.realized + item.unrealized - item.fee,
+    0
+  );
+  if (-netPnl >= guardrails.maxDailyLossUsd) {
+    throw new Error("live_runtime_max_daily_loss_exceeded");
+  }
+}
+
+/** Re-run the deployment envelope immediately before the real broker call. */
+export async function assertLiveOrderIntentGuardrailsFresh(
+  db: DbClient,
+  intent: Pick<
+    typeof orderIntent.$inferSelect,
+    | "id"
+    | "workflowRunId"
+    | "strategyVersionId"
+    | "instrumentId"
+    | "side"
+    | "qty"
+    | "orderType"
+    | "price"
+    | "timeInForce"
+    | "market"
+    | "symbol"
+    | "timeframe"
+    | "strategyRuntimeId"
+    | "signalBarTime"
+  >,
+  brokerAccountId: string | null,
+  now?: Date
+): Promise<void> {
+  const instruments = await db
+    .select()
+    .from(instrument)
+    .where(eq(instrument.id, intent.instrumentId))
+    .limit(1);
+  const inst = instruments[0];
+  if (!inst) throw new Error("instrument_not_found");
+  await assertLiveRuntimeOrderEnvelope(
+    db,
+    {
+      workflowRunId: intent.workflowRunId,
+      strategyVersionId: intent.strategyVersionId,
+      instrumentId: intent.instrumentId,
+      side: intent.side,
+      qty: intent.qty,
+      orderType: intent.orderType,
+      price: intent.price,
+      timeInForce: intent.timeInForce,
+      market: intent.market,
+      symbol: intent.symbol,
+      timeframe: intent.timeframe,
+      strategyRuntimeId: intent.strategyRuntimeId,
+      signalBarTime: intent.signalBarTime,
+      dispatchMode: "live",
+      brokerAccountId,
+      requireHumanConfirmation: true,
+    },
+    inst,
+    { excludeOrderIntentId: intent.id, ...(now ? { now } : {}) }
+  );
 }
 
 /**
@@ -260,6 +448,44 @@ export async function createOrderIntentWithExecution(
   const boundSnapshotId = evidence.snapshotId;
   const boundThesisId = evidence.thesisId;
 
+  if (dispatchMode === "live") {
+    const instruments = await db
+      .select()
+      .from(instrument)
+      .where(eq(instrument.id, input.instrumentId))
+      .limit(1);
+    const inst = instruments[0];
+    if (!inst) throw new Error("instrument_not_found");
+    try {
+      await assertLiveRuntimeOrderEnvelope(db, input, inst);
+    } catch (error) {
+      // A rejected live request has no order_intent to attach an audit record
+      // to. Keep the rejection durable on the runtime instead of leaving the
+      // only evidence in an API response or process log.
+      const reason = error instanceof Error ? error.message : "live_runtime_guardrail_rejected";
+      try {
+        await audit(db, {
+          traceId,
+          workflowRunId: input.workflowRunId,
+          action: "live_runtime_guardrail_rejected",
+          resourceType: "strategy_runtime",
+          resourceId: input.strategyRuntimeId?.trim() || "unbound",
+          detail: {
+            reason,
+            dispatchMode,
+            strategyVersionId: input.strategyVersionId,
+            instrumentId: input.instrumentId,
+            brokerAccountId: input.brokerAccountId ?? null,
+          },
+        });
+      } catch {
+        // Audit availability must never turn a hard risk rejection into a
+        // potentially retryable infrastructure error.
+      }
+      throw error;
+    }
+  }
+
   if (requestedClientOrderId) {
     const existingIntents = await db
       .select()
@@ -364,7 +590,9 @@ export async function createOrderIntentWithExecution(
     },
   });
 
-  const risk = await evaluatePreTradeForIntent(db, orderIntentId);
+  const risk = await evaluatePreTradeForIntent(db, orderIntentId, undefined, {
+    requireExplicitRules: dispatchMode === "live",
+  });
   const riskEvaluatedAt = new Date().toISOString();
 
   let executionTaskId: string | null = null;

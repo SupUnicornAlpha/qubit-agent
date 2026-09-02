@@ -227,4 +227,32 @@ describe("factor.autoEvaluate 一步式 register → compute → evaluate", () =
     });
     expect(callOrder).toEqual(["evaluate-1", "compute", "evaluate-2"]);
   });
+
+  test("forwards an explicit independent-validation boundary to the service", async () => {
+    let receivedValidationStartDate: string | undefined;
+    factorService.autoEvaluate = (async (input) => {
+      receivedValidationStartDate = input.validationStartDate;
+      return { evaluationId: randomUUID(), rankIc: 0.04, ir: 0.2 } as never;
+    }) as typeof factorService.autoEvaluate;
+
+    await dispatchBuiltinTool("factor.autoEvaluate", buildCtx() as never, {
+      factor_id: randomUUID(),
+      start_date: "2025-01-01",
+      end_date: "2025-06-30",
+      validation_start_date: "2025-05-01",
+    });
+
+    expect(receivedValidationStartDate).toBe("2025-05-01");
+  });
+
+  test("rejects malformed independent-validation boundaries before evaluation", async () => {
+    await expect(
+      dispatchBuiltinTool("factor.autoEvaluate", buildCtx() as never, {
+        factor_id: randomUUID(),
+        start_date: "2025-01-01",
+        end_date: "2025-06-30",
+        validation_start_date: "2025/05/01",
+      })
+    ).rejects.toThrow("validation_start_date must be YYYY-MM-DD");
+  });
 });

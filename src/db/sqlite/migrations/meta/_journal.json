@@ -855,6 +855,20 @@
       "when": 1816473600000,
       "tag": "0122_order_intent_execution_evidence",
       "breakpoints": true
+    },
+    {
+      "idx": 122,
+      "version": "7",
+      "when": 1788220800000,
+      "tag": "0123_shadow_strategy_runtime",
+      "breakpoints": true
+    },
+    {
+      "idx": 123,
+      "version": "7",
+      "when": 1788307200000,
+      "tag": "0124_shadow_strategy_eval_kind",
+      "breakpoints": true
     }
   ]
 }

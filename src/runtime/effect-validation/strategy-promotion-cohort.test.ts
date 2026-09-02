@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import * as schema from "../../db/sqlite/schema";
@@ -98,13 +98,57 @@ async function insertCohortEvidence(
                   embargoDays: 5,
                 }),
               }
-            : { comparisonCohort: { id: cohort } },
+            : evalKind === "walk_forward"
+              ? {
+                  comparisonCohort: { id: cohort },
+                  oosReturnSeries: oosReturns(score >= 0.8 ? "challenger" : "champion"),
+                }
+              : { comparisonCohort: { id: cohort } },
       qualityScore: score,
       pass: true,
       notes: "test",
       createdBy: "test",
     });
   }
+}
+
+async function setWalkForwardOosReturns(
+  db: Awaited<ReturnType<typeof seededDb>>["db"],
+  strategyVersionId: string,
+  oosReturnSeries: unknown
+) {
+  const row = (
+    await db
+      .select()
+      .from(schema.strategyEvalRun)
+      .where(
+        and(
+          eq(schema.strategyEvalRun.strategyVersionId, strategyVersionId),
+          eq(schema.strategyEvalRun.evalKind, "walk_forward")
+        )
+      )
+      .limit(1)
+  )[0];
+  if (!row) throw new Error("walk_forward_fixture_missing");
+  const metrics =
+    row.metricsJson && typeof row.metricsJson === "object" && !Array.isArray(row.metricsJson)
+      ? row.metricsJson
+      : {};
+  await db
+    .update(schema.strategyEvalRun)
+    .set({ metricsJson: { ...metrics, oosReturnSeries } })
+    .where(eq(schema.strategyEvalRun.id, row.id));
+}
+
+function oosReturns(kind: "champion" | "challenger") {
+  const values =
+    kind === "champion"
+      ? [0.02, -0.015, 0.018, -0.012, 0.02, -0.016, 0.017, -0.01]
+      : [0.004, 0.005, 0.006, 0.004, 0.005, 0.006, 0.004, 0.005];
+  return Array.from({ length: 64 }, (_, index) => ({
+    timestamp: `2026-03-${String(index + 1).padStart(2, "0")}`,
+    return: values[index % values.length] ?? 0,
+  }));
 }
 
 describe("strategy promotion fixed-cohort gate", () => {
@@ -128,6 +172,42 @@ describe("strategy promotion fixed-cohort gate", () => {
       strategyVersionId: challengerVersionId,
       comparisonCohortId: cohort,
       decision: "eligible",
+    });
+  });
+
+  test("fails closed when a matching cohort has no auditable OOS return series", async () => {
+    const { db, projectId, championVersionId, challengerVersionId } = await seededDb();
+    await insertCohortEvidence(db, projectId, championVersionId, 0.7);
+    await insertCohortEvidence(db, projectId, challengerVersionId, 0.9);
+    await setWalkForwardOosReturns(db, challengerVersionId, []);
+
+    const result = await strategyPromotionService.compareVersions(
+      { projectId, challengerStrategyVersionId: challengerVersionId },
+      db
+    );
+    expect(result.decision).toBe("challenger_diversification_evidence_missing_or_failed");
+    expect(result.promotionEligible).toBe(false);
+    expect(result.diversification.status).toBe("insufficient_evidence");
+    expect((await strategyCandidateReviewService.list(projectId, db))[0]).toMatchObject({
+      decision: "incomplete",
+    });
+  });
+
+  test("rejects a high-correlation challenger even when its weighted score is higher", async () => {
+    const { db, projectId, championVersionId, challengerVersionId } = await seededDb();
+    await insertCohortEvidence(db, projectId, championVersionId, 0.7);
+    await insertCohortEvidence(db, projectId, challengerVersionId, 0.9);
+    await setWalkForwardOosReturns(db, challengerVersionId, oosReturns("champion"));
+
+    const result = await strategyPromotionService.compareVersions(
+      { projectId, challengerStrategyVersionId: challengerVersionId },
+      db
+    );
+    expect(result.decision).toBe("challenger_diversification_evidence_missing_or_failed");
+    expect(result.promotionEligible).toBe(false);
+    expect(result.diversification.status).toBe("correlation_too_high");
+    expect((await strategyCandidateReviewService.list(projectId, db))[0]).toMatchObject({
+      decision: "rejected",
     });
   });
 
@@ -200,7 +280,6 @@ describe("strategy promotion fixed-cohort gate", () => {
         createdBy: "test",
       });
     }
-
     const eligible = await assessStrategyRecipeEvidence({ projectId, compositionId, client: db });
     expect(eligible.eligible).toBe(true);
     if (eligible.eligible) {

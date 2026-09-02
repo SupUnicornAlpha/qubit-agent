@@ -239,6 +239,89 @@ chatRouter.post("/sessions/:sessionId/turns", async (c) => {
 });
 
 /**
+ * Compatibility writer for persisted messages. New interactive requests must
+ * use `/turns` so that they create a workflow-bound user/assistant pair, but
+ * imports, streaming placeholders and legacy clients still need to append one
+ * explicitly requested message without starting an Agent turn.
+ */
+chatRouter.post("/sessions/:id/messages", async (c) => {
+  type MessageBody = {
+    role?: "user" | "assistant" | "system";
+    sender?: "user" | "orchestrator" | "agent" | "system";
+    content?: string;
+    status?: "queued" | "running" | "completed" | "failed" | "awaiting_approval";
+    errorMessage?: string | null;
+    attachments?: unknown;
+    workflowRunIds?: string[];
+  };
+  const sessionId = c.req.param("id");
+  const body = await c.req.json<MessageBody>().catch(() => ({}) as MessageBody);
+  const role = body.role;
+  if (role !== "user" && role !== "assistant" && role !== "system") {
+    return c.json({ error: "role must be user, assistant, or system" }, 400);
+  }
+  const content = typeof body.content === "string" ? body.content : "";
+  const status = body.status ?? "queued";
+  if (!content && role !== "assistant") {
+    return c.json({ error: "content is required unless creating an assistant placeholder" }, 400);
+  }
+  let attachments: ChatImageAttachment[];
+  try {
+    attachments = parseChatImageAttachments(body.attachments);
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
+  }
+  if (attachments.length > 0 && role !== "user") {
+    return c.json({ error: "image attachments are only accepted on user messages" }, 400);
+  }
+  const db = await getDb();
+  const session = (
+    await db.select().from(chatSession).where(eq(chatSession.id, sessionId)).limit(1)
+  )[0];
+  if (!session) return c.json({ error: "session not found", sessionId }, 404);
+  const workflowRunIds = [
+    ...new Set((body.workflowRunIds ?? []).map((value) => value.trim())),
+  ].filter(Boolean);
+  for (const workflowRunId of workflowRunIds) {
+    const ownership = await assertWorkflowBelongsToSession(db, sessionId, workflowRunId);
+    if (!ownership.ok) {
+      if (ownership.status === 404) return c.json(ownership.body, 404);
+      return c.json(ownership.body, 400);
+    }
+  }
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  await db.insert(chatMessage).values({
+    id,
+    sessionId,
+    role,
+    sender:
+      body.sender ??
+      (role === "assistant" ? "orchestrator" : role === "system" ? "system" : "user"),
+    content,
+    attachmentsJson: attachments,
+    status,
+    errorMessage: body.errorMessage ?? null,
+    createdAt: now,
+    updatedAt: now,
+  });
+  for (const workflowRunId of workflowRunIds) {
+    await db.insert(chatMessageWorkflowLink).values({
+      id: crypto.randomUUID(),
+      chatMessageId: id,
+      workflowRunId,
+      traceId: crypto.randomUUID(),
+    });
+  }
+  await db
+    .update(chatSession)
+    .set({ lastActivityAt: now, updatedAt: now })
+    .where(eq(chatSession.id, sessionId));
+  const created = await db.select().from(chatMessage).where(eq(chatMessage.id, id)).limit(1);
+  return c.json({ data: created[0] }, 201);
+});
+
+/**
  * Session 级统一 ClientEvent SSE（06 协议）。
  * 投影自 stepStream + HITL；需先 POST turns 建立 Turn 绑定。
  */

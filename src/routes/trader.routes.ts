@@ -30,6 +30,29 @@ import type { OrderSide, OrderType } from "../types/entities";
 
 export const traderRouter = new Hono();
 
+type RuntimePauseCandidate = {
+  id: string;
+  executionMode: "paper" | "shadow" | "sim" | "live";
+  brokerAccountId: string | null;
+};
+
+/**
+ * A trading pause removes executable paths only. Shadow has no order intent or
+ * broker path, so retaining it preserves read-only research observation while
+ * the operator has explicitly paused trading.
+ */
+export function selectRuntimesToStopOnTradingPause<T extends RuntimePauseCandidate>(
+  runtimes: T[],
+  scope: { brokerAccountId?: string; strategyRuntimeId?: string }
+): T[] {
+  return runtimes.filter(
+    (runtime) =>
+      runtime.executionMode !== "shadow" &&
+      (!scope.brokerAccountId || runtime.brokerAccountId === scope.brokerAccountId) &&
+      (!scope.strategyRuntimeId || runtime.id === scope.strategyRuntimeId)
+  );
+}
+
 /** 总开关由后端持有，页面刷新、其它入口或 Agent 调用都会读到同一状态。 */
 traderRouter.get("/module", async (c) => {
   const brokerAccountId = c.req.query("brokerAccountId")?.trim();
@@ -79,10 +102,9 @@ traderRouter.put("/module", async (c) => {
   });
   if (status.enabled) return c.json({ ok: true, data: { ...status, stoppedRuntimeIds: [] } });
 
-  const running = (await listStrategyRuntimes({ status: "running" })).filter(
-    (runtime) =>
-      (!brokerAccountId || runtime.brokerAccountId === brokerAccountId) &&
-      (!strategyRuntimeId || runtime.id === strategyRuntimeId)
+  const running = selectRuntimesToStopOnTradingPause(
+    await listStrategyRuntimes({ status: "running" }),
+    scope
   );
   await Promise.all(running.map((runtime) => stopStrategyRuntime(runtime.id)));
   const cancelledTaskIds = await cancelPendingTradingWork(undefined, undefined, scope);

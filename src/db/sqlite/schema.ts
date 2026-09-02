@@ -1951,7 +1951,7 @@ export const strategyRuntime = sqliteTable("strategy_runtime", {
   })
     .notNull()
     .default("stopped"),
-  executionMode: text("execution_mode", { enum: ["paper", "live", "sim"] })
+  executionMode: text("execution_mode", { enum: ["paper", "live", "sim", "shadow"] })
     .notNull()
     .default("paper"),
   market: text("market").notNull(),
@@ -3015,7 +3015,7 @@ export const strategyEvalRun = sqliteTable("strategy_eval_run", {
   }),
   scenarioKey: text("scenario_key").notNull().default(""),
   evalKind: text("eval_kind", {
-    enum: ["backtest", "paper", "live", "walk_forward", "holdout", "recommendation"],
+    enum: ["backtest", "paper", "shadow", "live", "walk_forward", "holdout", "recommendation"],
   })
     .notNull()
     .default("backtest"),

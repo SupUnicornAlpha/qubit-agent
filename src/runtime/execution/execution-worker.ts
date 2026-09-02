@@ -19,7 +19,11 @@ const RETRY_DELAY_MS = 30_000;
 function isPermanentGovernanceBlock(message: string): boolean {
   return (
     message.startsWith("live_promotion_gate_blocked:") ||
-    message.startsWith("live_dataset_admission_blocked:")
+    message.startsWith("live_dataset_admission_blocked:") ||
+    message.startsWith("live_runtime_") ||
+    message.startsWith("live_account_risk_") ||
+    message.startsWith("live_execution_requires_") ||
+    message.startsWith("strategy_runtime_")
   );
 }
 

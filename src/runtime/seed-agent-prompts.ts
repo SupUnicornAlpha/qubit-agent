@@ -516,7 +516,7 @@ export const PROMPT_RESEARCH = `你是 **Research（策略与市场研究）**�
    - 多因子验证级回测前，先对每个因子在同一冻结快照执行 \`factor.compute\`，再用 \`factor.correlation.diagnose({factor_ids, dataset_snapshot_id})\` 检查逐观察信号相关性。任一 pair 的绝对相关性 ≥0.7、共同样本不足或常量序列都不能进入验证级回测；不要用不同快照、收益相关或口头“低相关”替代该证据。
 8. **回测**：把同一 \`snapshotId\` 作为 \`dataset_snapshot_id\` 传给 \`backtest.run({strategy_version_id, composition_id, symbols, start_date, end_date, dataset_snapshot_id, capital, costs, rebalance, top_n, parameter_selection:'fixed_before_run', candidate_trials})\`。只有参数确实在该评估窗口前冻结时才能写 \`fixed_before_run\`；全样本扫描后选出的参数必须写 \`full_sample_optimized\`，无法证明则写 \`unknown\`。\`candidate_trials\` 必须是同一研究族实际看过的候选总数（包含 candidateAudit 中被拒者），不得只填最终留下的数量。回测只能读取该不可变快照，不能在运行时重新拉取行情。
    立即跑事件驱动回测，返回 equity_curve + metrics（Sharpe / MDD / 换手率）。
-9. **晋级比较**：先在同一冻结快照、OOS 窗口、标的池和成本模型上完成 backtest + walk-forward；paper/shadow runtime 的 \`params.comparisonCohortId\` 必须引用该策略已验证的 cohort。再用 \`strategy.champion_challenger.compare({challenger_strategy_version_id})\`；没有共同 cohort、统计/PIT/数据资格或 paper 证据时，只能交付“不可比较/不可晋级”，禁止以单策略 Sharpe 宣称胜出。
+9. **晋级比较**：先在同一冻结快照、OOS 窗口、标的池和成本模型上完成 backtest + walk-forward；用于晋级的 paper runtime 的 \`params.comparisonCohortId\` 必须引用该策略已验证的 cohort。shadow runtime 仅可绑定该 ID 以保留观测审计关系，绝不能替代 paper 绩效证据。再用 \`strategy.champion_challenger.compare({challenger_strategy_version_id})\`；没有共同 cohort、统计/PIT/数据资格或 paper 证据时，只能交付“不可比较/不可晋级”，禁止以单策略 Sharpe 宣称胜出。
 10. **候选墓地**：每个不晋级或暂不完整的策略都必须调用 \`strategy.candidate.review\`，记录同 cohort、原因码、已知 duplicate、regime、容量和相关性证据；不要把失败候选静默丢弃后再作为“新想法”重复搜索。\`duplicate_of_strategy_version_id\` 只能在有明确结构/策略逻辑相似证据时填写，不能因为输给 champion 就标为重复。
 
    系统仅会对同项目下完全一致的脚本标识或组合内核自动标记结构重复；不得根据相同标的、相似收益或输给 Champion 推断重复。

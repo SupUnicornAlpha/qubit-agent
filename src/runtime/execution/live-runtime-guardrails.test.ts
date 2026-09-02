@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  assertLiveRuntimeAccountRiskLimits,
   assertLiveRuntimeGuardrailsForSymbol,
   parseLiveRuntimeGuardrails,
 } from "./live-runtime-guardrails";
@@ -12,7 +13,7 @@ const guardrails = {
   maxOrdersPerDay: 3,
   maxDailyLossUsd: 250,
   requireHumanConfirmation: true,
-};
+} as const;
 
 describe("live runtime guardrails", () => {
   test("normalizes an explicit limited-live envelope", () => {
@@ -23,11 +24,30 @@ describe("live runtime guardrails", () => {
 
   test("fails closed for unlimited, inconsistent, and non-confirmed envelopes", () => {
     expect(parseLiveRuntimeGuardrails({})).toMatchObject({ ok: false });
-    expect(
-      parseLiveRuntimeGuardrails({ ...guardrails, maxDailyNotionalUsd: 999 })
-    ).toMatchObject({ ok: false, error: "live_runtime_guardrails_daily_notional_below_order_notional" });
+    expect(parseLiveRuntimeGuardrails({ ...guardrails, maxDailyNotionalUsd: 999 })).toMatchObject({
+      ok: false,
+      error: "live_runtime_guardrails_daily_notional_below_order_notional",
+    });
     expect(() => assertLiveRuntimeGuardrailsForSymbol(guardrails, "NVDA")).toThrow(
       "live_runtime_symbol_not_allowlisted"
     );
+  });
+
+  test("requires v2 account limits before a real-money runtime can start", () => {
+    expect(() => assertLiveRuntimeAccountRiskLimits(guardrails)).toThrow(
+      "live_runtime_account_risk_limits_missing"
+    );
+    const v2 = {
+      ...guardrails,
+      schemaVersion: 2 as const,
+      accountRisk: {
+        currency: "USD" as const,
+        minAvailableCashUsd: 1_000,
+        maxGrossNotionalUsd: 10_000,
+        maxSymbolNotionalUsd: 5_000,
+        maxOpenPositions: 4,
+      },
+    };
+    expect(assertLiveRuntimeAccountRiskLimits(v2)).toEqual(v2.accountRisk);
   });
 });

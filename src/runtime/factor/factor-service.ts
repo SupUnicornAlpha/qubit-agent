@@ -40,6 +40,7 @@ import type {
   FactorComputeRow,
   FactorEvalResult,
   FactorEvaluationProvider,
+  FactorIndependentValidationReport,
   ProviderScope,
 } from "../provider/types";
 import { factorValueStore } from "./factor-value-store";
@@ -51,7 +52,10 @@ import {
   diagnoseFactorExposure,
   type FactorExposureDiagnostics,
 } from "./factor-exposure-diagnostics";
-import { regressFactorRiskExposures, type FactorRiskExposureRegression } from "./factor-risk-exposure-regression";
+import {
+  regressFactorRiskExposures,
+  type FactorRiskExposureRegression,
+} from "./factor-risk-exposure-regression";
 import { getMarketSnapshotById } from "../market/contracts/market-snapshot-service";
 import {
   type FactorResearchContract,
@@ -223,6 +227,12 @@ export interface FactorAutoEvaluateInput {
   scope?: ProviderScope;
   /** 传入后，因子值与未来收益均从同一冻结快照计算，不读取实时/修订后的行情。 */
   datasetSnapshotId?: string;
+  /**
+   * Explicit first OOS decision date. The training slice is purged by the
+   * primary return horizon before this date, so its labels cannot cross into
+   * the validation period.
+   */
+  validationStartDate?: string;
 }
 
 const DEFAULT_UNIVERSE_SYMBOLS: Record<string, string[]> = {
@@ -882,6 +892,7 @@ export class FactorService {
     factorId: string;
     datasetSnapshotId: string;
     minimumObservations?: number;
+    minimumCrossSections?: number;
   }): Promise<FactorRiskExposureRegression> {
     const snapshot = await getMarketSnapshotById(input.datasetSnapshotId);
     if (!snapshot?.snapshot.riskExposureLedger) {
@@ -889,9 +900,17 @@ export class FactorService {
     }
     return regressFactorRiskExposures({
       factorId: input.factorId,
-      values: await this.loadValues({ factorId: input.factorId, datasetSnapshotId: input.datasetSnapshotId }),
+      values: await this.loadValues({
+        factorId: input.factorId,
+        datasetSnapshotId: input.datasetSnapshotId,
+      }),
       ledger: snapshot.snapshot.riskExposureLedger,
-      ...(input.minimumObservations !== undefined ? { minimumObservations: input.minimumObservations } : {}),
+      ...(input.minimumObservations !== undefined
+        ? { minimumObservations: input.minimumObservations }
+        : {}),
+      ...(input.minimumCrossSections !== undefined
+        ? { minimumCrossSections: input.minimumCrossSections }
+        : {}),
     });
   }
 
@@ -1115,7 +1134,7 @@ export class FactorService {
     const mainFutures = byHorizon[horizon] ?? [];
 
     // 4) 调 evaluate
-    const result = await this.evaluate({
+    let result = await this.evaluate({
       factorId: f.id,
       values,
       futureReturns: mainFutures,
@@ -1149,6 +1168,28 @@ export class FactorService {
       );
     }
 
+    if (input.validationStartDate) {
+      const independentValidation = await this.evaluateIndependentHoldout({
+        factorId: f.id,
+        universe: f.universe,
+        values,
+        mainFutures,
+        byHorizon,
+        horizon,
+        input,
+      });
+      const db = await getDb();
+      const statisticalReportJson = {
+        ...(result.statisticalReport ?? {}),
+        independentValidation,
+      };
+      await db
+        .update(factorEvalTable)
+        .set({ statisticalReportJson: statisticalReportJson as never })
+        .where(eq(factorEvalTable.id, result.evaluationId));
+      result = { ...result, independentValidation };
+    }
+
     return {
       ...result,
       meta: {
@@ -1156,6 +1197,108 @@ export class FactorService {
         decayHorizons,
         ...(input.datasetSnapshotId ? { datasetSnapshotId: input.datasetSnapshotId } : {}),
       },
+    };
+  }
+
+  /**
+   * Produces an auditable factor holdout without creating a second ambiguous
+   * factor_evaluation row. The output is embedded in the canonical full-range
+   * evaluation record; callers can therefore see the split and both slices.
+   */
+  private async evaluateIndependentHoldout(input: {
+    factorId: string;
+    universe: string;
+    values: FactorComputeRow[];
+    mainFutures: FactorComputeRow[];
+    byHorizon: Record<number, FactorComputeRow[]>;
+    horizon: number;
+    input: FactorAutoEvaluateInput;
+  }): Promise<FactorIndependentValidationReport> {
+    const validationStartDate = input.input.validationStartDate?.trim() ?? "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(validationStartDate)) {
+      throw new FactorServiceError(
+        "validation_failed",
+        "factor_independent_validation_start_date_invalid"
+      );
+    }
+    if (validationStartDate <= input.input.startDate || validationStartDate > input.input.endDate) {
+      throw new FactorServiceError(
+        "validation_failed",
+        "factor_independent_validation_start_date_out_of_range"
+      );
+    }
+    const trainLabelEndExclusive = this.shiftDate(validationStartDate, -input.horizon);
+    const datePart = (row: FactorComputeRow) => row.date.slice(0, 10);
+    const inSampleValues = input.values.filter((row) => datePart(row) < trainLabelEndExclusive);
+    const inSampleFutures = input.mainFutures.filter(
+      (row) => datePart(row) < trainLabelEndExclusive
+    );
+    const outOfSampleValues = input.values.filter(
+      (row) => datePart(row) >= validationStartDate && datePart(row) <= input.input.endDate
+    );
+    const outOfSampleFutures = input.mainFutures.filter(
+      (row) => datePart(row) >= validationStartDate && datePart(row) <= input.input.endDate
+    );
+    const filterHorizons = (predicate: (row: FactorComputeRow) => boolean) =>
+      Object.fromEntries(
+        Object.entries(input.byHorizon).map(([horizon, rows]) => [
+          Number(horizon),
+          rows.filter(predicate),
+        ])
+      ) as Record<number, FactorComputeRow[]>;
+    const evaluator = await this.resolveEval(input.input.providerKey, input.input.scope);
+    const base = {
+      factorId: input.factorId,
+      universe: input.universe,
+      ...(typeof input.input.groupCount === "number" ? { groupCount: input.input.groupCount } : {}),
+    };
+    const [inSample, outOfSample] = await Promise.all([
+      evaluator.evaluate({
+        ...base,
+        values: inSampleValues,
+        futureReturns: inSampleFutures,
+        futureReturnsByHorizon: filterHorizons((row) => datePart(row) < trainLabelEndExclusive),
+      }),
+      evaluator.evaluate({
+        ...base,
+        values: outOfSampleValues,
+        futureReturns: outOfSampleFutures,
+        futureReturnsByHorizon: filterHorizons(
+          (row) => datePart(row) >= validationStartDate && datePart(row) <= input.input.endDate
+        ),
+      }),
+    ]);
+    const pick = (result: FactorEvalResult) => ({
+      ic: result.ic,
+      rankIc: result.rankIc,
+      ir: result.ir,
+      sampleSize: result.sampleSize,
+      ...(result.error ? { error: result.error } : {}),
+      ...(result.statisticalReport ? { statisticalReport: result.statisticalReport } : {}),
+    });
+    const inSampleReport = pick(inSample);
+    const outOfSampleReport = pick(outOfSample);
+    const oosPassed = !outOfSample.error && outOfSample.statisticalReport?.status === "passed";
+    return {
+      version: "factor-independent-validation-v1",
+      datasetSnapshotId: input.input.datasetSnapshotId ?? null,
+      split: {
+        trainStartDate: input.input.startDate,
+        trainLabelEndExclusive,
+        validationStartDate,
+        validationEndDate: input.input.endDate,
+        purgeCalendarDays: input.horizon,
+      },
+      inSample: inSampleReport,
+      outOfSample: outOfSampleReport,
+      status: oosPassed ? "passed" : "research_only",
+      reasons: [
+        ...(inSample.error ? [`in_sample_${inSample.error}`] : []),
+        ...(outOfSample.error ? [`out_of_sample_${outOfSample.error}`] : []),
+        ...(!outOfSample.error && outOfSample.statisticalReport?.status !== "passed"
+          ? ["out_of_sample_statistical_validation_not_passed"]
+          : []),
+      ],
     };
   }
 

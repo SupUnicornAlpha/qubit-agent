@@ -3,25 +3,21 @@ import { eq } from "drizzle-orm";
 import type { BarData } from "../../connectors/data/data.connector";
 import { getDb } from "../../db/sqlite/client";
 import { strategy, strategyEvalRun, strategyVersion } from "../../db/sqlite/schema";
-import { backtestJobService } from "../backtest/backtest-job-service";
 import {
-  buildBacktestIntegrityReport,
   type BacktestIntegrityReport,
+  buildBacktestIntegrityReport,
 } from "../backtest/anti-leakage-report";
+import { backtestJobService } from "../backtest/backtest-job-service";
+import { type WhiteRealityCheckReport, buildWhiteRealityCheck } from "../backtest/reality-check";
 import {
+  type BacktestStatisticalValidationReport,
+  type FalseDiscoveryRateResult,
   benjaminiHochberg,
   buildStatisticalValidationReport,
   estimateSharpeNullPValue,
-  type BacktestStatisticalValidationReport,
-  type FalseDiscoveryRateResult,
 } from "../backtest/statistical-validation-report";
-import {
-  buildWhiteRealityCheck,
-  type WhiteRealityCheckReport,
-} from "../backtest/reality-check";
 import { detectRegimeFromBars } from "../market/regime";
 import { providerResolver } from "../provider/resolver";
-import { buildStrategyComparisonCohort } from "./strategy-comparison-cohort";
 import type {
   BacktestDataset,
   BacktestEquityPoint,
@@ -30,6 +26,8 @@ import type {
   BacktestRequest,
   BacktestResult,
 } from "../provider/types";
+import { buildStrategyComparisonCohort } from "./strategy-comparison-cohort";
+import { type OosReturnPoint, equityCurveToOosReturns } from "./strategy-diversification";
 
 export interface WalkForwardParameterCandidate {
   topN?: number;
@@ -91,6 +89,8 @@ export interface WalkForwardEvaluation {
   id: string;
   backtestRunId: string;
   folds: WalkForwardFold[];
+  /** Frozen, stitched OOS return observations for portfolio-level comparison. */
+  oosReturnSeries: OosReturnPoint[];
   aggregate: {
     foldCount: number;
     compoundedOosReturn: number;
@@ -205,9 +205,11 @@ export class WalkForwardEvaluationService {
       nextBarExecution: true,
       oos: { mode: "walk_forward", foldCount: folds.length, purgeDays, embargoDays },
     });
+    const stitchedOosEquity = stitchOosEquity(oosResults);
+    const oosReturnSeries = equityCurveToOosReturns(stitchedOosEquity);
     const statisticalValidationReport = buildStatisticalValidationReport(
       validationConfig,
-      stitchOosEquity(oosResults),
+      stitchedOosEquity,
       selection ? { trialAnnualizedSharpes: aggregateTrialSharpes(folds) } : {}
     );
     const pass =
@@ -218,6 +220,7 @@ export class WalkForwardEvaluationService {
     const id = await this.persist(
       source,
       folds,
+      oosReturnSeries,
       aggregate,
       performancePass,
       selectionIntegrityPass,
@@ -229,6 +232,7 @@ export class WalkForwardEvaluationService {
       id,
       backtestRunId,
       folds,
+      oosReturnSeries,
       aggregate,
       performancePass,
       selectionIntegrityPass,
@@ -241,6 +245,7 @@ export class WalkForwardEvaluationService {
   private async persist(
     source: Awaited<ReturnType<typeof backtestJobService.get>>,
     folds: WalkForwardFold[],
+    oosReturnSeries: OosReturnPoint[],
     aggregate: WalkForwardEvaluation["aggregate"],
     performancePass: boolean,
     selectionIntegrityPass: boolean,
@@ -266,6 +271,7 @@ export class WalkForwardEvaluationService {
       metricsJson: {
         aggregate,
         folds,
+        oosReturnSeries,
         comparisonCohort: buildStrategyComparisonCohort(source.config),
         performancePass,
         selectionIntegrityPass,
@@ -307,8 +313,10 @@ export class WalkForwardEvaluationService {
 
 function normalizeSelection(
   input: WalkForwardSelectionOptions | undefined
-): Required<Pick<WalkForwardSelectionOptions, "objective">> &
-  Pick<WalkForwardSelectionOptions, "candidates"> | null {
+):
+  | (Required<Pick<WalkForwardSelectionOptions, "objective">> &
+      Pick<WalkForwardSelectionOptions, "candidates">)
+  | null {
   if (!input) return null;
   if (
     input.objective !== undefined &&

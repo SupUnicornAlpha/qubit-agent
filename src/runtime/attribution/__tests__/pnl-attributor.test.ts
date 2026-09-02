@@ -32,6 +32,7 @@ import { runMigrations } from "../../../db/sqlite/migrate";
 import {
   BUILTIN_PAPER_CONNECTOR_INSTANCE_ID,
   BUILTIN_PAPER_TRADING_ACCOUNT_ID,
+  brokerAccount,
   brokerOrder,
   chatSession,
   dailyMarkPrice,
@@ -53,7 +54,8 @@ import {
   workflowRun,
   workspace,
 } from "../../../db/sqlite/schema";
-import { createPnlAttributor } from "../pnl-attributor";
+import { InMemoryExperienceStore } from "../../experience/experience-store";
+import { createPnlAttributor, inferAssetClass } from "../pnl-attributor";
 
 interface Fixture {
   workspaceId: string;
@@ -68,6 +70,7 @@ interface Fixture {
   runtimeUSId: string;
   runtimeUS2Id: string;
   runtimeCNId: string;
+  brokerAccountId: string;
 }
 
 let fixture: Fixture;
@@ -90,6 +93,7 @@ beforeAll(async () => {
     runtimeUSId: `rt_${randomUUID()}`,
     runtimeUS2Id: `rt_${randomUUID()}`,
     runtimeCNId: `rt_${randomUUID()}`,
+    brokerAccountId: `broker_${randomUUID()}`,
   };
 
   await db.insert(workspace).values({ id: f.workspaceId, name: "t", owner: "tester" }).run();
@@ -112,6 +116,16 @@ beforeAll(async () => {
       sessionId: f.chatSessionId,
       workflowRunId: f.workflowRunId,
       name: "test-script",
+    })
+    .run();
+  await db
+    .insert(brokerAccount)
+    .values({
+      id: f.brokerAccountId,
+      provider: "futu",
+      accountRef: "pnl-attribution-futu",
+      mode: "sandbox",
+      enabled: true,
     })
     .run();
   await db
@@ -164,6 +178,7 @@ beforeAll(async () => {
       market: "US",
       symbol: "MSFT",
       executionMode: "paper",
+      brokerAccountId: f.brokerAccountId,
     })
     .run();
   await db
@@ -310,6 +325,12 @@ async function fetchSnapshots(runtimeId: string): Promise<
 }
 
 describe("PnlAttributor runOnce", () => {
+  test("未知 instrument 不会被伪装为股票成本", () => {
+    expect(inferAssetClass("US", null)).toBe("unknown");
+    expect(inferAssetClass("CRYPTO", null)).toBe("crypto");
+    expect(inferAssetClass("US", "option")).toBe("option");
+  });
+
   test("场景1：单日单 fill → 写出 1 行 snapshot", async () => {
     await insertFill({
       runtimeId: fixture.runtimeUSId,
@@ -326,10 +347,12 @@ describe("PnlAttributor runOnce", () => {
 
     const db = await getDb();
     const attr = createPnlAttributor(db);
+    const experienceStore = new InMemoryExperienceStore();
     const summary = await attr.runOnce({
       fromDay: "2026-06-01",
       toDay: "2026-06-01",
       runtimeIds: [fixture.runtimeUSId],
+      experienceStore,
     });
 
     expect(summary.runtimesProcessed).toBe(1);
@@ -348,6 +371,17 @@ describe("PnlAttributor runOnce", () => {
     expect(s.unrealizedPnlDaily).toBe(200);
     expect(s.feeDaily).toBe(1);
     expect(s.source).toBe("pnl_attributor_v0");
+    const experiences = await experienceStore.query({
+      kind: "semantic",
+      subKind: "pnl_episode",
+      scope: "project",
+      scopeId: fixture.projectId,
+    });
+    expect(experiences).toHaveLength(1);
+    expect(experiences[0]).toMatchObject({
+      sourceRunId: fixture.workflowRunId,
+      metadataJson: { strategyRuntimeId: fixture.runtimeUSId, symbol: "AAPL" },
+    });
   });
 
   test("场景2：跨日持仓 mark 波动 → 3 行 snapshot 且 unrealizedDaily 正确", async () => {
@@ -379,6 +413,45 @@ describe("PnlAttributor runOnce", () => {
     expect(snaps).toHaveLength(3);
     expect(snaps[1]?.unrealizedPnlDaily).toBe(200);
     expect(snaps[2]?.unrealizedPnlDaily).toBe(-300);
+  });
+
+  test("场景2b：券商账户与 instrument 资产类别决定回补手续费", async () => {
+    const db = await getDb();
+    await db
+      .insert(feeSchedule)
+      .values({
+        id: `fee_futu_us_stock_${randomUUID()}`,
+        broker: "futu",
+        market: "US",
+        assetClass: "stock",
+        side: "buy",
+        commissionRate: 0.002,
+        commissionMin: 0,
+        priority: 200,
+        effectiveFrom: "2024-01-01",
+      })
+      .run();
+    await insertFill({
+      runtimeId: fixture.runtimeUS2Id,
+      market: "US",
+      symbol: "MSFT",
+      instrumentId: fixture.instrumentIdMSFT,
+      side: "buy",
+      qty: 10,
+      price: 100,
+      filledAt: "2026-06-01T14:00:00.000Z",
+      fee: 0,
+    });
+    await insertMark("US", "MSFT", "2026-06-01", 100);
+
+    const summary = await createPnlAttributor(db).runOnce({
+      fromDay: "2026-06-01",
+      toDay: "2026-06-01",
+      runtimeIds: [fixture.runtimeUS2Id],
+    });
+    expect(summary.errors).toHaveLength(0);
+    const [snapshot] = await fetchSnapshots(fixture.runtimeUS2Id);
+    expect(snapshot?.feeDaily).toBeCloseTo(2, 6);
   });
 
   test("场景3：同日多 fill 同 symbol → 1 行聚合", async () => {

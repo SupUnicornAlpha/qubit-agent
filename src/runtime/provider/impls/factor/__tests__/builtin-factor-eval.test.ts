@@ -171,13 +171,31 @@ describe("BuiltinFactorEvalProvider v0.2", () => {
     });
 
     expect(result.statisticalReport).toMatchObject({
-      version: "factor-statistical-validation-v1",
+      version: "factor-statistical-validation-v2",
       dailyObservations: 60,
       status: "passed",
+      blockBootstrap: {
+        method: "moving_block_bootstrap_v1",
+        simulations: 500,
+        blockLength: 7,
+      },
     });
     expect(result.statisticalReport?.ic.pValue).not.toBeNull();
     expect(result.statisticalReport?.checks).toEqual(
       expect.arrayContaining([expect.objectContaining({ key: "ic_significance", state: "pass" })])
+    );
+    expect(result.statisticalReport?.blockBootstrap.ic).toMatchObject({
+      confidenceInterval95: { lower: expect.any(Number), upper: expect.any(Number) },
+      positiveProbability: expect.any(Number),
+    });
+    const repeat = await provider.evaluate({
+      factorId: "hac-factor",
+      universe: "test",
+      values,
+      futureReturns: futures,
+    });
+    expect(repeat.statisticalReport?.blockBootstrap).toEqual(
+      result.statisticalReport?.blockBootstrap
     );
   });
 });

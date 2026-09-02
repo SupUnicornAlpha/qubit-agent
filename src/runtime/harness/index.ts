@@ -1,4 +1,5 @@
 export * from "./builtin-financial-capabilities";
+export * from "./capability-catalog";
 export * from "./capability-registry";
 export * from "./container-exec-adapter";
 export * from "./event-ledger";

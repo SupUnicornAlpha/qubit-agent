@@ -813,6 +813,12 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
     const decayHorizons = Array.isArray(decayRaw)
       ? decayRaw.filter((n): n is number => typeof n === "number")
       : undefined;
+    const validationStartDate = String(
+      params.validation_start_date ?? params.validationStartDate ?? ""
+    ).trim();
+    if (validationStartDate && !/^\d{4}-\d{2}-\d{2}$/.test(validationStartDate)) {
+      throw new Error("factor.autoEvaluate: validation_start_date must be YYYY-MM-DD");
+    }
     const evaluateInput = {
       factorId,
       startDate,
@@ -823,6 +829,7 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
       ...(params.group_count !== undefined ? { groupCount: Number(params.group_count) } : {}),
       ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
       ...(datasetSnapshotId ? { datasetSnapshotId } : {}),
+      ...(validationStartDate ? { validationStartDate } : {}),
     };
     try {
       return await factorService.autoEvaluate(evaluateInput);
@@ -1074,7 +1081,20 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
     if (!Number.isInteger(minimumObservations) || minimumObservations < 2) {
       throw new Error("factor.risk_exposure.regress: minimum_observations must be an integer >= 2");
     }
-    return factorService.regressRiskExposures({ factorId, datasetSnapshotId, minimumObservations });
+    const minimumCrossSections = Number(
+      params.minimum_cross_sections ?? params.minimumCrossSections ?? 20
+    );
+    if (!Number.isInteger(minimumCrossSections) || minimumCrossSections < 2) {
+      throw new Error(
+        "factor.risk_exposure.regress: minimum_cross_sections must be an integer >= 2"
+      );
+    }
+    return factorService.regressRiskExposures({
+      factorId,
+      datasetSnapshotId,
+      minimumObservations,
+      minimumCrossSections,
+    });
   },
 
   /**

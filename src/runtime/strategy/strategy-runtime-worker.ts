@@ -6,6 +6,7 @@ import {
   strategyRuntime,
 } from "../../db/sqlite/schema";
 import { processExecutionTasks } from "../execution/execution-worker";
+import { assessExchangeCalendarSession } from "../market/exchange-calendar-release";
 import { computeDateRangeForLimit, queryBarsRange } from "../market/klines-query";
 import { isWithinTradingSession } from "../market/trading-calendar";
 import { evaluateSignalCode } from "./signal-evaluator";
@@ -17,10 +18,44 @@ import {
 } from "./strategy-runtime-service";
 
 const DEFAULT_TICK_MS = 30_000;
+const CALENDAR_BLOCK_LOG_INTERVAL_MS = 5 * 60_000;
+const lastCalendarBlockLogAt = new Map<string, number>();
 
 function parseParams(raw: unknown): StrategyRuntimeParams {
   if (!raw || typeof raw !== "object") return {};
   return raw as StrategyRuntimeParams;
+}
+
+/**
+ * Resolve whether a runtime may evaluate a signal at this instant. A real-money
+ * runtime has already bound an authoritative, versioned exchange release, so
+ * applying the generic weekday/regular-hours calendar afterwards would make a
+ * valid early-close or split session silently unavailable. Non-live modes have
+ * no such release requirement and retain the generic guard.
+ */
+export function assessRuntimeSignalSession(input: {
+  executionMode: string;
+  market: string;
+  params: StrategyRuntimeParams;
+  now: Date;
+}): { executable: boolean; calendar?: ReturnType<typeof assessExchangeCalendarSession> } {
+  if (input.executionMode === "live") {
+    const calendar = assessExchangeCalendarSession({
+      release: input.params.calendarRelease,
+      venue: input.params.calendarVenue ?? input.market,
+      now: input.now,
+    });
+    return { executable: calendar.executable, calendar };
+  }
+  const sessionOverrides = {
+    ...(input.params.tradingDays !== undefined ? { tradingDays: input.params.tradingDays } : {}),
+    ...(input.params.tradingStart !== undefined ? { tradingStart: input.params.tradingStart } : {}),
+    ...(input.params.tradingEnd !== undefined ? { tradingEnd: input.params.tradingEnd } : {}),
+    ...(input.params.timezone !== undefined ? { timezone: input.params.timezone } : {}),
+  };
+  return {
+    executable: isWithinTradingSession(input.now, input.market, sessionOverrides),
+  };
 }
 
 function isStrategyApiV2Script(script: typeof indicatorStrategyScript.$inferSelect): boolean {
@@ -113,13 +148,25 @@ async function tickOneRuntime(
   const db = await getDb();
   const params = parseParams(runtime.paramsJson);
 
-  const sessionOverrides = {
-    ...(params.tradingDays !== undefined ? { tradingDays: params.tradingDays } : {}),
-    ...(params.tradingStart !== undefined ? { tradingStart: params.tradingStart } : {}),
-    ...(params.tradingEnd !== undefined ? { tradingEnd: params.tradingEnd } : {}),
-    ...(params.timezone !== undefined ? { timezone: params.timezone } : {}),
-  };
-  if (!isWithinTradingSession(now, runtime.market, sessionOverrides)) {
+  const session = assessRuntimeSignalSession({
+    executionMode: runtime.executionMode,
+    market: runtime.market,
+    params,
+    now,
+  });
+  if (!session.executable) {
+    if (runtime.executionMode === "live" && session.calendar) {
+      const lastLogged = lastCalendarBlockLogAt.get(runtime.id) ?? 0;
+      if (now.getTime() - lastLogged >= CALENDAR_BLOCK_LOG_INTERVAL_MS) {
+        lastCalendarBlockLogAt.set(runtime.id, now.getTime());
+        await appendStrategyRuntimeLog(db, {
+          strategyRuntimeId: runtime.id,
+          level: "warn",
+          message: "live_calendar_session_blocked",
+          payload: session.calendar,
+        });
+      }
+    }
     return;
   }
 
@@ -249,6 +296,19 @@ async function tickOneRuntime(
       signalBarTime: barTime,
     });
     if (!fresh) return;
+    if (runtime.executionMode === "shadow") {
+      await recordShadowObservation(db, runtime.id, now, {
+        barTime,
+        price: lastBar.close,
+        symbol: runtime.symbol,
+        timeframe: runtime.timeframe,
+        side,
+        currentQty,
+        targetQty: target.targetQty,
+        reason: target.reason,
+      });
+      return;
+    }
     try {
       const { orderIntentId } = await submitRuntimeOrder(db, runtime, {
         side,
@@ -338,31 +398,41 @@ async function tickOneRuntime(
     });
     if (!fresh) return;
 
-    try {
-      const { orderIntentId } = await submitRuntimeOrder(db, runtime, {
-        side: "buy",
-        qty: orderQty,
+    if (runtime.executionMode === "shadow") {
+      await recordShadowObservation(db, runtime.id, now, {
+        barTime,
         price,
-        signalBarTime: barTime,
+        symbol: runtime.symbol,
+        timeframe: runtime.timeframe,
+        side: "buy",
       });
-      await db
-        .update(strategyRuntime)
-        .set({ lastSignalAt: now.toISOString(), updatedAt: now.toISOString() })
-        .where(eq(strategyRuntime.id, runtime.id));
-      await appendStrategyRuntimeLog(db, {
-        strategyRuntimeId: runtime.id,
-        level: "info",
-        message: "buy_signal_executed",
-        payload: { orderIntentId, barTime, price },
-      });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      await appendStrategyRuntimeLog(db, {
-        strategyRuntimeId: runtime.id,
-        level: "error",
-        message: "buy_order_failed",
-        payload: { error: msg },
-      });
+    } else {
+      try {
+        const { orderIntentId } = await submitRuntimeOrder(db, runtime, {
+          side: "buy",
+          qty: orderQty,
+          price,
+          signalBarTime: barTime,
+        });
+        await db
+          .update(strategyRuntime)
+          .set({ lastSignalAt: now.toISOString(), updatedAt: now.toISOString() })
+          .where(eq(strategyRuntime.id, runtime.id));
+        await appendStrategyRuntimeLog(db, {
+          strategyRuntimeId: runtime.id,
+          level: "info",
+          message: "buy_signal_executed",
+          payload: { orderIntentId, barTime, price },
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        await appendStrategyRuntimeLog(db, {
+          strategyRuntimeId: runtime.id,
+          level: "error",
+          message: "buy_order_failed",
+          payload: { error: msg },
+        });
+      }
     }
   }
 
@@ -375,33 +445,68 @@ async function tickOneRuntime(
     });
     if (!fresh) return;
 
-    try {
-      const { orderIntentId } = await submitRuntimeOrder(db, runtime, {
-        side: "sell",
-        qty: orderQty,
+    if (runtime.executionMode === "shadow") {
+      await recordShadowObservation(db, runtime.id, now, {
+        barTime,
         price,
-        signalBarTime: barTime,
+        symbol: runtime.symbol,
+        timeframe: runtime.timeframe,
+        side: "sell",
       });
-      await db
-        .update(strategyRuntime)
-        .set({ lastSignalAt: now.toISOString(), updatedAt: now.toISOString() })
-        .where(eq(strategyRuntime.id, runtime.id));
-      await appendStrategyRuntimeLog(db, {
-        strategyRuntimeId: runtime.id,
-        level: "info",
-        message: "sell_signal_executed",
-        payload: { orderIntentId, barTime, price },
-      });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      await appendStrategyRuntimeLog(db, {
-        strategyRuntimeId: runtime.id,
-        level: "error",
-        message: "sell_order_failed",
-        payload: { error: msg },
-      });
+    } else {
+      try {
+        const { orderIntentId } = await submitRuntimeOrder(db, runtime, {
+          side: "sell",
+          qty: orderQty,
+          price,
+          signalBarTime: barTime,
+        });
+        await db
+          .update(strategyRuntime)
+          .set({ lastSignalAt: now.toISOString(), updatedAt: now.toISOString() })
+          .where(eq(strategyRuntime.id, runtime.id));
+        await appendStrategyRuntimeLog(db, {
+          strategyRuntimeId: runtime.id,
+          level: "info",
+          message: "sell_signal_executed",
+          payload: { orderIntentId, barTime, price },
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        await appendStrategyRuntimeLog(db, {
+          strategyRuntimeId: runtime.id,
+          level: "error",
+          message: "sell_order_failed",
+          payload: { error: msg },
+        });
+      }
     }
   }
+}
+
+/**
+ * Shadow preserves the signal decision as audit evidence while deliberately
+ * stopping before any order-intent, execution-task, position or broker path.
+ */
+async function recordShadowObservation(
+  db: Awaited<ReturnType<typeof getDb>>,
+  runtimeId: string,
+  now: Date,
+  payload: Record<string, unknown>
+): Promise<void> {
+  await db
+    .update(strategyRuntime)
+    .set({ lastSignalAt: now.toISOString(), updatedAt: now.toISOString() })
+    .where(eq(strategyRuntime.id, runtimeId));
+  await appendStrategyRuntimeLog(db, {
+    strategyRuntimeId: runtimeId,
+    level: "info",
+    message: "shadow_signal_observed",
+    payload: {
+      ...payload,
+      executionGuarantee: "no_order_intent_no_execution_task_no_broker_request",
+    },
+  });
 }
 
 export async function processStrategyRuntimes(now = new Date()): Promise<void> {

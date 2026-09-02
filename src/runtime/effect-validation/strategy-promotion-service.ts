@@ -16,6 +16,11 @@ import { ensureStrategyVersionForScript } from "../strategy/strategy-version-res
 import { strategyCandidateReviewService } from "./strategy-candidate-review-service";
 import { readStrategyComparisonCohortId } from "./strategy-comparison-cohort";
 import {
+  type OosReturnPoint,
+  type StrategyDiversificationAssessment,
+  assessStrategyDiversification,
+} from "./strategy-diversification";
+import {
   assessStrategyExecutionAdmission,
   hasPassedBacktestIntegrity,
   hasValidationQualifiedDataset,
@@ -31,6 +36,9 @@ export interface StrategyPromotionAssessment {
   finalHoldoutPassed: boolean;
   paperPassed: boolean;
   factorRiskExposurePassed: boolean;
+  /** A signed deployment authorization, not a measured live-performance result. */
+  manualLiveDeploymentApproved: boolean;
+  /** @deprecated Use manualLiveDeploymentApproved; retained for API compatibility. */
   manuallyApproved: boolean;
   integrity: QuantResearchIntegrityAssessment;
   liveEligible: boolean;
@@ -45,9 +53,70 @@ export interface StrategyVersionScorecard {
   paperScore: number | null;
   allPrerequisitesPassed: boolean;
   evaluationCount: number;
-  /** Cohorts with matching backtest + walk-forward + shadow/paper evidence. */
+  /** Cohorts with matching backtest + walk-forward + paper evidence. */
   comparisonCohortIds: string[];
   comparisonCohortId: string | null;
+}
+
+export type ManualLiveDeploymentAdmission = {
+  version: "strategy-live-admission-v1";
+  kind: "manual_champion_bootstrap" | "challenger_replacement";
+  decision: "manual_champion_bootstrap_required" | "candidate_for_manual_promotion";
+  comparisonCohortId: string;
+  championStrategyVersionId: string | null;
+  challengerStrategyVersionId: string;
+  diversification: StrategyDiversificationAssessment | null;
+};
+
+type PromotionComparisonForAdmission = {
+  comparisonCohortId: string | null;
+  champion: Pick<StrategyVersionScorecard, "strategyVersionId"> | null;
+  challenger: Pick<StrategyVersionScorecard, "strategyVersionId"> | null;
+  diversification: StrategyDiversificationAssessment;
+  promotionEligible: boolean;
+  decision: string;
+};
+
+/**
+ * Converts a read-only champion/challenger result into the narrow evidence a
+ * human may sign for limited live deployment. The first admitted strategy is
+ * explicitly labelled as a bootstrap; every subsequent challenger must have
+ * passed the paired frozen-OOS diversification gate.
+ */
+export function resolveManualLiveDeploymentAdmission(
+  comparison: PromotionComparisonForAdmission
+): ManualLiveDeploymentAdmission | null {
+  const comparisonCohortId = comparison.comparisonCohortId?.trim();
+  const challengerStrategyVersionId = comparison.challenger?.strategyVersionId?.trim();
+  if (!comparisonCohortId || !challengerStrategyVersionId) return null;
+  if (comparison.decision === "manual_champion_bootstrap_required" && !comparison.champion) {
+    return {
+      version: "strategy-live-admission-v1",
+      kind: "manual_champion_bootstrap",
+      decision: "manual_champion_bootstrap_required",
+      comparisonCohortId,
+      championStrategyVersionId: null,
+      challengerStrategyVersionId,
+      diversification: null,
+    };
+  }
+  if (
+    comparison.decision === "candidate_for_manual_promotion" &&
+    comparison.promotionEligible &&
+    comparison.champion?.strategyVersionId &&
+    comparison.diversification.pass
+  ) {
+    return {
+      version: "strategy-live-admission-v1",
+      kind: "challenger_replacement",
+      decision: "candidate_for_manual_promotion",
+      comparisonCohortId,
+      championStrategyVersionId: comparison.champion.strategyVersionId,
+      challengerStrategyVersionId,
+      diversification: comparison.diversification,
+    };
+  }
+  return null;
 }
 
 export function buildStrategyVersionScorecards(
@@ -130,7 +199,7 @@ export class StrategyPromotionService {
       projectId: string;
       challengerStrategyVersionId?: string;
       minimumScoreUplift?: number;
-      /** Fixed OOS/shadow cohort; if omitted only an unambiguous cohort is selected. */
+      /** Fixed OOS comparison cohort; if omitted only an unambiguous cohort is selected. */
       comparisonCohortId?: string;
     },
     client?: DbClient
@@ -162,6 +231,14 @@ export class StrategyPromotionService {
         (row) =>
           row.strategyVersionId !== challenger?.strategyVersionId && row.allPrerequisitesPassed
       ) ?? null;
+    const diversification = assessStrategyDiversification({
+      champion: champion
+        ? readWalkForwardOosReturns(rows, champion.strategyVersionId, comparisonCohortId)
+        : [],
+      challenger: challenger
+        ? readWalkForwardOosReturns(rows, challenger.strategyVersionId, comparisonCohortId)
+        : [],
+    });
     const minimumScoreUplift = Math.max(0, input.minimumScoreUplift ?? 0.03);
     const scoreUplift = challenger && champion ? challenger.score - champion.score : null;
     const cohortUnavailable =
@@ -180,16 +257,21 @@ export class StrategyPromotionService {
           ? "challenger_missing_backtest_walkforward_or_paper"
           : !champion
             ? "manual_champion_bootstrap_required"
-            : scoreUplift != null && scoreUplift >= minimumScoreUplift
-              ? "candidate_for_manual_promotion"
-              : "keep_champion";
+            : !diversification.pass
+              ? "challenger_diversification_evidence_missing_or_failed"
+              : scoreUplift != null && scoreUplift >= minimumScoreUplift
+                ? "candidate_for_manual_promotion"
+                : "keep_champion";
     if (overviewChallenger) {
       const reviewDecision =
         decision === "candidate_for_manual_promotion"
           ? "eligible"
-          : decision === "keep_champion"
+          : diversification.status === "correlation_too_high" ||
+              diversification.status === "no_incremental_risk_adjusted_value"
             ? "rejected"
-            : "incomplete";
+            : decision === "keep_champion"
+              ? "rejected"
+              : "incomplete";
       await strategyCandidateReviewService.record(
         {
           projectId: input.projectId,
@@ -202,6 +284,7 @@ export class StrategyPromotionService {
             championStrategyVersionId: champion?.strategyVersionId ?? null,
             scoreUplift,
             minimumScoreUplift,
+            diversification,
           },
           createdBy: "strategy_champion_challenger",
         },
@@ -215,11 +298,13 @@ export class StrategyPromotionService {
       challenger,
       scoreUplift,
       minimumScoreUplift,
+      diversification,
       promotionEligible: Boolean(
         !cohortUnavailable &&
           champion &&
           challenger &&
           challenger.allPrerequisitesPassed &&
+          diversification.pass &&
           scoreUplift != null &&
           scoreUplift >= minimumScoreUplift
       ),
@@ -245,7 +330,7 @@ export class StrategyPromotionService {
       backtest?.pass === true && validationQualifiedDataset && backtestIntegrityPassed;
     const factorRiskExposurePassed = hasPassedFactorRiskExposure(backtest?.metricsJson);
     const comparisonCohortId = readStrategyComparisonCohortId(backtest?.metricsJson);
-    const passedOnCohort = (kind: "walk_forward" | "paper" | "live") =>
+    const passedOnCohort = (kind: "walk_forward" | "paper") =>
       Boolean(
         comparisonCohortId &&
           rows.some(
@@ -258,7 +343,15 @@ export class StrategyPromotionService {
     const walkForwardPassed = passedOnCohort("walk_forward");
     const finalHoldoutPassed = hasPassedFinalHoldout(backtest, rows);
     const paperPassed = passedOnCohort("paper");
-    const manuallyApproved = passedOnCohort("live");
+    const manualLiveDeploymentApproved = Boolean(
+      comparisonCohortId &&
+        rows.some(
+          (row) =>
+            row.pass === true &&
+            isManualLiveDeploymentApproval(row) &&
+            readStrategyComparisonCohortId(row.metricsJson) === comparisonCohortId
+        )
+    );
     const integrity = assessQuantResearchIntegrity({
       stage: "live",
       evidence: {
@@ -268,7 +361,7 @@ export class StrategyPromotionService {
         walkForward: walkForwardPassed,
         finalHoldout: finalHoldoutPassed,
         paper: paperPassed,
-        humanApproval: manuallyApproved,
+        humanApproval: manualLiveDeploymentApproved,
       },
     });
     return {
@@ -281,7 +374,8 @@ export class StrategyPromotionService {
       finalHoldoutPassed,
       paperPassed,
       factorRiskExposurePassed,
-      manuallyApproved,
+      manualLiveDeploymentApproved,
+      manuallyApproved: manualLiveDeploymentApproved,
       integrity,
       liveEligible: integrity.passed,
     };
@@ -319,31 +413,53 @@ export class StrategyPromotionService {
       );
     }
     if (!assessment.comparisonCohortId) throw new Error("promotion_comparison_cohort_missing");
-    const existing = await db
-      .select({ id: strategyEvalRun.id })
+    const comparison = await this.compareVersions(
+      {
+        projectId: resolved.projectId,
+        challengerStrategyVersionId: resolved.strategyVersionId,
+        comparisonCohortId: assessment.comparisonCohortId,
+      },
+      db
+    );
+    const admission = resolveManualLiveDeploymentAdmission(comparison);
+    if (!admission) {
+      throw new Error(`promotion_candidate_gate_blocked:${comparison.decision}`);
+    }
+    const liveRows = await db
+      .select({
+        id: strategyEvalRun.id,
+        scenarioKey: strategyEvalRun.scenarioKey,
+        evalKind: strategyEvalRun.evalKind,
+        metricsJson: strategyEvalRun.metricsJson,
+      })
       .from(strategyEvalRun)
       .where(
         and(
           eq(strategyEvalRun.strategyVersionId, resolved.strategyVersionId),
           eq(strategyEvalRun.evalKind, "live")
         )
-      )
-      .limit(1);
-    const id = existing[0]?.id ?? randomUUID();
+      );
+    // `eval_kind='live'` is also the legacy bucket for measured live results.
+    // Never overwrite one of those with an approval and never let one stand in
+    // for a human decision.
+    const existing = liveRows.find(isManualLiveDeploymentApproval);
+    const id = existing?.id ?? randomUUID();
     const values = {
       metricsJson: {
         strategyRuntimeId,
         reviewer: reviewer.trim() || "user",
         approvedAt: new Date().toISOString(),
-        gateVersion: "live-approval-v1",
+        approvalKind: "manual_limited_live_deployment_v2",
+        gateVersion: "live-approval-v2",
         comparisonCohort: { id: assessment.comparisonCohortId },
+        promotionAdmission: admission,
       },
       qualityScore: 1,
       pass: true,
-      notes: `live_approved_by:${reviewer.trim() || "user"}`,
+      notes: `limited_live_deployment_approved_by:${reviewer.trim() || "user"}`,
       createdBy: reviewer.trim() || "user",
     };
-    if (existing[0]) {
+    if (existing) {
       await db.update(strategyEvalRun).set(values).where(eq(strategyEvalRun.id, id));
     } else {
       await db.insert(strategyEvalRun).values({
@@ -384,6 +500,90 @@ export class StrategyPromotionService {
       throw new Error(`live_dataset_admission_blocked:${JSON.stringify(datasetAdmission)}`);
     }
   }
+}
+
+function readWalkForwardOosReturns(
+  rows: Array<typeof strategyEvalRun.$inferSelect>,
+  strategyVersionId: string,
+  comparisonCohortId: string | undefined
+): OosReturnPoint[] {
+  const evaluation = rows
+    .filter(
+      (row) =>
+        row.strategyVersionId === strategyVersionId &&
+        row.evalKind === "walk_forward" &&
+        row.pass === true &&
+        (!comparisonCohortId ||
+          readStrategyComparisonCohortId(row.metricsJson) === comparisonCohortId)
+    )
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+  const value = evaluation?.metricsJson;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const series = (value as Record<string, unknown>).oosReturnSeries;
+  if (!Array.isArray(series)) return [];
+  return series.flatMap((point) => {
+    if (!point || typeof point !== "object" || Array.isArray(point)) return [];
+    const item = point as Record<string, unknown>;
+    const timestamp = typeof item.timestamp === "string" ? item.timestamp.trim() : "";
+    const value = Number(item.return);
+    return timestamp && Number.isFinite(value) ? [{ timestamp, return: value }] : [];
+  });
+}
+
+/**
+ * Isolate authorization from actual live performance. A valid approval also
+ * proves that it was either an explicit first-champion bootstrap or a current
+ * challenger with paired frozen-OOS diversification evidence. Arbitrary
+ * eval_kind='live' observations and legacy label-only approvals are excluded.
+ */
+export function isManualLiveDeploymentApproval(
+  row: Pick<typeof strategyEvalRun.$inferSelect, "evalKind" | "scenarioKey" | "metricsJson">
+): boolean {
+  if (row.evalKind !== "live" || row.scenarioKey !== "live_approval") return false;
+  const metrics = row.metricsJson;
+  if (!metrics || typeof metrics !== "object" || Array.isArray(metrics)) return false;
+  const value = metrics as Record<string, unknown>;
+  return (
+    value.approvalKind === "manual_limited_live_deployment_v2" &&
+    value.gateVersion === "live-approval-v2" &&
+    isManualLiveDeploymentAdmission(value.promotionAdmission)
+  );
+}
+
+function isManualLiveDeploymentAdmission(value: unknown): value is ManualLiveDeploymentAdmission {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const admission = value as Record<string, unknown>;
+  const cohort =
+    typeof admission.comparisonCohortId === "string" ? admission.comparisonCohortId : "";
+  const challenger =
+    typeof admission.challengerStrategyVersionId === "string"
+      ? admission.challengerStrategyVersionId
+      : "";
+  if (admission.version !== "strategy-live-admission-v1" || !cohort.trim() || !challenger.trim()) {
+    return false;
+  }
+  if (
+    admission.kind === "manual_champion_bootstrap" &&
+    admission.decision === "manual_champion_bootstrap_required" &&
+    admission.championStrategyVersionId === null &&
+    admission.diversification === null
+  ) {
+    return true;
+  }
+  if (
+    admission.kind === "challenger_replacement" &&
+    admission.decision === "candidate_for_manual_promotion" &&
+    typeof admission.championStrategyVersionId === "string" &&
+    Boolean(
+      admission.diversification &&
+        typeof admission.diversification === "object" &&
+        !Array.isArray(admission.diversification) &&
+        (admission.diversification as Record<string, unknown>).pass === true
+    )
+  ) {
+    return true;
+  }
+  return false;
 }
 
 export function hasPassedFactorRiskExposure(metrics: unknown): boolean {

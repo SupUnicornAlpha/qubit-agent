@@ -10,10 +10,8 @@
  *      → 借 DailyMarkPriceFetcher.getClosesByDay 拉 markLookup
  *      → upsert 到 strategy_pnl_snapshot
  *
- * v0 不做的事：
- *   - 不写 agent_pnl_attribution / agent_skill_run.pnlDelta（P4b-6 单独实现）；
- *   - 不调 AnalystAccuracyWriter（P4b-7 单独连）；
- *   - 不 emit Bus 事件（P4b-8 metrics 时统一接入）。
+ * 物化之后还会执行 Skill 归因、分析师准确率回写，并发出 maintenance
+ * metrics；这些投影都不影响 fill 与 PnL 快照的可重放主链。
  *
  * 单 runtime 失败不阻塞其他 runtime；汇总在 RunSummary.errors。
  */
@@ -23,13 +21,19 @@ import { and, between, eq, inArray, lt, sql } from "drizzle-orm";
 import type { DbClient } from "../../db/sqlite/client";
 import { getDb, runInTransaction } from "../../db/sqlite/client";
 import {
+  brokerAccount,
   brokerOrder,
+  chatSession,
   fill as fillTable,
+  indicatorStrategyScript,
+  instrument,
   orderIntent,
   strategyPnlSnapshot,
   strategyRuntime,
+  workflowRun,
 } from "../../db/sqlite/schema";
 import { type ExperienceBus, getExperienceBus } from "../experience/experience-bus";
+import type { ExperienceStore } from "../experience/experience-store";
 import {
   type AnalystAccuracyWriter,
   type EvaluatePendingResult,
@@ -83,6 +87,11 @@ export interface PnlAttributorRunOptions {
   evaluateAnalystAccuracy?: boolean;
   /** 注入：ExperienceBus；默认走全局 bus。 */
   experienceBus?: ExperienceBus;
+  /**
+   * Optional destination for auditable PnL outcome experiences. Production uses
+   * the shared store; injection keeps this projection independently testable.
+   */
+  experienceStore?: ExperienceStore;
   /** 默认 true：跑完发 maintenance_run(kind=pnl_attributor/analyst_accuracy) 给 metrics */
   emitMetrics?: boolean;
 }
@@ -257,7 +266,16 @@ export class PnlAttributor {
   private async listRuntimes(
     marketScope?: string[],
     runtimeIds?: string[]
-  ): Promise<Array<{ id: string; market: string; executionMode: string }>> {
+  ): Promise<
+    Array<{
+      id: string;
+      market: string;
+      executionMode: string;
+      brokerProvider: string | null;
+      projectId: string | null;
+      workflowRunId: string | null;
+    }>
+  > {
     const conditions = [];
     if (marketScope && marketScope.length > 0) {
       conditions.push(inArray(strategyRuntime.market, marketScope));
@@ -271,16 +289,43 @@ export class PnlAttributor {
         id: strategyRuntime.id,
         market: strategyRuntime.market,
         executionMode: strategyRuntime.executionMode,
+        brokerProvider: brokerAccount.provider,
+        workflowRunId: indicatorStrategyScript.workflowRunId,
+        workflowProjectId: workflowRun.projectId,
+        sessionProjectId: chatSession.projectId,
       })
       .from(strategyRuntime)
+      .innerJoin(
+        indicatorStrategyScript,
+        eq(strategyRuntime.strategyScriptId, indicatorStrategyScript.id)
+      )
+      .leftJoin(workflowRun, eq(indicatorStrategyScript.workflowRunId, workflowRun.id))
+      .innerJoin(chatSession, eq(indicatorStrategyScript.sessionId, chatSession.id))
+      .leftJoin(brokerAccount, eq(strategyRuntime.brokerAccountId, brokerAccount.id))
       .where(where)
       .all();
-    return rows;
+    return rows.map((row) => ({
+      id: row.id,
+      market: row.market,
+      executionMode: row.executionMode,
+      brokerProvider: row.brokerProvider ?? null,
+      // Legacy scripts can lack workflow linkage; session.project is a safe
+      // fallback. Missing both retains the existing private strategy scope.
+      projectId: row.workflowProjectId ?? row.sessionProjectId ?? null,
+      workflowRunId: row.workflowRunId,
+    }));
   }
 
   /** 单 runtime 处理：load prior → load fills → calc → upsert。 */
   private async processRuntime(
-    rt: { id: string; market: string; executionMode: string },
+    rt: {
+      id: string;
+      market: string;
+      executionMode: string;
+      brokerProvider: string | null;
+      projectId: string | null;
+      workflowRunId: string | null;
+    },
     opts: PnlAttributorRunOptions,
     feeCalculator: FeeCalculator,
     markFetcher: DailyMarkPriceFetcher
@@ -319,10 +364,12 @@ export class PnlAttributor {
         symbol: orderIntent.symbol,
         workflowRunId: orderIntent.workflowRunId,
         strategyRuntimeId: orderIntent.strategyRuntimeId,
+        assetClass: instrument.assetClass,
       })
       .from(fillTable)
       .innerJoin(brokerOrder, eq(fillTable.brokerOrderId, brokerOrder.id))
       .innerJoin(orderIntent, eq(brokerOrder.orderIntentId, orderIntent.id))
+      .leftJoin(instrument, eq(orderIntent.instrumentId, instrument.id))
       .where(
         and(
           eq(orderIntent.strategyRuntimeId, rt.id),
@@ -350,11 +397,11 @@ export class PnlAttributor {
       // 估 fee（如 fill.fee 已记账则用之；否则 calculator）
       let fee = r.fee ?? 0;
       if (!fee || fee === 0) {
-        const broker = inferBroker(rt.executionMode);
+        const broker = resolvePnlFeeBroker(rt.executionMode, rt.brokerProvider);
         const feeBreakdown = await feeCalculator.calculate({
           broker,
           market,
-          assetClass: inferAssetClass(market),
+          assetClass: inferAssetClass(market, r.assetClass),
           side: r.side,
           qty: r.fillQty,
           price: r.fillPrice,
@@ -372,8 +419,8 @@ export class PnlAttributor {
         tradingDay,
         ts: r.filledAt,
         market,
-        assetClass: inferAssetClass(market),
-        broker: inferBroker(rt.executionMode),
+        assetClass: inferAssetClass(market, r.assetClass),
+        broker: resolvePnlFeeBroker(rt.executionMode, rt.brokerProvider),
       });
       // 记录 (day, workflow_run) 给后续 skill 归因用
       if (r.workflowRunId) {
@@ -420,7 +467,7 @@ export class PnlAttributor {
 
     // 6) upsert（单事务）
     if (!opts.dryRun) {
-      await this.upsertSnapshots(rt.id, calcResult);
+      await this.upsertSnapshots(rt, calcResult, opts.experienceStore);
       result.snapshotsWritten = calcResult.snapshots.length;
     } else {
       result.snapshotsWritten = 0;
@@ -541,8 +588,13 @@ export class PnlAttributor {
   }
 
   /** upsert：(runtime, day, symbol) 唯一；同事务 N 条。 */
-  private async upsertSnapshots(runtimeId: string, calc: PnlCalcResult): Promise<void> {
+  private async upsertSnapshots(
+    runtime: { id: string; projectId: string | null; workflowRunId: string | null },
+    calc: PnlCalcResult,
+    experienceStore?: ExperienceStore
+  ): Promise<void> {
     if (calc.snapshots.length === 0) return;
+    const runtimeId = runtime.id;
     await runInTransaction(this.db, async () => {
       for (const s of calc.snapshots) {
         const existing = await this.db
@@ -599,6 +651,7 @@ export class PnlAttributor {
         try {
           const { upsertPnlEpisodeExperience } = await import("../context/finance-memory-writer");
           await upsertPnlEpisodeExperience({
+            ...(runtime.projectId ? { projectId: runtime.projectId } : {}),
             meta: {
               strategyRuntimeId: runtimeId,
               tradingDay: s.tradingDay,
@@ -610,6 +663,8 @@ export class PnlAttributor {
               asof: s.tradingDay,
               memoryTier: "intermediate",
             },
+            sourceRunId: runtime.workflowRunId,
+            ...(experienceStore ? { store: experienceStore } : {}),
           });
         } catch {
           /* experience 写失败不阻断 pnl snapshot */
@@ -703,15 +758,30 @@ function addDays(iso: string, delta: number): string {
   return `${y}-${m}-${day}`;
 }
 
-function inferBroker(executionMode: string): string {
-  // v0：paper / live 都先走 'paper' 兜底费率；实盘细化由 P5 接 trading_account.broker
-  if (executionMode === "live") return "*";
-  return "paper";
+/**
+ * Live and broker-sim executions preserve their configured provider when
+ * matching costs. Paper has no provider and deliberately keeps the paper
+ * schedule; legacy executable rows without an account use wildcard pricing.
+ */
+export function resolvePnlFeeBroker(
+  executionMode: string,
+  brokerProvider: string | null | undefined
+): string {
+  const provider = brokerProvider?.trim().toLowerCase();
+  if (provider) return provider;
+  return executionMode === "paper" ? "paper" : "*";
 }
 
-function inferAssetClass(market: string): string {
-  if (market === "CRYPTO") return "crypto";
-  return "stock";
+/**
+ * Use immutable instrument classification. A missing class must not turn an
+ * option or future into a stock fee assumption; only CRYPTO has an unambiguous
+ * market-level fallback. Unknown rows deliberately miss the fee schedule and
+ * remain visible as incomplete cost evidence rather than fabricated costs.
+ */
+export function inferAssetClass(market: string, instrumentAssetClass?: string | null): string {
+  const assetClass = instrumentAssetClass?.trim().toLowerCase();
+  if (assetClass) return assetClass;
+  return market === "CRYPTO" ? "crypto" : "unknown";
 }
 
 function round6(n: number): number {

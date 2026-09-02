@@ -1912,9 +1912,7 @@ export function listChatSessions(params: {
   const key = query.toString();
   const pending = chatSessionsRequests.get(key);
   if (pending) return pending;
-  const request = httpGet<{ data: ChatSession[] }>(
-    `/api/v1/chat/sessions?${query.toString()}`
-  )
+  const request = httpGet<{ data: ChatSession[] }>(`/api/v1/chat/sessions?${query.toString()}`)
     .then((res) => res.data)
     .finally(() => {
       if (chatSessionsRequests.get(key) === request) chatSessionsRequests.delete(key);
@@ -4635,6 +4633,39 @@ export interface HarnessPackageProfileDto {
     default?: string | number | boolean;
     values?: string[];
   }>;
+  extends?: string[];
+  capabilities?: Array<{
+    id: string;
+    title: string;
+    kind: string;
+    description: string;
+    tools: string[];
+  }>;
+  tools?: string[];
+  admission?: {
+    kind: "global_toggle" | "workflow_lease";
+    defaultMode: "off" | "advisory" | "required";
+    summary: string;
+    configKey?: string;
+    scenarios: Array<{ id: string; mode: "advisory" | "required" }>;
+    workflowModes: Array<{ id: string; mode: "advisory" | "required" }>;
+    unloadNote: string;
+  };
+  evidenceStages?: Array<{
+    stage: "research" | "paper" | "live";
+    enforcement: "advisory" | "required";
+    checks: Array<{ id: string; title: string }>;
+  }>;
+}
+
+export interface HarnessHostGateDto {
+  id: string;
+  title: string;
+  layer: "research" | "backtest" | "execution" | "live";
+  role: "gate" | "observation";
+  toggleable: false;
+  failClosedWhenMissing: boolean;
+  description: string;
 }
 
 export interface HarnessProfileActivationDto {
@@ -4664,6 +4695,7 @@ export interface HarnessPackageProfilesDto {
   activeProfileIds: string[];
   activation: HarnessProfileActivationDto;
   available: HarnessPackageProfileDto[];
+  hostGates?: HarnessHostGateDto[];
   rejected: Array<{ packageId: string; reason: string }>;
 }
 
@@ -5504,7 +5536,7 @@ export type StrategyRuntimeRecord = {
   strategyScriptId: string;
   brokerAccountId: string | null;
   status: "stopped" | "starting" | "running" | "error" | "stopping";
-  executionMode: "paper" | "live" | "sim";
+  executionMode: "paper" | "live" | "sim" | "shadow";
   market: string;
   symbol: string;
   timeframe: string;
@@ -5537,7 +5569,7 @@ export async function createStrategyRuntime(input: {
   market: string;
   symbol: string;
   timeframe?: string;
-  executionMode?: "paper" | "live" | "sim";
+  executionMode?: "paper" | "live" | "sim" | "shadow";
   brokerAccountId?: string;
   params?: Record<string, unknown>;
   autoStart?: boolean;
@@ -5594,7 +5626,41 @@ export interface PaperEvaluationDto {
   sharpe: number;
   maxDrawdown: number;
   turnover: number;
+  executionQuality: {
+    orderCount: number;
+    filledOrderCount: number;
+    averageFillRatePct: number | null;
+    averageImplementationShortfallPct: number | null;
+    p95ImplementationShortfallPct: number | null;
+    averageSubmitLatencyMs: number | null;
+    p95TotalLatencyMs: number | null;
+    rejectedOrderCount: number;
+    rejectionRatePct: number;
+    totalFees: number;
+  };
+  executionQualityAssessment: {
+    status: string;
+    pass: boolean | null;
+    calibrationId: string | null;
+    sampleSize: number;
+    minimumSampleSize: number | null;
+    breaches: string[];
+  };
   pass: boolean;
+}
+
+export interface ShadowEvaluationDto {
+  id: string;
+  strategyRuntimeId: string;
+  strategyVersionId: string;
+  observedSignalCount: number;
+  buySignalCount: number;
+  sellSignalCount: number;
+  observedBarCount: number;
+  orderIntentCount: number;
+  safetyStatus: "clean" | "order_intent_detected";
+  promotionEligible: false;
+  pass: null;
 }
 
 export interface StrategyPromotionAssessmentDto {
@@ -5602,6 +5668,7 @@ export interface StrategyPromotionAssessmentDto {
   backtestPassed: boolean;
   walkForwardPassed: boolean;
   paperPassed: boolean;
+  manualLiveDeploymentApproved?: boolean;
   manuallyApproved: boolean;
   liveEligible: boolean;
 }
@@ -5609,6 +5676,14 @@ export interface StrategyPromotionAssessmentDto {
 export async function evaluatePaperRuntime(id: string): Promise<PaperEvaluationDto> {
   const res = await httpPost<{ ok: boolean; data: PaperEvaluationDto }>(
     `/api/v1/strategy-runtimes/${encodeURIComponent(id)}/evaluate-paper`,
+    {}
+  );
+  return res.data;
+}
+
+export async function evaluateShadowRuntime(id: string): Promise<ShadowEvaluationDto> {
+  const res = await httpPost<{ ok: boolean; data: ShadowEvaluationDto }>(
+    `/api/v1/strategy-runtimes/${encodeURIComponent(id)}/evaluate-shadow`,
     {}
   );
   return res.data;

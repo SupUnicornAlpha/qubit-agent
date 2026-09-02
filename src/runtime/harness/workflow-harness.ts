@@ -44,7 +44,7 @@ type WorkflowHarnessInput = {
 };
 
 const TERMINAL_WORKFLOW_STATUSES = new Set(["completed", "partial", "failed", "cancelled"]);
-const MATH_REQUIRED_SCENARIOS = new Set([
+export const MATH_AUDIT_REQUIRED_SCENARIOS = new Set([
   "factor_research",
   "strategy_authoring",
   "rule_research",
@@ -54,7 +54,7 @@ const MATH_REQUIRED_SCENARIOS = new Set([
   "live_trading",
 ]);
 
-const RESEARCH_INTEGRITY_SCENARIOS = new Set([
+export const RESEARCH_INTEGRITY_SCENARIOS = new Set([
   "factor_research",
   "strategy_authoring",
   "rule_research",
@@ -96,7 +96,7 @@ export function resolveWorkflowHarnessAdmission(
           workflowKind,
         }
       : null
-    : workflowKind && MATH_REQUIRED_SCENARIOS.has(workflowKind)
+    : workflowKind && MATH_AUDIT_REQUIRED_SCENARIOS.has(workflowKind)
       ? {
           profileId: MATH_AUDIT_PROFILE_ID,
           mode: "required" as const,

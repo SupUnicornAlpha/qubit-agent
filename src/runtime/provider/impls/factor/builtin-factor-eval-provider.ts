@@ -22,14 +22,15 @@ const META: ProviderMeta = {
   key: "builtin",
   displayName: "Builtin Factor Eval（纯 TS）",
   description:
-    "Pearson IC / Spearman RankIC（横截面 daily）+ HAC 显著性 + 年化 IR + decay curve + group returns + turnover。",
-  version: "0.3.0",
+    "Pearson IC / Spearman RankIC（横截面 daily）+ HAC/区块 bootstrap 统计 + 年化 IR + decay curve + group returns + turnover。",
+  version: "0.4.0",
   capability: {
     features: [
       "pearson_ic",
       "spearman_rank_ic",
       "daily_cross_sectional_ic",
       "newey_west_hac_inference",
+      "moving_block_bootstrap_confidence_interval",
       "annualized_ir",
       "decay_curve",
       "group_returns",
@@ -81,7 +82,10 @@ function rank(values: number[]): number[] {
     let j = i;
     while (j + 1 < indexed.length && indexed[j + 1]?.v === indexed[i]?.v) j++;
     const avg = (i + j) / 2 + 1;
-    for (let k = i; k <= j; k++) ranks[indexed[k]?.i] = avg;
+    for (let k = i; k <= j; k++) {
+      const originalIndex = indexed[k]?.i;
+      if (originalIndex !== undefined) ranks[originalIndex] = avg;
+    }
     i = j + 1;
   }
   return ranks;
@@ -171,7 +175,7 @@ function neweyWestInference(values: number[]): {
   for (let k = 1; k <= lag; k += 1) {
     let covariance = 0;
     for (let index = k; index < n; index += 1)
-      covariance += centered[index]! * centered[index - k]!;
+      covariance += (centered[index] ?? 0) * (centered[index - k] ?? 0);
     covariance /= n;
     longRunVariance += 2 * (1 - k / (lag + 1)) * covariance;
   }
@@ -181,17 +185,28 @@ function neweyWestInference(values: number[]): {
   return { mean: average, lag, stdError, tStatistic, pValue, positiveRate };
 }
 
+const BOOTSTRAP_SIMULATIONS = 500;
+
 function factorStatisticalReport(
   ics: number[],
-  rankIcs: number[]
+  rankIcs: number[],
+  seed: string
 ): NonNullable<FactorEvalResult["statisticalReport"]> {
   const ic = neweyWestInference(ics);
   const rankIc = neweyWestInference(rankIcs);
+  const blockBootstrap = {
+    method: "moving_block_bootstrap_v1" as const,
+    simulations: BOOTSTRAP_SIMULATIONS,
+    blockLength: blockLength(ics.length),
+    seed,
+    ic: movingBlockBootstrap(ics, `${seed}:ic`),
+    rankIc: movingBlockBootstrap(rankIcs, `${seed}:rank_ic`),
+  };
   const enoughDailyObservations = ics.length >= 60;
   const significantIc = ic.pValue != null && ic.pValue <= 0.05;
   const significantRankIc = rankIc.pValue != null && rankIc.pValue <= 0.05;
   return {
-    version: "factor-statistical-validation-v1",
+    version: "factor-statistical-validation-v2",
     dailyObservations: ics.length,
     hacLag: Math.max(ic.lag, rankIc.lag),
     ic: {
@@ -208,6 +223,7 @@ function factorStatisticalReport(
       pValue: rankIc.pValue == null ? null : Number(rankIc.pValue.toFixed(6)),
       positiveRate: Number(rankIc.positiveRate.toFixed(6)),
     },
+    blockBootstrap,
     status:
       enoughDailyObservations && (significantIc || significantRankIc) ? "passed" : "research_only",
     checks: [
@@ -226,8 +242,102 @@ function factorStatisticalReport(
         state: rankIc.pValue == null ? "unknown" : significantRankIc ? "pass" : "fail",
         evidence: `NeweyWest p=${rankIc.pValue == null ? "unknown" : rankIc.pValue}`,
       },
+      {
+        key: "ic_block_bootstrap",
+        state:
+          blockBootstrap.ic.confidenceInterval95 == null
+            ? "unknown"
+            : blockBootstrap.ic.confidenceInterval95.lower > 0
+              ? "pass"
+              : "fail",
+        evidence: bootstrapEvidence(blockBootstrap.ic),
+      },
+      {
+        key: "rank_ic_block_bootstrap",
+        state:
+          blockBootstrap.rankIc.confidenceInterval95 == null
+            ? "unknown"
+            : blockBootstrap.rankIc.confidenceInterval95.lower > 0
+              ? "pass"
+              : "fail",
+        evidence: bootstrapEvidence(blockBootstrap.rankIc),
+      },
     ],
   };
+}
+
+function movingBlockBootstrap(
+  values: number[],
+  seed: string
+): {
+  confidenceInterval95: { lower: number; upper: number } | null;
+  positiveProbability: number | null;
+} {
+  if (values.length < 2) return { confidenceInterval95: null, positiveProbability: null };
+  const random = seededRandom(seed);
+  const width = blockLength(values.length);
+  const means = Array.from({ length: BOOTSTRAP_SIMULATIONS }, () => {
+    const sample: number[] = [];
+    while (sample.length < values.length) {
+      const start = Math.floor(random() * values.length);
+      for (let offset = 0; offset < width && sample.length < values.length; offset += 1) {
+        sample.push(values[(start + offset) % values.length] ?? 0);
+      }
+    }
+    return mean(sample);
+  }).sort((left, right) => left - right);
+  const lower = quantile(means, 0.025);
+  const upper = quantile(means, 0.975);
+  return {
+    confidenceInterval95: { lower: Number(lower.toFixed(6)), upper: Number(upper.toFixed(6)) },
+    positiveProbability: Number(
+      (means.filter((value) => value > 0).length / means.length).toFixed(6)
+    ),
+  };
+}
+
+function blockLength(observations: number): number {
+  return Math.max(1, Math.min(observations, Math.floor(Math.sqrt(observations))));
+}
+
+function quantile(values: number[], probability: number): number {
+  const index = Math.max(
+    0,
+    Math.min(values.length - 1, Math.round((values.length - 1) * probability))
+  );
+  return values[index] ?? 0;
+}
+
+function seededRandom(seed: string): () => number {
+  let state = fnv1a(seed);
+  return () => {
+    state += 0x6d2b79f5;
+    let value = state;
+    value = Math.imul(value ^ (value >>> 15), value | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function deterministicSeed(value: string): string {
+  return `fnv1a32:${fnv1a(value).toString(16).padStart(8, "0")}`;
+}
+
+function fnv1a(value: string): number {
+  let state = 2166136261;
+  for (const character of value) {
+    state ^= character.charCodeAt(0);
+    state = Math.imul(state, 16777619);
+  }
+  return state >>> 0;
+}
+
+function bootstrapEvidence(input: {
+  confidenceInterval95: { lower: number; upper: number } | null;
+  positiveProbability: number | null;
+}): string {
+  if (!input.confidenceInterval95) return "movingBlockBootstrap unavailable: dailyCrossSections<2";
+  return `movingBlockBootstrap CI95=[${input.confidenceInterval95.lower},${input.confidenceInterval95.upper}]; P(mean>0)=${input.positiveProbability}`;
 }
 
 /** 横截面 daily IC 时序：返回每日 (pearson, spearman) */
@@ -353,7 +463,11 @@ export class BuiltinFactorEvalProvider implements FactorEvaluationProvider {
 
     // ─── 4) turnover ───
     const turnover = Number(topQuintileTurnover(pairs).toFixed(4));
-    const statisticalReport = factorStatisticalReport(daily.ics, daily.rankIcs);
+    const statisticalReport = factorStatisticalReport(
+      daily.ics,
+      daily.rankIcs,
+      deterministicSeed(`${input.factorId}:${daily.dates.join("|")}`)
+    );
 
     return {
       ic: Number(ic.toFixed(4)),

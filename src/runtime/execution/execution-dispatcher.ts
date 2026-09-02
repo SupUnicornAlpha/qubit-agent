@@ -16,8 +16,12 @@ import { strategyPromotionService } from "../effect-validation/strategy-promotio
 import { executeWithPolicy } from "../external-call/policy";
 import { assertTradingModuleEnabled } from "../trader/trading-module-control";
 import { connectorForAccount, resolveBrokerAccount } from "./broker/broker-service";
+import { assertLiveBrokerAccountRiskFresh } from "./live-account-risk";
 import { type DispatchMode, assertBrokerDispatchAllowed } from "./live-trading-gate";
-import { assertLiveOrderIntentEvidenceFresh } from "./order-intent-service";
+import {
+  assertLiveOrderIntentEvidenceFresh,
+  assertLiveOrderIntentGuardrailsFresh,
+} from "./order-intent-service";
 
 export type { DispatchMode };
 
@@ -164,6 +168,9 @@ async function dispatchLiveBroker(
   if (!resolved) throw new Error("broker_account_resolve_failed");
 
   const connector = connectorForAccount(resolved);
+  if (input.dispatchMode === "live") {
+    await assertLiveBrokerAccountRiskFresh({ db, intent, connector });
+  }
   const ticker =
     intent.symbol?.trim() ||
     (await db.select().from(orderIntent).where(eq(orderIntent.id, intent.id)).limit(1))[0]
@@ -299,6 +306,12 @@ export async function dispatchExecutionTask(
   if (input.dispatchMode === "live") {
     await strategyPromotionService.assertStrategyVersionLiveEligible(intent.strategyVersionId, db);
     await assertLiveOrderIntentEvidenceFresh(db, intent);
+    await assertLiveOrderIntentGuardrailsFresh(
+      db,
+      intent,
+      input.brokerAccountId ?? null,
+      new Date(nowIso)
+    );
   }
   const effectiveOrderType = resolveEffectiveOrderType(intent.orderType, intent.activationStatus);
 

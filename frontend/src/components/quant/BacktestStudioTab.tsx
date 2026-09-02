@@ -30,10 +30,7 @@ import {
   type PitAuditReportDto,
 } from "../../api/backend";
 import { useDefaultProject } from "./useDefaultProject";
-import {
-  fetchQuantBacktestJobs,
-  fetchQuantStrategyVersions,
-} from "../../lib/quantListScope";
+import { fetchQuantBacktestJobs, fetchQuantStrategyVersions } from "../../lib/quantListScope";
 import { pickColor, SvgLineChart, type ChartSeries } from "./charts/SvgLineChart";
 import { LineageBadge, LineageTrail } from "./LineageBadge";
 import { GenomeEvolutionPanel } from "./GenomeEvolutionPanel";
@@ -1462,7 +1459,7 @@ const BacktestResultView: FC<{
         </div>
       ) : null}
       {job.evaluation ? (
-        <section className="qb-bt-section qb-bt-gate">
+        <section className="qb-bt-section qb-bt-gate qb-quant-gate-panel">
           <header className="qb-bt-section-header">
             <div>
               <h4 className="qb-bt-section-title">策略晋级 Gate</h4>

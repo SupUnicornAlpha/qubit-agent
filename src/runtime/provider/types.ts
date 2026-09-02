@@ -131,6 +131,74 @@ export interface FactorEvalRequest {
   universe: string;
 }
 
+export type FactorStatisticalReport = {
+  version: "factor-statistical-validation-v2";
+  dailyObservations: number;
+  hacLag: number;
+  ic: {
+    mean: number;
+    neweyWestStdError: number | null;
+    tStatistic: number | null;
+    pValue: number | null;
+    positiveRate: number;
+  };
+  rankIc: {
+    mean: number;
+    neweyWestStdError: number | null;
+    tStatistic: number | null;
+    pValue: number | null;
+    positiveRate: number;
+  };
+  /** Fixed, deterministic moving-block resampling over daily cross-sections. */
+  blockBootstrap: {
+    method: "moving_block_bootstrap_v1";
+    simulations: number;
+    blockLength: number;
+    seed: string;
+    ic: {
+      confidenceInterval95: { lower: number; upper: number } | null;
+      positiveProbability: number | null;
+    };
+    rankIc: {
+      confidenceInterval95: { lower: number; upper: number } | null;
+      positiveProbability: number | null;
+    };
+  };
+  status: "passed" | "research_only";
+  checks: Array<{
+    key:
+      | "minimum_daily_observations"
+      | "ic_significance"
+      | "rank_ic_significance"
+      | "ic_block_bootstrap"
+      | "rank_ic_block_bootstrap";
+    state: "pass" | "unknown" | "fail";
+    evidence: string;
+  }>;
+};
+
+export type FactorIndependentValidationReport = {
+  version: "factor-independent-validation-v1";
+  datasetSnapshotId: string | null;
+  split: {
+    trainStartDate: string;
+    trainLabelEndExclusive: string;
+    validationStartDate: string;
+    validationEndDate: string;
+    purgeCalendarDays: number;
+  };
+  inSample: Pick<
+    FactorEvalResult,
+    "ic" | "rankIc" | "ir" | "sampleSize" | "error" | "statisticalReport"
+  >;
+  outOfSample: Pick<
+    FactorEvalResult,
+    "ic" | "rankIc" | "ir" | "sampleSize" | "error" | "statisticalReport"
+  >;
+  status: "passed" | "research_only";
+  reasons: string[];
+};
+
 export interface FactorEvalResult {
   ic: number;
   rankIc: number;
@@ -141,31 +209,9 @@ export interface FactorEvalResult {
   sampleSize: number;
   latencyMs: number;
   /** Auditable inference over the daily cross-sectional IC time series. */
-  statisticalReport?: {
-    version: "factor-statistical-validation-v1";
-    dailyObservations: number;
-    hacLag: number;
-    ic: {
-      mean: number;
-      neweyWestStdError: number | null;
-      tStatistic: number | null;
-      pValue: number | null;
-      positiveRate: number;
-    };
-    rankIc: {
-      mean: number;
-      neweyWestStdError: number | null;
-      tStatistic: number | null;
-      pValue: number | null;
-      positiveRate: number;
-    };
-    status: "passed" | "research_only";
-    checks: Array<{
-      key: "minimum_daily_observations" | "ic_significance" | "rank_ic_significance";
-      state: "pass" | "unknown" | "fail";
-      evidence: string;
-    }>;
-  };
+  statisticalReport?: FactorStatisticalReport;
+  /** Explicit date holdout; populated by FactorService.autoEvaluate only. */
+  independentValidation?: FactorIndependentValidationReport;
   error?: string;
 }
 

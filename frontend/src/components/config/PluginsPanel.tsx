@@ -2,8 +2,10 @@ import type { CSSProperties, FC } from "react";
 import { useCallback, useEffect, useState } from "react";
 import {
   type HarnessHealthDto,
+  type HarnessHostGateDto,
   type HarnessMarketplaceItemDto,
   type HarnessPackageLockRecordDto,
+  type HarnessPackageProfileDto,
   type HarnessPackageProfilesDto,
   type HarnessPackageVersionDto,
   type HarnessProfileActivationHistoryDto,
@@ -95,6 +97,109 @@ const styles: Record<string, CSSProperties> = {
   warn: { color: "var(--qb-pill-warn-fg)", fontSize: 12, marginTop: 6 },
   err: { color: "var(--qb-danger, #c44)", fontSize: 13, marginBottom: 8 },
   label: { fontSize: 12, color: "var(--qb-main-meta)", marginBottom: 4 },
+  badge: {
+    fontSize: 11,
+    lineHeight: "16px",
+    border: "1px solid var(--qb-border)",
+    borderRadius: 4,
+    padding: "1px 6px",
+    color: "var(--qb-main-meta)",
+    whiteSpace: "nowrap" as const,
+  },
+  chip: {
+    fontSize: 11,
+    lineHeight: "16px",
+    borderRadius: 4,
+    padding: "1px 6px",
+    background: "var(--qb-pill-info-bg)",
+    color: "var(--qb-fg)",
+    whiteSpace: "nowrap" as const,
+  },
+};
+
+function admissionKindLabel(kind: "global_toggle" | "workflow_lease" | undefined): string {
+  return kind === "workflow_lease" ? "工作流租约" : "全局开关";
+}
+
+function hostGateLayerLabel(layer: HarnessHostGateDto["layer"]): string {
+  if (layer === "research") return "研究";
+  if (layer === "backtest") return "回测";
+  if (layer === "execution") return "执行";
+  return "实盘";
+}
+
+function evidenceStageLabel(stage: "research" | "paper" | "live"): string {
+  if (stage === "research") return "研究";
+  if (stage === "paper") return "Paper";
+  return "Live";
+}
+
+const HarnessProfileInspection: FC<{ profile: HarnessPackageProfileDto }> = ({ profile }) => {
+  const tools = profile.tools ?? [];
+  const capabilities = profile.capabilities ?? [];
+  const visibleTools = tools.slice(0, 6);
+  const extraTools = tools.length - visibleTools.length;
+  return (
+    <div style={{ display: "grid", gap: 6, marginTop: 6 }}>
+      {profile.admission ? (
+        <div style={styles.meta}>
+          {profile.admission.summary}
+          {profile.admission.configKey ? ` · ${profile.admission.configKey}` : ""}
+        </div>
+      ) : null}
+      {profile.extends && profile.extends.length > 0 ? (
+        <div style={styles.meta}>继承：{profile.extends.join("、")}</div>
+      ) : null}
+      {capabilities.length > 0 ? (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+          {capabilities.map((capability) => (
+            <span key={capability.id} style={styles.chip} title={capability.description}>
+              {capability.title}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {visibleTools.length > 0 ? (
+        <div style={styles.meta}>
+          工具：{visibleTools.join("、")}
+          {extraTools > 0 ? ` 等 ${tools.length} 个` : ""}
+        </div>
+      ) : profile.admission?.kind === "workflow_lease" ? (
+        <div style={styles.meta}>无独立工具面；只投影已有证据，不新增执行权限。</div>
+      ) : null}
+      {profile.evidenceStages && profile.evidenceStages.length > 0 ? (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+            gap: 6,
+          }}
+        >
+          {profile.evidenceStages.map((stage) => (
+            <div
+              key={stage.stage}
+              style={{
+                border: "1px solid var(--qb-border)",
+                borderRadius: 6,
+                padding: 7,
+              }}
+            >
+              <div style={{ fontSize: 12, fontWeight: 600 }}>
+                {evidenceStageLabel(stage.stage)} ·{" "}
+                {stage.enforcement === "required" ? "硬门" : "提示"}
+              </div>
+              <div style={{ ...styles.meta, marginTop: 4 }}>
+                {stage.checks.map((check) => check.title).join("、")}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {profile.admission?.unloadNote ? (
+        <div style={styles.meta}>{profile.admission.unloadNote}</div>
+      ) : null}
+    </div>
+  );
 };
 
 export const PluginsPanel: FC<Props> = ({
@@ -131,6 +236,7 @@ export const PluginsPanel: FC<Props> = ({
       updatedAt: null,
     },
     available: [],
+    hostGates: [],
     rejected: [],
   });
   const [harnessEvents, setHarnessEvents] = useState<HarnessRecentEventsDto | null>(null);
@@ -644,7 +750,11 @@ export const PluginsPanel: FC<Props> = ({
 
       {showHarness ? (
         <>
-          <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>Harness</h3>
+          <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>Harness</h3>
+          <p style={styles.hint}>
+            这里展示的是能力组合，不是第二套交易引擎。工作流租约会按场景自动加载；下方宿主闸门始终
+            fail-closed，关闭 Profile 不会放宽 paper/live 准入。
+          </p>
           {error ? <div style={styles.err}>{error}</div> : null}
           {message ? <div style={{ ...styles.meta, marginBottom: 8 }}>{message}</div> : null}
           <div style={{ ...styles.card, marginBottom: 12 }}>
@@ -696,38 +806,116 @@ export const PluginsPanel: FC<Props> = ({
                 清空
               </button>
             </div>
-            <div style={{ display: "grid", gap: 6 }}>
+            <div style={{ display: "grid", gap: 10 }}>
               {harnessProfiles.available
                 .filter((profile) => profile.source === "system")
                 .map((profile) => {
                   const active = harnessProfiles.activeProfileIds.includes(profile.id);
+                  const lease = profile.admission?.kind === "workflow_lease";
                   return (
                     <div
                       key={profile.id}
                       style={{
-                        display: "flex",
-                        gap: 12,
-                        alignItems: "center",
-                        justifyContent: "space-between",
                         borderTop: "1px solid var(--qb-border)",
-                        paddingTop: 7,
+                        paddingTop: 10,
                       }}
                     >
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 600 }}>{profile.title}</div>
-                        <div style={styles.meta}>{profile.description}</div>
-                      </div>
-                      <button
-                        type="button"
-                        style={active ? styles.tabActive : styles.btn}
-                        onClick={() => void onToggleHarnessProfile(profile.id)}
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: 12,
+                          alignItems: "flex-start",
+                          justifyContent: "space-between",
+                        }}
                       >
-                        {active ? "已启用" : "启用"}
-                      </button>
+                        <div style={{ minWidth: 0 }}>
+                          <div
+                            style={{
+                              display: "flex",
+                              gap: 6,
+                              alignItems: "center",
+                              flexWrap: "wrap",
+                            }}
+                          >
+                            <div style={{ fontSize: 13, fontWeight: 600 }}>{profile.title}</div>
+                            <span style={styles.badge}>{admissionKindLabel(profile.admission?.kind)}</span>
+                            {lease ? (
+                              <span style={styles.badge}>自动加载</span>
+                            ) : null}
+                            {profile.resolverAllowlisted ? (
+                              <span style={styles.badge}>灰度准入</span>
+                            ) : (
+                              <span style={styles.badge}>影子</span>
+                            )}
+                          </div>
+                          <div style={styles.meta}>{profile.description}</div>
+                          <HarnessProfileInspection profile={profile} />
+                        </div>
+                        <button
+                          type="button"
+                          style={active ? styles.tabActive : styles.btn}
+                          onClick={() => void onToggleHarnessProfile(profile.id)}
+                          title={
+                            lease
+                              ? "只影响影子工具面。真正加载由工作流租约决定，不能关闭宿主闸门。"
+                              : undefined
+                          }
+                        >
+                          {active ? "已启用" : lease ? "加入影子" : "启用"}
+                        </button>
+                      </div>
                     </div>
                   );
                 })}
             </div>
+            {(harnessProfiles.hostGates ?? []).length > 0 ? (
+              <div
+                style={{
+                  marginTop: 14,
+                  borderTop: "1px solid var(--qb-border)",
+                  paddingTop: 12,
+                }}
+              >
+                <div style={{ fontSize: 14, fontWeight: 650 }}>宿主强制闸门</div>
+                <div style={styles.meta}>
+                  这些适配器写在回测、风控和执行服务里，不是可卸载 Profile。页面只展示状态，没有关闭开关。
+                </div>
+                <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+                  {(harnessProfiles.hostGates ?? []).map((gate) => (
+                    <div
+                      key={gate.id}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "minmax(0, 1fr) auto",
+                        gap: 10,
+                        alignItems: "start",
+                      }}
+                    >
+                      <div>
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: 6,
+                            alignItems: "center",
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          <div style={{ fontSize: 13, fontWeight: 600 }}>{gate.title}</div>
+                          <span style={styles.badge}>{hostGateLayerLabel(gate.layer)}</span>
+                          <span style={styles.badge}>
+                            {gate.role === "observation" ? "观察证据" : "硬门"}
+                          </span>
+                        </div>
+                        <div style={styles.meta}>{gate.description}</div>
+                      </div>
+                      <span style={styles.badge}>
+                        {gate.failClosedWhenMissing ? "缺失则拒绝" : "不可关闭"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             {harnessProfiles.available.length === 0 ? (
               <div style={styles.meta}>正在读取可用工作模式…</div>
             ) : null}

@@ -1,4 +1,8 @@
 import { type Context, Hono } from "hono";
+import {
+  type HarnessProfileInspection,
+  buildHarnessCapabilityCatalog,
+} from "../runtime/harness/capability-catalog";
 import { listRecentHarnessEvents, projectHarnessTrace } from "../runtime/harness/event-ledger";
 import { listHarnessProfileHealth } from "../runtime/harness/health";
 import {
@@ -59,8 +63,23 @@ harnessRouter.get("/packages/:packageId/versions", async (c) => {
   }
 });
 
+function inspectionFields(inspection: HarnessProfileInspection | undefined) {
+  if (!inspection) return {};
+  return {
+    extends: inspection.extends,
+    capabilities: inspection.capabilities,
+    tools: inspection.tools,
+    admission: inspection.admission,
+    ...(inspection.evidenceStages ? { evidenceStages: inspection.evidenceStages } : {}),
+  };
+}
+
 harnessRouter.get("/profiles", async (c) => {
   const state = await refreshHarnessPackageRuntime();
+  const catalog = buildHarnessCapabilityCatalog();
+  const inspectionById = new Map(
+    catalog.profiles.map((profile) => [profile.profileId, profile] as const)
+  );
   const resolverAllowlist = new Set(
     (process.env.QUBIT_HARNESS_RESOLVER_PROFILES ?? "")
       .split(",")
@@ -88,6 +107,7 @@ harnessRouter.get("/profiles", async (c) => {
             ...(parameter.default !== undefined ? { default: parameter.default } : {}),
             ...(parameter.values ? { values: [...parameter.values] } : {}),
           })),
+          ...inspectionFields(inspectionById.get(profile.id)),
         })),
         ...state.packages.flatMap((pkg) =>
           pkg.profiles.map((profile) => ({
@@ -106,9 +126,11 @@ harnessRouter.get("/profiles", async (c) => {
               ...(parameter.default !== undefined ? { default: parameter.default } : {}),
               ...(parameter.values ? { values: [...parameter.values] } : {}),
             })),
+            ...inspectionFields(inspectionById.get(profile.id)),
           }))
         ),
       ],
+      hostGates: catalog.hostGates,
       rejected: state.rejected,
     },
   });

@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { paperEvaluationService } from "../runtime/effect-validation/paper-evaluation-service";
+import { shadowEvaluationService } from "../runtime/effect-validation/shadow-evaluation-service";
 import { strategyPromotionService } from "../runtime/effect-validation/strategy-promotion-service";
 import { listStrategyRuntimeLogs } from "../runtime/strategy/strategy-runtime-log";
 import {
@@ -45,7 +46,7 @@ strategyRuntimeRouter.post("/", async (c) => {
     market?: string;
     symbol?: string;
     timeframe?: string;
-    executionMode?: "paper" | "live" | "sim";
+    executionMode?: "paper" | "live" | "sim" | "shadow";
     brokerAccountId?: string;
     params?: Record<string, unknown>;
     autoStart?: boolean;
@@ -94,6 +95,18 @@ strategyRuntimeRouter.get("/:id/logs", async (c) => {
 strategyRuntimeRouter.post("/:id/evaluate-paper", async (c) => {
   try {
     const data = await paperEvaluationService.evaluate(c.req.param("id"));
+    return c.json({ ok: true, data });
+  } catch (error) {
+    return c.json(
+      { ok: false, error: error instanceof Error ? error.message : String(error) },
+      400
+    );
+  }
+});
+
+strategyRuntimeRouter.post("/:id/evaluate-shadow", async (c) => {
+  try {
+    const data = await shadowEvaluationService.evaluate(c.req.param("id"));
     return c.json({ ok: true, data });
   } catch (error) {
     return c.json(

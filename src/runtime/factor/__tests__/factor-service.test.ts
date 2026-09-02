@@ -62,6 +62,63 @@ beforeAll(async () => {
 });
 
 describe("FactorService", () => {
+  test("independent validation purges training labels before its explicit OOS boundary", async () => {
+    const internal = factorService as unknown as {
+      evaluateIndependentHoldout: (input: Record<string, unknown>) => Promise<{
+        split: { trainLabelEndExclusive: string };
+        status: string;
+      }>;
+      resolveEval: () => Promise<{
+        evaluate: (input: { values: Array<{ date: string }> }) => Promise<unknown>;
+      }>;
+    };
+    const originalResolveEval = internal.resolveEval;
+    const receivedDates: string[][] = [];
+    internal.resolveEval = async () => ({
+      evaluate: async (input) => {
+        receivedDates.push(input.values.map((row) => row.date));
+        return {
+          ic: 0.05,
+          rankIc: 0.05,
+          ir: 1,
+          turnover: 0,
+          decayCurve: [],
+          groupReturns: [],
+          sampleSize: input.values.length,
+          latencyMs: 0,
+          statisticalReport: { status: "passed" },
+        };
+      },
+    });
+    const values = Array.from({ length: 10 }, (_, index) => ({
+      symbol: `S${index % 3}`,
+      date: `2025-01-${String(index + 1).padStart(2, "0")}`,
+      value: index,
+    }));
+    try {
+      const result = await internal.evaluateIndependentHoldout({
+        factorId: "factor-holdout",
+        universe: "US",
+        values,
+        mainFutures: values,
+        byHorizon: { 2: values },
+        horizon: 2,
+        input: {
+          factorId: "factor-holdout",
+          startDate: "2025-01-01",
+          endDate: "2025-01-10",
+          validationStartDate: "2025-01-07",
+        },
+      });
+      expect(result.split.trainLabelEndExclusive).toBe("2025-01-05");
+      expect(receivedDates[0]).toEqual(["2025-01-01", "2025-01-02", "2025-01-03", "2025-01-04"]);
+      expect(receivedDates[1]).toEqual(["2025-01-07", "2025-01-08", "2025-01-09", "2025-01-10"]);
+      expect(result.status).toBe("passed");
+    } finally {
+      internal.resolveEval = originalResolveEval;
+    }
+  });
+
   test("register: 写库 + status=draft + 默认 provider 解析", async () => {
     const rec = await factorService.register({
       projectId,
@@ -332,7 +389,7 @@ describe("FactorService", () => {
     expect(logs[0]?.factorId).toBe(rec.id);
     expect(logs[0]?.datasetSnapshotId).toBe("snapshot-eval-v1");
     expect(logs[0]?.statisticalReportJson).toMatchObject({
-      version: "factor-statistical-validation-v1",
+      version: "factor-statistical-validation-v2",
       dailyObservations: 1,
       status: "research_only",
     });
