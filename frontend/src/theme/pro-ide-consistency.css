@@ -286,12 +286,9 @@ html[data-qb-style="jetbrains-darcula"] .qb-research-output-tab--active .qb-rese
 }
 
 /* 对话执行块：去掉海军蓝混色 */
-html[data-qb-style="vscode-dark"] [data-qb-chat-panel] .qb-chat-execution,
-html[data-qb-style="vscode-dark"] [data-qb-orchestrator-chat] .qb-chat-execution,
-html[data-qb-style="vscode-light"] [data-qb-chat-panel] .qb-chat-execution,
-html[data-qb-style="vscode-light"] [data-qb-orchestrator-chat] .qb-chat-execution,
-html[data-qb-style="jetbrains-darcula"] [data-qb-chat-panel] .qb-chat-execution,
-html[data-qb-style="jetbrains-darcula"] [data-qb-orchestrator-chat] .qb-chat-execution {
+html[data-qb-style="vscode-dark"] .qb-chat-execution,
+html[data-qb-style="vscode-light"] .qb-chat-execution,
+html[data-qb-style="jetbrains-darcula"] .qb-chat-execution {
   background: var(--qb-team-panel-bg, var(--qb-bg-surface)) !important;
   border-color: var(--qb-team-panel-border, var(--qb-separator)) !important;
 }

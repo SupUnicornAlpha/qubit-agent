@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { harnessRouter } from "../../routes/harness.routes";
+import { createBuiltinFinancialHarnessRegistry } from "./builtin-financial-capabilities";
 import { buildHarnessCapabilityCatalog } from "./capability-catalog";
 
 describe("Harness capability catalog", () => {
   const catalog = buildHarnessCapabilityCatalog();
+  const registry = createBuiltinFinancialHarnessRegistry();
 
   test("exposes workflow-leased math and integrity profiles from the live registry", () => {
     const math = catalog.profiles.find((profile) => profile.profileId === "math-audit");
@@ -15,6 +17,8 @@ describe("Harness capability catalog", () => {
       configKey: "harness.mathAudit",
     });
     expect(math?.tools).toEqual(["math.derivation.verify"]);
+    expect(registry.getProfile("math-audit")?.parameters).toBeUndefined();
+    expect(registry.getProfile("quant-research-integrity")?.parameters).toBeUndefined();
     expect(integrity?.admission.kind).toBe("workflow_lease");
     expect(integrity?.capabilities.map((item) => item.id)).toContain("quant.research-integrity");
     expect(integrity?.evidenceStages?.map((stage) => stage.stage)).toEqual([
@@ -58,6 +62,9 @@ describe("Harness capability catalog", () => {
       "observation"
     );
     expect(
+      catalog.hostGates.filter((gate) => gate.role === "gate").map((gate) => gate.id)
+    ).not.toContain("tca-execution-quality");
+    expect(
       catalog.hostGates.find((gate) => gate.id === "live-account-risk")?.failClosedWhenMissing
     ).toBe(true);
   });
@@ -71,11 +78,16 @@ describe("Harness capability catalog", () => {
           id: string;
           admission?: { kind: string };
           evidenceStages?: Array<{ stage: string }>;
+          parameters?: Array<{ id: string }>;
         }>;
         hostGates: Array<{ id: string; toggleable: boolean }>;
       };
     };
+    const mathProfile = body.data.available.find((item) => item.id === "math-audit");
     const integrity = body.data.available.find((item) => item.id === "quant-research-integrity");
+    expect(mathProfile?.admission?.kind).toBe("workflow_lease");
+    expect(mathProfile?.parameters ?? []).toEqual([]);
+    expect(integrity?.parameters ?? []).toEqual([]);
     expect(integrity?.admission?.kind).toBe("workflow_lease");
     expect(integrity?.evidenceStages?.map((stage) => stage.stage)).toEqual([
       "research",

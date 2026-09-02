@@ -201,10 +201,11 @@ function admissionFor(profileId: string): HarnessAdmissionPolicy {
   return {
     kind: "global_toggle",
     defaultMode: "off",
-    summary: "由配置页启用后进入影子工具面；真正进入执行工具面还需灰度白名单。",
+    summary:
+      "配置页只能把它加入影子工具面。真正进入执行还要部署白名单 QUBIT_HARNESS_RESOLVER_PROFILES，且只取与旧工具面的交集。",
     scenarios: [],
     workflowModes: [],
-    unloadNote: "关闭后不再出现在全局影子组合；不影响宿主侧执行闸门。",
+    unloadNote: "移出影子组合不影响宿主侧执行闸门，也不能靠打开它新增工具。",
   };
 }
 

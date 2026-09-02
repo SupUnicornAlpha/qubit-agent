@@ -9,6 +9,7 @@
  *     - 运行中 + 无内容 → 停止（interrupt / cancel Core turn）
  */
 import {
+  type ClipboardEvent as ReactClipboardEvent,
   type CSSProperties,
   type KeyboardEvent,
   useCallback,
@@ -18,10 +19,20 @@ import {
   useRef,
   useState,
 } from "react";
-import { type AgentControlMode, type StepStreamEvent } from "../../api/types";
+import { ImagePlus, X } from "lucide-react";
+import {
+  type AgentControlMode,
+  type ChatImageAttachment,
+  type StepStreamEvent,
+} from "../../api/types";
 import { listFsWorkspaceMemory, type FsMemoryEntry } from "../../api/backend";
 import { AgentModePicker, getAgentModeOption } from "../chat/AgentModePicker";
 import { buildChatExecutionActivity, ChatExecutionActivity } from "../chat/ChatExecutionActivity";
+import {
+  clipboardImageFiles,
+  imageAttachmentFromFile,
+  MAX_CHAT_IMAGES,
+} from "../../lib/chatImageAttachments";
 import type { SubAgentRunSummary } from "../../lib/subAgentRuns";
 import { type LiveConversationEvent, LiveConversationView } from "./LiveConversationView";
 import { type LiveReasoningState, ThinkingGhostBox } from "./ThinkingGhostBox";
@@ -78,8 +89,8 @@ export interface OrchestratorChatPanelProps {
   /** composer 文本（受控；与左栏「分析提示」共享同一 state） */
   composerValue: string;
   onComposerChange: (value: string) => void;
-  /** 空闲时发送；可传入已展开文案（含 @记忆 正文） */
-  onSend: (message?: string) => void;
+  /** 空闲时发送；可传入已展开文案（含 @记忆 正文）与图片附件 */
+  onSend: (message?: string, attachments?: ChatImageAttachment[]) => void;
   /** 运行中发送：把 composerValue 注入运行中的 Orchestrator，返回队列剩余条数 */
   onInject: (content: string) => Promise<number>;
   /** 协作式中断：请求在下一个安全断点暂停，等用户输入新提示词后续跑 */
@@ -193,6 +204,7 @@ export function OrchestratorChatPanel({
 }: OrchestratorChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const chatContentRef = useRef<HTMLDivElement | null>(null);
+  const imagePickerRef = useRef<HTMLInputElement | null>(null);
   /**
    * Stick-to-bottom: only auto-scroll while the user is near the bottom.
    * Scrolling up pauses follow so streaming/tool rows do not yank the viewport.
@@ -267,6 +279,8 @@ export function OrchestratorChatPanel({
   const [memoryHits, setMemoryHits] = useState<FsMemoryEntry[]>([]);
   const [memoryMentions, setMemoryMentions] = useState<FsMemoryEntry[]>([]);
   const [memoryLoading, setMemoryLoading] = useState(false);
+  const [imageAttachments, setImageAttachments] = useState<ChatImageAttachment[]>([]);
+  const [imageError, setImageError] = useState<string | null>(null);
   const [statusRailPinned, setStatusRailPinned] = useState(() => {
     try {
       return window.localStorage.getItem("qb.orchestrator.statusRailPinned") !== "0";
@@ -277,6 +291,35 @@ export function OrchestratorChatPanel({
   const subConversationRef = useRef<HTMLDivElement | null>(null);
   const wfId = workflowRunId.trim();
 
+  const addImageFiles = useCallback(
+    async (files: Iterable<File>) => {
+      const images = Array.from(files).filter((file) => file.type.startsWith("image/"));
+      if (images.length === 0) return;
+      const remaining = MAX_CHAT_IMAGES - imageAttachments.length;
+      if (remaining <= 0) {
+        setImageError(`最多可附加 ${MAX_CHAT_IMAGES} 张图片`);
+        return;
+      }
+      try {
+        const attachments = await Promise.all(
+          images.slice(0, remaining).map(imageAttachmentFromFile)
+        );
+        setImageAttachments((previous) => [...previous, ...attachments]);
+        setImageError(images.length > remaining ? `最多可附加 ${MAX_CHAT_IMAGES} 张图片` : null);
+      } catch (error) {
+        setImageError(error instanceof Error ? error.message : "读取图片失败");
+      }
+    },
+    [imageAttachments.length]
+  );
+
+  const onComposerPaste = (event: ReactClipboardEvent<HTMLTextAreaElement>) => {
+    const files = clipboardImageFiles(event.clipboardData);
+    if (files.length === 0) return;
+    event.preventDefault();
+    void addImageFiles(files);
+  };
+
   useEffect(() => {
     if (chatInFlight) setStopAcknowledged(false);
   }, [chatInFlight]);
@@ -284,6 +327,8 @@ export function OrchestratorChatPanel({
   // 切换工作流时不能沿用上一条工作流的 Stop 闩锁。
   useEffect(() => {
     setStopAcknowledged(false);
+    setImageAttachments([]);
+    setImageError(null);
   }, [workflowRunId]);
 
   useEffect(() => {
@@ -463,7 +508,7 @@ export function OrchestratorChatPanel({
   /** 有实质工作在飞时，发送走追加；否则开新 turn */
   const composerMode: "chat" | "inject" = liveTurn ? "inject" : "chat";
   const selectedAgentMode = getAgentModeOption(agentMode);
-  const hasContent = composerValue.trim().length > 0;
+  const hasContent = composerValue.trim().length > 0 || imageAttachments.length > 0;
   const showStop = showActive && !hasContent && !pendingHitlRequestId;
   const canSend = wfId.length > 0 && hasContent && !injecting && !interrupting;
   const canStop = wfId.length > 0 && showStop && !interrupting;
@@ -474,7 +519,9 @@ export function OrchestratorChatPanel({
 
   const doSend = async () => {
     if (!canSend) return;
-    if (composerMode === "inject") {
+    const pendingAttachments = imageAttachments;
+    // 带图走 conversation turn（软注入队列只支持纯文本）
+    if (composerMode === "inject" && pendingAttachments.length === 0) {
       const text = composerValue.trim();
       setInjecting(true);
       setInjectHint(null);
@@ -501,7 +548,12 @@ export function OrchestratorChatPanel({
       onComposerChange("");
       setMemoryMentions([]);
       setMemoryPickerOpen(false);
-      onSend(text);
+      setImageAttachments([]);
+      setImageError(null);
+      if (composerMode === "inject" && pendingAttachments.length > 0) {
+        setInjectHint("图片已随续聊发送（含图消息走对话回合，而非纯文本插话队列）");
+      }
+      onSend(text || undefined, pendingAttachments.length ? pendingAttachments : undefined);
     }
   };
 
@@ -561,10 +613,12 @@ export function OrchestratorChatPanel({
     wfId.length === 0
       ? "请先在左侧选择或新建工作流"
       : showStop
-        ? "Agent 运行中 —— 点停止结束本轮，或输入内容追加对话"
+        ? "Agent 运行中 —— 点停止结束本轮，或输入/粘贴图片追加对话"
         : composerMode === "inject"
-          ? "运行中追加对话 —— 指令会在下一轮思考时被采纳（Cmd/Ctrl+Enter）"
-          : `${selectedAgentMode.hint}（Cmd/Ctrl+Enter 发送）`;
+          ? imageAttachments.length > 0
+            ? "含图消息将作为续聊回合发送（Cmd/Ctrl+Enter）"
+            : "运行中追加对话 —— 指令会在下一轮思考时被采纳（Cmd/Ctrl+Enter）"
+          : `${selectedAgentMode.hint}（Cmd/Ctrl+Enter 发送，可粘贴图片）`;
 
   return (
     <div style={styles.root} data-qb-orchestrator-panel>
@@ -899,6 +953,41 @@ export function OrchestratorChatPanel({
           </div>
         ) : null}
         {injectHint ? <div style={styles.injectHint}>{injectHint}</div> : null}
+        {imageError ? <div style={styles.imageError}>{imageError}</div> : null}
+        <input
+          ref={imagePickerRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          multiple
+          hidden
+          onChange={(event) => {
+            if (event.target.files) void addImageFiles(event.target.files);
+            event.target.value = "";
+          }}
+        />
+        {imageAttachments.length > 0 ? (
+          <div style={styles.imagePreviewRow} data-qb-orch-image-previews>
+            {imageAttachments.map((attachment, index) => (
+              <div key={`${attachment.name ?? "image"}-${index}`} style={styles.imagePreviewItem}>
+                <img
+                  src={attachment.dataUrl}
+                  alt={attachment.name || "待发送图片"}
+                  style={styles.imagePreviewThumb}
+                />
+                <button
+                  type="button"
+                  aria-label="移除图片"
+                  style={styles.imagePreviewRemove}
+                  onClick={() =>
+                    setImageAttachments((items) => items.filter((_, i) => i !== index))
+                  }
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
         {memoryMentions.length > 0 ? (
           <div style={styles.memoryChips} data-qb-orch-memory-chips>
             {memoryMentions.map((m) => (
@@ -957,15 +1046,25 @@ export function OrchestratorChatPanel({
           value={composerValue}
           onChange={(e) => onComposerChange(e.target.value)}
           onKeyDown={handleKeyDown}
+          onPaste={onComposerPaste}
           rows={3}
           placeholder={
             composerMode === "inject"
-              ? "给运行中的 Orchestrator 追加指令，例如：把重点放到现金流质量上…"
-              : "和 Orchestrator 对话，例如：总结一下结论 / 重做一次技术面；可用 @记忆 引用课题沉淀…"
+              ? "给运行中的 Orchestrator 追加指令，可粘贴图片；例如：把重点放到现金流质量上…"
+              : "和 Orchestrator 对话，可粘贴图片；例如：总结一下结论 / 重做一次技术面；可用 @记忆 引用课题沉淀…"
           }
         />
         <div style={styles.composerBar}>
           <div style={styles.composerMeta}>
+            <button
+              type="button"
+              style={styles.imageAttachBtn}
+              title="粘贴或选择图片（PNG / JPEG / WebP / GIF）"
+              aria-label="选择图片"
+              onClick={() => imagePickerRef.current?.click()}
+            >
+              <ImagePlus size={14} />
+            </button>
             <button
               type="button"
               style={{
@@ -1019,14 +1118,18 @@ export function OrchestratorChatPanel({
               disabled={!canSend}
               title={
                 canSend
-                  ? composerMode === "inject"
+                  ? composerMode === "inject" && imageAttachments.length === 0
                     ? "追加到当前对话"
                     : `使用 ${selectedAgentMode.label} 模式发送给 Orchestrator`
-                  : "请输入内容"
+                  : "请输入内容或粘贴图片"
               }
               onClick={() => void doSend()}
             >
-              {injecting ? "发送中…" : composerMode === "inject" ? "追加" : "发送"}
+              {injecting
+                ? "发送中…"
+                : composerMode === "inject" && imageAttachments.length === 0
+                  ? "追加"
+                  : "发送"}
             </button>
           )}
         </div>
@@ -1470,6 +1573,61 @@ const styles: Record<string, CSSProperties> = {
     border: "1px solid rgba(34,197,94,0.35)",
     borderRadius: 6,
     padding: "5px 8px",
+  },
+  imageError: {
+    fontSize: 11,
+    color: "#fca5a5",
+    background: "rgba(239,68,68,0.10)",
+    border: "1px solid rgba(239,68,68,0.35)",
+    borderRadius: 6,
+    padding: "5px 8px",
+  },
+  imagePreviewRow: {
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap",
+    marginBottom: 6,
+  },
+  imagePreviewItem: {
+    position: "relative",
+  },
+  imagePreviewThumb: {
+    width: 64,
+    height: 64,
+    objectFit: "cover",
+    borderRadius: 8,
+    border: "1px solid var(--qb-team-input-border, #3f3f46)",
+    display: "block",
+  },
+  imagePreviewRemove: {
+    position: "absolute",
+    top: -6,
+    right: -6,
+    width: 18,
+    height: 18,
+    padding: 0,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 999,
+    border: "1px solid #52525b",
+    background: "#18181b",
+    color: "#fff",
+    cursor: "pointer",
+  },
+  imageAttachBtn: {
+    flexShrink: 0,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: 28,
+    height: 28,
+    border: "1px solid var(--qb-team-input-border, #3f3f46)",
+    background: "var(--qb-team-input-bg, #27272a)",
+    color: "var(--qb-body-fg, #e4e4e7)",
+    borderRadius: 6,
+    cursor: "pointer",
+    padding: 0,
   },
   activityLine: {
     display: "flex",

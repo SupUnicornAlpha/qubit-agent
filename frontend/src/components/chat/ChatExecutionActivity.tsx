@@ -210,9 +210,9 @@ export const ChatExecutionActivity: FC<{
                     )}
                   </span>
                   <Wrench className="qb-chat-call-card__tool-icon" size={14} aria-hidden />
-                  <code className="qb-chat-call-card__name" title={tool.name}>
+                  <span className="qb-chat-call-card__name" title={tool.name}>
                     {tool.name}
-                  </code>
+                  </span>
                   <span className="qb-chat-call-card__role" title={tool.role}>
                     {roleCopy(tool.role)}
                   </span>

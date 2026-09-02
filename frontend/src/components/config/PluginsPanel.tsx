@@ -118,7 +118,11 @@ const styles: Record<string, CSSProperties> = {
 };
 
 function admissionKindLabel(kind: "global_toggle" | "workflow_lease" | undefined): string {
-  return kind === "workflow_lease" ? "工作流租约" : "全局开关";
+  return kind === "workflow_lease" ? "工作流租约" : "影子组合";
+}
+
+function isLeaseProfile(profile: Pick<HarnessPackageProfileDto, "admission">): boolean {
+  return profile.admission?.kind === "workflow_lease";
 }
 
 function hostGateLayerLabel(layer: HarnessHostGateDto["layer"]): string {
@@ -133,6 +137,26 @@ function evidenceStageLabel(stage: "research" | "paper" | "live"): string {
   if (stage === "paper") return "Paper";
   return "Live";
 }
+
+const HostAdapterRow: FC<{ gate: HarnessHostGateDto }> = ({ gate }) => (
+  <div
+    style={{
+      display: "grid",
+      gridTemplateColumns: "minmax(0, 1fr) auto",
+      gap: 10,
+      alignItems: "start",
+    }}
+  >
+    <div>
+      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>{gate.title}</div>
+        <span style={styles.badge}>{hostGateLayerLabel(gate.layer)}</span>
+      </div>
+      <div style={styles.meta}>{gate.description}</div>
+    </div>
+    <span style={styles.badge}>{gate.failClosedWhenMissing ? "缺失则拒绝" : "只观察"}</span>
+  </div>
+);
 
 const HarnessProfileInspection: FC<{ profile: HarnessPackageProfileDto }> = ({ profile }) => {
   const tools = profile.tools ?? [];
@@ -530,13 +554,17 @@ export const PluginsPanel: FC<Props> = ({
   };
 
   const onApplyHarnessProfiles = async (profileIds: string[]) => {
+    const leaseIds = new Set(
+      harnessProfiles.available.filter(isLeaseProfile).map((profile) => profile.id)
+    );
+    const nextIds = profileIds.filter((id) => !leaseIds.has(id));
     const parameterOverrides = Object.fromEntries(
-      Object.entries(harnessParameterDrafts).filter(([id]) => profileIds.includes(id))
+      Object.entries(harnessParameterDrafts).filter(([id]) => nextIds.includes(id))
     );
     setError(null);
     try {
       const activation = await setActiveHarnessPackageProfiles({
-        profileIds,
+        profileIds: nextIds,
         parameterOverrides,
       });
       setHarnessProfiles((current) => ({
@@ -545,7 +573,7 @@ export const PluginsPanel: FC<Props> = ({
         activation,
       }));
       setHarnessParameterDrafts(activation.parameterOverrides);
-      setMessage(`Harness 已更新：${activation.profileIds.length} 项能力启用`);
+      setMessage(`影子组合已更新：${activation.profileIds.length} 项`);
       await reloadHarnessPackages();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -553,6 +581,8 @@ export const PluginsPanel: FC<Props> = ({
   };
 
   const onToggleHarnessProfile = async (profileId: string) => {
+    const profile = harnessProfiles.available.find((item) => item.id === profileId);
+    if (profile && isLeaseProfile(profile)) return;
     const next = harnessProfiles.activeProfileIds.includes(profileId)
       ? harnessProfiles.activeProfileIds.filter((id) => id !== profileId)
       : [...harnessProfiles.activeProfileIds, profileId];
@@ -560,18 +590,24 @@ export const PluginsPanel: FC<Props> = ({
   };
 
   const onSaveHarnessProfileParameters = async () => {
+    const leaseIds = new Set(
+      harnessProfiles.available.filter(isLeaseProfile).map((profile) => profile.id)
+    );
+    const nextIds = harnessProfiles.activeProfileIds.filter((id) => !leaseIds.has(id));
     const parameterOverrides = Object.fromEntries(
-      Object.entries(harnessParameterDrafts).filter(([profileId]) =>
-        harnessProfiles.activeProfileIds.includes(profileId)
-      )
+      Object.entries(harnessParameterDrafts).filter(([profileId]) => nextIds.includes(profileId))
     );
     setError(null);
     try {
       const activation = await setActiveHarnessPackageProfiles({
-        profileIds: harnessProfiles.activeProfileIds,
+        profileIds: nextIds,
         parameterOverrides,
       });
-      setHarnessProfiles((current) => ({ ...current, activation }));
+      setHarnessProfiles((current) => ({
+        ...current,
+        activeProfileIds: activation.profileIds,
+        activation,
+      }));
       setHarnessParameterDrafts(activation.parameterOverrides);
       setMessage(`已保存 Profile 参数（修订 ${activation.revision}）`);
       await reloadHarnessPackages();
@@ -588,6 +624,20 @@ export const PluginsPanel: FC<Props> = ({
     });
     setMessage("已恢复包内默认参数；点击“保存参数修订”后生效");
   };
+
+  const leaseProfileIds = new Set(
+    harnessProfiles.available.filter(isLeaseProfile).map((profile) => profile.id)
+  );
+  const shadowProfileIds = harnessProfiles.activeProfileIds.filter(
+    (id) => !leaseProfileIds.has(id)
+  );
+  const hostHardGates = (harnessProfiles.hostGates ?? []).filter((gate) => gate.role === "gate");
+  const hostObservations = (harnessProfiles.hostGates ?? []).filter(
+    (gate) => gate.role === "observation"
+  );
+  const allowlistedShadow = harnessProfiles.available.filter(
+    (profile) => !isLeaseProfile(profile) && profile.resolverAllowlisted
+  );
 
   const onExportHarnessProfiles = async () => {
     setError(null);
@@ -608,7 +658,13 @@ export const PluginsPanel: FC<Props> = ({
         setError("Profile 配置必须是导出的 JSON 对象");
         return;
       }
-      const activation = await importHarnessPackageProfiles(parsed as Record<string, unknown>);
+      const payload = parsed as Record<string, unknown>;
+      if (Array.isArray(payload.profileIds)) {
+        payload.profileIds = payload.profileIds.filter(
+          (id) => typeof id === "string" && !leaseProfileIds.has(id)
+        );
+      }
+      const activation = await importHarnessPackageProfiles(payload);
       setMessage(`已导入 Harness Profile 配置（修订 ${activation.revision}）`);
       await reloadHarnessPackages();
     } catch (e) {
@@ -752,8 +808,9 @@ export const PluginsPanel: FC<Props> = ({
         <>
           <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>Harness</h3>
           <p style={styles.hint}>
-            这里展示的是能力组合，不是第二套交易引擎。工作流租约会按场景自动加载；下方宿主闸门始终
-            fail-closed，关闭 Profile 不会放宽 paper/live 准入。
+            能力组合默认只进影子工具面。工作流租约按场景自动加载，本页不能开关。灰度白名单由部署环境
+            QUBIT_HARNESS_RESOLVER_PROFILES 决定；未列入只做对比，列入后也只取与旧工具面的交集。宿主硬门始终
+            fail-closed。TCA 是观察仪器，不是晋级门。
           </p>
           {error ? <div style={styles.err}>{error}</div> : null}
           {message ? <div style={{ ...styles.meta, marginBottom: 8 }}>{message}</div> : null}
@@ -768,9 +825,9 @@ export const PluginsPanel: FC<Props> = ({
                 marginBottom: 10,
               }}
             >
-              <div style={{ fontSize: 14, fontWeight: 650 }}>工作模式</div>
+              <div style={{ fontSize: 14, fontWeight: 650 }}>影子组合</div>
               <div style={styles.meta}>
-                当前 {harnessProfiles.activeProfileIds.length} 项能力
+                当前 {shadowProfileIds.length} 项
                 {harnessProfiles.activation.updatedAt
                   ? ` · ${new Date(harnessProfiles.activation.updatedAt).toLocaleString()}`
                   : ""}
@@ -785,8 +842,8 @@ export const PluginsPanel: FC<Props> = ({
                 { title: "研究交付", ids: ["document-production"] },
               ].map((preset) => {
                 const active =
-                  preset.ids.length === harnessProfiles.activeProfileIds.length &&
-                  preset.ids.every((id) => harnessProfiles.activeProfileIds.includes(id));
+                  preset.ids.length === shadowProfileIds.length &&
+                  preset.ids.every((id) => shadowProfileIds.includes(id));
                 return (
                   <button
                     key={preset.title}
@@ -806,12 +863,22 @@ export const PluginsPanel: FC<Props> = ({
                 清空
               </button>
             </div>
-            <div style={{ display: "grid", gap: 10 }}>
+              {allowlistedShadow.length > 0 ? (
+                <div style={{ ...styles.meta, marginBottom: 10 }}>
+                  已列入部署白名单（本页不能改）：
+                  {allowlistedShadow.map((profile) => profile.title).join("、")}
+                </div>
+              ) : (
+                <div style={{ ...styles.meta, marginBottom: 10 }}>
+                  当前没有 Profile 列入部署白名单，组合只做影子对比。
+                </div>
+              )}
+              <div style={{ display: "grid", gap: 10 }}>
               {harnessProfiles.available
                 .filter((profile) => profile.source === "system")
                 .map((profile) => {
-                  const active = harnessProfiles.activeProfileIds.includes(profile.id);
-                  const lease = profile.admission?.kind === "workflow_lease";
+                  const active = shadowProfileIds.includes(profile.id);
+                  const lease = isLeaseProfile(profile);
                   return (
                     <div
                       key={profile.id}
@@ -839,36 +906,35 @@ export const PluginsPanel: FC<Props> = ({
                           >
                             <div style={{ fontSize: 13, fontWeight: 600 }}>{profile.title}</div>
                             <span style={styles.badge}>{admissionKindLabel(profile.admission?.kind)}</span>
-                            {lease ? (
-                              <span style={styles.badge}>自动加载</span>
+                            {lease ? <span style={styles.badge}>本页不能开关</span> : null}
+                            {!lease && profile.resolverAllowlisted ? (
+                              <span style={styles.badge}>已列入灰度</span>
                             ) : null}
-                            {profile.resolverAllowlisted ? (
-                              <span style={styles.badge}>灰度准入</span>
-                            ) : (
-                              <span style={styles.badge}>影子</span>
-                            )}
+                            {!lease && !profile.resolverAllowlisted ? (
+                              <span style={styles.badge}>仅影子</span>
+                            ) : null}
                           </div>
                           <div style={styles.meta}>{profile.description}</div>
                           <HarnessProfileInspection profile={profile} />
                         </div>
-                        <button
-                          type="button"
-                          style={active ? styles.tabActive : styles.btn}
-                          onClick={() => void onToggleHarnessProfile(profile.id)}
-                          title={
-                            lease
-                              ? "只影响影子工具面。真正加载由工作流租约决定，不能关闭宿主闸门。"
-                              : undefined
-                          }
-                        >
-                          {active ? "已启用" : lease ? "加入影子" : "启用"}
-                        </button>
+                        {lease ? (
+                          <span style={styles.badge}>由工作流加载</span>
+                        ) : (
+                          <button
+                            type="button"
+                            style={active ? styles.tabActive : styles.btn}
+                            onClick={() => void onToggleHarnessProfile(profile.id)}
+                            title="只加入影子组合。不能新增工具，也不能关闭宿主闸门。"
+                          >
+                            {active ? "已在影子组合" : "加入影子组合"}
+                          </button>
+                        )}
                       </div>
                     </div>
                   );
                 })}
-            </div>
-            {(harnessProfiles.hostGates ?? []).length > 0 ? (
+              </div>
+            {hostHardGates.length > 0 ? (
               <div
                 style={{
                   marginTop: 14,
@@ -878,40 +944,30 @@ export const PluginsPanel: FC<Props> = ({
               >
                 <div style={{ fontSize: 14, fontWeight: 650 }}>宿主强制闸门</div>
                 <div style={styles.meta}>
-                  这些适配器写在回测、风控和执行服务里，不是可卸载 Profile。页面只展示状态，没有关闭开关。
+                  写在回测、风控和执行服务里，不是可卸载 Profile。没有关闭开关，缺失则拒绝。
                 </div>
                 <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
-                  {(harnessProfiles.hostGates ?? []).map((gate) => (
-                    <div
-                      key={gate.id}
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "minmax(0, 1fr) auto",
-                        gap: 10,
-                        alignItems: "start",
-                      }}
-                    >
-                      <div>
-                        <div
-                          style={{
-                            display: "flex",
-                            gap: 6,
-                            alignItems: "center",
-                            flexWrap: "wrap",
-                          }}
-                        >
-                          <div style={{ fontSize: 13, fontWeight: 600 }}>{gate.title}</div>
-                          <span style={styles.badge}>{hostGateLayerLabel(gate.layer)}</span>
-                          <span style={styles.badge}>
-                            {gate.role === "observation" ? "观察证据" : "硬门"}
-                          </span>
-                        </div>
-                        <div style={styles.meta}>{gate.description}</div>
-                      </div>
-                      <span style={styles.badge}>
-                        {gate.failClosedWhenMissing ? "缺失则拒绝" : "不可关闭"}
-                      </span>
-                    </div>
+                  {hostHardGates.map((gate) => (
+                    <HostAdapterRow key={gate.id} gate={gate} />
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            {hostObservations.length > 0 ? (
+              <div
+                style={{
+                  marginTop: 14,
+                  borderTop: "1px solid var(--qb-border)",
+                  paddingTop: 12,
+                }}
+              >
+                <div style={{ fontSize: 14, fontWeight: 650 }}>观察仪器</div>
+                <div style={styles.meta}>
+                  写入评估证据，供复盘使用。尚未校准，不会单独改变 pass 或晋级。
+                </div>
+                <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+                  {hostObservations.map((gate) => (
+                    <HostAdapterRow key={gate.id} gate={gate} />
                   ))}
                 </div>
               </div>
@@ -1046,11 +1102,13 @@ export const PluginsPanel: FC<Props> = ({
               {harnessProfiles.available.length > 0 ? (
                 <div style={{ marginTop: 12 }}>
                   <div style={styles.label}>
-                    Profile 组合（启用后仍需经灰度白名单进入实际工具面）
+                    影子组合（包 Profile 可加入；租约型不在此开关。切面仍需部署白名单）
                   </div>
                   <div style={{ ...styles.row, marginTop: 6, marginBottom: 0 }}>
-                    {harnessProfiles.available.map((profile) => {
-                      const active = harnessProfiles.activeProfileIds.includes(profile.id);
+                    {harnessProfiles.available
+                      .filter((profile) => !isLeaseProfile(profile))
+                      .map((profile) => {
+                      const active = shadowProfileIds.includes(profile.id);
                       return (
                         <button
                           key={profile.id}
@@ -1064,7 +1122,7 @@ export const PluginsPanel: FC<Props> = ({
                           {active
                             ? profile.resolverAllowlisted
                               ? " · 已列入灰度"
-                              : " · 影子"
+                              : " · 仅影子"
                             : ""}
                         </button>
                       );
@@ -1074,13 +1132,14 @@ export const PluginsPanel: FC<Props> = ({
               ) : null}
               {harnessProfiles.available.some(
                 (profile) =>
-                  harnessProfiles.activeProfileIds.includes(profile.id) &&
+                  shadowProfileIds.includes(profile.id) &&
+                  !isLeaseProfile(profile) &&
                   profile.parameters.length > 0
               ) ? (
                 <div
                   style={{ marginTop: 12, borderTop: "1px solid var(--qb-border)", paddingTop: 10 }}
                 >
-                  <div style={{ fontSize: 13, fontWeight: 600 }}>已启用 Profile 的参数</div>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>影子组合中的参数</div>
                   <div style={{ ...styles.meta, marginTop: 4 }}>
                     参数来自签名能力包的
                     schema，仅支持非密钥的字符串、数字、开关和枚举值；保存会生成可回溯修订。
@@ -1089,7 +1148,8 @@ export const PluginsPanel: FC<Props> = ({
                     {harnessProfiles.available
                       .filter(
                         (profile) =>
-                          harnessProfiles.activeProfileIds.includes(profile.id) &&
+                          shadowProfileIds.includes(profile.id) &&
+                          !isLeaseProfile(profile) &&
                           profile.parameters.length > 0
                       )
                       .map((profile) => (

@@ -16,8 +16,8 @@ import {
   listBacktestJobs,
   listFactors,
   listMonitorWorkflows,
+  listProjectStrategyScripts,
   listProjects,
-  listStrategyScripts,
   listStrategyVersions,
   patchWorkflow,
   putFsWorkspaceRun,
@@ -505,6 +505,8 @@ export const TeamDashboardPanel: FC = () => {
   const [workflowEventStreamUnavailable, setWorkflowEventStreamUnavailable] = useState(false);
   /** 单调递增；切 workflow 后丢弃过期的拓扑响应（长对话尤其容易晚归）。 */
   const teamGraphLoadGenRef = useRef(0);
+  /** 切工作流后丢弃上一份产物请求，避免晚到的 setState 把旧卡片写回来。 */
+  const teamArtifactLoadGenRef = useRef(0);
   const [graphSelection, setGraphSelection] = useState<TeamGraphSelection>(null);
   const [graphLoading, setGraphLoading] = useState(false);
   const [teamGraphView, setTeamGraphView] = useState<"topology" | "office">("topology");
@@ -629,6 +631,7 @@ export const TeamDashboardPanel: FC = () => {
         agentMode?: AgentControlMode;
         preserveGoal?: boolean;
         skipEcho?: boolean;
+        attachments?: import("../api/types").ChatImageAttachment[];
       }) => Promise<void>)
     | null
   >(null);
@@ -1336,8 +1339,9 @@ export const TeamDashboardPanel: FC = () => {
   }, [teamGraph]);
 
   /**
-   * 内联产物轮询：按 workflow 聚合因子、策略版本和 Python 脚本。
-   * 单一类型同步失败不遮蔽其他可用产物；workflow 变化时立即清空旧卡片。
+   * 内联产物轮询：按 workflow 聚合因子、策略、回测和脚本卡片。
+   * 只在切换工作流时清空；左栏列表 15s 刷新不得重拉、不得把已显示卡片抹掉。
+   * 四类接口各自返回就上屏，脚本走不含代码正文的轻量列表。
    */
   useEffect(() => {
     const wf = workflowRunId.trim();
@@ -1348,106 +1352,110 @@ export const TeamDashboardPanel: FC = () => {
       return;
     }
     let alive = true;
-    let initial = true;
+    const gen = ++teamArtifactLoadGenRef.current;
     setTeamArtifacts([]);
     setTeamArtifactsLoading(true);
     setTeamArtifactsError(null);
-    const load = async () => {
-      const workflowRow = workflowOptions.find((row) => String(row.id) === wf);
-      const workflowLinkedSessionId =
-        typeof workflowRow?.sessionId === "string" ? workflowRow.sessionId : "";
-      const artifactSessionId = workflowLinkedSessionId || teamResearchSessionId;
-      const scriptsRequest = artifactSessionId
-        ? listStrategyScripts(artifactSessionId, { workflowRunId: wf })
-        : Promise.resolve([]);
-      const [factorResult, strategyResult, scriptResult, backtestResult] = await Promise.allSettled(
-        [
-          listFactors({ workflowRunId: wf }),
-          listStrategyVersions({ workflowRunId: wf }),
-          scriptsRequest,
-          listBacktestJobs({ workflowRunId: wf }),
-        ]
+
+    const ingest = (kind: OrchestratorArtifact["kind"], items: OrchestratorArtifact[]) => {
+      if (!alive || teamArtifactLoadGenRef.current !== gen) return;
+      setTeamArtifacts((prev) =>
+        teamArtifactLoadGenRef.current !== gen
+          ? prev
+          : [...prev.filter((row) => row.kind !== kind), ...items]
       );
-      if (!alive) return;
+      setTeamArtifactsLoading(false);
+    };
 
-      const next: OrchestratorArtifact[] = [];
+    const load = async () => {
       const failures: string[] = [];
-      if (factorResult.status === "fulfilled") {
-        next.push(
-          ...factorResult.value.map((f) => ({
-            id: f.id,
-            kind: "factor" as const,
-            title: f.name,
-            subtitle: f.status === "draft" ? "草稿" : f.category,
-            projectId: f.projectId,
-            workflowRunId: f.workflowRunId,
-            createdAt: f.createdAt,
-          }))
-        );
-      } else {
-        failures.push("因子");
-      }
-      if (strategyResult.status === "fulfilled") {
-        next.push(
-          ...strategyResult.value.map((v) => ({
-            id: v.id,
-            kind: "strategy" as const,
-            title: v.strategyName,
-            subtitle: v.versionTag,
-            projectId: v.projectId,
-            workflowRunId: v.workflowRunId,
-            createdAt: v.createdAt,
-          }))
-        );
-      } else {
-        failures.push("策略");
-      }
-      if (backtestResult.status === "fulfilled") {
-        next.push(
-          ...backtestResult.value.map((b) => ({
-            id: b.id,
-            kind: "backtest" as const,
-            title: `回测 ${b.id.slice(0, 8)}`,
-            subtitle: b.status,
-            projectId: undefined,
-            workflowRunId: b.workflowRunId ?? wf,
-            createdAt: b.startedAt,
-          }))
-        );
-      } else {
-        failures.push("回测");
-      }
-      if (scriptResult.status === "fulfilled") {
-        next.push(
-          ...scriptResult.value.map((s) => ({
-            id: s.id,
-            kind: "script" as const,
-            title: s.name,
-            subtitle: s.purpose,
-            workflowRunId: s.workflowRunId ?? wf,
-            createdAt: s.createdAt,
-          }))
-        );
-      } else {
-        failures.push("脚本");
-      }
-
-      setTeamArtifacts(next);
+      await Promise.all([
+        listFactors({ workflowRunId: wf })
+          .then((rows) =>
+            ingest(
+              "factor",
+              rows.map((f) => ({
+                id: f.id,
+                kind: "factor" as const,
+                title: f.name,
+                subtitle: f.status === "draft" ? "草稿" : f.category,
+                projectId: f.projectId,
+                workflowRunId: f.workflowRunId,
+                createdAt: f.createdAt,
+              }))
+            )
+          )
+          .catch(() => {
+            failures.push("因子");
+          }),
+        listStrategyVersions({ workflowRunId: wf })
+          .then((rows) =>
+            ingest(
+              "strategy",
+              rows.map((v) => ({
+                id: v.id,
+                kind: "strategy" as const,
+                title: v.strategyName,
+                subtitle: v.versionTag,
+                projectId: v.projectId,
+                workflowRunId: v.workflowRunId,
+                createdAt: v.createdAt,
+              }))
+            )
+          )
+          .catch(() => {
+            failures.push("策略");
+          }),
+        listBacktestJobs({ workflowRunId: wf })
+          .then((rows) =>
+            ingest(
+              "backtest",
+              rows.map((b) => ({
+                id: b.id,
+                kind: "backtest" as const,
+                title: `回测 ${b.id.slice(0, 8)}`,
+                subtitle: b.status,
+                projectId: undefined,
+                workflowRunId: b.workflowRunId ?? wf,
+                createdAt: b.startedAt,
+              }))
+            )
+          )
+          .catch(() => {
+            failures.push("回测");
+          }),
+        listProjectStrategyScripts({ workflowRunId: wf })
+          .then((rows) =>
+            ingest(
+              "script",
+              rows.map((s) => ({
+                id: s.id,
+                kind: "script" as const,
+                title: s.name,
+                subtitle: s.purpose,
+                workflowRunId: s.workflowRunId ?? wf,
+                createdAt: s.createdAt,
+              }))
+            )
+          )
+          .catch(() => {
+            failures.push("脚本");
+          }),
+      ]);
+      if (!alive || teamArtifactLoadGenRef.current !== gen) return;
+      setTeamArtifactsLoading(false);
       setTeamArtifactsError(
         failures.length > 0 ? `${failures.join("、")} 产物暂时同步失败，已保留其他可用产物。` : null
       );
-      if (initial) {
-        initial = false;
-        setTeamArtifactsLoading(false);
-      }
     };
+
     void load();
-    const timer = setInterval(load, 6000);
+    const timer = setInterval(() => void load(), 6000);
     return () => {
       alive = false;
       clearInterval(timer);
     };
-  }, [workflowRunId, teamResearchSessionId, workflowOptions]);
+  }, [workflowRunId]);
 
   useEffect(() => {
     const el = liveFeedScrollRef.current;
@@ -1871,14 +1879,16 @@ export const TeamDashboardPanel: FC = () => {
     preserveGoal?: boolean;
     /** 追加队列续跑时勿重复 echo（inject 时已写入） */
     skipEcho?: boolean;
+    attachments?: import("../api/types").ChatImageAttachment[];
   }) => {
     const wf = workflowRunId.trim();
     const msg = (options?.message ?? teamAnalysisContext).trim();
+    const attachments = options?.attachments ?? [];
     if (!wf) {
       setError("请先选择工作流");
       return;
     }
-    if (!msg) return;
+    if (!msg && attachments.length === 0) return;
     const sessionId = workflowSessionId || teamResearchSessionId;
     const projectId = effectiveResearchProjectId || teamResearchProjectId;
     if (!sessionId || !projectId) {
@@ -1887,7 +1897,8 @@ export const TeamDashboardPanel: FC = () => {
     }
     setError(null);
     setStoppedWorkflowId(null);
-    if (!options?.skipEcho) pushUserEcho(msg);
+    const echoText = msg || "请分析附图。";
+    if (!options?.skipEcho) pushUserEcho(echoText);
     if (!options?.message) setTeamAnalysisContext("");
     setOrchestratorChatInFlight(true);
     setRunProgress("Orchestrator 处理中…（自主判断是否调度团队）");
@@ -1897,13 +1908,14 @@ export const TeamDashboardPanel: FC = () => {
         sessionId,
         projectId,
         workflowRunId: wf,
-        message: msg,
+        message: msg || echoText,
         turnMode: "continue_goal",
         hitlMode: teamHitlMode,
         roleReasoner,
         agentMode: options?.agentMode ?? teamAgentMode,
         ...(options?.preserveGoal ? { preserveGoal: true } : {}),
         ...(activeFsWorkspaceId ? { fsWorkspaceId: activeFsWorkspaceId } : {}),
+        ...(attachments.length ? { attachments } : {}),
       });
       // 用户已切走：丢弃本次收口，避免旧会话把右侧钉回。
       if (workflowRunIdRef.current.trim() !== wfAtStart) {
@@ -1911,7 +1923,7 @@ export const TeamDashboardPanel: FC = () => {
       }
       if (activeFsWorkspaceId) {
         void putFsWorkspaceRun(activeFsWorkspaceId, wf, {
-          title: msg.slice(0, 120),
+          title: echoText.slice(0, 120),
           status: "running",
           workflowId: wf,
           sessionId,
@@ -3372,9 +3384,12 @@ export const TeamDashboardPanel: FC = () => {
                 composerValue={teamAnalysisContext}
                 onComposerChange={setTeamAnalysisContext}
                 fsWorkspaceId={activeFsWorkspaceId}
-                onSend={(message) => {
+                onSend={(message, attachments) => {
                   // 唯一执行入口：交给 Orchestrator 自主判断（答 / 派单 / 全队）。
-                  void handleOrchestratorChat(message ? { message } : undefined);
+                  void handleOrchestratorChat({
+                    ...(message ? { message } : {}),
+                    ...(attachments?.length ? { attachments } : {}),
+                  });
                 }}
                 onInject={async (content) => {
                   const wf = workflowRunId.trim();

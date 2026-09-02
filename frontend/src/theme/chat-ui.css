@@ -112,17 +112,19 @@ html {
   color: inherit;
 }
 
-[data-qb-chat-panel] .qb-chat-execution,
-[data-qb-orchestrator-chat] .qb-chat-execution {
+/* 执行轨迹：样式挂在组件根上，不依赖父级 data 属性
+ * （Team 页「已固定」状态轨在 [data-qb-orchestrator-chat] 之外） */
+.qb-chat-execution {
   margin-top: 10px;
   border: 1px solid color-mix(in srgb, var(--qb-chat-bubble-border, #3f3f46) 88%, transparent);
   border-radius: 10px;
   overflow: hidden;
   background: color-mix(in srgb, var(--qb-chat-page-bg, #0d0d0f) 92%, var(--qb-bg-surface, #252526) 8%);
+  color: var(--qb-body-fg);
+  font-family: var(--qb-font-ui, var(--qb-font-sans, inherit));
 }
 
-[data-qb-chat-panel] .qb-chat-execution__toggle,
-[data-qb-orchestrator-chat] .qb-chat-execution__toggle {
+.qb-chat-execution__toggle {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -139,29 +141,24 @@ html {
   text-align: left;
 }
 
-[data-qb-chat-panel] .qb-chat-execution__toggle:hover,
-[data-qb-orchestrator-chat] .qb-chat-execution__toggle:hover {
+.qb-chat-execution__toggle:hover {
   background: color-mix(in srgb, var(--qb-chat-bubble-border, #3f3f46) 18%, transparent);
 }
 
-[data-qb-chat-panel] .qb-chat-execution__chevron,
-[data-qb-orchestrator-chat] .qb-chat-execution__chevron {
+.qb-chat-execution__chevron {
   color: var(--qb-chat-meta-fg);
   transition: transform 160ms ease;
 }
 
-[data-qb-chat-panel] .qb-chat-execution__chevron--closed,
-[data-qb-orchestrator-chat] .qb-chat-execution__chevron--closed {
+.qb-chat-execution__chevron--closed {
   transform: rotate(-90deg);
 }
 
-[data-qb-chat-panel] .qb-chat-execution__title,
-[data-qb-orchestrator-chat] .qb-chat-execution__title {
+.qb-chat-execution__title {
   letter-spacing: .01em;
 }
 
-[data-qb-chat-panel] .qb-chat-execution__count,
-[data-qb-orchestrator-chat] .qb-chat-execution__count {
+.qb-chat-execution__count {
   padding: 2px 6px;
   border-radius: 999px;
   color: var(--qb-chat-meta-fg);
@@ -170,8 +167,7 @@ html {
   font-variant-numeric: tabular-nums;
 }
 
-[data-qb-chat-panel] .qb-chat-execution__summary,
-[data-qb-orchestrator-chat] .qb-chat-execution__summary {
+.qb-chat-execution__summary {
   margin-left: auto;
   display: inline-flex;
   align-items: center;
@@ -179,29 +175,24 @@ html {
   font-size: 10px;
 }
 
-[data-qb-chat-panel] .qb-chat-execution__metric,
-[data-qb-orchestrator-chat] .qb-chat-execution__metric {
+.qb-chat-execution__metric {
   display: inline-flex;
   align-items: center;
   gap: 3px;
   font-variant-numeric: tabular-nums;
 }
 
-[data-qb-chat-panel] .qb-chat-execution__metric--success,
-[data-qb-orchestrator-chat] .qb-chat-execution__metric--success {
+.qb-chat-execution__metric--success {
   color: #48d597;
 }
-[data-qb-chat-panel] .qb-chat-execution__metric--running,
-[data-qb-orchestrator-chat] .qb-chat-execution__metric--running {
+.qb-chat-execution__metric--running {
   color: #65b5ff;
 }
-[data-qb-chat-panel] .qb-chat-execution__metric--failed,
-[data-qb-orchestrator-chat] .qb-chat-execution__metric--failed {
+.qb-chat-execution__metric--failed {
   color: #ff7d73;
 }
 
-[data-qb-chat-panel] .qb-chat-execution__list,
-[data-qb-orchestrator-chat] .qb-chat-execution__list {
+.qb-chat-execution__list {
   display: grid;
   gap: 3px;
   padding: 5px 6px 6px;
@@ -212,18 +203,16 @@ html {
   scrollbar-gutter: stable;
 }
 
-[data-qb-chat-panel] .qb-chat-call-card,
-[data-qb-orchestrator-chat] .qb-chat-call-card {
+.qb-chat-execution .qb-chat-call-card {
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
+  font: inherit;
   font-size: 11px;
 }
 
-[data-qb-chat-panel] .qb-chat-call-card--a2a,
-[data-qb-chat-panel] .qb-chat-call-card summary,
-[data-qb-orchestrator-chat] .qb-chat-call-card--a2a,
-[data-qb-orchestrator-chat] .qb-chat-call-card summary {
+.qb-chat-execution .qb-chat-call-card--a2a,
+.qb-chat-execution .qb-chat-call-card summary {
   display: flex;
   align-items: center;
   gap: 7px;
@@ -231,103 +220,107 @@ html {
   padding: 6px 7px;
 }
 
-[data-qb-chat-panel] .qb-chat-call-card summary,
-[data-qb-orchestrator-chat] .qb-chat-call-card summary {
+.qb-chat-execution .qb-chat-call-card summary {
   cursor: pointer;
   list-style: none;
   display: grid;
   grid-template-columns: 16px 16px minmax(0, 1fr) auto auto;
-  column-gap: 7px;
+  column-gap: 8px;
   align-items: center;
 }
 
-[data-qb-chat-panel] .qb-chat-call-card summary:hover,
-[data-qb-orchestrator-chat] .qb-chat-call-card summary:hover {
+.qb-chat-execution .qb-chat-call-card summary:hover {
   background: color-mix(in srgb, var(--qb-chat-bubble-border, #3f3f46) 18%, transparent);
 }
 
-[data-qb-chat-panel] .qb-chat-call-card summary::-webkit-details-marker,
-[data-qb-orchestrator-chat] .qb-chat-call-card summary::-webkit-details-marker {
+.qb-chat-execution .qb-chat-call-card summary::-webkit-details-marker {
   display: none;
 }
 
-[data-qb-chat-panel] .qb-chat-call-card--a2a > div,
-[data-qb-orchestrator-chat] .qb-chat-call-card--a2a > div {
+.qb-chat-execution .qb-chat-call-card--a2a > div {
   display: flex;
   flex: 1;
   min-width: 0;
   flex-direction: column;
   gap: 2px;
+  font: inherit;
 }
 
-[data-qb-chat-panel] .qb-chat-call-card span,
-[data-qb-orchestrator-chat] .qb-chat-call-card span {
+.qb-chat-execution .qb-chat-call-card--a2a strong {
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--qb-body-fg);
+}
+
+.qb-chat-execution .qb-chat-call-card--a2a span {
+  font: inherit;
+  font-size: 10px;
+  font-weight: 500;
   color: var(--qb-chat-meta-fg);
 }
 
-[data-qb-chat-panel] .qb-chat-call-card__status,
-[data-qb-orchestrator-chat] .qb-chat-call-card__status {
+.qb-chat-execution .qb-chat-call-card span {
+  color: var(--qb-chat-meta-fg);
+}
+
+.qb-chat-execution .qb-chat-call-card__status {
   display: inline-flex;
   justify-content: center;
 }
-[data-qb-chat-panel] .qb-chat-call-card__status--success,
-[data-qb-orchestrator-chat] .qb-chat-call-card__status--success {
+.qb-chat-execution .qb-chat-call-card__status--success {
   color: #48d597;
 }
-[data-qb-chat-panel] .qb-chat-call-card__status--running,
-[data-qb-orchestrator-chat] .qb-chat-call-card__status--running {
+.qb-chat-execution .qb-chat-call-card__status--running {
   color: #65b5ff;
 }
-[data-qb-chat-panel] .qb-chat-call-card__status--failed,
-[data-qb-chat-panel] .qb-chat-call-card__status--blocked,
-[data-qb-chat-panel] .qb-chat-call-card__status--timeout,
-[data-qb-orchestrator-chat] .qb-chat-call-card__status--failed,
-[data-qb-orchestrator-chat] .qb-chat-call-card__status--blocked,
-[data-qb-orchestrator-chat] .qb-chat-call-card__status--timeout {
+.qb-chat-execution .qb-chat-call-card__status--failed,
+.qb-chat-execution .qb-chat-call-card__status--blocked,
+.qb-chat-execution .qb-chat-call-card__status--timeout {
   color: #ff7d73;
 }
 
-[data-qb-chat-panel] .qb-chat-call-card__tool-icon,
-[data-qb-orchestrator-chat] .qb-chat-call-card__tool-icon {
+.qb-chat-execution .qb-chat-call-card__tool-icon {
   color: var(--qb-chat-meta-fg);
 }
 
-[data-qb-chat-panel] .qb-chat-call-card__name,
-[data-qb-orchestrator-chat] .qb-chat-call-card__name {
+.qb-chat-execution .qb-chat-call-card__name {
   min-width: 0;
   overflow: hidden;
   color: var(--qb-body-fg);
-  font-family: var(--qb-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-family: inherit;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
+  letter-spacing: 0.01em;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-[data-qb-chat-panel] .qb-chat-call-card__role,
-[data-qb-orchestrator-chat] .qb-chat-call-card__role {
+.qb-chat-execution .qb-chat-call-card__role {
   max-width: 92px;
   overflow: hidden;
-  padding: 2px 5px;
-  border: 1px solid color-mix(in srgb, #65b5ff 38%, transparent);
-  border-radius: 999px;
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, #65b5ff 28%, transparent);
+  border-radius: 4px;
   color: #9ccaff;
-  font-size: 9px;
-  line-height: 1.1;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-[data-qb-chat-panel] .qb-chat-call-card__result,
-[data-qb-orchestrator-chat] .qb-chat-call-card__result {
+.qb-chat-execution .qb-chat-call-card__result {
   color: var(--qb-chat-meta-fg);
+  font-family: inherit;
   font-size: 10px;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-[data-qb-chat-panel] .qb-chat-call-card pre,
-[data-qb-orchestrator-chat] .qb-chat-call-card pre {
+.qb-chat-execution .qb-chat-call-card pre {
   max-height: 220px;
   margin: 0;
   padding: 8px 10px;
@@ -335,26 +328,23 @@ html {
   border-top: 1px solid color-mix(in srgb, var(--qb-chat-bubble-border, #3f3f46) 60%, transparent);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  font-family: var(--qb-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: 10px;
 }
 
-[data-qb-chat-panel] .qb-chat-call-card__spin,
-[data-qb-orchestrator-chat] .qb-chat-call-card__spin {
+.qb-chat-execution .qb-chat-call-card__spin {
   flex: none;
   animation: qb-chat-call-spin .9s linear infinite;
 }
 
 @media (max-width: 560px) {
-  [data-qb-chat-panel] .qb-chat-execution__count,
-  [data-qb-orchestrator-chat] .qb-chat-execution__count {
+  .qb-chat-execution__count {
     display: none;
   }
-  [data-qb-chat-panel] .qb-chat-call-card__role,
-  [data-qb-orchestrator-chat] .qb-chat-call-card__role {
+  .qb-chat-execution .qb-chat-call-card__role {
     display: none;
   }
-  [data-qb-chat-panel] .qb-chat-call-card summary,
-  [data-qb-orchestrator-chat] .qb-chat-call-card summary {
+  .qb-chat-execution .qb-chat-call-card summary {
     grid-template-columns: 16px 16px minmax(0, 1fr) auto;
   }
 }

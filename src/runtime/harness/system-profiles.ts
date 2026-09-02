@@ -33,15 +33,6 @@ export const builtinFinancialProfiles: CapabilityProfile[] = [
       "按工作流组合 QUBIT 的量化完整性证据链。研究仅提示缺口；paper/live 的实际准入仍由宿主侧不可绕过的闸门执行。",
     extends: ["financial-research"],
     enable: ["quant.research-integrity"],
-    parameters: {
-      researchReport: {
-        type: "enum",
-        title: "研究阶段报告",
-        description: "仅影响研究缺口的呈现粒度，不能降低 paper 或 live 的准入条件。",
-        default: "summary",
-        values: ["summary", "full"],
-      },
-    },
   },
   {
     id: "paper-trading",
@@ -55,32 +46,6 @@ export const builtinFinancialProfiles: CapabilityProfile[] = [
     title: "数学推导审计",
     description: "按工作流租约加载 Qubit 数学推导验证，不改变普通对话或研究任务。",
     enable: ["math.reasoning"],
-    parameters: {
-      activation: {
-        type: "enum",
-        title: "触发方式",
-        description: "仅接受显式任务模式或已标注的高保证工作流；不会根据普通文本自动开启。",
-        default: "manual",
-        values: ["manual", "scenario_required"],
-      },
-      symbolicVerifier: {
-        type: "boolean",
-        title: "符号等价校验",
-        description: "可选 SymPy 校验；不可用时记录跳过，不以模型解释替代。",
-        default: false,
-      },
-      maxCases: {
-        type: "number",
-        title: "每类检查上限",
-        default: 16,
-      },
-      failurePolicy: {
-        type: "enum",
-        title: "失败策略",
-        default: "warn",
-        values: ["warn", "require"],
-      },
-    },
   },
   {
     id: "document-production",
