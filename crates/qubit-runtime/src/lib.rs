@@ -44,8 +44,8 @@ pub use engine::{RunTurnOpts, TurnEngine, TurnOutcome};
 pub use error::RuntimeError;
 pub use hitl_inbox::{HitlInbox, MemoryHitlInbox, SqliteHitlInbox};
 pub use hitl_policy::{
-    evaluate_tool_batch_hitl, extract_ai_hitl_hint, is_high_risk_tool, HitlMode, HitlPolicy,
-    ToolHitlDecision,
+    evaluate_tool_batch_hitl, extract_ai_hitl_hint, is_high_risk_tool, AiHitlHint, HitlMode,
+    HitlPolicy, ToolHitlDecision,
 };
 pub use invocation::{AgentInvoker, InvocationService};
 pub use model::{

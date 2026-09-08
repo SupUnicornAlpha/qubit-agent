@@ -819,6 +819,17 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
     if (validationStartDate && !/^\d{4}-\d{2}-\d{2}$/.test(validationStartDate)) {
       throw new Error("factor.autoEvaluate: validation_start_date must be YYYY-MM-DD");
     }
+    const scenarioKey = String(params.scenario_key ?? params.scenarioKey ?? "").trim();
+    const researchIntentRaw = String(
+      params.research_intent ?? params.researchIntent ?? ""
+    ).trim();
+    const researchIntent =
+      researchIntentRaw === "factor" ||
+      researchIntentRaw === "strategy" ||
+      researchIntentRaw === "thesis_only" ||
+      researchIntentRaw === "single_name"
+        ? researchIntentRaw
+        : undefined;
     const evaluateInput = {
       factorId,
       startDate,
@@ -830,6 +841,8 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
       ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
       ...(datasetSnapshotId ? { datasetSnapshotId } : {}),
       ...(validationStartDate ? { validationStartDate } : {}),
+      ...(scenarioKey ? { scenarioKey } : { scenarioKey: "factor_research" }),
+      ...(researchIntent ? { researchIntent } : {}),
     };
     try {
       return await factorService.autoEvaluate(evaluateInput);

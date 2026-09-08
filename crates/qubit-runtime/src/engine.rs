@@ -268,14 +268,16 @@ impl TurnEngine {
         body: String,
         hard_rule: bool,
         source: HitlSource,
+        input_kind: HitlInputKind,
+        options: Vec<qubit_protocol::HitlOption>,
     ) -> Result<(TurnId, TurnOutcome), RuntimeError> {
         let prompt = HitlPrompt {
             id: HitlPromptId::new(format!("hitl_{}", uuid::Uuid::new_v4().simple())),
             turn_id: turn_id.clone(),
-            input_kind: HitlInputKind::ApproveOnly,
+            input_kind,
             title,
             body,
-            options: vec![],
+            options,
             hard_rule,
             created_at: now_ms(),
         };
@@ -653,23 +655,27 @@ impl TurnEngine {
                             .unwrap_or_else(|| "Please approve to continue.".into()),
                         false,
                         HitlSource::UserTurn,
+                        HitlInputKind::ApproveOnly,
+                        vec![],
                     )
                     .await;
             }
 
             // mode=ai：模型可用 ---HITL_HINT_JSON--- 主动请求审批（无工具时也可）。
             if matches!(hitl_policy.mode, crate::hitl_policy::HitlMode::Ai) {
-                if let Some((title, body)) = extract_ai_hitl_hint(&sample.text) {
+                if let Some(hint) = extract_ai_hitl_hint(&sample.text) {
                     return self
                         .raise_hitl(
                             session_id,
                             &session,
                             &mut turn,
                             &turn_id,
-                            title,
-                            body,
+                            hint.title,
+                            hint.body,
                             false,
                             HitlSource::UserTurn,
+                            hint.input_kind,
+                            hint.options,
                         )
                         .await;
                 }
@@ -708,6 +714,8 @@ impl TurnEngine {
                         tool_decision.body,
                         tool_decision.hard_rule,
                         HitlSource::Invocation,
+                        HitlInputKind::ApproveOnly,
+                        vec![],
                     )
                     .await;
             }

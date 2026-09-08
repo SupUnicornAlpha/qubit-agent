@@ -41,6 +41,14 @@ describe("goal-scope", () => {
     expect(shift.shifted).toBe(false);
   });
 
+  test("does not shift on bare path letter replies like B", () => {
+    const shift = detectGoalTopicShift(
+      "请选择下一步：A 直连收口 / B 因子管线 / C 先写结论",
+      "B"
+    );
+    expect(shift.shifted).toBe(false);
+  });
+
   test("suppresses workflow_play recall for knowledge goals", () => {
     expect(
       shouldSuppressWorkflowPlayRecall({

@@ -182,8 +182,19 @@ pub fn evaluate_tool_batch_hitl(
 
 const HITL_HINT_DELIMITER: &str = "---HITL_HINT_JSON---";
 
+/// Parsed AI-emitted HITL hint (Bun delimiter + optional single/multi choice).
+#[derive(Clone, Debug, PartialEq)]
+pub struct AiHitlHint {
+    pub title: String,
+    pub body: String,
+    pub input_kind: qubit_protocol::HitlInputKind,
+    pub options: Vec<qubit_protocol::HitlOption>,
+}
+
 /// Parse Bun-compatible `---HITL_HINT_JSON---` block; used when mode=ai.
-pub fn extract_ai_hitl_hint(text: &str) -> Option<(String, String)> {
+pub fn extract_ai_hitl_hint(text: &str) -> Option<AiHitlHint> {
+    use qubit_protocol::{HitlInputKind, HitlOption};
+
     let idx = text.find(HITL_HINT_DELIMITER)?;
     let rest = &text[idx + HITL_HINT_DELIMITER.len()..];
     let start = rest.find('{')?;
@@ -209,7 +220,56 @@ pub fn extract_ai_hitl_hint(text: &str) -> Option<(String, String)> {
         .chars()
         .take(2000)
         .collect::<String>();
-    Some((title, body))
+    let options: Vec<HitlOption> = v
+        .get("options")
+        .and_then(|x| x.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| {
+                    let value = item
+                        .get("value")
+                        .or_else(|| item.get("id"))
+                        .and_then(|x| x.as_str())?
+                        .trim();
+                    if value.is_empty() {
+                        return None;
+                    }
+                    let label = item
+                        .get("label")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or(value)
+                        .trim();
+                    let description = item
+                        .get("description")
+                        .and_then(|x| x.as_str())
+                        .map(|s| s.trim())
+                        .filter(|s| !s.is_empty());
+                    let label = match description {
+                        Some(desc) => format!("{label} — {desc}"),
+                        None => label.to_string(),
+                    };
+                    Some(HitlOption {
+                        id: value.chars().take(80).collect(),
+                        label: label.chars().take(240).collect(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let input_kind = match v.get("inputKind").and_then(|x| x.as_str()) {
+        Some("single_choice") if !options.is_empty() => HitlInputKind::SingleChoice,
+        Some("multi_choice") if !options.is_empty() => HitlInputKind::MultiChoice,
+        Some("free_form") => HitlInputKind::FreeForm,
+        Some("single_choice") | Some("multi_choice") => HitlInputKind::FreeForm,
+        _ if !options.is_empty() => HitlInputKind::SingleChoice,
+        _ => HitlInputKind::ApproveOnly,
+    };
+    Some(AiHitlHint {
+        title,
+        body,
+        input_kind,
+        options,
+    })
 }
 
 #[cfg(test)]
@@ -270,8 +330,22 @@ mod tests {
     #[test]
     fn parses_ai_hint_delimiter() {
         let text = "计划如下\n---HITL_HINT_JSON---\n{\"needed\":true,\"reason\":\"确认仓位\"}";
-        let (t, b) = extract_ai_hitl_hint(text).unwrap();
-        assert!(t.contains("确认") || b.contains("确认"));
+        let hint = extract_ai_hitl_hint(text).unwrap();
+        assert!(hint.title.contains("确认") || hint.body.contains("确认"));
+        assert_eq!(hint.input_kind, qubit_protocol::HitlInputKind::ApproveOnly);
         assert!(extract_ai_hitl_hint("no hint").is_none());
+    }
+
+    #[test]
+    fn parses_ai_hint_single_choice_options() {
+        let text = r#"请选路径
+---HITL_HINT_JSON---
+{"needed":true,"question":"下一步走哪条？","inputKind":"single_choice","options":[{"label":"直连收口","value":"A","description":"compile+backtest"},{"label":"因子管线","value":"B"}]}
+"#;
+        let hint = extract_ai_hitl_hint(text).unwrap();
+        assert_eq!(hint.input_kind, qubit_protocol::HitlInputKind::SingleChoice);
+        assert_eq!(hint.options.len(), 2);
+        assert_eq!(hint.options[0].id, "A");
+        assert!(hint.options[1].label.contains("因子管线"));
     }
 }

@@ -2,7 +2,8 @@
  * 右栏 Orchestrator 对话内的「子 Agent 运行」面板。
  * 点击专家后由父级跳转到独立的子对话上下文，避免把完整轨迹挤在进度卡里。
  */
-import type { CSSProperties, FC } from "react";
+import { ChevronDown } from "lucide-react";
+import { type CSSProperties, type FC, useState } from "react";
 import type { SubAgentRunSummary, SubAgentRunStatus } from "../../lib/subAgentRuns";
 import { avatarColorFor, avatarLabelFor, formatRoleName } from "./conversationAvatar";
 
@@ -25,76 +26,105 @@ export const SubAgentRunsPanel: FC<{
   selectedRole?: string | null;
   onSelectRun?: (run: SubAgentRunSummary) => void;
 }> = ({ runs, selectedRole = null, onSelectRun }) => {
+  const [open, setOpen] = useState(true);
 
   if (runs.length === 0) return null;
 
   const activeCount = runs.filter((r) => r.status === "running" || r.status === "queued").length;
+  const failedCount = runs.filter((r) => r.status === "failed").length;
 
   return (
     <div style={styles.box} data-qb-subagent-runs>
-      <div style={styles.header}>
+      <button
+        type="button"
+        style={styles.toggle}
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        aria-label={open ? "折叠专家进度" : "展开专家进度"}
+      >
+        <ChevronDown
+          size={15}
+          aria-hidden
+          style={{
+            ...styles.chevronToggle,
+            transform: open ? undefined : "rotate(-90deg)",
+          }}
+        />
         <span style={styles.title}>专家进度</span>
-        <span style={styles.meta}>
-          {activeCount > 0 ? `${activeCount} 个进行中` : `${runs.length} 个已参与`}
+        <span style={styles.count}>{runs.length} 位专家</span>
+        <span style={styles.summary}>
+          {activeCount > 0 ? (
+            <span style={{ ...styles.metric, color: STATUS_COLOR.running }}>
+              {activeCount} 个进行中
+            </span>
+          ) : failedCount > 0 ? (
+            <span style={{ ...styles.metric, color: STATUS_COLOR.failed }}>
+              {failedCount} 个失败
+            </span>
+          ) : (
+            <span style={{ ...styles.metric, color: STATUS_COLOR.done }}>已完成</span>
+          )}
         </span>
-      </div>
-      <div style={styles.list}>
-        {runs.map((run) => {
-          const selected = selectedRole === run.role;
-          const { bg, fg } = avatarColorFor(run.role);
-          return (
-            <div key={run.role} style={styles.card}>
-              <button
-                type="button"
-                style={{ ...styles.summaryBtn, ...(selected ? styles.summaryBtnSelected : null) }}
-                aria-pressed={selected}
-                onClick={() => onSelectRun?.(run)}
-                title={`打开${formatRoleName(run.role)}的子对话上下文`}
-              >
-                <span
-                  aria-hidden
-                  style={{
-                    ...styles.avatar,
-                    background: bg,
-                    color: fg,
-                  }}
+      </button>
+      {open ? (
+        <div style={styles.list}>
+          {runs.map((run) => {
+            const selected = selectedRole === run.role;
+            const { bg, fg } = avatarColorFor(run.role);
+            return (
+              <div key={run.role} style={styles.card}>
+                <button
+                  type="button"
+                  style={{ ...styles.summaryBtn, ...(selected ? styles.summaryBtnSelected : null) }}
+                  aria-pressed={selected}
+                  onClick={() => onSelectRun?.(run)}
+                  title={`打开${formatRoleName(run.role)}的子对话上下文`}
                 >
-                  {avatarLabelFor(run.role)}
-                </span>
-                <span style={styles.summaryMain}>
-                  <span style={styles.roleRow}>
-                    <span style={styles.roleName}>{formatRoleName(run.role)}</span>
-                    <span
-                      style={{
-                        ...styles.statusPill,
-                        color: STATUS_COLOR[run.status],
-                        borderColor: `${STATUS_COLOR[run.status]}66`,
-                      }}
-                    >
-                      {run.status === "running" ? (
-                        <span style={styles.pulse} aria-hidden>
-                          ●
-                        </span>
-                      ) : null}
-                      {STATUS_LABEL[run.status]}
+                  <span
+                    aria-hidden
+                    style={{
+                      ...styles.avatar,
+                      background: bg,
+                      color: fg,
+                    }}
+                  >
+                    {avatarLabelFor(run.role)}
+                  </span>
+                  <span style={styles.summaryMain}>
+                    <span style={styles.roleRow}>
+                      <span style={styles.roleName}>{formatRoleName(run.role)}</span>
+                      <span
+                        style={{
+                          ...styles.statusPill,
+                          color: STATUS_COLOR[run.status],
+                          borderColor: `${STATUS_COLOR[run.status]}66`,
+                        }}
+                      >
+                        {run.status === "running" ? (
+                          <span style={styles.pulse} aria-hidden>
+                            ●
+                          </span>
+                        ) : null}
+                        {STATUS_LABEL[run.status]}
+                      </span>
+                    </span>
+                    <span style={styles.headline}>{run.headline}</span>
+                    <span style={styles.counts}>
+                      {run.stepCount > 0 ? `${run.stepCount} 步` : null}
+                      {run.stepCount > 0 && run.toolCount > 0 ? " · " : null}
+                      {run.toolCount > 0 ? `${run.toolCount} 次工具` : null}
+                      {run.stepCount === 0 && run.toolCount === 0 ? "等待首步…" : null}
                     </span>
                   </span>
-                  <span style={styles.headline}>{run.headline}</span>
-                  <span style={styles.counts}>
-                    {run.stepCount > 0 ? `${run.stepCount} 步` : null}
-                    {run.stepCount > 0 && run.toolCount > 0 ? " · " : null}
-                    {run.toolCount > 0 ? `${run.toolCount} 次工具` : null}
-                    {run.stepCount === 0 && run.toolCount === 0 ? "等待首步…" : null}
+                  <span aria-hidden style={styles.chevron}>
+                    {selected ? "打开中" : "查看对话 ▸"}
                   </span>
-                </span>
-                <span aria-hidden style={styles.chevron}>
-                  {selected ? "打开中" : "查看对话 ▸"}
-                </span>
-              </button>
-            </div>
-          );
-        })}
-      </div>
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 };
@@ -107,27 +137,53 @@ const styles: Record<string, CSSProperties> = {
     marginBottom: 10,
     overflow: "hidden",
   },
-  header: {
+  toggle: {
     display: "flex",
     alignItems: "center",
-    justifyContent: "space-between",
     gap: 8,
-    padding: "8px 10px 6px",
-    borderBottom: "1px solid rgba(255,255,255,0.05)",
+    width: "100%",
+    minHeight: 36,
+    padding: "8px 10px",
+    border: "none",
+    background: "transparent",
+    color: "inherit",
+    cursor: "pointer",
+    font: "inherit",
+    textAlign: "left",
+  },
+  chevronToggle: {
+    flexShrink: 0,
+    color: "#94a3b8",
+    transition: "transform 160ms ease",
   },
   title: {
     fontSize: 12,
     fontWeight: 650,
     color: "#e2e8f0",
   },
-  meta: {
-    fontSize: 11,
+  count: {
+    padding: "2px 6px",
+    borderRadius: 999,
+    fontSize: 10,
     color: "#94a3b8",
+    background: "rgba(148,163,184,0.16)",
+    fontVariantNumeric: "tabular-nums",
+  },
+  summary: {
+    marginLeft: "auto",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    fontSize: 10,
+  },
+  metric: {
+    fontVariantNumeric: "tabular-nums",
   },
   list: {
     display: "flex",
     flexDirection: "column",
     gap: 0,
+    borderTop: "1px solid rgba(255,255,255,0.05)",
   },
   card: {
     borderTop: "1px solid rgba(255,255,255,0.04)",
@@ -197,20 +253,20 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 11.5,
     color: "#cbd5e1",
     lineHeight: 1.4,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
     display: "-webkit-box",
     WebkitLineClamp: 2,
     WebkitBoxOrient: "vertical",
-    overflow: "hidden",
   },
   counts: {
     fontSize: 10.5,
-    color: "#64748b",
+    color: "#94a3b8",
   },
   chevron: {
     flexShrink: 0,
-    fontSize: 10,
+    fontSize: 11,
     color: "#7dd3fc",
     marginTop: 4,
-    whiteSpace: "nowrap",
   },
 };

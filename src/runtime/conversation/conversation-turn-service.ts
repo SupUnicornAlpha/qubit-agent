@@ -33,6 +33,7 @@ import {
   buildGoalTopicResetNotice,
   buildKnowledgeIntentGuard,
   detectGoalTopicShift,
+  isLetterChoiceReply,
   parseContextIsolation,
 } from "./goal-scope";
 import {
@@ -44,6 +45,7 @@ import {
   parseRollingChronicle,
   rollChronicleWindow,
 } from "./turn-packet";
+import { buildChatHitlSelfCheckPromptBlock } from "../workflow/hitl-hint-parse";
 
 export interface CreateConversationTurnInput {
   sessionId: string;
@@ -167,6 +169,29 @@ export async function buildWorkflowConversationContext(
   }
   const knowledgeGuard = buildKnowledgeIntentGuard(currentUserText);
   if (knowledgeGuard) sections.push(knowledgeGuard);
+  const hitlMode = loopOptions.hitlMode ?? loopOptions.hitlChatMode;
+  if (hitlMode === "ai" || hitlMode === "always" || hitlMode == null) {
+    // Default chat HITL mode is ai; teach the model to emit single_choice instead of "reply A/B/C".
+    sections.push(buildChatHitlSelfCheckPromptBlock());
+  }
+  if (isLetterChoiceReply(currentUserText)) {
+    const lastAssistant = [...messages]
+      .reverse()
+      .find((m) => m.role !== "user" && m.content.trim().length > 0);
+    if (lastAssistant) {
+      const menu = lastAssistant.content.trim().slice(0, 2400);
+      sections.push(
+        [
+          "PENDING_PATH_CHOICE: the user replied with a bare letter selecting a prior menu option.",
+          `Selected letter: ${currentUserText.trim().toUpperCase()}`,
+          "Interpret CURRENT_USER_TASK as that menu choice and continue the chosen path.",
+          "Do NOT claim the session was reset, and do NOT ask what the letter means.",
+          "Prior assistant menu (verbatim excerpt):",
+          menu,
+        ].join("\n")
+      );
+    }
+  }
   const chronicle = buildSessionChronicle({
     messages,
     currentUserMessageId,

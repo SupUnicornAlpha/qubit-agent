@@ -312,3 +312,7 @@ simulation / live 得到 required 审阅；工作流终态统一 `dispose()`。�
 5. **M5 — Measured Learning**：Phase 7；结果归因与 benchmark 驱动持续改进。
 
 只有前一里程碑的硬门与验收全部通过，才允许提高下一阶段的自主权。
+
+## 相关文档
+
+- [Research Dataset · Gate · Evolution](./RESEARCH_DATASET_GATE_EVOLUTION.md)：数据面物化、研究纪律合同与产物长期进化环（本规格的上游输入与下游再评估）。

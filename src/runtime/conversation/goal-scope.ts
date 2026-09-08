@@ -72,10 +72,16 @@ const EXECUTION_SKILL_PATTERN =
 const CONTINUATION_CUE =
   /^(继续|请继续|接着|接着做|往下|然后呢|下一步|go on|continue|keep going)[.。!！?？…\s]*$/i;
 
+/** User replied with a bare path letter (A/B/C/D) after an assistant menu. */
+export function isLetterChoiceReply(text: string): boolean {
+  return /^[A-Da-d]$/.test(text.trim());
+}
+
 export function isContinuationCue(text: string): boolean {
   const t = text.trim();
   if (!t) return false;
   if (CONTINUATION_CUE.test(t)) return true;
+  if (isLetterChoiceReply(t)) return true;
   // Ultra-short neutral nudges ("好的", "嗯") should not wipe session context.
   return t.length <= 6 && classifyGoalIntent(t) === "neutral";
 }

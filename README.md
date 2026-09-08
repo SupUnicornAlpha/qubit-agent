@@ -467,6 +467,7 @@ bun run scripts/agent-readiness-runner.ts \
 - [Loop 驱动说明](docs/LOOP_DRIVERS.md)
 - [Agent Benchmark v2](docs/AGENT_BENCHMARK_V2.md)
 - [Quant Research Integrity 项目规格](docs/QUANT_RESEARCH_INTEGRITY_PLAN.md)
+- [Research Dataset · Gate · Evolution 设计](docs/RESEARCH_DATASET_GATE_EVOLUTION.md)
 
 ---
 

@@ -154,7 +154,7 @@ describe("factor.autoEvaluate cross-section guard (P0-3)", () => {
         startDate: "2026-01-01",
         endDate: "2026-04-30",
       })
-    ).rejects.toThrow(/cross_section_too_few_symbols.*只覆盖 1 只 symbols/);
+    ).rejects.toThrow(/cross_section_too_few_symbols:.*当前仅 1 只 symbols/);
   });
 
   test("service 层：provider 返回 result.error → 抛 factor_evaluation_invalid（不让 0 假装成功）", async () => {

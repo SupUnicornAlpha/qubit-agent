@@ -186,7 +186,7 @@ export function buildTopologySpecialistExecutionContract(role: AgentRole, goal =
   }
   if (role === "research") {
     common.push(
-      "- 单标的研究不得用 factor.autoEvaluate/IC/RankIC 证明有效性；IC 是横截面指标，至少需要 3 只标的。单标的应使用时序指标或 backtest，或明确扩展可比股票池后再做横截面评估。"
+      "- 单标的研究不得用 factor.autoEvaluate/IC/RankIC 证明有效性；IC 是横截面指标。默认 ResearchRunContract（factor_research）要求 ≥60 标的 × ≥504 交易日才可晋级；不足仅 research_only。单标的应使用时序指标或 backtest，或扩展可比股票池后再做横截面评估。"
     );
   }
   return common.join("\n");

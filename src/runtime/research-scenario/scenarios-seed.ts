@@ -126,7 +126,8 @@ export const STRATEGY_AUTHORING_SCENARIO: ResearchScenarioSpec = {
 export const FACTOR_RESEARCH_SCENARIO: ResearchScenarioSpec = {
   key: "factor_research",
   displayName: "因子研究",
-  description: "围绕目标因子类别生成候选因子、计算因子值、评估 IC/IR、入库为可复用因子。",
+  description:
+    "围绕目标因子类别生成候选因子、计算因子值、评估 IC/IR、入库为可复用因子。横截面晋级默认要求 ≥60 标的 × ≥504 交易日（ResearchRunContract）；不足仅 research_only。",
   inputSchema: {
     universe: {
       type: "enum",
