@@ -3,11 +3,13 @@ import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
-import { defaultDataDir } from "../app-paths";
 import { getDb } from "../../db/sqlite/client";
 import { runMigrations } from "../../db/sqlite/migrate";
 import * as schema from "../../db/sqlite/schema";
+import { defaultDataDir } from "../app-paths";
+import { assessFactorDataIntegrity } from "../factor/factor-data-integrity";
 import { factorService } from "../factor/factor-service";
+import { buildMarketSnapshotRecord } from "../market/contracts/market-snapshot-service";
 import { _resetBootstrapForTests, bootstrapProviders } from "../provider/bootstrap";
 import { providerRegistry } from "../provider/registry";
 import type {
@@ -17,7 +19,6 @@ import type {
   ProviderMeta,
 } from "../provider/types";
 import { factorBacktestPromotionService } from "./factor-backtest-promotion-service";
-import { buildMarketSnapshotRecord } from "../market/contracts/market-snapshot-service";
 
 class PromotionStubBacktestProvider implements BacktestProvider {
   readonly meta: ProviderMeta = {
@@ -59,6 +60,43 @@ class PromotionStubBacktestProvider implements BacktestProvider {
 let projectId = "";
 let workflowRunId = "";
 let datasetSnapshotId = "";
+
+/** Synthetic completed source evidence isolates promotion wiring from source qualification. */
+function integrityProof(factorId: string, expression: string, snapshotId: string) {
+  return assessFactorDataIntegrity({
+    factorId,
+    expr: expression,
+    lang: "qlib_expr",
+    providerKey: "qlib_expr",
+    startDate: "2026-01-01",
+    endDate: "2026-04-30",
+    dataset: {
+      snapshotId,
+      dataRef: "synthetic-promotion-test",
+      asOf: "2026-05-01T00:00:00.000Z",
+      timeframe: "1d",
+      sourceIds: ["synthetic-verified-test-source"],
+      barsBySymbol: {
+        TEST: Array.from({ length: 120 }, (_, index) => ({
+          timestamp: new Date(Date.UTC(2026, 0, index + 1)).toISOString(),
+          open: 100 + index,
+          close: 100 + index,
+          high: 101 + index,
+          low: 99 + index,
+          volume: 100,
+          turnover: (100 + index) * 100,
+        })),
+      },
+      qualification: {
+        useClass: "strategy_validation",
+        universeHistory: "verified",
+        corporateActions: "verified",
+        pointInTime: "verified",
+        limitations: [],
+      },
+    },
+  });
+}
 
 function researchContract(expression: string) {
   return {
@@ -188,6 +226,7 @@ describe("FactorBacktestPromotionService", () => {
         version: "factor-statistical-validation-v1",
         dailyObservations: 120,
         status: "passed",
+        dataIntegrity: integrityProof(factor.id, expr, datasetSnapshotId),
       } as never,
     });
 
@@ -251,6 +290,7 @@ describe("FactorBacktestPromotionService", () => {
         version: "factor-statistical-validation-v1",
         dailyObservations: 120,
         status: "passed",
+        dataIntegrity: integrityProof(factor.id, expr, "different-frozen-snapshot"),
       } as never,
     });
     await expect(
@@ -293,6 +333,7 @@ describe("FactorBacktestPromotionService", () => {
           version: "factor-statistical-validation-v1",
           dailyObservations: 120,
           status: "passed",
+          dataIntegrity: integrityProof(factor.id, expr, datasetSnapshotId),
         } as never,
       });
     }
@@ -351,6 +392,7 @@ describe("FactorBacktestPromotionService", () => {
           version: "factor-statistical-validation-v1",
           dailyObservations: 120,
           status: "passed",
+          dataIntegrity: integrityProof(factor.id, expr, datasetSnapshotId),
         } as never,
       });
     }
@@ -372,7 +414,7 @@ describe("FactorBacktestPromotionService", () => {
       maximumVif: 5,
       minimumObservations: 60,
       rows: [],
-      highVifFactorIds: [factorIds[0]!],
+      highVifFactorIds: factorIds.slice(0, 1),
       missingFactorIds: [],
       reasons: ["factor_vif_too_high"],
     })) as typeof factorService.diagnoseExposure;

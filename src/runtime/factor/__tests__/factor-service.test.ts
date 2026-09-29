@@ -2,15 +2,54 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { defaultDataDir } from "../../app-paths";
+import { eq } from "drizzle-orm";
 import { getDb } from "../../../db/sqlite/client";
 import { runMigrations } from "../../../db/sqlite/migrate";
 import * as schema from "../../../db/sqlite/schema";
-import { _resetBootstrapForTests, bootstrapProviders } from "../../provider/bootstrap";
+import { defaultDataDir } from "../../app-paths";
 import { buildMarketSnapshotRecord } from "../../market/contracts/market-snapshot-service";
+import { _resetBootstrapForTests, bootstrapProviders } from "../../provider/bootstrap";
+import { assessFactorDataIntegrity } from "../factor-data-integrity";
 import { FactorServiceError, factorService } from "../factor-service";
 
 let projectId = "";
+
+/** Synthetic completed evaluator evidence; these tests isolate the eligibility gate. */
+function integrityProof(factorId: string, expression: string, datasetSnapshotId: string) {
+  return assessFactorDataIntegrity({
+    factorId,
+    expr: expression,
+    lang: "qlib_expr",
+    providerKey: "qlib_expr",
+    startDate: "2026-01-01",
+    endDate: "2026-03-01",
+    dataset: {
+      snapshotId: datasetSnapshotId,
+      dataRef: "synthetic-eligibility-test",
+      asOf: "2026-03-31T00:00:00.000Z",
+      timeframe: "1d",
+      sourceIds: ["synthetic-verified-test-source"],
+      barsBySymbol: {
+        TEST: Array.from({ length: 60 }, (_, index) => ({
+          timestamp: new Date(Date.UTC(2026, 0, index + 1)).toISOString(),
+          open: 100 + index,
+          close: 100 + index,
+          high: 101 + index,
+          low: 99 + index,
+          volume: 100,
+          turnover: (100 + index) * 100,
+        })),
+      },
+      qualification: {
+        useClass: "strategy_validation",
+        universeHistory: "verified",
+        corporateActions: "verified",
+        pointInTime: "verified",
+        limitations: [],
+      },
+    },
+  });
+}
 
 function researchContract(expression: string) {
   return {
@@ -255,6 +294,7 @@ describe("FactorService", () => {
         version: "factor-statistical-validation-v1",
         dailyObservations: 120,
         status: "passed",
+        dataIntegrity: integrityProof(rec.id, expr, "snapshot-admission-v1"),
       } as never,
     });
     expect(await factorService.assessStrategyEligibility([rec.id])).toEqual([
@@ -305,6 +345,7 @@ describe("FactorService", () => {
           version: "factor-statistical-validation-v1",
           dailyObservations: 120,
           status,
+          dataIntegrity: integrityProof(rec.id, expr, snapshotId),
         } as never,
       });
     }
@@ -315,6 +356,52 @@ describe("FactorService", () => {
       eligible: true,
       datasetSnapshotId: "snapshot-matching",
     });
+  });
+
+  test("statistical pass cannot promote missing or mismatched data-integrity evidence", async () => {
+    const expr = "close / Ref(close, 10) - 1";
+    const rec = await factorService.register({
+      projectId,
+      name: `integrity_admission_${randomUUID()}`,
+      category: "momentum",
+      expr,
+      lang: "qlib_expr",
+      definition: { researchContract: researchContract(expr) },
+    });
+    const db = await getDb();
+    const evaluationId = randomUUID();
+    const snapshotId = "snapshot-proof-validation";
+    await db.insert(schema.factorEvaluation).values({
+      id: evaluationId,
+      factorId: rec.id,
+      asof: "2026-07-01",
+      universe: "US",
+      datasetSnapshotId: snapshotId,
+      sampleSize: 120,
+      latencyMs: 1,
+    });
+    const valid = integrityProof(rec.id, expr, snapshotId);
+    for (const dataIntegrity of [
+      undefined,
+      { ...valid, status: "research_only" },
+      { ...valid, datasetSnapshotId: "another-snapshot" },
+      { ...valid, factorId: "another-factor" },
+      { ...valid, expressionHash: "changed-expression" },
+    ]) {
+      await db
+        .update(schema.factorEvaluation)
+        .set({
+          statisticalReportJson: {
+            version: "factor-statistical-validation-v1",
+            status: "passed",
+            dailyObservations: 120,
+            ...(dataIntegrity ? { dataIntegrity } : {}),
+          } as never,
+        })
+        .where(eq(schema.factorEvaluation.id, evaluationId));
+      const [assessment] = await factorService.assessStrategyEligibility([rec.id]);
+      expect(assessment?.eligible).toBe(false);
+    }
   });
 
   test("rejects a research contract whose formula differs from the executable expression", async () => {
@@ -356,6 +443,7 @@ describe("FactorService", () => {
         version: "factor-statistical-validation-v1",
         dailyObservations: 120,
         status: "passed",
+        dataIntegrity: integrityProof(rec.id, expr, "snapshot-activation-v1"),
       } as never,
     });
     expect((await factorService.activate(rec.id)).status).toBe("active");

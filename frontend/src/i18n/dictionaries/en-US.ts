@@ -173,6 +173,7 @@ const pack: LocalePack = {
         config: "Settings",
       },
       quant: {
+        research: "Research Management",
         factor: "Factors",
         discovery: "Discovery",
         composer: "Composer",

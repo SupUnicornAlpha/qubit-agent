@@ -445,6 +445,8 @@ export interface BacktestDataset {
 
 export interface BacktestRequest {
   strategyVersionId?: string;
+  /** Server-assigned experiment linkage; never accepted from a submitted configuration. */
+  researchAttemptId?: string;
   /** 非空且已校验存在的不可变行情快照。 */
   dataset: BacktestDataset;
   signals: BacktestSignalSpec;

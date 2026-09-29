@@ -5,6 +5,7 @@
  */
 
 import { Hono } from "hono";
+import { z } from "zod";
 import {
   type FactorCategory,
   type FactorLang,
@@ -15,6 +16,36 @@ import {
 import type { FactorComputeRow } from "../runtime/provider/types";
 
 export const factorRouter = new Hono();
+
+const integrityInput = z
+  .object({
+    datasetSnapshotId: z
+      .string()
+      .trim()
+      .regex(/^mkt_snapshot_[a-f0-9]{24}$/),
+    symbols: z.array(z.string().trim().min(1).max(80)).min(1).max(500),
+    startDate: z.string().date(),
+    endDate: z.string().date(),
+  })
+  .strict()
+  .refine((value) => value.startDate <= value.endDate, "startDate must precede endDate");
+
+factorRouter.post("/:id/data-integrity", async (c) => {
+  try {
+    const input = integrityInput.parse(await c.req.json());
+    const data = await factorService.checkDataIntegrity({ factorId: c.req.param("id"), ...input });
+    return c.json({ ok: true, data });
+  } catch (error) {
+    return c.json(
+      {
+        ok: false,
+        code: "data_integrity_check_failed",
+        error: error instanceof Error ? error.message : String(error),
+      },
+      400
+    );
+  }
+});
 
 function asError(e: unknown) {
   if (e instanceof FactorServiceError) {

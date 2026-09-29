@@ -11,6 +11,58 @@ import { bindBacktestDataset } from "./dataset-snapshot-binding";
 afterEach(() => clearMarketSnapshotCatalogForTests());
 
 describe("dataset snapshot calendar binding", () => {
+  test("binding checks exact timestamps for every requested symbol", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "qb-boundary-bind-"));
+    const priorDataDir = process.env.QUBIT_DATA_DIR;
+    process.env.QUBIT_DATA_DIR = dataDir;
+    try {
+      const root = join(dataDir, "market-snapshots");
+      await mkdir(root, { recursive: true });
+      for (const [timestamp, valid] of [
+        ["2026-01-02T20:00:00.000+08:00", true],
+        ["2026-01-02T20:00:00.001+08:00", false],
+        ["2026-01-02T12:00:00", false],
+        ["2026-02-30T12:00:00Z", false],
+      ] as const) {
+        clearMarketSnapshotCatalogForTests();
+        const bar = { open: 100, high: 101, low: 99, close: 100, volume: 100, turnover: 10_000 };
+        const record = buildMarketSnapshotRecord({
+          asOf: "2026-01-02T12:00:00.000Z",
+          purpose: "backtest",
+          instruments: [
+            { symbol: "AAPL", venue: "US", assetClass: "equity" },
+            { symbol: "MSFT", venue: "US", assetClass: "equity" },
+          ],
+          window: { start: "2026-01-02T00:00:00Z", end: "2026-01-02T12:00:00Z" },
+          sources: [{ provider: "fixture", feed: "history", upstreamFamily: "fixture" }],
+          barsByInstrument: {
+            "US:AAPL": [{ ...bar, timestamp: "2026-01-02T12:00:00Z" }],
+            "US:MSFT": [{ ...bar, timestamp }],
+          },
+          timeframe: "1m",
+          limit: 1,
+        });
+        await writeFile(join(root, `${record.snapshot.snapshotId}.json`), JSON.stringify(record));
+        const bound = bindBacktestDataset({
+          snapshotId: record.snapshot.snapshotId,
+          symbols: ["AAPL", "MSFT"],
+          startDate: "2026-01-02",
+          endDate: "2026-01-02",
+          timeframe: "1m",
+        });
+        if (valid) {
+          expect((await bound).qualification.useClass).toBe("research_only");
+        } else {
+          await expect(bound).rejects.toThrow("dataset_snapshot_invalid");
+        }
+      }
+    } finally {
+      if (priorDataDir === undefined) process.env.QUBIT_DATA_DIR = undefined;
+      else process.env.QUBIT_DATA_DIR = priorDataDir;
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
   test("projects venue sessions onto the requested symbol without guessing", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "qb-calendar-bind-"));
     const priorDataDir = process.env.QUBIT_DATA_DIR;
@@ -91,6 +143,7 @@ describe("dataset snapshot calendar binding", () => {
           "universe_history_not_verified",
           "corporate_actions_not_versioned",
           "validation_feed_not_verified",
+          "point_in_time_not_verified",
         ])
       );
     } finally {
@@ -100,7 +153,7 @@ describe("dataset snapshot calendar binding", () => {
     }
   });
 
-  test("admits validation-grade history only when frozen membership and corporate-action ledgers cover every symbol", async () => {
+  test("keeps versioned membership and corporate actions without claiming unproven price PIT", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "qb-history-bind-"));
     const priorDataDir = process.env.QUBIT_DATA_DIR;
     process.env.QUBIT_DATA_DIR = dataDir;
@@ -193,15 +246,15 @@ describe("dataset snapshot calendar binding", () => {
       });
 
       expect(dataset.qualification).toMatchObject({
-        useClass: "strategy_validation",
+        useClass: "research_only",
         universeHistory: "verified",
         corporateActions: "verified",
-        pointInTime: "verified",
+        pointInTime: "not_verified",
         universeHistoryRef: { universeId: "sp500", version: "sp500-2026.01" },
         corporateActionLedgerRef: { version: "corp-actions-2026.01" },
         fundamentalLedgerRef: { version: "fundamentals-2026.01" },
       });
-      expect(dataset.qualification.limitations).toEqual([]);
+      expect(dataset.qualification.limitations).toEqual(["point_in_time_not_verified"]);
       expect(dataset.derivativePricing).toEqual({
         version: "us-options-iv-2026.01",
         source: "fixture_options_vendor",

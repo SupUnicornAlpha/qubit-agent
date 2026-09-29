@@ -19,22 +19,25 @@ import { getDb } from "../../db/sqlite/client";
 import {
   factorDefinition as factorDefTable,
   factorEvaluation as factorEvalTable,
+  researchAttempt as researchAttemptTable,
 } from "../../db/sqlite/schema";
 import { generateGbmTicks } from "../../util/synthesize-gbm";
-import { queryBarsRange } from "../market/klines-query";
 import {
-  bindBacktestDataset,
   DatasetSnapshotBindingError,
+  bindBacktestDataset,
 } from "../backtest/dataset-snapshot-binding";
+import { getMarketSnapshotById } from "../market/contracts/market-snapshot-service";
+import { queryBarsRange } from "../market/klines-query";
 import { type PriceSeries, evalQlibExpr, parseQlibExpr } from "../provider";
-import { providerResolver } from "../provider/resolver";
 import {
+  ModelFactorContractError,
   buildModelFactorExpr,
   extractModelFactorBinding,
   parseModelFactorBinding,
-  ModelFactorContractError,
 } from "../provider/model-factor-contract";
+import { providerResolver } from "../provider/resolver";
 import type {
+  BacktestDataset,
   FactorComputeProvider,
   FactorComputeResult,
   FactorComputeRow,
@@ -43,33 +46,43 @@ import type {
   FactorIndependentValidationReport,
   ProviderScope,
 } from "../provider/types";
-import { factorValueStore } from "./factor-value-store";
-import {
-  diagnoseFactorCorrelation,
-  type FactorCorrelationDiagnostics,
-} from "./factor-correlation-diagnostics";
 import { collectSampleStatsFromRows } from "../research-dataset";
 import {
-  assessResearchSampleGate,
-  assertCrossSectionIcComputeAllowed,
-  resolveResearchRunContract,
   type ResearchRunIntent,
   type ResearchSampleGateResult,
+  assertCrossSectionIcComputeAllowed,
+  assessResearchSampleGate,
+  resolveResearchRunContract,
 } from "../research-gate";
 import {
-  diagnoseFactorExposure,
-  type FactorExposureDiagnostics,
-} from "./factor-exposure-diagnostics";
+  currentResearchExecution,
+  normalizeResearchRequest,
+  withResearchExecution,
+} from "../research-program/execution";
+import { researchProgramService } from "../research-program/service";
 import {
-  regressFactorRiskExposures,
-  type FactorRiskExposureRegression,
-} from "./factor-risk-exposure-regression";
-import { getMarketSnapshotById } from "../market/contracts/market-snapshot-service";
+  type FactorCorrelationDiagnostics,
+  diagnoseFactorCorrelation,
+} from "./factor-correlation-diagnostics";
+import {
+  type FactorDataIntegrityReport,
+  assessFactorDataIntegrity,
+  matchesFactorDataIntegrity,
+} from "./factor-data-integrity";
+import {
+  type FactorExposureDiagnostics,
+  diagnoseFactorExposure,
+} from "./factor-exposure-diagnostics";
 import {
   type FactorResearchContract,
   parseFactorResearchContract,
   researchContractMatchesExpression,
 } from "./factor-research-contract";
+import {
+  type FactorRiskExposureRegression,
+  regressFactorRiskExposures,
+} from "./factor-risk-exposure-regression";
+import { factorValueStore } from "./factor-value-store";
 
 // ─── 类型 ───────────────────────────────────────────────────────────────────
 
@@ -183,6 +196,7 @@ export interface FactorStrategyEligibility {
 
 export interface FactorComputeInput {
   factorId: string;
+  idempotencyKey?: string;
   startDate: string;
   endDate: string;
   symbols?: string[];
@@ -217,10 +231,15 @@ export interface FactorEvaluateInput {
   scope?: ProviderScope;
   /** Immutable dataset used for both values and labels; absent means unversioned/manual. */
   datasetSnapshotId?: string;
+  /** Server-generated evidence; deliberately absent from the HTTP evaluate input. */
+  dataIntegrity?: FactorDataIntegrityReport;
+  researchGate?: ResearchSampleGateResult;
+  horizonDays?: number;
 }
 
 export interface FactorAutoEvaluateInput {
   factorId: string;
+  idempotencyKey?: string;
   startDate: string;
   endDate: string;
   symbols?: string[];
@@ -246,6 +265,16 @@ export interface FactorAutoEvaluateInput {
   /** Override intent when scenario is absent or mismatched. */
   researchIntent?: ResearchRunIntent;
 }
+
+export type FactorAutoEvaluateResult = FactorEvalResult & {
+  evaluationId: string;
+  meta: {
+    horizonDays: number;
+    decayHorizons: number[];
+    datasetSnapshotId?: string;
+    researchGate: ResearchSampleGateResult;
+  };
+};
 
 const DEFAULT_UNIVERSE_SYMBOLS: Record<string, string[]> = {
   "CN-A": ["600519", "000858", "300750", "601318", "600036", "000333", "601899", "601012"],
@@ -289,6 +318,35 @@ export class FactorServiceError extends Error {
 // ─── Service ────────────────────────────────────────────────────────────────
 
 export class FactorService {
+  /** Inspect the exact frozen input without writing values or evaluation metrics. */
+  async checkDataIntegrity(request: {
+    factorId: string;
+    datasetSnapshotId: string;
+    symbols: string[];
+    startDate: string;
+    endDate: string;
+  }): Promise<FactorDataIntegrityReport> {
+    const factor = await this.get(request.factorId);
+    const input = await this.controlledReadRequest(factor, request);
+    const provider = await this.resolveCompute(factor.providerKey, undefined, undefined);
+    const dataset = await bindBacktestDataset({
+      snapshotId: input.datasetSnapshotId,
+      symbols: input.symbols,
+      startDate: input.startDate,
+      endDate: input.endDate,
+      timeframe: "1d",
+    });
+    return assessFactorDataIntegrity({
+      factorId: factor.id,
+      expr: factor.expr,
+      lang: factor.lang,
+      providerKey: provider.meta.key,
+      dataset,
+      startDate: input.startDate,
+      endDate: input.endDate,
+    });
+  }
+
   /** 注册因子（落 SQLite + 调 Provider.validateExpr） */
   async register(input: FactorRegisterInput): Promise<FactorRecord> {
     if (!input.name?.trim()) {
@@ -309,8 +367,8 @@ export class FactorService {
           );
         }
         const binding = parseModelFactorBinding(rawBinding);
-        definition = { ...definition, modelFactor: binding };
-        delete definition.model_factor;
+        const { model_factor: _legacyBinding, ...canonicalDefinition } = definition;
+        definition = { ...canonicalDefinition, modelFactor: binding };
         if (!expr) expr = buildModelFactorExpr(binding);
       } catch (e) {
         const msg =
@@ -324,6 +382,13 @@ export class FactorService {
     }
 
     const providerKey = input.providerKey ?? this.defaultProviderKeyForLang(lang);
+    const controlled = Boolean((await researchProgramService.get(input.projectId)).program);
+    if (controlled && (lang !== "qlib_expr" || providerKey !== "qlib_expr")) {
+      throw new FactorServiceError(
+        "validation_failed",
+        "controlled_research_requires_builtin_qlib_expr"
+      );
+    }
 
     const contractRaw = input.researchContract ?? definition.researchContract;
     if (contractRaw !== undefined) {
@@ -377,19 +442,23 @@ export class FactorService {
     // 让 Provider 做 syntax 校验（best effort，不打断 draft 注册）
     let providerHint: { ok: boolean; error?: string } = { ok: true };
     try {
-      const provider = await providerResolver.resolve<"factor_compute">(
-        "factor_compute",
-        {},
-        { providerKey }
-      );
-      providerHint = await provider.validateExpr(expr, lang);
+      if (controlled) {
+        parseQlibExpr(expr);
+      } else {
+        const provider = await providerResolver.resolve<"factor_compute">(
+          "factor_compute",
+          {},
+          { providerKey }
+        );
+        providerHint = await provider.validateExpr(expr, lang);
+      }
     } catch {
       // Provider 不可达不阻塞注册：保留 draft 让 UI 提示
     }
 
     // P0-2: 强制 dry-run 闸门
     let dryRunMeta: Record<string, unknown> | undefined;
-    if (input.dryRun) {
+    if (input.dryRun && !controlled) {
       const opts =
         typeof input.dryRun === "object"
           ? input.dryRun
@@ -413,7 +482,7 @@ export class FactorService {
     const id = randomUUID();
     // 通过 dry-run 后默认进入 draft 池（让上游评估器决定何时 promote 到 active）；
     // 用户显式传 status 时尊重用户输入
-    const status: FactorStatus = input.status ?? "draft";
+    const status: FactorStatus = controlled ? "draft" : (input.status ?? "draft");
     const workflowRunId = input.workflowRunId?.trim() || null;
     const createdBy = input.createdBy ?? "user";
     const agentInstanceId = input.agentInstanceId?.trim?.() || input.agentInstanceId || null;
@@ -714,9 +783,19 @@ export class FactorService {
           const report = evaluation.statisticalReportJson as {
             status?: unknown;
             dailyObservations?: unknown;
+            dataIntegrity?: unknown;
             researchGate?: { okForPromotion?: unknown; missing?: unknown };
           } | null;
           if (report?.status !== "passed") reasons.push("factor_statistical_validation_not_passed");
+          if (
+            !matchesFactorDataIntegrity(report?.dataIntegrity, {
+              factorId,
+              expr: factor.expr,
+              lang: factor.lang,
+              datasetSnapshotId: evaluation.datasetSnapshotId,
+            })
+          )
+            reasons.push("factor_data_integrity_missing_or_not_passed");
           if (typeof report?.dailyObservations !== "number" || report.dailyObservations < 60) {
             reasons.push("factor_daily_cross_section_too_small");
           }
@@ -747,10 +826,35 @@ export class FactorService {
    * 调 Provider 计算因子值；默认写入 DuckDB `factor_value`，下游可 loadValues 取回。
    */
   async compute(input: FactorComputeInput): Promise<FactorComputeResult> {
+    const factor = await this.get(input.factorId);
+    return withResearchExecution(
+      {
+        projectId: factor.projectId,
+        kind: "factor_compute",
+        candidateId: factor.id,
+        candidateJson: this.researchCandidate(factor),
+        requestJson: { ...input },
+        ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+      },
+      (request) => this.computeInternal(request as unknown as FactorComputeInput)
+    );
+  }
+
+  private async computeInternal(input: FactorComputeInput): Promise<FactorComputeResult> {
     const f = await this.get(input.factorId);
+    this.assertControlledProviderInput(input, "qlib_expr");
     const provider = await this.resolveCompute(f.providerKey, input.providerKey, input.scope);
+    if (
+      currentResearchExecution() &&
+      (f.lang !== "qlib_expr" || provider.meta.key !== "qlib_expr" || !provider.meta.isBuiltin)
+    ) {
+      throw new FactorServiceError(
+        "validation_failed",
+        "controlled_research_requires_builtin_qlib_expr"
+      );
+    }
     const symbols = normalizeFactorComputeSymbols(input.symbols, f.universe);
-    let dataset;
+    let dataset: BacktestDataset | undefined;
     if (input.datasetSnapshotId) {
       const snapshotOk =
         (provider.meta.key === "qlib_expr" && f.lang === "qlib_expr") ||
@@ -786,6 +890,23 @@ export class FactorService {
       }
     }
 
+    const dataIntegrity = dataset
+      ? assessFactorDataIntegrity({
+          factorId: f.id,
+          expr: f.expr,
+          lang: f.lang,
+          providerKey: provider.meta.key,
+          dataset,
+          startDate: input.startDate,
+          endDate: input.endDate,
+        })
+      : undefined;
+    if (dataIntegrity?.status === "failed") {
+      throw new FactorServiceError("validation_failed", "factor_data_integrity_failed", {
+        dataIntegrity,
+      });
+    }
+
     let result: FactorComputeResult;
     try {
       result = await provider.compute({
@@ -807,6 +928,17 @@ export class FactorService {
       );
     }
 
+    if (dataIntegrity) result.meta.dataIntegrity = dataIntegrity;
+    if (
+      currentResearchExecution() &&
+      !result.rows.some((row) => typeof row.value === "number" && Number.isFinite(row.value))
+    ) {
+      throw new FactorServiceError(
+        "validation_failed",
+        "controlled_research_no_finite_factor_values"
+      );
+    }
+    await this.assertResearchLease();
     if ((input.persist ?? true) && result.rows.length > 0) {
       try {
         await factorValueStore.upsert({
@@ -827,7 +959,8 @@ export class FactorService {
   }
 
   /** 直接从 DuckDB factor_value 表读取（不重新计算） */
-  async loadValues(q: FactorValueQueryInput): Promise<FactorComputeRow[]> {
+  async loadValues(request: FactorValueQueryInput): Promise<FactorComputeRow[]> {
+    const q = await this.controlledReadRequest(await this.get(request.factorId), request);
     const rows = await factorValueStore.query({
       factorId: q.factorId,
       ...(q.datasetSnapshotId ? { datasetSnapshotId: q.datasetSnapshotId } : {}),
@@ -841,6 +974,24 @@ export class FactorService {
 
   /** 因子值汇总统计（行数/symbol 数/区间） */
   async valuesStats(factorId: string, datasetSnapshotId?: string) {
+    const factor = await this.get(factorId);
+    const request = await this.controlledReadRequest(factor, {
+      factorId,
+      ...(datasetSnapshotId ? { datasetSnapshotId } : {}),
+    });
+    if ((await researchProgramService.get(factor.projectId)).program) {
+      const rows = await this.loadValues(request);
+      return {
+        rowCount: rows.length,
+        symbolCount: new Set(rows.map((row) => row.symbol)).size,
+        minDate: rows.map((row) => row.date).sort()[0] ?? null,
+        maxDate:
+          rows
+            .map((row) => row.date)
+            .sort()
+            .at(-1) ?? null,
+      };
+    }
     return factorValueStore.stats(factorId, datasetSnapshotId);
   }
 
@@ -940,8 +1091,34 @@ export class FactorService {
 
   /** 调 Provider 评估因子；汇总指标写入 factor_evaluation 留痕 */
   async evaluate(input: FactorEvaluateInput): Promise<FactorEvalResult & { evaluationId: string }> {
+    const factor = await this.get(input.factorId);
+    if (
+      currentResearchExecution() ||
+      (await researchProgramService.get(factor.projectId)).program
+    ) {
+      throw new FactorServiceError(
+        "validation_failed",
+        "controlled_research_requires_server_generated_evaluation"
+      );
+    }
+    return this.evaluateInternal(input);
+  }
+
+  private async evaluateInternal(
+    input: FactorEvaluateInput
+  ): Promise<FactorEvalResult & { evaluationId: string }> {
     const f = await this.get(input.factorId);
+    this.assertControlledProviderInput(input, "builtin");
     const provider = await this.resolveEval(input.providerKey, input.scope);
+    if (
+      currentResearchExecution() &&
+      (provider.meta.key !== "builtin" || !provider.meta.isBuiltin)
+    ) {
+      throw new FactorServiceError(
+        "validation_failed",
+        "controlled_research_requires_builtin_evaluator"
+      );
+    }
 
     let result: FactorEvalResult;
     try {
@@ -954,7 +1131,7 @@ export class FactorService {
           ? { futureReturnsByHorizon: input.futureReturnsByHorizon }
           : {}),
         ...(typeof input.groupCount === "number" ? { groupCount: input.groupCount } : {}),
-        horizonDays: f.horizon,
+        horizonDays: input.horizonDays ?? f.horizon,
       });
     } catch (e) {
       throw new FactorServiceError(
@@ -964,27 +1141,51 @@ export class FactorService {
       );
     }
 
+    // Persist the full admission state in the first insert. A later failure or
+    // concurrent activation must never observe an optimistic intermediate pass.
+    const trustedData = matchesFactorDataIntegrity(input.dataIntegrity, {
+      factorId: f.id,
+      expr: f.expr,
+      lang: f.lang,
+      datasetSnapshotId: input.datasetSnapshotId ?? null,
+    });
+    const statisticalReport = {
+      ...(result.statisticalReport ?? {}),
+      ...(input.dataIntegrity ? { dataIntegrity: input.dataIntegrity } : {}),
+      ...(input.researchGate ? { researchGate: input.researchGate } : {}),
+      ...(!trustedData || !input.researchGate?.okForPromotion
+        ? { status: "research_only" as const }
+        : {}),
+    };
     const db = await getDb();
     const evaluationId = randomUUID();
     const asof = input.asof ?? new Date().toISOString().slice(0, 10);
-    await db.insert(factorEvalTable).values({
-      id: evaluationId,
-      factorId: f.id,
-      asof,
-      universe: f.universe,
-      datasetSnapshotId: input.datasetSnapshotId ?? null,
-      providerId: null,
-      ic: result.ic,
-      rankIc: result.rankIc,
-      ir: result.ir,
-      turnover: result.turnover,
-      decayCurveJson: result.decayCurve as never,
-      groupReturnsJson: result.groupReturns as never,
-      statisticalReportJson: result.statisticalReport as never,
-      sampleSize: result.sampleSize,
-      latencyMs: result.latencyMs,
-      error: result.error ?? null,
-    });
+    db.transaction(
+      (tx) => {
+        this.assertResearchLeaseInDb(tx);
+        tx.insert(factorEvalTable)
+          .values({
+            id: evaluationId,
+            factorId: f.id,
+            asof,
+            universe: f.universe,
+            datasetSnapshotId: input.datasetSnapshotId ?? null,
+            providerId: null,
+            ic: result.ic,
+            rankIc: result.rankIc,
+            ir: result.ir,
+            turnover: result.turnover,
+            decayCurveJson: result.decayCurve as never,
+            groupReturnsJson: result.groupReturns as never,
+            statisticalReportJson: statisticalReport as never,
+            sampleSize: result.sampleSize,
+            latencyMs: result.latencyMs,
+            error: result.error ?? null,
+          })
+          .run();
+      },
+      { behavior: "immediate" }
+    );
 
     // Context Protocol P0：成功评估 → 自动写 factor_archive（带 factorId+asof）
     if (!result.error) {
@@ -1021,7 +1222,11 @@ export class FactorService {
       }
     }
 
-    return { ...result, evaluationId };
+    return {
+      ...result,
+      statisticalReport: statisticalReport as NonNullable<FactorEvalResult["statisticalReport"]>,
+      evaluationId,
+    };
   }
 
   /**
@@ -1030,21 +1235,29 @@ export class FactorService {
    * 与 evaluate 的差异：调用方只提供 factorId + 区间，service 负责拉所有数据。
    * 适合 Agent / CLI 一键评估场景。
    */
-  async autoEvaluate(input: FactorAutoEvaluateInput): Promise<
-    FactorEvalResult & {
-      evaluationId: string;
-      meta: {
-        horizonDays: number;
-        decayHorizons: number[];
-        datasetSnapshotId?: string;
-        researchGate: ResearchSampleGateResult;
-      };
-    }
-  > {
+  async autoEvaluate(input: FactorAutoEvaluateInput): Promise<FactorAutoEvaluateResult> {
+    const factor = await this.get(input.factorId);
+    return withResearchExecution(
+      {
+        projectId: factor.projectId,
+        kind: "factor_evaluate",
+        candidateId: factor.id,
+        candidateJson: this.researchCandidate(factor),
+        requestJson: { ...input },
+        ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+      },
+      (request) => this.autoEvaluateInternal(request as unknown as FactorAutoEvaluateInput)
+    );
+  }
+
+  private async autoEvaluateInternal(
+    input: FactorAutoEvaluateInput
+  ): Promise<FactorAutoEvaluateResult> {
     const f = await this.get(input.factorId);
+    this.assertControlledProviderInput(input, "builtin");
     const contract = resolveResearchRunContract({
-      scenarioKey: input.scenarioKey,
-      intent: input.researchIntent,
+      ...(input.scenarioKey ? { scenarioKey: input.scenarioKey } : {}),
+      ...(input.researchIntent ? { intent: input.researchIntent } : {}),
     });
     const horizon = input.horizonDays ?? f.horizon ?? 5;
     const decayHorizons =
@@ -1055,25 +1268,33 @@ export class FactorService {
           : [1, 3, 5, 10, 20, horizon].sort((a, b) => a - b);
 
     // 1) 快照模式必须重新在绑定数据上计算，不能复用未标数据版本的 factor_value。
-    const values = input.datasetSnapshotId
-      ? (
-          await this.compute({
-            factorId: f.id,
-            startDate: input.startDate,
-            endDate: input.endDate,
-            ...(input.symbols ? { symbols: input.symbols } : {}),
-            ...(input.providerKey ? { providerKey: input.providerKey } : {}),
-            ...(input.scope ? { scope: input.scope } : {}),
-            datasetSnapshotId: input.datasetSnapshotId,
-            persist: false,
-          })
-        ).rows
-      : await this.loadValues({
+    const snapshotComputation = input.datasetSnapshotId
+      ? await this.compute({
           factorId: f.id,
-          ...(input.symbols ? { symbols: input.symbols } : {}),
           startDate: input.startDate,
           endDate: input.endDate,
-        });
+          ...(input.symbols ? { symbols: input.symbols } : {}),
+          ...(currentResearchExecution()
+            ? { providerKey: "qlib_expr" }
+            : input.providerKey
+              ? { providerKey: input.providerKey }
+              : {}),
+          ...(input.scope ? { scope: input.scope } : {}),
+          datasetSnapshotId: input.datasetSnapshotId,
+          persist: false,
+        })
+      : null;
+    const dataIntegrity = snapshotComputation?.meta.dataIntegrity as
+      | FactorDataIntegrityReport
+      | undefined;
+    const values =
+      snapshotComputation?.rows ??
+      (await this.loadValues({
+        factorId: f.id,
+        ...(input.symbols ? { symbols: input.symbols } : {}),
+        startDate: input.startDate,
+        endDate: input.endDate,
+      }));
     if (values.length === 0) {
       throw new FactorServiceError(
         "validation_failed",
@@ -1115,7 +1336,7 @@ export class FactorService {
     const maxHorizon = Math.max(horizon, ...decayHorizons);
     const endExtended = this.shiftDate(input.endDate, maxHorizon + 5);
     if (input.datasetSnapshotId) {
-      let dataset;
+      let dataset: BacktestDataset;
       try {
         dataset = await bindBacktestDataset({
           snapshotId: input.datasetSnapshotId,
@@ -1169,7 +1390,7 @@ export class FactorService {
     const mainFutures = byHorizon[horizon] ?? [];
 
     // 4) 调 evaluate
-    let result = await this.evaluate({
+    let result = await this.evaluateInternal({
       factorId: f.id,
       values,
       futureReturns: mainFutures,
@@ -1178,6 +1399,9 @@ export class FactorService {
       ...(input.providerKey ? { providerKey: input.providerKey } : {}),
       ...(input.scope ? { scope: input.scope } : {}),
       ...(input.datasetSnapshotId ? { datasetSnapshotId: input.datasetSnapshotId } : {}),
+      ...(dataIntegrity ? { dataIntegrity } : {}),
+      researchGate,
+      horizonDays: horizon,
     });
 
     if (result.error) {
@@ -1207,6 +1431,8 @@ export class FactorService {
         ...(result.statisticalReport ?? {}),
         independentValidation,
         researchGate,
+        ...(dataIntegrity ? { dataIntegrity } : {}),
+        ...(dataIntegrity?.status !== "passed" ? { status: "research_only" } : {}),
         ...(!researchGate.okForPromotion
           ? {
               status: "research_only",
@@ -1214,20 +1440,30 @@ export class FactorService {
             }
           : {}),
       };
-      await db
-        .update(factorEvalTable)
-        .set({ statisticalReportJson: statisticalReportJson as never })
-        .where(eq(factorEvalTable.id, result.evaluationId));
+      db.transaction(
+        (tx) => {
+          this.assertResearchLeaseInDb(tx);
+          tx.update(factorEvalTable)
+            .set({ statisticalReportJson: statisticalReportJson as never })
+            .where(eq(factorEvalTable.id, result.evaluationId))
+            .run();
+        },
+        { behavior: "immediate" }
+      );
       result = {
         ...result,
         independentValidation,
-        statisticalReport: statisticalReportJson as FactorEvalResult["statisticalReport"],
+        statisticalReport: statisticalReportJson as NonNullable<
+          FactorEvalResult["statisticalReport"]
+        >,
       };
     } else {
       const db = await getDb();
       const statisticalReportJson = {
         ...(result.statisticalReport ?? {}),
         researchGate,
+        ...(dataIntegrity ? { dataIntegrity } : {}),
+        ...(dataIntegrity?.status !== "passed" ? { status: "research_only" } : {}),
         ...(researchGate.okForPromotion
           ? {}
           : {
@@ -1235,13 +1471,21 @@ export class FactorService {
               researchGateReasons: researchGate.missing,
             }),
       };
-      await db
-        .update(factorEvalTable)
-        .set({ statisticalReportJson: statisticalReportJson as never })
-        .where(eq(factorEvalTable.id, result.evaluationId));
+      db.transaction(
+        (tx) => {
+          this.assertResearchLeaseInDb(tx);
+          tx.update(factorEvalTable)
+            .set({ statisticalReportJson: statisticalReportJson as never })
+            .where(eq(factorEvalTable.id, result.evaluationId))
+            .run();
+        },
+        { behavior: "immediate" }
+      );
       result = {
         ...result,
-        statisticalReport: statisticalReportJson as FactorEvalResult["statisticalReport"],
+        statisticalReport: statisticalReportJson as NonNullable<
+          FactorEvalResult["statisticalReport"]
+        >,
       };
     }
 
@@ -1414,6 +1658,66 @@ export class FactorService {
 
   // ── private ──
 
+  private researchCandidate(factor: FactorRecord): Record<string, unknown> {
+    return {
+      expr: factor.expr,
+      lang: factor.lang,
+      providerKey: factor.providerKey,
+      universe: factor.universe,
+      horizon: factor.horizon,
+      definition: factor.definition,
+    };
+  }
+
+  private assertControlledProviderInput(
+    input: { providerKey?: string; scope?: ProviderScope },
+    expected: string
+  ): void {
+    if (
+      currentResearchExecution() &&
+      ((input.providerKey !== undefined && input.providerKey !== expected) ||
+        input.scope !== undefined)
+    ) {
+      throw new FactorServiceError(
+        "validation_failed",
+        "controlled_research_provider_override_forbidden"
+      );
+    }
+  }
+
+  private async assertResearchLease(): Promise<void> {
+    this.assertResearchLeaseInDb(await getDb());
+  }
+
+  private assertResearchLeaseInDb(db: Pick<Awaited<ReturnType<typeof getDb>>, "select">): void {
+    const context = currentResearchExecution();
+    if (!context) return;
+    const attempt = db
+      .select()
+      .from(researchAttemptTable)
+      .where(eq(researchAttemptTable.id, context.attempt.id))
+      .get();
+    if (!attempt || attempt.status !== "running" || Date.parse(attempt.deadlineAt) <= Date.now()) {
+      throw new FactorServiceError("validation_failed", "research_execution_lease_expired");
+    }
+  }
+
+  private async controlledReadRequest<T extends { factorId: string }>(
+    factor: FactorRecord,
+    request: T
+  ): Promise<T> {
+    const inherited = currentResearchExecution();
+    if (inherited && inherited.attempt.projectId !== factor.projectId)
+      throw new Error("research_execution_project_mismatch");
+    const detail = await researchProgramService.get(factor.projectId);
+    if (!detail.program) return request;
+    const protocol =
+      inherited?.protocol ??
+      detail.protocols.find((item) => item.id === detail.program?.activeProtocolId);
+    if (!protocol) throw new Error("research_protocol_missing");
+    return normalizeResearchRequest(protocol, "factor_compute", { ...request }) as T;
+  }
+
   private defaultProviderKeyForLang(lang: FactorLang): string {
     if (lang === "qlib_expr") return "qlib_expr"; // M3 内置纯 TS 实现
     if (lang === "ml_score") return "external_ml";
@@ -1452,10 +1756,18 @@ export class FactorService {
     if (horizonDays < 1) return out;
     for (const [sym, ser] of closesBySymbol) {
       for (let i = 0; i + horizonDays < ser.closes.length; i++) {
-        const a = ser.closes[i]!;
-        const b = ser.closes[i + horizonDays]!;
-        if (a > 0 && Number.isFinite(a) && Number.isFinite(b)) {
-          out.push({ symbol: sym, date: ser.dates[i]!, value: b / a - 1 });
+        const a = ser.closes[i];
+        const b = ser.closes[i + horizonDays];
+        const date = ser.dates[i];
+        if (
+          a !== undefined &&
+          b !== undefined &&
+          date &&
+          a > 0 &&
+          Number.isFinite(a) &&
+          Number.isFinite(b)
+        ) {
+          out.push({ symbol: sym, date, value: b / a - 1 });
         }
       }
     }
@@ -1580,7 +1892,7 @@ function summarizeDryRunValues(
  * 与历史行为完全一致（评估报告 P3-1 只迁移代码结构、不改 qlib 路径语义）。
  */
 function runQlibExprDryRun(expr: string, minRows: number, minVariance: number): DryRunResult {
-  let ast;
+  let ast: ReturnType<typeof parseQlibExpr>;
   try {
     ast = parseQlibExpr(expr);
   } catch (e) {

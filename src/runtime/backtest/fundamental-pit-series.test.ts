@@ -52,4 +52,76 @@ describe("point-in-time fundamental expression fields", () => {
       )
     ).toThrow(/fundamental_metric_field_collision/);
   });
+
+  test("orders revisions by actual availability across timezone offsets", () => {
+    const fields = materializeFundamentalPitFields(
+      [{ timestamp: "2026-01-02T00:30:00Z" }, { timestamp: "2026-01-02T09:30:00+08:00" }],
+      [
+        {
+          metric: "revenue",
+          fiscalPeriodEnd: "2025-12-31",
+          availableAt: "2026-01-02T01:00:00Z",
+          value: 105,
+        },
+        {
+          metric: "revenue",
+          fiscalPeriodEnd: "2025-12-31",
+          availableAt: "2026-01-02T08:00:00+08:00",
+          value: 100,
+        },
+      ]
+    );
+    expect(fields.fund_revenue).toEqual([100, 105]);
+  });
+
+  test("offsets cannot expose a filing early or at the exact availability instant", () => {
+    const fields = materializeFundamentalPitFields(
+      [
+        { timestamp: "2026-01-02T09:00:00+02:00" },
+        { timestamp: "2026-01-02T16:00:00+08:00" },
+        { timestamp: "2026-01-02T08:00:00.001Z" },
+      ],
+      [
+        {
+          metric: "revenue",
+          fiscalPeriodEnd: "2025-12-31",
+          availableAt: "2026-01-02T08:00:00Z",
+          value: 100,
+        },
+      ]
+    );
+    expect(fields.fund_revenue).toEqual([null, null, 100]);
+  });
+
+  test.each(["2026-01-02T08:00:00", "2026-02-30T08:00:00Z", "invalid"])(
+    "rejects an ambiguous or invalid filing timestamp %s",
+    (availableAt) => {
+      expect(() =>
+        materializeFundamentalPitFields(
+          [{ timestamp: "2026-03-02T00:00:00Z" }],
+          [{ metric: "revenue", fiscalPeriodEnd: "2025-12-31", availableAt, value: 100 }]
+        )
+      ).toThrow("fundamental_available_at_invalid");
+    }
+  );
+
+  test("rejects invalid or reversed bar instants instead of carrying future values backward", () => {
+    const observations = [
+      {
+        metric: "revenue",
+        fiscalPeriodEnd: "2025-12-31",
+        availableAt: "2026-01-02T08:00:00Z",
+        value: 100,
+      },
+    ];
+    expect(() =>
+      materializeFundamentalPitFields([{ timestamp: "2026-01-03T00:00:00" }], observations)
+    ).toThrow("fundamental_bar_timestamp_invalid");
+    expect(() =>
+      materializeFundamentalPitFields(
+        [{ timestamp: "2026-01-02T09:00:00Z" }, { timestamp: "2026-01-02T10:00:00+02:00" }],
+        observations
+      )
+    ).toThrow("fundamental_bar_timestamps_not_increasing");
+  });
 });

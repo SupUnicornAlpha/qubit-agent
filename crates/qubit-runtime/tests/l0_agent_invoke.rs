@@ -13,21 +13,37 @@ async fn l0_agent_invoke_tool_records_on_parent_snapshot() {
     let scripted = ScriptedModelClient::sequence(vec![
         SampleResponse {
             text: "delegating".into(),
-            tool_calls: vec![NormalizedToolCall {
-                call_id: "tc_inv".into(),
-                name: "agent.invoke".into(),
-                args: json!({
-                    "callee_spec_id": "def-research-sub",
-                    "goal": "summarize AAPL",
-                    "max_iterations": 2
-                }),
-            }],
+            tool_calls: vec![
+                NormalizedToolCall {
+                    call_id: "tc_inv".into(),
+                    name: "agent.invoke".into(),
+                    args: json!({
+                        "callee_spec_id": "def-research-sub",
+                        "goal": "summarize AAPL",
+                        "max_iterations": 2
+                    }),
+                },
+                NormalizedToolCall {
+                    call_id: "tc_parent_plan".into(),
+                    name: "update_plan".into(),
+                    args: json!({"steps": [{"title": "parent plan", "status": "pending"}]}),
+                },
+            ],
             request_hitl: false,
             hitl_title: None,
             hitl_body: None,
             ..Default::default()
         },
-        // Child turn consumes next sample(s).
+        // Child turn installs a nested session scope and writes its own plan.
+        SampleResponse {
+            text: "child plan".into(),
+            tool_calls: vec![NormalizedToolCall {
+                call_id: "tc_child_plan".into(),
+                name: "update_plan".into(),
+                args: json!({"steps": [{"title": "child plan", "status": "pending"}]}),
+            }],
+            ..Default::default()
+        },
         SampleResponse {
             text: "child research note".into(),
             tool_calls: vec![],
@@ -91,4 +107,18 @@ async fn l0_agent_invoke_tool_records_on_parent_snapshot() {
     assert_eq!(inv.request.callee_spec_id.as_str(), "def-research-sub");
     assert_eq!(inv.state, InvocationState::Completed);
     assert_ne!(inv.child_session_id, parent.session_id);
+    let parent_plan = rt
+        .store()
+        .get_plan(&parent.session_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let child_plan = rt
+        .store()
+        .get_plan(&inv.child_session_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(parent_plan.steps[0].title, "parent plan");
+    assert_eq!(child_plan.steps[0].title, "child plan");
 }

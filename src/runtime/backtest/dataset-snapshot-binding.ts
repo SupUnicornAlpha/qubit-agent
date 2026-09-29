@@ -11,6 +11,7 @@ import {
   type SnapshotBar,
   getMarketSnapshotById,
 } from "../market/contracts/market-snapshot-service";
+import { isPointInTimeDate, pointInTimeMillis } from "../market/contracts/point-in-time-clock";
 import type { BacktestDataset, BacktestDatasetBar } from "../provider/types";
 
 export class DatasetSnapshotBindingError extends Error {
@@ -63,6 +64,18 @@ export async function bindBacktestDataset(input: {
         "dataset_snapshot_coverage_missing",
         `dataset_snapshot_coverage_missing: ${symbol} is absent from ${snapshotId}`
       );
+    }
+    const asOfMs = pointInTimeMillis(record.snapshot.asOf);
+    let previousTimestamp = Number.NEGATIVE_INFINITY;
+    for (const bar of rawBars) {
+      const timestamp = pointInTimeMillis(bar.timestamp);
+      if (!Number.isFinite(timestamp) || timestamp > asOfMs || timestamp <= previousTimestamp) {
+        throw new DatasetSnapshotBindingError(
+          "dataset_snapshot_invalid",
+          `dataset_snapshot_invalid: invalid, unordered or future timestamp for ${symbol}: ${bar.timestamp}`
+        );
+      }
+      previousTimestamp = timestamp;
     }
     const bars = rawBars
       .filter((bar) => {
@@ -281,17 +294,28 @@ function hasCorporateActionCoverage(record: MarketSnapshotRecord, symbols: strin
 }
 
 function isIsoDateTime(value: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}T/.test(value) && Number.isFinite(Date.parse(value));
+  return Number.isFinite(pointInTimeMillis(value));
 }
 
 function isIsoDate(value: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(`${value}T00:00:00Z`));
+  return isPointInTimeDate(value);
 }
 
 function validateSnapshot(
   record: MarketSnapshotRecord,
   input: Pick<Parameters<typeof bindBacktestDataset>[0], "startDate" | "endDate" | "timeframe">
 ): void {
+  if (
+    !isPointInTimeDate(input.startDate) ||
+    !isPointInTimeDate(input.endDate) ||
+    input.startDate > input.endDate ||
+    !Number.isFinite(pointInTimeMillis(record.snapshot.asOf))
+  ) {
+    throw new DatasetSnapshotBindingError(
+      "dataset_snapshot_invalid",
+      "dataset_snapshot_invalid: valid date range and explicit asOf timezone required"
+    );
+  }
   if ((input.timeframe ?? "1d").toLowerCase() !== record.meta.timeframe.toLowerCase()) {
     throw new DatasetSnapshotBindingError(
       "dataset_snapshot_coverage_missing",
@@ -313,7 +337,7 @@ function validateSnapshot(
     quality &&
     (quality.structure !== "valid" ||
       quality.completeness !== "complete" ||
-      quality.pointInTime !== "point_in_time_valid")
+      quality.pointInTime === "invalid")
   ) {
     throw new DatasetSnapshotBindingError(
       "dataset_snapshot_invalid",

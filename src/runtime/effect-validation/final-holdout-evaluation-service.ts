@@ -18,6 +18,7 @@ import {
 } from "../backtest/statistical-validation-report";
 import { providerResolver } from "../provider/resolver";
 import type { BacktestProvider, BacktestRequest, BacktestResult } from "../provider/types";
+import { researchProgramService } from "../research-program/service";
 
 export type FinalHoldoutRunOptions = {
   trainEnd: string;
@@ -28,6 +29,8 @@ export type FinalHoldoutRunOptions = {
 };
 
 export type FinalHoldoutEvaluation = {
+  /** Local legacy data is readable by the operator; this is not sealed evaluation. */
+  evaluationScope: "exploratory_local";
   id: string;
   backtestRunId: string;
   contract: FinalHoldoutContract;
@@ -50,6 +53,11 @@ export class FinalHoldoutEvaluationService {
     options: FinalHoldoutRunOptions
   ): Promise<FinalHoldoutEvaluation> {
     const source = await backtestJobService.get(backtestRunId);
+    const db = await getDb();
+    const projectId = await readProjectId(db, source.strategyVersionId);
+    if (projectId && (await researchProgramService.get(projectId)).program) {
+      throw new Error("controlled_research_requires_sealed_evaluator");
+    }
     if (source.status !== "completed" || !source.result) {
       throw new Error("final_holdout_requires_completed_backtest");
     }
@@ -68,7 +76,6 @@ export class FinalHoldoutEvaluationService {
       embargoDays,
     });
 
-    const db = await getDb();
     await assertUnusedHoldoutContract(db, backtestRunId, contract);
     // The source request contains a *narrow*, training-only dataset binding.
     // Reusing it here would hand the provider no holdout bars. Bind the
@@ -125,7 +132,6 @@ export class FinalHoldoutEvaluationService {
       integrityReport.status === "passed" &&
       statisticalValidationReport.status === "passed";
     const id = randomUUID();
-    const projectId = await readProjectId(db, source.strategyVersionId);
     await db.insert(strategyEvalRun).values({
       id,
       workflowRunId: source.workflowRunId,
@@ -138,6 +144,7 @@ export class FinalHoldoutEvaluationService {
       periodStart: contract.holdoutStart,
       periodEnd: contract.holdoutEnd,
       metricsJson: {
+        evaluationScope: "exploratory_local",
         contract,
         metrics: result.metrics,
         sampleSize: result.meta.sampleSize,
@@ -156,6 +163,7 @@ export class FinalHoldoutEvaluationService {
       createdBy: "system",
     });
     return {
+      evaluationScope: "exploratory_local",
       id,
       backtestRunId: source.id,
       contract,

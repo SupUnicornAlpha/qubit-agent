@@ -6,6 +6,7 @@
 
 import { getDb } from "../../db/sqlite/client";
 import { agentDefinition } from "../../db/sqlite/schema";
+import { RESEARCH_PROGRAM_ENTRY_TOOLS } from "../harness/research-program-harness";
 import { SEED_AGENT_DEFINITIONS } from "../seed-agent-definitions-data";
 import type { AgentOutput, RuntimeAgentDefinition } from "../types";
 import { resolveExecutionKind } from "./execution-kind";
@@ -25,6 +26,14 @@ export function toPrimeAgentSpec(def: RuntimeAgentDefinition): AgentSpec {
   /** On-demand specialists share a legacy role but need distinct Core labels for invoke alias. */
   const aliasLabels =
     def.id === "def-strategy-coder" ? (["strategy_coder", "strategy-coder"] as const) : [];
+  const quantCapable =
+    def.role === "orchestrator" ||
+    def.role === "research" ||
+    def.tools.some((tool) => /^(factor|backtest|discovery)\./.test(tool));
+  // Core intersects the global inventory with spec.tools. Merely registering
+  // handlers would leave existing quant agents unable to find the new path.
+  // These entry points resolve the persisted workflow/project on every call.
+  const tools = [...new Set([...def.tools, ...(quantCapable ? RESEARCH_PROGRAM_ENTRY_TOOLS : [])])];
 
   return {
     id: def.id,
@@ -36,7 +45,7 @@ export function toPrimeAgentSpec(def: RuntimeAgentDefinition): AgentSpec {
     system_prompt: def.systemPrompt?.trim() || null,
     default_recipe_id: defaultRecipeForRole(def.role),
     tool_surface_ref: `tools://${def.id}`,
-    tools: [...def.tools],
+    tools,
     model_ref: def.llmProvider || null,
     max_iterations: def.maxIterations,
     hitl_profile_ref: null,

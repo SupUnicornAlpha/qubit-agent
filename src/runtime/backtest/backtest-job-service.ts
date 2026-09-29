@@ -14,7 +14,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import {
   backtestRun as backtestRunTable,
@@ -25,6 +25,7 @@ import {
   type StrategyEvaluationRecord,
   strategyEvaluationService,
 } from "../effect-validation/strategy-evaluation-service";
+import { assessFactorDataIntegrity } from "../factor/factor-data-integrity";
 import { factorService } from "../factor/factor-service";
 import { providerResolver } from "../provider/resolver";
 import type {
@@ -36,6 +37,13 @@ import type {
   BacktestSignalSpec,
   ProviderScope,
 } from "../provider/types";
+import {
+  executeResearchAttempt,
+  normalizeResearchRequest,
+  runWithResearchContext,
+} from "../research-program/execution";
+import { researchProgramService } from "../research-program/service";
+import type { ResearchAttempt } from "../research-program/types";
 import { strategyComposer } from "../strategy/strategy-composer";
 import { compactBacktestResult } from "../util/compact-heavy-json";
 import { DatasetSnapshotBindingError, bindBacktestDataset } from "./dataset-snapshot-binding";
@@ -44,6 +52,7 @@ import { DatasetSnapshotBindingError, bindBacktestDataset } from "./dataset-snap
 
 export interface BacktestJobSubmitInput {
   strategyVersionId: string;
+  idempotencyKey?: string;
   /** 必须引用在运行前冻结的 market snapshot；不允许回测时临时取数。 */
   datasetSnapshotId?: string;
   /** 二选一：从 composition 自动展开 signals */
@@ -101,6 +110,7 @@ export class BacktestJobError extends Error {
       | "dataset_snapshot_required"
       | "dataset_snapshot_not_found"
       | "dataset_snapshot_invalid"
+      | "dataset_snapshot_window_mismatch"
       | "dataset_snapshot_coverage_missing"
       | "provider_failed"
       | "job_not_found",
@@ -158,6 +168,74 @@ export class BacktestJobService {
   /** 创建任务（pending），不立即执行 */
   async submit(input: BacktestJobSubmitInput): Promise<BacktestJobRecord> {
     const db = await getDb();
+    const source = (
+      await db
+        .select({
+          projectId: strategyTable.projectId,
+          specification: strategyVersionTable.paramSchemaJson,
+        })
+        .from(strategyVersionTable)
+        .innerJoin(strategyTable, eq(strategyTable.id, strategyVersionTable.strategyId))
+        .where(eq(strategyVersionTable.id, input.strategyVersionId))
+        .limit(1)
+    )[0];
+    if (!source)
+      throw new BacktestJobError(
+        "strategy_version_not_found",
+        `strategy_version_not_found: ${input.strategyVersionId}`
+      );
+    const detail = await researchProgramService.get(source.projectId);
+    if (!detail.program) return this.submitInternal(input);
+    const protocol = detail.protocols.find((item) => item.id === detail.program?.activeProtocolId);
+    if (!protocol) throw new Error("research_protocol_missing");
+    const attempt = await researchProgramService.reserve({
+      projectId: source.projectId,
+      protocolId: protocol.id,
+      kind: "backtest",
+      candidateId: input.strategyVersionId,
+      candidateJson: {
+        specification: source.specification,
+        signals: input.signals ?? null,
+        compositionId: input.compositionId ?? null,
+      },
+      requestJson: { ...input },
+      idempotencyKey: input.idempotencyKey ?? randomUUID(),
+    });
+    // One deterministic job per reserved attempt, including simultaneous retries.
+    const existing = (
+      await db
+        .select()
+        .from(backtestRunTable)
+        .where(eq(backtestRunTable.id, `research_backtest_${attempt.id}`))
+        .limit(1)
+    )[0];
+    if (existing) return this.get(existing.id);
+    if (attempt.status !== "pending") throw new Error(`research_attempt_not_pending:${attempt.id}`);
+    try {
+      const request = normalizeResearchRequest(protocol, "backtest", { ...input });
+      if (
+        (input.providerKey !== undefined && input.providerKey !== "event_driven") ||
+        input.scope !== undefined
+      ) {
+        throw new Error("controlled_research_requires_builtin_event_driven");
+      }
+      return await this.submitInternal(request as unknown as BacktestJobSubmitInput, attempt);
+    } catch (error) {
+      if (await researchProgramService.claim(attempt.id)) {
+        await researchProgramService.finish(attempt.id, {
+          status: "failed",
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      throw error;
+    }
+  }
+
+  private async submitInternal(
+    input: BacktestJobSubmitInput,
+    attempt?: ResearchAttempt
+  ): Promise<BacktestJobRecord> {
+    const db = await getDb();
 
     // 1) 校验 strategy_version 存在
     const sv = await db
@@ -174,6 +252,29 @@ export class BacktestJobService {
 
     // 2) 解析 signals
     const signals = await this.resolveSignals(input);
+    if (attempt) {
+      const valid =
+        signals.kind === "factor_score"
+          ? signals.lang === "qlib_expr"
+          : signals.kind === "factor_composite" &&
+            signals.factors.every((factor) => factor.lang === "qlib_expr");
+      if (!valid) throw new Error("controlled_research_requires_builtin_factor_signals");
+      if (input.compositionId) {
+        const composition = await strategyComposer.get(input.compositionId);
+        if (composition.strategyVersionId !== input.strategyVersionId)
+          throw new Error("research_composition_strategy_mismatch");
+      }
+      const ids =
+        signals.kind === "factor_score"
+          ? [signals.factorId].filter((id): id is string => Boolean(id))
+          : signals.kind === "factor_composite"
+            ? signals.factors.map((factor) => factor.factorId)
+            : [];
+      for (const id of ids) {
+        if ((await factorService.get(id)).projectId !== attempt.projectId)
+          throw new Error("research_factor_project_mismatch");
+      }
+    }
 
     // 3) 在提交时绑定不可变快照。Provider 只能消费此数据，不能运行时重新取行情。
     const timeframe = input.timeframe?.trim() || "1d";
@@ -194,9 +295,38 @@ export class BacktestJobService {
       throw error;
     }
 
+    if (attempt) {
+      // The backtest engine evaluates its frozen inline expressions directly.
+      // Inspect those actual expressions, including composite members, before
+      // inserting a job; a registered factor ID is not evidence for its payload.
+      const factors =
+        signals.kind === "factor_score"
+          ? [signals]
+          : signals.kind === "factor_composite"
+            ? signals.factors
+            : [];
+      for (const [index, factor] of factors.entries()) {
+        const integrity = assessFactorDataIntegrity({
+          factorId: factor.factorId ?? `${attempt.candidateId}:signal:${index}`,
+          expr: factor.expr,
+          lang: factor.lang,
+          providerKey: "qlib_expr",
+          dataset,
+          startDate: input.startDate,
+          endDate: input.endDate,
+        });
+        if (integrity.status === "failed")
+          throw new BacktestJobError(
+            "validation_failed",
+            `research_backtest_signal_data_integrity_failed:${index}`
+          );
+      }
+    }
+
     // 4) 构造 BacktestRequest
     const request: BacktestRequest = {
       strategyVersionId: input.strategyVersionId,
+      ...(attempt ? { researchAttemptId: attempt.id } : {}),
       dataset,
       signals,
       universe: input.universe ?? "CN-A",
@@ -214,22 +344,25 @@ export class BacktestJobService {
     };
 
     const providerKey = input.providerKey ?? "event_driven";
-    const id = randomUUID();
-    await db.insert(backtestRunTable).values({
-      id,
-      strategyVersionId: input.strategyVersionId,
-      agentInstanceId: input.agentInstanceId ?? null,
-      connectorInstanceId: "",
-      datasetSnapshotId: dataset.snapshotId,
-      configJson: request as never,
-      performanceJson: null,
-      status: "pending",
-      providerId: null,
-      engineKey: providerKey,
-      createdBy: input.createdBy ?? "user",
-      workflowRunId: input.workflowRunId ?? null,
-      compositionId: input.compositionId ?? null,
-    });
+    const id = attempt ? `research_backtest_${attempt.id}` : randomUUID();
+    await db
+      .insert(backtestRunTable)
+      .values({
+        id,
+        strategyVersionId: input.strategyVersionId,
+        agentInstanceId: input.agentInstanceId ?? null,
+        connectorInstanceId: "",
+        datasetSnapshotId: dataset.snapshotId,
+        configJson: request as never,
+        performanceJson: null,
+        status: "pending",
+        providerId: null,
+        engineKey: providerKey,
+        createdBy: input.createdBy ?? "user",
+        workflowRunId: input.workflowRunId ?? null,
+        compositionId: input.compositionId ?? null,
+      })
+      .onConflictDoNothing();
 
     return this.get(id);
   }
@@ -239,6 +372,52 @@ export class BacktestJobService {
    * 这里保留 await 形式，便于测试与小数据规模直接同步使用。
    */
   async run(jobId: string): Promise<BacktestJobRecord> {
+    const job = await this.get(jobId);
+    if (job.config.researchAttemptId) {
+      const attempt = await researchProgramService.getAttempt(job.config.researchAttemptId);
+      if (attempt.kind !== "backtest" || attempt.candidateId !== job.strategyVersionId)
+        throw new Error("research_backtest_attempt_mismatch");
+      const protocol = await researchProgramService.getProtocol(attempt.protocolId);
+      // Claim before execution. A retry cannot rerun an already observed experiment.
+      try {
+        return await executeResearchAttempt(attempt, () =>
+          runWithResearchContext(attempt, protocol, () => this.runInternal(jobId))
+        );
+      } catch (error) {
+        const db = await getDb();
+        await db
+          .update(backtestRunTable)
+          .set({
+            status: "failed",
+            endedAt: new Date().toISOString(),
+            performanceJson: {
+              error: error instanceof Error ? error.message : String(error),
+            } as never,
+          })
+          .where(
+            and(
+              eq(backtestRunTable.id, jobId),
+              inArray(backtestRunTable.status, ["pending", "running"])
+            )
+          );
+        throw error;
+      }
+    }
+    const db = await getDb();
+    const source = (
+      await db
+        .select({ projectId: strategyTable.projectId })
+        .from(strategyVersionTable)
+        .innerJoin(strategyTable, eq(strategyTable.id, strategyVersionTable.strategyId))
+        .where(eq(strategyVersionTable.id, job.strategyVersionId))
+        .limit(1)
+    )[0];
+    if (source && (await researchProgramService.get(source.projectId)).program)
+      throw new Error("research_backtest_requires_registered_attempt");
+    return this.runInternal(jobId);
+  }
+
+  private async runInternal(jobId: string): Promise<BacktestJobRecord> {
     const job = await this.get(jobId);
     if (job.status !== "pending") {
       // 重跑不阻塞：把状态置回 running
@@ -258,10 +437,21 @@ export class BacktestJobService {
         }
       );
       const bp = provider as BacktestProvider;
+      if (
+        job.config.researchAttemptId &&
+        (provider.meta.key !== "event_driven" || !provider.meta.isBuiltin)
+      ) {
+        throw new Error("controlled_research_requires_builtin_event_driven");
+      }
       if (typeof bp.run !== "function") {
         throw new BacktestJobError("provider_failed", `provider_${job.engineKey}_lacks_run_method`);
       }
       const result = await bp.run(job.config);
+      if (job.config.researchAttemptId) {
+        const attempt = await researchProgramService.getAttempt(job.config.researchAttemptId);
+        if (attempt.status !== "running" || Date.parse(attempt.deadlineAt) <= Date.now())
+          throw new Error("research_execution_lease_expired");
+      }
 
       await db
         .update(backtestRunTable)

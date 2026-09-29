@@ -116,7 +116,7 @@ export const DataQualityCompletenessSchema = z.enum([
 ]);
 export const DataQualityConsistencySchema = z.enum(["verified", "divergent", "insufficient_peers"]);
 export const DataQualityStructureSchema = z.enum(["valid", "malformed", "market_closed"]);
-export const DataQualityPitSchema = z.enum(["point_in_time_valid", "invalid"]);
+export const DataQualityPitSchema = z.enum(["point_in_time_valid", "unknown", "invalid"]);
 
 /** Explicit daily session state from a versioned exchange calendar. */
 export const MarketCalendarSessionStateSchema = z.enum(["open", "closed"]);

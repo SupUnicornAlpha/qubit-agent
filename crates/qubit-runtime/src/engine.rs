@@ -31,7 +31,7 @@ use crate::stall::{
 };
 use crate::store::{initial_turn, new_turn_id, SharedStore};
 use crate::tool_surface::resolve_tool_surface;
-use crate::tools::{L0ToolHost, ToolHost};
+use crate::tools::{with_tool_turn_context, L0ToolHost, ToolHost};
 use serde_json::json;
 
 const TOOL_LOOP_HARNESS: &str = r#"
@@ -372,6 +372,24 @@ impl TurnEngine {
         cancel: CancelToken,
         opts: RunTurnOpts,
     ) -> Result<(TurnId, TurnOutcome), RuntimeError> {
+        // Identity comes from the stored session, never mutable shared host state.
+        let session = self.store.get_session(session_id).await?;
+        with_tool_turn_context(
+            session.view.workspace_id.as_str().to_string(),
+            session_id.clone(),
+            self.run_turn_scoped(session_id, turn_id, input, cancel, opts),
+        )
+        .await
+    }
+
+    async fn run_turn_scoped(
+        &self,
+        session_id: &SessionId,
+        turn_id: TurnId,
+        input: UserInput,
+        cancel: CancelToken,
+        opts: RunTurnOpts,
+    ) -> Result<(TurnId, TurnOutcome), RuntimeError> {
         let session = self.store.get_session(session_id).await?;
         let mut hitl_policy = HitlPolicy::from_client_meta(input.client_meta.as_ref());
         let spec = self.store.get_spec(&session.view.agent_spec_id).await?;
@@ -381,9 +399,6 @@ impl TurnEngine {
             .set_active_turn(session_id, Some(turn.clone()))
             .await?;
 
-        if let Some(ref l0) = self.l0 {
-            l0.bind_session(session_id.clone()).await;
-        }
         self.tools
             .bind_turn_context(session.view.workspace_id.as_str(), session_id)
             .await;

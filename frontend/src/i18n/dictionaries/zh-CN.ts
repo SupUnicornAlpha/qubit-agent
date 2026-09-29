@@ -173,6 +173,7 @@ const pack: LocalePack = {
         config: "配置中心",
       },
       quant: {
+        research: "研究管理",
         factor: "因子工坊",
         discovery: "挖掘工坊",
         composer: "组合工坊",

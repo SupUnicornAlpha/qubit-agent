@@ -34,7 +34,9 @@
     "lint": "biome lint src",
     "format": "biome format --write src",
     "check": "biome check src",
-    "test": "bun test"
+    "test": "bun test",
+    "research:mcp": "bun run scripts/research-mcp.ts",
+    "research:evaluator": "bun run scripts/serve-research-evaluator.ts"
   },
   "dependencies": {
     "@duckdb/node-api": "^1.5.2-r.1",

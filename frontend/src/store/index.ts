@@ -57,7 +57,7 @@ export function ideEditorTabId(workspaceId: string, path: string): string {
 export type ExplorerSection = "pages" | "sessions" | "workspace" | "assets";
 
 /** 量化工作台 tab */
-export type QuantTab = "factor" | "discovery" | "composer" | "backtest" | "evolution" | "script";
+export type QuantTab = "research" | "factor" | "discovery" | "composer" | "backtest" | "evolution" | "script";
 
 /** 从研究工作流进入量化工坊时保留的项目上下文。 */
 export interface QuantContext {

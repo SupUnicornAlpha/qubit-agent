@@ -6,6 +6,7 @@ import {
   getDataDir,
   writePackSelfEditMarkdown,
 } from "../agent/agent-pack-service";
+import { enforceResearchToolAccess } from "../harness/research-program-harness";
 import { dispatchTeamAgentTask } from "../orchestration/team-dispatch-adapter";
 import {
   isTopologyTeamTool,
@@ -21,6 +22,7 @@ import { MATH_REASONING_HANDLER } from "./math-reasoning-handler";
 import { MEMORY_HANDLERS } from "./memory-handlers";
 import { PRIME_MEMORY_HANDLERS } from "./prime-memory-handlers";
 import { REPORTING_HANDLERS } from "./reporting-handlers";
+import { RESEARCH_PROGRAM_HANDLERS } from "./research-program-handlers";
 import { RESEARCH_THESIS_HANDLERS } from "./research-thesis-handlers";
 import { SIGNAL_FUSION_HANDLERS } from "./signal-fusion-handlers";
 import { SKILL_HANDLERS } from "./skill-handlers";
@@ -43,6 +45,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
   ...EXECUTION_OBSERVABILITY_HANDLERS,
   ...REPORTING_HANDLERS,
   ...FACTOR_RESEARCH_HANDLERS,
+  ...RESEARCH_PROGRAM_HANDLERS,
   ...STRATEGY_EXECUTION_HANDLERS,
 
   "math.derivation.verify": MATH_REASONING_HANDLER,
@@ -151,10 +154,11 @@ export async function dispatchBuiltinTool(
   ctx: BuiltinToolContext,
   params: Record<string, unknown>
 ): Promise<unknown> {
+  const access = await enforceResearchToolAccess(toolName, ctx, params);
   if (isTopologyTeamTool(toolName)) {
     const role = parseRoleFromTopologyTeamTool(toolName);
     if (!role) throw new Error(`Invalid topology tool name: ${toolName}`);
-    return dispatchTeamAgentTask(ctx, role, params);
+    return dispatchTeamAgentTask(access.ctx, role, access.params);
   }
   const handler = BUILTIN_HANDLERS[toolName];
   if (!handler) {
@@ -162,7 +166,7 @@ export async function dispatchBuiltinTool(
       `Tool "${toolName}" is not implemented. Configure a connector route or add a builtin handler.`
     );
   }
-  return handler(ctx, params);
+  return handler(access.ctx, access.params);
 }
 
 export function listRegisteredBuiltinTools(): string[] {

@@ -17,8 +17,8 @@ import {
   type DataQualityVerdict,
   MARKET_EVENT_SCHEMA_VERSION,
   type MarketAssetClass,
-  type MarketCalendarSessionsByVenue,
   type MarketCalendarSessionWindowsByVenue,
+  type MarketCalendarSessionsByVenue,
   type MarketCorporateActionLedger,
   type MarketDerivativePricingLedger,
   type MarketEventSource,
@@ -27,11 +27,12 @@ import {
   type MarketLicenseUse,
   type MarketRiskExposureLedger,
   type MarketSnapshot,
-  type MarketUniverseHistory,
   MarketSnapshotSchema,
+  type MarketUniverseHistory,
   evaluateTradability,
   hashPayload,
 } from "./market-event-v2";
+import { pointInTimeMillis } from "./point-in-time-clock";
 
 export type SnapshotPurpose = MarketSnapshot["purpose"];
 
@@ -117,7 +118,18 @@ export type MarketSnapshotToolResult = {
   }>;
 };
 
-const memoryCatalog = new Map<string, MarketSnapshotRecord>();
+// Key by storage path, not just content ID: separate workspaces must never
+// borrow one another's snapshots. Cached records are private immutable copies.
+const memoryCatalog = new Map<string, { raw: string; record: MarketSnapshotRecord }>();
+
+export class MarketSnapshotIntegrityError extends Error {
+  readonly code = "market_snapshot_integrity_failed";
+
+  constructor(snapshotId: string, reason: string) {
+    super(`market_snapshot_integrity_failed:${snapshotId}:${reason}`);
+    this.name = "MarketSnapshotIntegrityError";
+  }
+}
 
 export function isMarketSnapshotGetEnabled(): boolean {
   const raw = (process.env.QUBIT_MARKET_SNAPSHOT_GET ?? "1").trim().toLowerCase();
@@ -303,9 +315,11 @@ export function canonicalFundamentalLedger(
     source: ledger.source.trim(),
     asOf: ledger.asOf,
     observationsBySymbol: Object.fromEntries(
-      (Object.entries(ledger.observationsBySymbol) as Array<
-        [string, MarketFundamentalLedger["observationsBySymbol"][string]]
-      >)
+      (
+        Object.entries(ledger.observationsBySymbol) as Array<
+          [string, MarketFundamentalLedger["observationsBySymbol"][string]]
+        >
+      )
         .map(([symbol, observations]) => [
           symbol.trim().toUpperCase(),
           [...observations].sort(
@@ -332,9 +346,11 @@ export function canonicalRiskExposureLedger(
     asOf: ledger.asOf,
     model: ledger.model.trim(),
     observationsBySymbol: Object.fromEntries(
-      (Object.entries(ledger.observationsBySymbol) as Array<
-        [string, MarketRiskExposureLedger["observationsBySymbol"][string]]
-      >)
+      (
+        Object.entries(ledger.observationsBySymbol) as Array<
+          [string, MarketRiskExposureLedger["observationsBySymbol"][string]]
+        >
+      )
         .map(([symbol, observations]) => [
           symbol.trim().toUpperCase(),
           [...observations].sort(
@@ -367,19 +383,19 @@ function canonicalFingerprint(input: {
   asOf: string;
   purpose: SnapshotPurpose;
   universe: string[];
-  window: { start?: string; end?: string };
+  window: MarketSnapshot["window"];
   sources: MarketEventSource[];
   sourceRevisions: Record<string, number>;
   adjustMethod: string;
   timezone: string;
-  calendarVersion?: string;
-  calendarSessionsByVenue?: MarketCalendarSessionsByVenue;
-  calendarSessionWindowsByVenue?: MarketCalendarSessionWindowsByVenue;
-  universeHistory?: MarketUniverseHistory;
-  corporateActionLedger?: MarketCorporateActionLedger;
-  fundamentalLedger?: MarketFundamentalLedger;
-  riskExposureLedger?: MarketRiskExposureLedger;
-  derivativePricingLedger?: MarketDerivativePricingLedger;
+  calendarVersion?: string | undefined;
+  calendarSessionsByVenue?: MarketCalendarSessionsByVenue | undefined;
+  calendarSessionWindowsByVenue?: MarketCalendarSessionWindowsByVenue | undefined;
+  universeHistory?: MarketUniverseHistory | undefined;
+  corporateActionLedger?: MarketCorporateActionLedger | undefined;
+  fundamentalLedger?: MarketFundamentalLedger | undefined;
+  riskExposureLedger?: MarketRiskExposureLedger | undefined;
+  derivativePricingLedger?: MarketDerivativePricingLedger | undefined;
   barDigests: Record<string, string>;
   timeframe: string;
   limit: number;
@@ -422,6 +438,104 @@ function dataRefFromSnapshotId(snapshotId: string): string {
   return `obs_${snapshotId.replace(/^mkt_snapshot_/, "")}`;
 }
 
+function fingerprintForRecord(record: MarketSnapshotRecord): string {
+  const { snapshot, meta } = record;
+  return canonicalFingerprint({
+    asOf: snapshot.asOf,
+    purpose: snapshot.purpose,
+    universe: snapshot.universe,
+    window: snapshot.window,
+    sources: snapshot.sources,
+    sourceRevisions: snapshot.sourceRevisions,
+    adjustMethod: snapshot.adjustMethod ?? "none",
+    timezone: snapshot.timezone,
+    calendarVersion: snapshot.calendarVersion,
+    calendarSessionsByVenue: snapshot.calendarSessionsByVenue,
+    calendarSessionWindowsByVenue: snapshot.calendarSessionWindowsByVenue,
+    universeHistory: snapshot.universeHistory,
+    corporateActionLedger: snapshot.corporateActionLedger,
+    fundamentalLedger: snapshot.fundamentalLedger,
+    riskExposureLedger: snapshot.riskExposureLedger,
+    derivativePricingLedger: snapshot.derivativePricingLedger,
+    barDigests: Object.fromEntries(
+      Object.entries(record.barsByInstrument).map(([key, bars]) => [key, digestBars(bars)])
+    ),
+    timeframe: meta.timeframe,
+    limit: meta.limit,
+  });
+}
+
+function assertSnapshotIntegrity(record: MarketSnapshotRecord, snapshotId: string): void {
+  const fail = (reason: string): never => {
+    throw new MarketSnapshotIntegrityError(snapshotId, reason);
+  };
+  MarketSnapshotSchema.parse(record.snapshot);
+  if (record.snapshot.snapshotId !== snapshotId) fail("identity_mismatch");
+  if (!record.meta || typeof record.meta.timeframe !== "string" || !record.meta.timeframe) {
+    fail("metadata_invalid");
+  }
+  if (!Number.isInteger(record.meta.limit) || record.meta.limit <= 0) fail("metadata_invalid");
+  if (
+    !record.barsByInstrument ||
+    typeof record.barsByInstrument !== "object" ||
+    Array.isArray(record.barsByInstrument)
+  ) {
+    fail("bars_invalid");
+  }
+  const instruments = Object.keys(record.barsByInstrument).sort();
+  if (JSON.stringify(instruments) !== JSON.stringify([...record.snapshot.universe].sort())) {
+    fail("universe_mismatch");
+  }
+  for (const bars of Object.values(record.barsByInstrument)) {
+    if (!Array.isArray(bars)) fail("bars_invalid");
+    for (const bar of bars) {
+      if (
+        !bar ||
+        typeof bar.timestamp !== "string" ||
+        !Number.isFinite(Date.parse(bar.timestamp)) ||
+        ![bar.open, bar.high, bar.low, bar.close, bar.volume, bar.turnover].every(Number.isFinite)
+      ) {
+        fail("bars_invalid");
+      }
+    }
+  }
+  if (snapshotIdFromFingerprint(fingerprintForRecord(record)) !== snapshotId) {
+    fail("content_hash_mismatch");
+  }
+  if (record.dataRef !== dataRefFromSnapshotId(snapshotId)) fail("data_ref_mismatch");
+  const counts = record.meta.barCounts;
+  if (
+    !counts ||
+    JSON.stringify(Object.keys(counts).sort()) !== JSON.stringify(instruments) ||
+    instruments.some((key) => counts[key] !== record.barsByInstrument[key]?.length)
+  ) {
+    fail("bar_counts_mismatch");
+  }
+  if (
+    JSON.stringify(record.meta.sourceIds) !==
+    JSON.stringify(record.snapshot.sources.map((source) => source.provider))
+  ) {
+    fail("source_ids_mismatch");
+  }
+}
+
+/** Quality was never part of the legacy content hash; do not trust a saved badge. */
+function reassessStoredQuality(record: MarketSnapshotRecord): void {
+  const key = record.snapshot.universe[0];
+  if (!key) throw new MarketSnapshotIntegrityError(record.snapshot.snapshotId, "universe_empty");
+  const separator = key.indexOf(":");
+  const venue = key.slice(0, separator);
+  const symbol = key.slice(separator + 1);
+  record.snapshot.qualityVerdict = buildQualityVerdict({
+    instrument: { symbol, venue, assetClass: inferAssetClass(symbol, venue) },
+    sources: record.snapshot.sources,
+    asOf: record.snapshot.asOf,
+    bars: record.barsByInstrument[key] ?? [],
+    purpose: record.snapshot.purpose,
+    snapshotId: record.snapshot.snapshotId,
+  });
+}
+
 function structureValid(bars: SnapshotBar[]): boolean {
   if (bars.length === 0) return false;
   return bars.every(
@@ -459,8 +573,8 @@ function buildQualityVerdict(input: {
   }
 
   const lastTs = input.bars.at(-1)?.timestamp;
-  const asOfMs = Date.parse(input.asOf);
-  const lastMs = lastTs ? Date.parse(lastTs) : Number.NaN;
+  const asOfMs = pointInTimeMillis(input.asOf);
+  const lastMs = lastTs ? pointInTimeMillis(lastTs) : Number.NaN;
   const freshnessMs =
     Number.isFinite(asOfMs) && Number.isFinite(lastMs) ? Math.max(0, asOfMs - lastMs) : null;
   // Intraday trading feeds: 30s; daily research bars: 2d.
@@ -474,6 +588,18 @@ function buildQualityVerdict(input: {
       : assessUpstreamIndependence(input.sources);
 
   const reasons: string[] = [];
+  // A bar's event time does not establish when this revision was available.
+  // Current historical queries therefore remain usable for research, while
+  // trusted as-of source adapters are required before PIT can be verified.
+  const invalidBoundary =
+    !Number.isFinite(asOfMs) ||
+    input.bars.some((bar) => {
+      const timestamp = pointInTimeMillis(bar.timestamp);
+      return !Number.isFinite(timestamp) || timestamp > asOfMs;
+    });
+  reasons.push(
+    invalidBoundary ? "point_in_time_boundary_invalid" : "point_in_time_provenance_not_verified"
+  );
   if (!tradingCandidate) {
     reasons.push(
       feedClass !== "L3_trading"
@@ -493,7 +619,7 @@ function buildQualityVerdict(input: {
     completeness: input.bars.length > 0 ? "complete" : "gap_unrecoverable",
     consistency,
     structure: structureValid(input.bars) ? "valid" : "malformed",
-    pointInTime: "point_in_time_valid",
+    pointInTime: invalidBoundary ? "invalid" : "unknown",
     licenseUse: tradingCandidate ? "trading_allowed" : licenseUse,
     snapshotId: input.snapshotId,
     reasons,
@@ -501,142 +627,138 @@ function buildQualityVerdict(input: {
 }
 
 /** Pure builder — used by service and unit tests. */
-export function buildMarketSnapshotRecord(input: {
+export function buildMarketSnapshotRecord(sourceInput: {
   asOf: string;
   purpose: SnapshotPurpose;
   instruments: Array<{ symbol: string; venue: string; assetClass: MarketAssetClass }>;
-  window: { start?: string; end?: string };
+  window: { start?: string | undefined; end?: string };
   sources: MarketEventSource[];
   barsByInstrument: Record<string, SnapshotBar[]>;
   timeframe: string;
   limit: number;
-  adjustMethod?: string;
-  timezone?: string;
-  calendarVersion?: string;
-  calendarSessionsByVenue?: MarketCalendarSessionsByVenue;
-  calendarSessionWindowsByVenue?: MarketCalendarSessionWindowsByVenue;
-  universeHistory?: MarketUniverseHistory;
-  corporateActionLedger?: MarketCorporateActionLedger;
-  fundamentalLedger?: MarketFundamentalLedger;
-  riskExposureLedger?: MarketRiskExposureLedger;
-  derivativePricingLedger?: MarketDerivativePricingLedger;
-  createdAt?: string;
+  adjustMethod?: string | undefined;
+  timezone?: string | undefined;
+  calendarVersion?: string | undefined;
+  calendarSessionsByVenue?: MarketCalendarSessionsByVenue | undefined;
+  calendarSessionWindowsByVenue?: MarketCalendarSessionWindowsByVenue | undefined;
+  universeHistory?: MarketUniverseHistory | undefined;
+  corporateActionLedger?: MarketCorporateActionLedger | undefined;
+  fundamentalLedger?: MarketFundamentalLedger | undefined;
+  riskExposureLedger?: MarketRiskExposureLedger | undefined;
+  derivativePricingLedger?: MarketDerivativePricingLedger | undefined;
+  createdAt?: string | undefined;
   peerCloses?: Array<{ upstreamFamily: string; price: number }>;
 }): MarketSnapshotRecord {
-  const universe = input.instruments.map((i) => instrumentKey(i.symbol, i.venue));
-  const barDigests = Object.fromEntries(
-    Object.entries(input.barsByInstrument).map(([key, bars]) => [key, digestBars(bars)])
-  );
-  const sourceRevisions = Object.fromEntries(input.sources.map((s) => [s.provider, 0]));
-  const adjustMethod = input.adjustMethod ?? "none";
-  const timezone = input.timezone ?? "UTC";
-  const calendarSessionsByVenue =
-    canonicalCalendarSessions(input.calendarSessionsByVenue) ?? undefined;
-  const calendarSessionWindowsByVenue =
-    canonicalCalendarSessionWindows(input.calendarSessionWindowsByVenue) ?? undefined;
-  const universeHistory = canonicalUniverseHistory(input.universeHistory);
-  const corporateActionLedger = canonicalCorporateActionLedger(input.corporateActionLedger);
-  const fundamentalLedger = canonicalFundamentalLedger(input.fundamentalLedger);
-  const riskExposureLedger = canonicalRiskExposureLedger(input.riskExposureLedger);
-  const derivativePricingLedger = canonicalDerivativePricingLedger(input.derivativePricingLedger);
-  const canonical = canonicalFingerprint({
-    asOf: input.asOf,
-    purpose: input.purpose,
-    universe,
-    window: input.window,
-    sources: input.sources,
-    sourceRevisions,
-    adjustMethod,
-    timezone,
-    calendarVersion: input.calendarVersion,
-    calendarSessionsByVenue,
-    calendarSessionWindowsByVenue,
-    universeHistory,
-    corporateActionLedger,
-    fundamentalLedger,
-    riskExposureLedger,
-    derivativePricingLedger,
-    barDigests,
-    timeframe: input.timeframe,
-    limit: input.limit,
-  });
-  const snapshotId = snapshotIdFromFingerprint(canonical);
-  const primary = input.instruments[0]!;
-  const primaryBars = input.barsByInstrument[instrumentKey(primary.symbol, primary.venue)] ?? [];
-  const qualityVerdict = buildQualityVerdict({
-    instrument: primary,
-    sources: input.sources,
-    asOf: input.asOf,
-    bars: primaryBars,
-    purpose: input.purpose,
-    snapshotId,
-    peerCloses: input.peerCloses,
-  });
-
+  // Neither the returned bars nor nested provenance may retain caller-owned references.
+  const input = structuredClone(sourceInput);
+  const primary = input.instruments[0];
+  if (!primary) throw new MarketSnapshotIntegrityError("unassigned", "universe_empty");
   const snapshot = MarketSnapshotSchema.parse({
-    snapshotId,
+    snapshotId: "pending",
     asOf: input.asOf,
     purpose: input.purpose,
-    universe,
+    universe: input.instruments.map((instrument) =>
+      instrumentKey(instrument.symbol, instrument.venue)
+    ),
     window: input.window,
     sources: input.sources,
-    sourceRevisions,
-    qualityVerdict,
-    adjustMethod,
-    universeHistory,
-    corporateActionLedger,
-    fundamentalLedger,
-    riskExposureLedger,
-    derivativePricingLedger,
-    timezone,
+    sourceRevisions: Object.fromEntries(input.sources.map((source) => [source.provider, 0])),
+    adjustMethod: input.adjustMethod ?? "none",
+    universeHistory: canonicalUniverseHistory(input.universeHistory),
+    corporateActionLedger: canonicalCorporateActionLedger(input.corporateActionLedger),
+    fundamentalLedger: canonicalFundamentalLedger(input.fundamentalLedger),
+    riskExposureLedger: canonicalRiskExposureLedger(input.riskExposureLedger),
+    derivativePricingLedger: canonicalDerivativePricingLedger(input.derivativePricingLedger),
+    timezone: input.timezone ?? "UTC",
     calendarVersion: input.calendarVersion,
-    calendarSessionsByVenue,
-    calendarSessionWindowsByVenue,
+    calendarSessionsByVenue: canonicalCalendarSessions(input.calendarSessionsByVenue) ?? undefined,
+    calendarSessionWindowsByVenue:
+      canonicalCalendarSessionWindows(input.calendarSessionWindowsByVenue) ?? undefined,
     eventRefs: [],
     createdAt: input.createdAt ?? new Date().toISOString(),
     schemaVersion: MARKET_EVENT_SCHEMA_VERSION,
   });
-
-  const barCounts = Object.fromEntries(
-    Object.entries(input.barsByInstrument).map(([key, bars]) => [key, bars.length])
-  );
-
-  return {
+  const record: MarketSnapshotRecord = {
     snapshot,
-    dataRef: dataRefFromSnapshotId(snapshotId),
+    dataRef: "pending",
     barsByInstrument: input.barsByInstrument,
     meta: {
       timeframe: input.timeframe,
       limit: input.limit,
-      barCounts,
-      sourceIds: input.sources.map((s) => s.provider),
+      barCounts: Object.fromEntries(
+        Object.entries(input.barsByInstrument).map(([key, bars]) => [key, bars.length])
+      ),
+      sourceIds: snapshot.sources.map((source) => source.provider),
     },
   };
+  // Hash the schema-normalized representation so the content identity survives
+  // serialization even when a caller supplied object properties in another order.
+  const snapshotId = snapshotIdFromFingerprint(fingerprintForRecord(record));
+  snapshot.snapshotId = snapshotId;
+  record.dataRef = dataRefFromSnapshotId(snapshotId);
+  snapshot.qualityVerdict = buildQualityVerdict({
+    instrument: primary,
+    sources: snapshot.sources,
+    asOf: snapshot.asOf,
+    bars: record.barsByInstrument[instrumentKey(primary.symbol, primary.venue)] ?? [],
+    purpose: snapshot.purpose,
+    snapshotId,
+    ...(input.peerCloses ? { peerCloses: input.peerCloses } : {}),
+  });
+  return record;
 }
 
-async function persistRecord(record: MarketSnapshotRecord, dataDir?: string): Promise<void> {
-  memoryCatalog.set(record.snapshot.snapshotId, record);
+async function persistRecord(
+  input: MarketSnapshotRecord,
+  dataDir?: string
+): Promise<MarketSnapshotRecord> {
+  const record = structuredClone(input);
+  assertSnapshotIntegrity(record, record.snapshot.snapshotId);
   const root = snapshotsRoot(dataDir);
   await mkdir(root, { recursive: true });
   const path = join(root, `${record.snapshot.snapshotId}.json`);
-  await writeFile(path, JSON.stringify(record), "utf8");
+  const raw = JSON.stringify(record);
+  try {
+    await writeFile(path, raw, { encoding: "utf8", flag: "wx" });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    const existing = await getMarketSnapshotById(record.snapshot.snapshotId, dataDir);
+    if (!existing) throw new MarketSnapshotIntegrityError(record.snapshot.snapshotId, "write_race");
+    return existing;
+  }
+  memoryCatalog.set(path, { raw, record });
+  return structuredClone(record);
 }
 
 export async function getMarketSnapshotById(
   snapshotId: string,
   dataDir?: string
 ): Promise<MarketSnapshotRecord | null> {
-  const cached = memoryCatalog.get(snapshotId);
-  if (cached) return cached;
+  if (!/^mkt_snapshot_[a-f0-9]{24}$/.test(snapshotId)) {
+    throw new MarketSnapshotIntegrityError(snapshotId, "identity_invalid");
+  }
+  const path = join(snapshotsRoot(dataDir), `${snapshotId}.json`);
+  let raw: string;
   try {
-    const path = join(snapshotsRoot(dataDir), `${snapshotId}.json`);
-    const raw = await readFile(path, "utf8");
+    // Read on every access: a cached ID must not hide a changed or deleted file.
+    raw = await readFile(path, "utf8");
+  } catch (error) {
+    memoryCatalog.delete(path);
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  const cached = memoryCatalog.get(path);
+  if (cached?.raw === raw) return structuredClone(cached.record);
+  try {
     const parsed = JSON.parse(raw) as MarketSnapshotRecord;
-    MarketSnapshotSchema.parse(parsed.snapshot);
-    memoryCatalog.set(snapshotId, parsed);
-    return parsed;
-  } catch {
-    return null;
+    assertSnapshotIntegrity(parsed, snapshotId);
+    reassessStoredQuality(parsed);
+    memoryCatalog.set(path, { raw, record: parsed });
+    return structuredClone(parsed);
+  } catch (error) {
+    memoryCatalog.delete(path);
+    if (error instanceof MarketSnapshotIntegrityError) throw error;
+    throw new MarketSnapshotIntegrityError(snapshotId, "record_invalid");
   }
 }
 
@@ -664,7 +786,7 @@ export async function getOrCreateMarketSnapshot(
   const purpose: SnapshotPurpose = params.purpose ?? "research";
   const timeframe = (params.timeframe ?? "1d").trim().toLowerCase() || "1d";
   const limit = Math.max(1, Math.min(Number(params.limit ?? 120), 500));
-  const asOfMs = params.asOf ? Date.parse(params.asOf) : Date.now();
+  const asOfMs = params.asOf === undefined ? Date.now() : pointInTimeMillis(params.asOf);
   if (!Number.isFinite(asOfMs)) throw new Error(`invalid_asOf:${params.asOf}`);
   const asOf = new Date(asOfMs).toISOString();
   const { startDate, endDate } = computeDateRangeForLimit(timeframe, limit, asOfMs);
@@ -753,8 +875,8 @@ export async function getOrCreateMarketSnapshot(
   const existing = await getMarketSnapshotById(record.snapshot.snapshotId, options?.dataDir);
   if (existing) return toToolResult(existing, true);
 
-  await persistRecord(record, options?.dataDir);
-  return toToolResult(record, false);
+  const persisted = await persistRecord(record, options?.dataDir);
+  return toToolResult(persisted, false);
 }
 
 function toToolResult(record: MarketSnapshotRecord, reused: boolean): MarketSnapshotToolResult {

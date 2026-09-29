@@ -5821,7 +5821,41 @@ export interface FactorValueStats {
 
 export interface FactorComputeResultDto {
   rows: FactorValueRow[];
-  meta: { factorId?: string; rowCount: number; latencyMs: number };
+  meta: { factorId?: string; rowCount: number; latencyMs: number; dataIntegrity?: FactorDataIntegrityDto };
+}
+
+export interface FactorDataIntegrityDto {
+  version: "factor-data-integrity-v1";
+  factorId: string;
+  expressionHash: string;
+  expression: string;
+  providerKey: string;
+  datasetSnapshotId: string;
+  startDate: string;
+  endDate: string;
+  asOf: string;
+  sourceIds: string[];
+  status: "passed" | "failed" | "research_only";
+  qualification: { useClass: string; pointInTime: string; limitations: string[] };
+  pit: { verdict: string; totalBarsAudited: number; violations: Array<{ symbol: string; detail: string; severity: string }> };
+  truncation: {
+    status: "passed" | "failed" | "insufficient_data" | "unsupported";
+    cutoffs: string[];
+    comparedValues: number;
+    mismatchCount: number;
+    issues: Array<{ code: string; message: string }>;
+  } | null;
+  limitations: string[];
+}
+
+export async function checkFactorDataIntegrity(id: string, body: {
+  datasetSnapshotId: string;
+  startDate: string;
+  endDate: string;
+  symbols: string[];
+}): Promise<FactorDataIntegrityDto> {
+  const res = await httpPost<{ ok: boolean; data: FactorDataIntegrityDto }>(`/api/v1/factors/${id}/data-integrity`, body);
+  return res.data;
 }
 
 export interface FactorEvalResultDto {
@@ -5836,6 +5870,7 @@ export interface FactorEvalResultDto {
   evaluationId?: string;
   meta?: { horizonDays: number; decayHorizons: number[] };
   error?: string;
+  statisticalReport?: { dataIntegrity?: FactorDataIntegrityDto; status?: string };
 }
 
 export interface FactorEvaluationLogRow {
@@ -5852,6 +5887,8 @@ export interface FactorEvaluationLogRow {
   latencyMs: number;
   error: string | null;
   createdAt: string;
+  datasetSnapshotId?: string | null;
+  statisticalReportJson?: { dataIntegrity?: FactorDataIntegrityDto; status?: string } | null;
 }
 
 export async function listFactors(filter?: {
@@ -5908,7 +5945,7 @@ export async function setFactorStatus(id: string, status: FactorStatus): Promise
 
 export async function computeFactor(
   id: string,
-  body: { startDate: string; endDate: string; symbols?: string[]; providerKey?: string }
+  body: { startDate: string; endDate: string; symbols?: string[]; providerKey?: string; datasetSnapshotId?: string }
 ): Promise<FactorComputeResultDto> {
   const res = await httpPost<{ ok: boolean; data: FactorComputeResultDto }>(
     `/api/v1/factors/${id}/compute`,
@@ -5927,6 +5964,7 @@ export async function autoEvaluateFactor(
     decayHorizons?: number[];
     groupCount?: number;
     providerKey?: string;
+    datasetSnapshotId?: string;
   }
 ): Promise<FactorEvalResultDto> {
   const res = await httpPost<{ ok: boolean; data: FactorEvalResultDto }>(
@@ -5938,22 +5976,23 @@ export async function autoEvaluateFactor(
 
 export async function loadFactorValues(
   id: string,
-  q?: { symbols?: string[]; startDate?: string; endDate?: string; latestN?: number }
+  q?: { symbols?: string[]; startDate?: string; endDate?: string; latestN?: number; datasetSnapshotId?: string }
 ): Promise<FactorValueRow[]> {
   const qs: string[] = [];
   if (q?.symbols && q.symbols.length > 0)
     qs.push(`symbols=${encodeURIComponent(q.symbols.join(","))}`);
   if (q?.startDate) qs.push(`startDate=${encodeURIComponent(q.startDate)}`);
   if (q?.endDate) qs.push(`endDate=${encodeURIComponent(q.endDate)}`);
+  if (q?.datasetSnapshotId) qs.push(`datasetSnapshotId=${encodeURIComponent(q.datasetSnapshotId)}`);
   if (typeof q?.latestN === "number") qs.push(`latestN=${q.latestN}`);
   const url = `/api/v1/factors/${id}/values${qs.length ? `?${qs.join("&")}` : ""}`;
   const res = await httpGet<{ ok: boolean; data: FactorValueRow[] }>(url);
   return res.data;
 }
 
-export async function factorValuesStats(id: string): Promise<FactorValueStats> {
+export async function factorValuesStats(id: string, datasetSnapshotId?: string): Promise<FactorValueStats> {
   const res = await httpGet<{ ok: boolean; data: FactorValueStats }>(
-    `/api/v1/factors/${id}/values/stats`
+    `/api/v1/factors/${id}/values/stats${datasetSnapshotId ? `?datasetSnapshotId=${encodeURIComponent(datasetSnapshotId)}` : ""}`
   );
   return res.data;
 }
@@ -6663,6 +6702,7 @@ export interface FactorBacktestPromotionResult {
 
 export async function runFactorBacktestPromotionNow(body: {
   projectId?: string;
+  datasetSnapshotId?: string;
   factorIds: string[];
   strategyName?: string;
   versionTag?: string;
@@ -6686,6 +6726,7 @@ export async function runFactorBacktestPromotionNow(body: {
   const res = await httpPost<{ ok: boolean; data: FactorBacktestPromotionResult }>(
     "/api/v1/quant/factor-backtest-promotions/run-now",
     {
+      ...(body.datasetSnapshotId ? { dataset_snapshot_id: body.datasetSnapshotId } : {}),
       ...(body.projectId ? { project_id: body.projectId } : {}),
       factor_ids: body.factorIds,
       ...(body.strategyName ? { strategy_name: body.strategyName } : {}),

@@ -18,13 +18,7 @@ use tracing::{info, warn};
 use crate::cancel::CancelToken;
 use crate::error::RuntimeError;
 use crate::model::NormalizedToolCall;
-use crate::tools::ToolHost;
-
-#[derive(Clone, Default)]
-struct BridgeTurnContext {
-    workspace_id: Option<String>,
-    session_id: Option<String>,
-}
+use crate::tools::{current_tool_turn_context, ToolHost};
 
 pub struct BridgeToolHost {
     client: Arc<LegacyBridgeClient>,
@@ -33,7 +27,6 @@ pub struct BridgeToolHost {
     /// Cached registry definitions. Schemas are loaded from Bun, never
     /// reconstructed in the Core model adapter.
     specs: Arc<RwLock<Vec<LegacyToolSpec>>>,
-    turn_ctx: Arc<RwLock<BridgeTurnContext>>,
 }
 
 fn is_mcp_bridge_name(name: &str) -> bool {
@@ -55,7 +48,6 @@ impl BridgeToolHost {
                     .collect(),
             )),
             specs: Arc::new(RwLock::new(Vec::new())),
-            turn_ctx: Arc::new(RwLock::new(BridgeTurnContext::default())),
         }
     }
 
@@ -105,12 +97,7 @@ impl BridgeToolHost {
 
 #[async_trait]
 impl ToolHost for BridgeToolHost {
-    async fn bind_turn_context(&self, workspace_id: &str, session_id: &SessionId) {
-        {
-            let mut g = self.turn_ctx.write().await;
-            g.workspace_id = Some(workspace_id.to_string());
-            g.session_id = Some(session_id.as_str().to_string());
-        }
+    async fn bind_turn_context(&self, _workspace_id: &str, _session_id: &SessionId) {
         // Refresh L2 + MCP names each turn so Core advertises Bun MCP tools.
         match self.refresh_tool_names().await {
             Ok(specs) => {
@@ -133,7 +120,8 @@ impl ToolHost for BridgeToolHost {
         cancel: CancelToken,
     ) -> Result<Vec<ToolResult>, RuntimeError> {
         cancel.check()?;
-        let ctx = self.turn_ctx.read().await.clone();
+        let ctx = current_tool_turn_context()
+            .ok_or_else(|| RuntimeError::Tool("bridge_turn_context_missing".into()))?;
         let mut out = Vec::with_capacity(calls.len());
         // Per-call timeout: keep below Bun `QUBIT_PRIME_TURN_TIMEOUT_MS` so one hung
         // MCP cannot pin the turn in Acting until the outer await times out.
@@ -153,8 +141,8 @@ impl ToolHost for BridgeToolHost {
                 name: name.clone(),
                 args: c.args,
                 idempotency_key: Some(format!("{}:{}", call_id, name)),
-                workspace_id: ctx.workspace_id.clone(),
-                session_id: ctx.session_id.clone(),
+                workspace_id: Some(ctx.workspace_id.clone()),
+                session_id: Some(ctx.session_id.as_str().to_string()),
             });
             let timed = tokio::time::timeout(per_call, invoke);
             let result = tokio::select! {

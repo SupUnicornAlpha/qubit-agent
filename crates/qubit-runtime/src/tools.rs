@@ -7,14 +7,47 @@ use qubit_protocol::{
 };
 use qubit_tool_host::ToolDefinition;
 use serde_json::{json, Value};
+use std::future::Future;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 use crate::cancel::CancelToken;
 use crate::error::RuntimeError;
 use crate::invocation::AgentInvoker;
 use crate::model::NormalizedToolCall;
 use crate::store::SharedStore;
+
+#[derive(Clone)]
+pub(crate) struct ToolTurnContext {
+    pub workspace_id: String,
+    pub session_id: SessionId,
+}
+
+tokio::task_local! {
+    static TOOL_TURN_CONTEXT: ToolTurnContext;
+}
+
+/// Scope trusted turn identity to the executing future. Nested turns restore the
+/// parent automatically, including on errors/cancellation; concurrent tasks never
+/// share identity. Spawned tasks must establish their own scope.
+pub async fn with_tool_turn_context<F: Future>(
+    workspace_id: String,
+    session_id: SessionId,
+    future: F,
+) -> F::Output {
+    TOOL_TURN_CONTEXT
+        .scope(
+            ToolTurnContext {
+                workspace_id,
+                session_id,
+            },
+            future,
+        )
+        .await
+}
+
+pub(crate) fn current_tool_turn_context() -> Option<ToolTurnContext> {
+    TOOL_TURN_CONTEXT.try_with(Clone::clone).ok()
+}
 
 /// Lenient parse aligned with Bun `update_plan` handler: LLM often omits step `id`.
 /// Missing id → `s{n}`; title falls back to `text`; unknown status → pending.
@@ -457,7 +490,8 @@ pub trait ToolHost: Send + Sync {
             .collect()
     }
 
-    /// Bind workspace/session so bridge invokes can correlate Bun UI streams.
+    /// Prepare the registry for a turn. Implementations must not retain mutable
+    /// identity here; tool authorization uses the task-scoped turn context.
     async fn bind_turn_context(&self, _workspace_id: &str, _session_id: &SessionId) {}
 }
 
@@ -498,8 +532,6 @@ impl ToolHost for FakeToolHost {
 /// L0 meta tools hosted in Core: `update_plan`, `agent.invoke`.
 pub struct L0ToolHost {
     store: SharedStore,
-    /// Current session for plan writes / invoke parent binding.
-    session_id: Arc<RwLock<Option<SessionId>>>,
     invoker: std::sync::RwLock<Option<Arc<dyn AgentInvoker>>>,
     fallback: Arc<dyn ToolHost>,
 }
@@ -508,14 +540,9 @@ impl L0ToolHost {
     pub fn new(store: SharedStore, fallback: Arc<dyn ToolHost>) -> Self {
         Self {
             store,
-            session_id: Arc::new(RwLock::new(None)),
             invoker: std::sync::RwLock::new(None),
             fallback,
         }
-    }
-
-    pub async fn bind_session(&self, session_id: SessionId) {
-        *self.session_id.write().await = Some(session_id);
     }
 
     /// Wire after `InvocationService` is constructed (breaks build cycle).
@@ -527,8 +554,8 @@ impl L0ToolHost {
         &self,
         call: &NormalizedToolCall,
     ) -> Result<ToolResult, RuntimeError> {
-        let sid = match self.session_id.read().await.clone() {
-            Some(s) => s,
+        let sid = match current_tool_turn_context() {
+            Some(context) => context.session_id,
             None => {
                 return Ok(tool_err(&call.call_id, "update_plan: no session bound"));
             }
@@ -566,8 +593,8 @@ impl L0ToolHost {
         call: &NormalizedToolCall,
         cancel: CancelToken,
     ) -> Result<ToolResult, RuntimeError> {
-        let parent_sid = match self.session_id.read().await.clone() {
-            Some(s) => s,
+        let parent_sid = match current_tool_turn_context() {
+            Some(context) => context.session_id,
             None => {
                 return Ok(tool_err(&call.call_id, "agent.invoke: no session bound"));
             }
@@ -678,9 +705,6 @@ impl L0ToolHost {
                 return Ok(tool_err(&call.call_id, format!("agent.invoke failed: {e}")));
             }
         };
-
-        // Child turn rebinds L0 session; restore parent for subsequent tools.
-        self.bind_session(parent_sid).await;
 
         let mut ok = matches!(record.state, qubit_protocol::InvocationState::Completed);
         // Cursor/Codex-style: empty child answer is a failed handoff, not success.

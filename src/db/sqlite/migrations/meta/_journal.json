@@ -869,6 +869,13 @@
       "when": 1788307200000,
       "tag": "0124_shadow_strategy_eval_kind",
       "breakpoints": true
+    },
+    {
+      "idx": 124,
+      "version": "7",
+      "when": 1816560000000,
+      "tag": "0125_research_program",
+      "breakpoints": true
     }
   ]
 }

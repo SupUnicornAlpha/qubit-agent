@@ -1,8 +1,127 @@
 import { describe, expect, test } from "bun:test";
-import { verifyPointInTimeIntegrity } from "./pit-verifier";
 import type { BacktestDataset } from "../provider/types";
+import { verifyPointInTimeIntegrity } from "./pit-verifier";
+
+function timestampDataset(
+  timestamps: string[],
+  asOf = "2026-04-01T12:00:00.000Z"
+): BacktestDataset {
+  return {
+    snapshotId: "time-boundary-fixture",
+    dataRef: "fixture",
+    asOf,
+    timeframe: "1m",
+    sourceIds: ["fixture"],
+    barsBySymbol: {
+      AAPL: timestamps.map((timestamp) => ({
+        timestamp,
+        open: 10,
+        high: 11,
+        low: 9,
+        close: 10,
+        volume: 100,
+        turnover: 1_000,
+      })),
+    },
+    qualification: {
+      useClass: "strategy_validation",
+      universeHistory: "verified",
+      corporateActions: "verified",
+      pointInTime: "verified",
+      limitations: [],
+    },
+  };
+}
 
 describe("Point-In-Time (PIT) Verifier", () => {
+  test("enforces the exact asOf millisecond, including timezone offsets", () => {
+    expect(
+      verifyPointInTimeIntegrity(timestampDataset(["2026-04-01T20:00:00.000+08:00"])).pass
+    ).toBe(true);
+    const future = verifyPointInTimeIntegrity(timestampDataset(["2026-04-01T20:00:00.001+08:00"]));
+    expect(future.violations.some((v) => v.type === "future_data_leakage")).toBe(true);
+    expect(future.pass).toBe(false);
+  });
+
+  test("compares timestamp ordering by instants and detects equivalent duplicates", () => {
+    expect(
+      verifyPointInTimeIntegrity(
+        timestampDataset(["2026-04-01T19:00:00+08:00", "2026-04-01T12:00:00Z"])
+      ).pass
+    ).toBe(true);
+    const duplicate = verifyPointInTimeIntegrity(
+      timestampDataset(["2026-04-01T20:00:00+08:00", "2026-04-01T12:00:00Z"])
+    );
+    expect(duplicate.violations.some((v) => v.type === "duplicate_timestamp")).toBe(true);
+  });
+
+  test("invalid, local-time and normalized impossible dates fail closed", () => {
+    for (const invalid of [
+      "2026-04-01",
+      "2026-04-01T12:00:00",
+      "2026-02-30T12:00:00Z",
+      "invalid",
+    ]) {
+      const badBar = verifyPointInTimeIntegrity(timestampDataset([invalid]));
+      expect(badBar.pass).toBe(false);
+      expect(badBar.violations.some((v) => v.type === "invalid_timestamp")).toBe(true);
+      expect(
+        verifyPointInTimeIntegrity(timestampDataset(["2026-04-01T12:00:00Z"], invalid)).pass
+      ).toBe(false);
+    }
+  });
+
+  test("fundamental availability compares actual instants across timezones", () => {
+    const dataset = timestampDataset(["2026-04-01T12:00:00Z"]);
+    dataset.fundamentalObservations = [
+      {
+        symbol: "AAPL",
+        metric: "revenue_ttm",
+        fiscalPeriodEnd: "2025-12-31",
+        availableAt: "2026-04-01T20:00:00+08:00",
+        value: 10,
+      },
+    ];
+    expect(verifyPointInTimeIntegrity(dataset).pass).toBe(true);
+    const observation = dataset.fundamentalObservations[0];
+    if (!observation) throw new Error("missing test observation");
+    observation.availableAt = "2026-04-01T07:00:00.001-05:00";
+    expect(
+      verifyPointInTimeIntegrity(dataset).violations.some(
+        (v) => v.type === "fundamental_observation_after_asof"
+      )
+    ).toBe(true);
+  });
+
+  test("same-day corporate announcement is uncertain when the effective time is only a date", () => {
+    const dataset = timestampDataset(["2026-04-01T12:00:00Z"]);
+    dataset.corporateActionEvents = [
+      {
+        symbol: "AAPL",
+        kind: "split",
+        effectiveDate: "2026-04-01",
+        knownAt: "2026-04-01T11:00:00Z",
+      },
+    ];
+    const report = verifyPointInTimeIntegrity(dataset);
+    expect(report.pass).toBe(false);
+    expect(report.verdict).toBe("point_in_time_degraded");
+    expect(report.violations.some((v) => v.type === "corporate_action_pre_announcement")).toBe(
+      false
+    );
+  });
+
+  test("empty data and non-finite prices cannot receive a clean audit", () => {
+    expect(verifyPointInTimeIntegrity(timestampDataset([])).pass).toBe(false);
+    const dataset = timestampDataset(["2026-04-01T12:00:00Z"]);
+    const bar = dataset.barsBySymbol.AAPL?.[0];
+    if (!bar) throw new Error("missing test bar");
+    bar.close = Number.NaN;
+    expect(
+      verifyPointInTimeIntegrity(dataset).violations.some((v) => v.type === "invalid_ohlcv_bounds")
+    ).toBe(true);
+  });
+
   test("should pass clean dataset without look-ahead bias", () => {
     const dataset: BacktestDataset = {
       snapshotId: "snap-001",

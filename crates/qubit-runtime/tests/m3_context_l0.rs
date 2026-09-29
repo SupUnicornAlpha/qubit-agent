@@ -220,3 +220,83 @@ async fn diagnose_alias_from_legacy_debug_string() {
     };
     let _ = StaticIdentityLoader;
 }
+
+/// Synchronize the model after engine setup, exposing last-bound session races.
+struct ConcurrentPlanModel {
+    barrier: tokio::sync::Barrier,
+}
+
+#[async_trait::async_trait]
+impl qubit_runtime::ModelClient for ConcurrentPlanModel {
+    async fn sample(
+        &self,
+        req: qubit_runtime::SampleRequest,
+        cancel: qubit_runtime::CancelToken,
+    ) -> Result<SampleResponse, qubit_runtime::RuntimeError> {
+        cancel.check()?;
+        if !req.history.is_empty() {
+            return Ok(SampleResponse::text_only("plan saved"));
+        }
+        let marker = if req.user.contains("controlled_plan") {
+            "controlled_plan"
+        } else {
+            "legacy_plan"
+        };
+        self.barrier.wait().await;
+        Ok(SampleResponse {
+            text: "writing session plan".into(),
+            tool_calls: vec![NormalizedToolCall {
+                call_id: format!("plan_{marker}"),
+                name: "update_plan".into(),
+                args: json!({"steps": [{"title": marker, "status": "pending"}]}),
+            }],
+            ..Default::default()
+        })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_engine_turns_write_plans_to_their_own_sessions() {
+    let rt = CoreRuntimeService::new_with_model(Arc::new(ConcurrentPlanModel {
+        barrier: tokio::sync::Barrier::new(2),
+    }));
+    rt.seed_defaults().await;
+    let mut sessions = Vec::new();
+    for marker in ["controlled_plan", "legacy_plan"] {
+        let session = rt
+            .create_session(SessionCreate {
+                workspace_id: Some(qubit_protocol::WorkspaceId::new(format!("ws_{marker}"))),
+                agent_ref: AgentSpecId::new("def-primary"),
+                interaction_mode: InteractionMode::Plan,
+                mode: None,
+            })
+            .await
+            .unwrap();
+        let started = rt
+            .start_turn(TurnStart {
+                session_id: session.session_id.clone(),
+                input: UserInput {
+                    text: marker.into(),
+                    attachments: vec![],
+                    client_meta: None,
+                },
+                idempotency_key: marker.into(),
+                context: None,
+            })
+            .await
+            .unwrap();
+        sessions.push((marker, session.session_id, started.turn_id));
+    }
+    for (marker, session_id, turn_id) in sessions {
+        rt.await_turn_terminal(&turn_id, Duration::from_secs(5))
+            .await
+            .unwrap();
+        let plan = rt
+            .store()
+            .get_plan(&session_id)
+            .await
+            .unwrap()
+            .expect("session plan");
+        assert_eq!(plan.steps[0].title, marker);
+    }
+}

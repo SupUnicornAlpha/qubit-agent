@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  type MarketSnapshotRecord,
   buildMarketSnapshotRecord,
   canonicalCalendarSessions,
   clearMarketSnapshotCatalogForTests,
@@ -15,6 +16,55 @@ import {
 afterEach(() => {
   clearMarketSnapshotCatalogForTests();
 });
+
+function required<T>(value: T | null | undefined): T {
+  if (value == null) throw new Error("missing_test_fixture");
+  return value;
+}
+
+function integrityFixtureInput(): Parameters<typeof buildMarketSnapshotRecord>[0] {
+  return {
+    asOf: "2026-08-04T00:00:00.000Z",
+    purpose: "research",
+    instruments: [{ symbol: "AAPL", venue: "US", assetClass: "equity" }],
+    window: { start: "2026-08-01T00:00:00.000Z", end: "2026-08-04T00:00:00.000Z" },
+    sources: [
+      {
+        provider: "fixture",
+        feed: "public_aggregate",
+        upstreamFamily: "fixture",
+        feedClass: "L0_research_fallback",
+        licenseUse: "research_only",
+      },
+    ],
+    barsByInstrument: {
+      "US:AAPL": [
+        {
+          timestamp: "2026-08-03T00:00:00.000Z",
+          open: 100,
+          high: 101,
+          low: 99,
+          close: 100.5,
+          volume: 10,
+          turnover: 1005,
+        },
+      ],
+    },
+    timeframe: "1d",
+    limit: 10,
+    createdAt: "2026-08-04T02:00:00.000Z",
+  };
+}
+
+async function writeSnapshotFixture(
+  dataDir: string,
+  record: MarketSnapshotRecord,
+  snapshotId = record.snapshot.snapshotId
+): Promise<void> {
+  const root = join(dataDir, "market-snapshots");
+  await mkdir(root, { recursive: true });
+  await writeFile(join(root, `${snapshotId}.json`), JSON.stringify(record));
+}
 
 describe("market snapshot service (D2)", () => {
   test("content-addressable snapshotId is stable for identical bar digests", () => {
@@ -363,14 +413,206 @@ describe("market snapshot service (D2)", () => {
     }
   });
 
+  test("builder detaches both prices and nested provenance from its caller", () => {
+    const input = integrityFixtureInput();
+    const record = buildMarketSnapshotRecord(input);
+    required(input.barsByInstrument["US:AAPL"]?.[0]).close = 999;
+    required(input.sources[0]).provider = "changed_source";
+    input.window.end = "2030-01-01T00:00:00.000Z";
+    expect(record.barsByInstrument["US:AAPL"]?.[0]?.close).toBe(100.5);
+    expect(record.snapshot.sources[0]?.provider).toBe("fixture");
+    expect(record.snapshot.window.end).toBe("2026-08-04T00:00:00.000Z");
+  });
+
+  test("serialized snapshots remain verifiable after schema property normalization", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "qb-snap-normalize-"));
+    try {
+      const input = integrityFixtureInput();
+      input.sources = [
+        {
+          licenseUse: "research_only",
+          upstreamFamily: "fixture",
+          provider: "fixture",
+          feed: "public_aggregate",
+          feedClass: "L0_research_fallback",
+        },
+      ];
+      input.window = { end: required(input.window.end), start: required(input.window.start) };
+      const record = buildMarketSnapshotRecord(input);
+      await writeSnapshotFixture(dataDir, record);
+      expect(
+        (await getMarketSnapshotById(record.snapshot.snapshotId, dataDir))?.snapshot.snapshotId
+      ).toBe(record.snapshot.snapshotId);
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  test("tampered prices are rejected even when the original record is already cached", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "qb-snap-tamper-"));
+    try {
+      const record = buildMarketSnapshotRecord(integrityFixtureInput());
+      await writeSnapshotFixture(dataDir, record);
+      expect(await getMarketSnapshotById(record.snapshot.snapshotId, dataDir)).not.toBeNull();
+      required(record.barsByInstrument["US:AAPL"]?.[0]).close = 100.75;
+      await writeSnapshotFixture(dataDir, record);
+      await expect(getMarketSnapshotById(record.snapshot.snapshotId, dataDir)).rejects.toThrow(
+        "content_hash_mismatch"
+      );
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  test.each([
+    [
+      "timeframe",
+      (record: MarketSnapshotRecord) => {
+        record.meta.timeframe = "1h";
+      },
+    ],
+    [
+      "window",
+      (record: MarketSnapshotRecord) => {
+        record.snapshot.window.end = "2030-01-01";
+      },
+    ],
+    [
+      "adjustment",
+      (record: MarketSnapshotRecord) => {
+        record.snapshot.adjustMethod = "qfq";
+      },
+    ],
+    [
+      "sources",
+      (record: MarketSnapshotRecord) => {
+        required(record.snapshot.sources[0]).provider = "other";
+      },
+    ],
+    [
+      "counts",
+      (record: MarketSnapshotRecord) => {
+        record.meta.barCounts["US:AAPL"] = 100;
+      },
+    ],
+    [
+      "source IDs",
+      (record: MarketSnapshotRecord) => {
+        record.meta.sourceIds = ["other"];
+      },
+    ],
+    [
+      "data reference",
+      (record: MarketSnapshotRecord) => {
+        record.dataRef = "obs_other";
+      },
+    ],
+  ] as const)(
+    "tampered %s metadata cannot be used with the original snapshot ID",
+    async (_name, tamper) => {
+      const dataDir = await mkdtemp(join(tmpdir(), "qb-snap-meta-"));
+      try {
+        const record = buildMarketSnapshotRecord(integrityFixtureInput());
+        tamper(record);
+        await writeSnapshotFixture(dataDir, record);
+        await expect(getMarketSnapshotById(record.snapshot.snapshotId, dataDir)).rejects.toThrow(
+          "market_snapshot_integrity_failed"
+        );
+      } finally {
+        await rm(dataDir, { recursive: true, force: true });
+      }
+    }
+  );
+
+  test("mutating loaded records and tool results does not affect subsequent replay", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "qb-snap-reference-"));
+    try {
+      const record = buildMarketSnapshotRecord(integrityFixtureInput());
+      await writeSnapshotFixture(dataDir, record);
+      const first = required(await getMarketSnapshotById(record.snapshot.snapshotId, dataDir));
+      required(first.barsByInstrument["US:AAPL"]?.[0]).close = 999;
+      required(first.snapshot.sources[0]).provider = "mutated";
+      const toolResult = await getOrCreateMarketSnapshot(
+        { snapshotId: record.snapshot.snapshotId },
+        { dataDir }
+      );
+      toolResult.snapshot.window.end = "2030-01-01";
+      toolResult.barCounts["US:AAPL"] = 999;
+      const replay = required(await getMarketSnapshotById(record.snapshot.snapshotId, dataDir));
+      expect(replay.barsByInstrument).toEqual(record.barsByInstrument);
+      expect(replay.snapshot.sources).toEqual(record.snapshot.sources);
+      expect(replay.snapshot.window).toEqual(record.snapshot.window);
+      expect(replay.meta.barCounts).toEqual(record.meta.barCounts);
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  test("replay reassesses legacy quality badges instead of trusting unhashed claims", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "qb-snap-quality-"));
+    try {
+      const record = buildMarketSnapshotRecord(integrityFixtureInput());
+      required(record.snapshot.qualityVerdict).pointInTime = "point_in_time_valid";
+      required(record.snapshot.qualityVerdict).tradable = true;
+      required(record.snapshot.qualityVerdict).useClass = "trading";
+      await writeSnapshotFixture(dataDir, record);
+      const replay = required(await getMarketSnapshotById(record.snapshot.snapshotId, dataDir));
+      expect(replay.snapshot.snapshotId).toBe(record.snapshot.snapshotId);
+      expect(replay.snapshot.qualityVerdict?.pointInTime).toBe("unknown");
+      expect(replay.snapshot.qualityVerdict?.tradable).toBe(false);
+      expect(replay.snapshot.qualityVerdict?.useClass).toBe("research_only");
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  test("a cached snapshot cannot appear in another data directory", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "qb-snap-scope-"));
+    try {
+      const record = buildMarketSnapshotRecord(integrityFixtureInput());
+      await writeSnapshotFixture(join(dataDir, "first"), record);
+      expect(
+        await getMarketSnapshotById(record.snapshot.snapshotId, join(dataDir, "first"))
+      ).not.toBeNull();
+      expect(
+        await getMarketSnapshotById(record.snapshot.snapshotId, join(dataDir, "second"))
+      ).toBeNull();
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  test("snapshot files copied under another ID fail instead of acquiring a new identity", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "qb-snap-identity-"));
+    try {
+      const record = buildMarketSnapshotRecord(integrityFixtureInput());
+      const wrongId = "mkt_snapshot_000000000000000000000000";
+      await writeSnapshotFixture(dataDir, record, wrongId);
+      await expect(getMarketSnapshotById(wrongId, dataDir)).rejects.toThrow("identity_mismatch");
+      await expect(getMarketSnapshotById("../outside", dataDir)).rejects.toThrow(
+        "identity_invalid"
+      );
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  test.each(["2026-08-04T10:00:00", "2026-02-30T00:00:00Z", ""])(
+    "snapshot requests reject ambiguous or invalid asOf %s before querying data",
+    async (asOf) => {
+      await expect(getOrCreateMarketSnapshot({ symbols: ["AAPL"], asOf })).rejects.toThrow(
+        "invalid_asOf"
+      );
+    }
+  );
+
   test("feature flag defaults on", () => {
     const prev = process.env.QUBIT_MARKET_SNAPSHOT_GET;
-    delete process.env.QUBIT_MARKET_SNAPSHOT_GET;
+    process.env.QUBIT_MARKET_SNAPSHOT_GET = undefined;
     expect(isMarketSnapshotGetEnabled()).toBe(true);
     process.env.QUBIT_MARKET_SNAPSHOT_GET = "0";
     expect(isMarketSnapshotGetEnabled()).toBe(false);
-    if (prev === undefined) delete process.env.QUBIT_MARKET_SNAPSHOT_GET;
-    else process.env.QUBIT_MARKET_SNAPSHOT_GET = prev;
+    process.env.QUBIT_MARKET_SNAPSHOT_GET = prev;
   });
 
   test("snapshotIdFromFingerprint is hex digest based", () => {

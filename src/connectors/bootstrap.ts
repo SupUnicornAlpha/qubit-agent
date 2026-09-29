@@ -1,3 +1,4 @@
+import { researchProgramService } from "../runtime/research-program/service";
 import { runMigrations } from "../db/sqlite/migrate";
 import {
   type BuiltinConnectorInitConfigs,
@@ -40,6 +41,7 @@ export function registerBuiltinConnectors(
 ): Promise<void> {
   bootstrapPromise ??= (async () => {
     await runMigrations();
+    await researchProgramService.recoverExpired();
     // M1: Provider 抽象层与研究场景注册中心；先于 connector init，
     // 这样后续 connector / runtime 都可直接走 providerResolver。
     await bootstrapProviders();

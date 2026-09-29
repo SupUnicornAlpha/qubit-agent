@@ -8,6 +8,8 @@
  * is strictly after `availableAt`. This is conservative by design.
  */
 
+import { pointInTimeMillis } from "../market/contracts/point-in-time-clock";
+
 export type FundamentalSeriesBar = { timestamp: string };
 export type FundamentalSeriesObservation = {
   metric: string;
@@ -31,20 +33,35 @@ export function materializeFundamentalPitFields(
   observations: FundamentalSeriesObservation[] | undefined
 ): Record<string, Array<number | null>> {
   if (!observations?.length || bars.length === 0) return {};
+  let previousBarTime = Number.NEGATIVE_INFINITY;
+  const barTimes = bars.map((bar) => {
+    const timestamp = pointInTimeMillis(bar.timestamp);
+    if (!Number.isFinite(timestamp)) {
+      throw new Error(`fundamental_bar_timestamp_invalid:${bar.timestamp}`);
+    }
+    if (timestamp <= previousBarTime) {
+      throw new Error(`fundamental_bar_timestamps_not_increasing:${bar.timestamp}`);
+    }
+    previousBarTime = timestamp;
+    return timestamp;
+  });
   const fields = new Map<string, Array<number | null>>();
   const latest = new Map<string, number>();
   const metricByField = new Map<string, string>();
   const pending = observations
     .filter(
-      (observation) =>
-        observation.metric.trim().length > 0 &&
-        Number.isFinite(observation.value) &&
-        Number.isFinite(Date.parse(observation.availableAt))
+      (observation) => observation.metric.trim().length > 0 && Number.isFinite(observation.value)
     )
-    .slice()
+    .map((observation) => {
+      const availableAtMs = pointInTimeMillis(observation.availableAt);
+      if (!Number.isFinite(availableAtMs)) {
+        throw new Error(`fundamental_available_at_invalid:${observation.availableAt}`);
+      }
+      return { ...observation, availableAtMs };
+    })
     .sort(
       (left, right) =>
-        left.availableAt.localeCompare(right.availableAt) ||
+        left.availableAtMs - right.availableAtMs ||
         left.fiscalPeriodEnd.localeCompare(right.fiscalPeriodEnd) ||
         left.metric.localeCompare(right.metric) ||
         (left.revisionId ?? "").localeCompare(right.revisionId ?? "")
@@ -64,12 +81,12 @@ export function materializeFundamentalPitFields(
   for (const field of fieldNames) fields.set(field, new Array(bars.length).fill(null));
 
   let cursor = 0;
-  for (let index = 0; index < bars.length; index += 1) {
-    const timestamp = bars[index]!.timestamp;
-    while (cursor < pending.length && pending[cursor]!.availableAt < timestamp) {
-      const observation = pending[cursor]!;
+  for (const [index, timestamp] of barTimes.entries()) {
+    let observation = pending[cursor];
+    while (observation && observation.availableAtMs < timestamp) {
       latest.set(fundamentalFieldName(observation.metric), observation.value);
       cursor += 1;
+      observation = pending[cursor];
     }
     for (const [field, values] of fields) values[index] = latest.get(field) ?? null;
   }

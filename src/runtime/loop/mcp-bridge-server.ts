@@ -8,6 +8,7 @@ import { Buffer } from "node:buffer";
 import { getDb } from "../../db/sqlite/client";
 import { dispatchMcpToolCall } from "../mcp/dispatcher";
 import { negotiateServerProtocolVersion } from "../mcp/mcp-protocol";
+import { researchProgramService } from "../research-program/service";
 import { isToolPermitted, parseToolPatternEnv } from "./mcp-bridge-guard";
 
 /**
@@ -109,7 +110,7 @@ export function takeMcpMessages(
 }
 
 async function* readMcpMessages(): AsyncGenerator<Record<string, unknown>> {
-  let buf = Buffer.alloc(0);
+  let buf: Buffer = Buffer.alloc(0);
   for await (const chunk of Bun.stdin.stream()) {
     buf = Buffer.concat([buf, chunk as Buffer]);
     const { msgs, rest } = takeMcpMessages(buf, framing);
@@ -241,6 +242,11 @@ async function handleRequest(
 
     await getDb();
     try {
+      if ((await researchProgramService.get(projectId)).program) {
+        throw new Error(
+          "controlled_research_disallows_legacy_mcp_passthrough: use the scoped research API"
+        );
+      }
       const out = await dispatchMcpToolCall({
         serverName,
         toolName,

@@ -18,6 +18,7 @@ import { registerBuiltinConnectors } from "../connectors/bootstrap";
 import { connectorRegistry } from "../connectors/registry";
 import { getDb } from "../db/sqlite/client";
 import { workflowRun } from "../db/sqlite/schema";
+import { enforceResearchToolAccess } from "../runtime/harness/research-program-harness";
 import { classifyToolError } from "../runtime/host/tool-error-classifier";
 import { dispatchMcpToolCall } from "../runtime/mcp/dispatcher";
 import { recordConnectorCall } from "../runtime/monitor/connector-call-log";
@@ -97,6 +98,12 @@ export const BRIDGED_TOOLS = [
   "strategy.sim_deploy",
   "factor.register",
   "factor.list",
+  "factor.get",
+  "research.protocol.get",
+  "research.protocol.create",
+  "research.factor.run",
+  "research.attempt.list",
+  "research.attempt.cancel",
   "factor.compute",
   "factor.autoEvaluate",
   "factor.mine.llm",
@@ -125,6 +132,8 @@ export const BRIDGED_TOOLS = [
   /** Orchestrator dispatch uses Core agent.invoke + typed topology call_team_* only. */
   "order.create_intent",
   "evaluate_risk",
+  "update_plan",
+  "tool.report_gap",
 ] as const;
 
 const BRIDGED_SET = new Set<string>(BRIDGED_TOOLS);
@@ -302,18 +311,13 @@ export function normalizeBridgeToolArgs(
 
 async function projectIdForWorkflow(workflowId: string): Promise<string | undefined> {
   if (!workflowId || workflowId === "prime-bridge") return undefined;
-  try {
-    const db = await getDb();
-    const rows = await db
-      .select({ projectId: workflowRun.projectId })
-      .from(workflowRun)
-      .where(eq(workflowRun.id, workflowId))
-      .limit(1);
-    const id = rows[0]?.projectId?.trim();
-    return id || undefined;
-  } catch {
-    return undefined;
-  }
+  const db = await getDb();
+  const rows = await db
+    .select({ projectId: workflowRun.projectId })
+    .from(workflowRun)
+    .where(eq(workflowRun.id, workflowId))
+    .limit(1);
+  return rows[0]?.projectId?.trim() || undefined;
 }
 
 function resolveBridgeActivity(
@@ -325,15 +329,23 @@ function resolveBridgeActivity(
   traceId: string;
   role: string;
 } {
-  const active = getPrimeBridgeRunContext();
+  const globalActivity = getPrimeBridgeRunContext();
   const fromWorkspace = workflowIdFromCoreWorkspace(
     typeof params.workspace_id === "string" ? params.workspace_id : null
   );
   const workflowId =
     fromWorkspace ||
-    active?.workflowId ||
     (typeof params.workflow_id === "string" ? params.workflow_id : "") ||
     "prime-bridge";
+  if (
+    fromWorkspace &&
+    typeof params.workflow_id === "string" &&
+    params.workflow_id !== fromWorkspace
+  ) {
+    throw new Error("research_tool_workflow_context_mismatch");
+  }
+  // The process-global value is UI correlation only, never project authority.
+  const active = globalActivity?.workflowId === workflowId ? globalActivity : null;
   return {
     workflowId,
     runId:
@@ -712,6 +724,12 @@ primeBridgeRouter.post("/rpc", async (c) => {
       let args = normalizeBridgeToolArgs(name, unwrapBridgeToolArgs(rawArgs));
       const activity = resolveBridgeActivity(params, callId);
       const projectId = await projectIdForWorkflow(activity.workflowId);
+      const access = await enforceResearchToolAccess(
+        name,
+        bridgeContext(callId, activity, projectId),
+        args
+      );
+      args = access.params;
 
       if (isMcpBridgeToolName(name)) {
         return invokeMcpViaBridge({

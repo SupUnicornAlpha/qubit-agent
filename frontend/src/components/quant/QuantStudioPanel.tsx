@@ -21,6 +21,7 @@ import { ComposerTab } from "./ComposerTab";
 import { BacktestStudioTab } from "./BacktestStudioTab";
 import { EvolutionStudioTab } from "./EvolutionStudioTab";
 import { ScriptStudioTab } from "./ScriptStudioTab";
+import { ResearchProgramTab } from "./ResearchProgramTab";
 import { listStrategyCompositions } from "../../api/backend";
 import { useDefaultProject } from "./useDefaultProject";
 import { QuantLineageFilterBar } from "./QuantLineageFilterBar";
@@ -33,6 +34,7 @@ import {
 } from "../../lib/quantListScope";
 
 const TABS: readonly { id: QuantTab; label: string; desc: string; color: string }[] = [
+  { id: "research", label: "研究管理", desc: "协议 · 预算 · 实验台账", color: "var(--qb-quant-accent-2)" },
   { id: "factor", label: "因子工坊", desc: "FactorWorkbench", color: "var(--qb-quant-accent-1)" },
   { id: "discovery", label: "挖掘工坊", desc: "DiscoveryStudio", color: "var(--qb-quant-accent-2)" },
   { id: "composer", label: "组合工坊", desc: "Composer", color: "var(--qb-quant-accent-4)" },
@@ -164,7 +166,7 @@ export const QuantStudioPanel: FC = () => {
             </label>
             <span style={styles.scopeHint}>
               {scopeAllProjects
-                ? "列表含所有 project 的历史因子/策略/回测；新建仍写入默认 project"
+                ? tab === "research" ? "研究管理需要选择具体项目，全部项目范围不能提交实验" : "列表含所有 project 的历史因子/策略/回测；新建仍写入默认 project"
                 : `仅显示「${scopeLabel}」· 新建写入该项目`}
             </span>
           </div>
@@ -241,6 +243,7 @@ export const QuantStudioPanel: FC = () => {
         </div>
       </header>
       <div className="qb-quant-body" data-qb-quant-active={tab} style={styles.body}>
+        {tab === "research" ? <ResearchProgramTab /> : null}
         {tab === "factor" ? <FactorWorkbenchTab /> : null}
         {tab === "discovery" ? <DiscoveryStudioTab /> : null}
         {tab === "composer" ? <ComposerTab /> : null}

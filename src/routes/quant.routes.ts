@@ -53,6 +53,8 @@ quantRouter.post("/factor-backtest-promotions/run-now", async (c) => {
     const body = await c.req.json<{
       project_id?: string;
       projectId?: string;
+      dataset_snapshot_id?: string;
+      datasetSnapshotId?: string;
       factor_ids?: string[];
       factorIds?: string[];
       strategy_name?: string;
@@ -86,12 +88,14 @@ quantRouter.post("/factor-backtest-promotions/run-now", async (c) => {
       createdBy?: string;
     }>();
     const projectId = body.project_id ?? body.projectId;
+    const datasetSnapshotId = body.dataset_snapshot_id ?? body.datasetSnapshotId;
     const strategyName = body.strategy_name ?? body.strategyName;
     const versionTag = body.version_tag ?? body.versionTag;
     const compositionName = body.composition_name ?? body.compositionName;
     const providerKey = body.provider_key ?? body.providerKey;
     const data = await factorBacktestPromotionService.promoteAndBacktest({
       ...(projectId ? { projectId } : {}),
+      ...(datasetSnapshotId ? { datasetSnapshotId } : {}),
       factorIds: body.factor_ids ?? body.factorIds ?? [],
       ...(strategyName ? { strategyName } : {}),
       ...(versionTag ? { versionTag } : {}),

@@ -31,6 +31,67 @@ export const project = sqliteTable("project", {
   createdAt: createdAt(),
 });
 
+/** Research protocols are append-only versions; attempts retain their original version. */
+export const researchProtocol = sqliteTable("research_protocol", {
+  id: id(),
+  projectId: text("project_id").notNull().references(() => project.id, { onDelete: "restrict" }),
+  version: integer("version").notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  specJson: text("spec_json", { mode: "json" }).notNull(),
+  createdAt: createdAt(),
+}, (table) => [
+  uniqueIndex("idx_research_protocol_version").on(table.projectId, table.version),
+]);
+
+export const researchProgram = sqliteTable("research_program", {
+  projectId: text("project_id").primaryKey().references(() => project.id, { onDelete: "restrict" }),
+  activeProtocolId: text("active_protocol_id").notNull()
+    .references(() => researchProtocol.id, { onDelete: "restrict" }),
+  status: text("status", { enum: ["active", "paused"] }).notNull().default("active"),
+  maxAttempts: integer("max_attempts").notNull(),
+  maxEvaluations: integer("max_evaluations").notNull(),
+  usedAttempts: integer("used_attempts").notNull().default(0),
+  usedEvaluations: integer("used_evaluations").notNull().default(0),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+/** A dataset owner chooses one global evaluation allowance, independent of project names. */
+export const researchEvaluationBudget = sqliteTable("research_evaluation_budget", {
+  key: text("key").primaryKey(),
+  limit: integer("limit").notNull(),
+  used: integer("used").notNull().default(0),
+  createdAt: createdAt(),
+});
+
+export const researchAttempt = sqliteTable("research_attempt", {
+  id: id(),
+  projectId: text("project_id").notNull()
+    .references(() => researchProgram.projectId, { onDelete: "restrict" }),
+  protocolId: text("protocol_id").notNull()
+    .references(() => researchProtocol.id, { onDelete: "restrict" }),
+  kind: text("kind", { enum: ["factor_compute", "factor_evaluate", "backtest", "sealed_factor"] }).notNull(),
+  candidateId: text("candidate_id").notNull(),
+  candidateJson: text("candidate_json", { mode: "json" }).notNull(),
+  requestJson: text("request_json", { mode: "json" }).notNull(),
+  requestFingerprint: text("request_fingerprint").notNull(),
+  idempotencyKey: text("idempotency_key").notNull(),
+  evaluationBudgetKey: text("evaluation_budget_key")
+    .references(() => researchEvaluationBudget.key, { onDelete: "restrict" }),
+  status: text("status", { enum: ["pending", "running", "completed", "failed", "cancelled", "timed_out"] })
+    .notNull().default("pending"),
+  resultJson: text("result_json", { mode: "json" }),
+  error: text("error"),
+  createdAt: createdAt(),
+  startedAt: text("started_at"),
+  endedAt: text("ended_at"),
+  deadlineAt: text("deadline_at").notNull(),
+}, (table) => [
+  uniqueIndex("idx_research_attempt_idempotency").on(table.projectId, table.idempotencyKey),
+  index("idx_research_attempt_project").on(table.projectId, table.createdAt),
+  index("idx_research_attempt_expiry").on(table.status, table.deadlineAt),
+]);
+
 export const chatSession = sqliteTable("chat_session", {
   id: id(),
   workspaceId: text("workspace_id")

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
+import { RESEARCH_PROGRAM_ENTRY_TOOLS } from "../../harness/research-program-harness";
 import { SEED_AGENT_DEFINITIONS } from "../../seed-agent-definitions-data";
 import {
   buildPrimeAgentSpecs,
@@ -28,6 +29,7 @@ describe("prime seed → AgentSpec migration", () => {
   test("every seed definition gets executionKind", () => {
     for (const def of SEED_AGENT_DEFINITIONS) {
       expect(def.executionKind).toBeDefined();
+      if (!def.executionKind) throw new Error(`missing_execution_kind:${def.id}`);
       expect(["primary", "subagent", "reactor"] as string[]).toContain(def.executionKind);
     }
   });
@@ -41,24 +43,34 @@ describe("prime seed → AgentSpec migration", () => {
     // Reactor specs (def-news-reactor) are Core-bootstrapped, not Bun seed roles.
     expect(summary.primaryId).toBe("def-orchestrator");
 
-    const orch = specs.find((s) => s.id === "def-orchestrator")!;
+    const orch = specs.find((s) => s.id === "def-orchestrator");
+    if (!orch) throw new Error("missing_orchestrator_seed");
     expect(orch.execution_kind).toBe("primary");
     expect(orch.labels).toContain("orchestrator");
-    expect(orch.tools).toEqual(
-      SEED_AGENT_DEFINITIONS.find((def) => def.id === "def-orchestrator")?.tools
-    );
+    expect(orch.tools).toEqual([
+      ...new Set([
+        ...(SEED_AGENT_DEFINITIONS.find((def) => def.id === "def-orchestrator")?.tools ?? []),
+        ...RESEARCH_PROGRAM_ENTRY_TOOLS,
+      ]),
+    ]);
 
-    const news = toPrimeAgentSpec(SEED_AGENT_DEFINITIONS.find((d) => d.id === "def-news-event")!);
+    const newsDefinition = SEED_AGENT_DEFINITIONS.find((d) => d.id === "def-news-event");
+    if (!newsDefinition) throw new Error("missing_news_seed");
+    const news = toPrimeAgentSpec(newsDefinition);
     expect(news.execution_kind).toBe("subagent");
     expect(news.triggers).toEqual([]);
     expect(news.labels).toContain("news_event");
 
-    const coder = toPrimeAgentSpec(
-      SEED_AGENT_DEFINITIONS.find((d) => d.id === "def-strategy-coder")!
-    );
+    const coderDefinition = SEED_AGENT_DEFINITIONS.find((d) => d.id === "def-strategy-coder");
+    if (!coderDefinition) throw new Error("missing_coder_seed");
+    const coder = toPrimeAgentSpec(coderDefinition);
     expect(coder.execution_kind).toBe("subagent");
     expect(coder.labels).toContain("strategy_coder");
     expect(coder.labels).toContain("research");
+    for (const name of RESEARCH_PROGRAM_ENTRY_TOOLS) expect(coder.tools).toContain(name);
+    const monitor = SEED_AGENT_DEFINITIONS.find((def) => def.id === "def-execution-monitor");
+    if (!monitor) throw new Error("missing_monitor_seed");
+    expect(toPrimeAgentSpec(monitor).tools).toEqual(monitor.tools);
   });
 
   test("packaged Rust seed versions do not drift from runtime definitions", async () => {

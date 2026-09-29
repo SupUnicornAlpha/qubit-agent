@@ -11,6 +11,7 @@ import { listPagesForShell } from "../../pages/registry";
 
 /** 仅承载结构（id 与 i18n key），具体 label 在渲染时通过 `t()` 解析。 */
 const QUANT_SUB: readonly { id: QuantTab; i18nKey: string }[] = [
+  { id: "research", i18nKey: "sidebar.quant.research" },
   { id: "factor", i18nKey: "sidebar.quant.factor" },
   { id: "discovery", i18nKey: "sidebar.quant.discovery" },
   { id: "composer", i18nKey: "sidebar.quant.composer" },

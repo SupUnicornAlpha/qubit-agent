@@ -9,7 +9,8 @@
  * 5. 输出标准化 PIT 审计报告（PitAuditReport）
  */
 
-import type { BacktestDataset, BacktestDatasetBar } from "../provider/types";
+import { isPointInTimeDate, pointInTimeMillis } from "../market/contracts/point-in-time-clock";
+import type { BacktestDataset } from "../provider/types";
 
 export interface PitViolation {
   symbol: string;
@@ -22,7 +23,10 @@ export interface PitViolation {
     | "fundamental_observation_after_asof"
     | "cross_sectional_misalignment"
     | "lookahead_signal_detected"
-    | "pit_provenance_unverified";
+    | "pit_provenance_unverified"
+    | "invalid_timestamp"
+    | "event_timestamp_precision_unknown"
+    | "empty_dataset";
   timestamp: string;
   detail: string;
   severity: "critical" | "warning";
@@ -67,25 +71,43 @@ export function verifyPointInTimeIntegrity(
   const violations: PitViolation[] = [];
   let totalBars = 0;
   const symbols = Object.keys(dataset.barsBySymbol);
-  const asOfDate = dataset.asOf ? dataset.asOf.slice(0, 10) : "9999-12-31";
+  const asOfMs = pointInTimeMillis(dataset.asOf);
   let globalMinDate = "9999-12-31";
   let globalMaxDate = "0000-01-01";
+  if (!Number.isFinite(asOfMs)) {
+    violations.push({
+      symbol: "*",
+      type: "invalid_timestamp",
+      timestamp: dataset.asOf,
+      detail: "Dataset asOf must be a valid ISO timestamp with an explicit timezone",
+      severity: "critical",
+    });
+  }
 
   for (const symbol of symbols) {
     const bars = dataset.barsBySymbol[symbol] ?? [];
     totalBars += bars.length;
-    let prevTs: string | null = null;
-    let prevDate: string | null = null;
+    let prevTs: number | null = null;
 
-    for (let i = 0; i < bars.length; i++) {
-      const bar = bars[i]!;
-      const date = bar.timestamp.slice(0, 10);
+    for (const bar of bars) {
+      const timestampMs = pointInTimeMillis(bar.timestamp);
+      if (!Number.isFinite(timestampMs)) {
+        violations.push({
+          symbol,
+          type: "invalid_timestamp",
+          timestamp: bar.timestamp,
+          detail: "Bar timestamp must be valid and include an explicit timezone",
+          severity: "critical",
+        });
+        continue;
+      }
+      const date = new Date(timestampMs).toISOString().slice(0, 10);
 
       if (date < globalMinDate) globalMinDate = date;
       if (date > globalMaxDate) globalMaxDate = date;
 
       // 1. 检查 as-of 泄漏（绝对不能出现大于 asOf 的数据）
-      if (date > asOfDate) {
+      if (timestampMs > asOfMs) {
         violations.push({
           symbol,
           type: "future_data_leakage",
@@ -97,15 +119,15 @@ export function verifyPointInTimeIntegrity(
 
       // 2. 检查时间戳单调性
       if (prevTs !== null) {
-        if (bar.timestamp < prevTs) {
+        if (timestampMs < prevTs) {
           violations.push({
             symbol,
             type: "non_monotonic_timestamp",
             timestamp: bar.timestamp,
-            detail: `Timestamp sequence inverted: ${bar.timestamp} < previous ${prevTs}`,
+            detail: `Timestamp sequence inverted: ${bar.timestamp} < previous ${new Date(prevTs).toISOString()}`,
             severity: "critical",
           });
-        } else if (bar.timestamp === prevTs) {
+        } else if (timestampMs === prevTs) {
           violations.push({
             symbol,
             type: "duplicate_timestamp",
@@ -118,6 +140,9 @@ export function verifyPointInTimeIntegrity(
 
       // 3. 检查 OHLCV 逻辑自洽（防假数据/未来数据插值导致的异常）
       if (
+        ![bar.open, bar.high, bar.low, bar.close, bar.volume, bar.turnover].every(
+          Number.isFinite
+        ) ||
         bar.open <= 0 ||
         bar.high <= 0 ||
         bar.low <= 0 ||
@@ -136,8 +161,7 @@ export function verifyPointInTimeIntegrity(
         });
       }
 
-      prevTs = bar.timestamp;
-      prevDate = date;
+      prevTs = timestampMs;
     }
   }
 
@@ -155,13 +179,37 @@ export function verifyPointInTimeIntegrity(
     }));
   if (corporateActionEvents && corporateActionEvents.length > 0) {
     for (const ev of corporateActionEvents) {
-      if (ev.announcementDate > ev.eventDate) {
+      const announcementMs = isPointInTimeDate(ev.announcementDate)
+        ? pointInTimeMillis(`${ev.announcementDate}T00:00:00.000Z`)
+        : pointInTimeMillis(ev.announcementDate);
+      const eventDateOnly = isPointInTimeDate(ev.eventDate);
+      const eventMs = eventDateOnly
+        ? pointInTimeMillis(`${ev.eventDate}T00:00:00.000Z`)
+        : pointInTimeMillis(ev.eventDate);
+      if (!Number.isFinite(announcementMs) || !Number.isFinite(eventMs)) {
+        violations.push({
+          symbol: ev.symbol,
+          type: "invalid_timestamp",
+          timestamp: ev.announcementDate,
+          detail: "Corporate-action event and announcement timestamps are invalid or ambiguous",
+          severity: "critical",
+        });
+      } else if (announcementMs > (eventDateOnly ? eventMs + 86_400_000 - 1 : eventMs)) {
         violations.push({
           symbol: ev.symbol,
           type: "corporate_action_pre_announcement",
           timestamp: ev.eventDate,
           detail: `Event for ${ev.symbol} on ${ev.eventDate} was legally announced on ${ev.announcementDate}; usage before announcement constitutes look-ahead bias`,
           severity: "critical",
+        });
+      } else if (eventDateOnly && announcementMs >= eventMs) {
+        violations.push({
+          symbol: ev.symbol,
+          type: "event_timestamp_precision_unknown",
+          timestamp: ev.eventDate,
+          detail:
+            "Same-day announcement has no precise effective time; ordering cannot be verified",
+          severity: "warning",
         });
       }
     }
@@ -172,7 +220,16 @@ export function verifyPointInTimeIntegrity(
   // frozen ledger is automatically checked so a post-snapshot revision cannot
   // silently enter a historical experiment.
   for (const observation of dataset.fundamentalObservations ?? []) {
-    if (observation.availableAt > dataset.asOf) {
+    const availableMs = pointInTimeMillis(observation.availableAt);
+    if (!Number.isFinite(availableMs)) {
+      violations.push({
+        symbol: observation.symbol,
+        type: "invalid_timestamp",
+        timestamp: observation.availableAt,
+        detail: `Fundamental ${observation.metric} availability must include a valid explicit timezone`,
+        severity: "critical",
+      });
+    } else if (availableMs > asOfMs) {
       violations.push({
         symbol: observation.symbol,
         type: "fundamental_observation_after_asof",
@@ -181,6 +238,16 @@ export function verifyPointInTimeIntegrity(
         severity: "critical",
       });
     }
+  }
+
+  if (totalBars === 0) {
+    violations.push({
+      symbol: "*",
+      type: "empty_dataset",
+      timestamp: dataset.asOf,
+      detail: "No bars are available to audit",
+      severity: "warning",
+    });
   }
 
   // “快照中没看到未来行”不等于数据源已经证明 point-in-time。缺少来源证书时
@@ -227,11 +294,16 @@ export function verifyPointInTimeIntegrity(
     );
   }
   if (recommendations.length === 0) {
-    recommendations.push("时序单调且截面隔离良好，已通过 Point-In-Time 严格防未来函数校验。");
+    recommendations.push(
+      warningCount > 0
+        ? "时点检查存在证据缺口；请补充报告中的缺失信息后再用于验证。"
+        : "已通过本次时间边界与数据结构检查；结果仍取决于来源凭证及信号计算的时点约束。"
+    );
   }
 
   return {
-    pass: criticalCount === 0 && dataset.qualification.pointInTime === "verified",
+    pass:
+      criticalCount === 0 && warningCount === 0 && dataset.qualification.pointInTime === "verified",
     verdict,
     lookAheadRiskScore,
     totalBarsAudited: totalBars,

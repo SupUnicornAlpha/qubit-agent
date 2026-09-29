@@ -37,6 +37,7 @@ import { fetchQuantFactors } from "../../lib/quantListScope";
 import { pickColor, SvgLineChart, type ChartSeries } from "./charts/SvgLineChart";
 import { LineageBadge, LineageTrail } from "./LineageBadge";
 import { useAppStore } from "../../store";
+import { FactorDataContext, FactorDataIntegrityResult } from "./FactorDataContext";
 
 const CATEGORY_LABELS: Record<FactorCategory, string> = {
   value: "Value",
@@ -113,6 +114,7 @@ export const FactorWorkbenchTab: FC = () => {
   const [opSymbols, setOpSymbols] = useState(DEFAULT_SYMBOLS);
   const [opHorizon, setOpHorizon] = useState(5);
   const [opGroups, setOpGroups] = useState(5);
+  const [datasetSnapshotId, setDatasetSnapshotId] = useState("");
 
   // register form
   const [showForm, setShowForm] = useState(false);
@@ -124,6 +126,12 @@ export const FactorWorkbenchTab: FC = () => {
 
   // last evaluation result
   const [lastEval, setLastEval] = useState<FactorEvalResultDto | null>(null);
+
+  useEffect(() => {
+    setValuePreview([]);
+    setLastEval(null);
+    setValueStats(null);
+  }, [selectedId, datasetSnapshotId, opStart, opEnd, opSymbols]);
 
   /**
    * 多选集 —— 同时承担「IC 对比」与「批量动作」两类用途，
@@ -188,7 +196,7 @@ export const FactorWorkbenchTab: FC = () => {
       const [rec, evals, stats] = await Promise.all([
         getFactor(selectedId),
         listFactorEvaluations(selectedId, 20),
-        factorValuesStats(selectedId).catch(() => null),
+        factorValuesStats(selectedId, datasetSnapshotId || undefined).catch(() => null),
       ]);
       setSelected(rec);
       setEvaluations(evals);
@@ -200,7 +208,7 @@ export const FactorWorkbenchTab: FC = () => {
           "该产物可能已删除，或不属于当前研究项目。"
       );
     }
-  }, [selectedId]);
+  }, [selectedId, datasetSnapshotId]);
 
   useEffect(() => {
     void reloadSelected();
@@ -259,21 +267,22 @@ export const FactorWorkbenchTab: FC = () => {
     setInfo(null);
     try {
       const r = await computeFactor(selectedId, {
+        datasetSnapshotId: datasetSnapshotId || undefined,
         startDate: opStart,
         endDate: opEnd,
         symbols: symbolsList.length > 0 ? symbolsList : undefined,
       });
       setInfo(`compute 完成：写入 ${r.meta.rowCount} 行 (耗时 ${r.meta.latencyMs}ms)`);
-      const fresh = await loadFactorValues(selectedId, { latestN: 30 });
+      const fresh = await loadFactorValues(selectedId, { latestN: 30, datasetSnapshotId: datasetSnapshotId || undefined });
       setValuePreview(fresh);
-      const stats = await factorValuesStats(selectedId).catch(() => null);
+      const stats = await factorValuesStats(selectedId, datasetSnapshotId || undefined).catch(() => null);
       setValueStats(stats);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
     }
-  }, [selectedId, opStart, opEnd, symbolsList]);
+  }, [selectedId, opStart, opEnd, symbolsList, datasetSnapshotId]);
 
   const onAutoEvaluate = useCallback(async () => {
     if (!selectedId) return;
@@ -283,6 +292,7 @@ export const FactorWorkbenchTab: FC = () => {
     setLastEval(null);
     try {
       const r = await autoEvaluateFactor(selectedId, {
+        datasetSnapshotId: datasetSnapshotId || undefined,
         startDate: opStart,
         endDate: opEnd,
         symbols: symbolsList.length > 0 ? symbolsList : undefined,
@@ -299,7 +309,7 @@ export const FactorWorkbenchTab: FC = () => {
     } finally {
       setBusy(false);
     }
-  }, [selectedId, opStart, opEnd, symbolsList, opHorizon, opGroups]);
+  }, [selectedId, opStart, opEnd, symbolsList, opHorizon, opGroups, datasetSnapshotId]);
 
   const onLoadValues = useCallback(async () => {
     if (!selectedId) return;
@@ -308,6 +318,7 @@ export const FactorWorkbenchTab: FC = () => {
     try {
       const rows = await loadFactorValues(selectedId, {
         symbols: symbolsList.length > 0 ? symbolsList : undefined,
+        datasetSnapshotId: datasetSnapshotId || undefined,
         startDate: opStart,
         endDate: opEnd,
         latestN: 80,
@@ -318,7 +329,7 @@ export const FactorWorkbenchTab: FC = () => {
     } finally {
       setBusy(false);
     }
-  }, [selectedId, symbolsList, opStart, opEnd]);
+  }, [selectedId, symbolsList, opStart, opEnd, datasetSnapshotId]);
 
   const toggleSelect = useCallback((id: string) => {
     setSelectedIds((prev) => {
@@ -403,21 +414,23 @@ export const FactorWorkbenchTab: FC = () => {
     if (ids.length === 0) return;
     await runBulk("compute", ids, async (id) => {
       await computeFactor(id, {
+        datasetSnapshotId: datasetSnapshotId || undefined,
         startDate: opStart,
         endDate: opEnd,
         symbols: symbolsList.length > 0 ? symbolsList : undefined,
       });
     });
     // 跑完刷新选中因子的统计
-    const stats = selectedId ? await factorValuesStats(selectedId).catch(() => null) : null;
+    const stats = selectedId ? await factorValuesStats(selectedId, datasetSnapshotId || undefined).catch(() => null) : null;
     setValueStats(stats);
-  }, [selectedIds, runBulk, opStart, opEnd, symbolsList, selectedId]);
+  }, [selectedIds, runBulk, opStart, opEnd, symbolsList, selectedId, datasetSnapshotId]);
 
   const onBulkAutoEvaluate = useCallback(async () => {
     const ids = Array.from(selectedIds);
     if (ids.length === 0) return;
     await runBulk("auto-evaluate", ids, async (id) => {
       await autoEvaluateFactor(id, {
+        datasetSnapshotId: datasetSnapshotId || undefined,
         startDate: opStart,
         endDate: opEnd,
         symbols: symbolsList.length > 0 ? symbolsList : undefined,
@@ -438,7 +451,7 @@ export const FactorWorkbenchTab: FC = () => {
     const next: Record<string, FactorEvaluationLogRow[]> = {};
     for (const r of results) next[r.id] = r.rows;
     setCompareEvalsByFactor(next);
-  }, [selectedIds, runBulk, opStart, opEnd, symbolsList, opHorizon, opGroups]);
+  }, [selectedIds, runBulk, opStart, opEnd, symbolsList, opHorizon, opGroups, datasetSnapshotId]);
 
   /** 批量送入组合工坊（写 handoff + 切 tab） */
   const onBulkToComposer = useCallback(() => {
@@ -464,6 +477,7 @@ export const FactorWorkbenchTab: FC = () => {
         projectId: projectId ?? undefined,
         factorIds: ids,
         symbols: symbolsList,
+        datasetSnapshotId: datasetSnapshotId || undefined,
         startDate: opStart,
         endDate: opEnd,
         rebalance: "daily",
@@ -486,7 +500,7 @@ export const FactorWorkbenchTab: FC = () => {
       setBusy(false);
       setBulkProgress(null);
     }
-  }, [opEnd, opStart, projectId, selectedIds, setQuantHandoff, setQuantTab, symbolsList]);
+  }, [opEnd, opStart, projectId, selectedIds, setQuantHandoff, setQuantTab, symbolsList, datasetSnapshotId]);
 
   // 拉取对比组的评估历史
   useEffect(() => {
@@ -597,7 +611,8 @@ export const FactorWorkbenchTab: FC = () => {
         </div>
         <div className="qb-quant-filter-row" style={styles.filterRow}>
           <select
-            value={filterCategory}
+            disabled={busy || bulkProgress !== null}
+                    value={filterCategory}
             onChange={(e) => setFilterCategory(e.target.value as FactorCategory | "all")}
             style={styles.select}
           >
@@ -609,7 +624,8 @@ export const FactorWorkbenchTab: FC = () => {
             ))}
           </select>
           <select
-            value={filterStatus}
+            disabled={busy || bulkProgress !== null}
+                    value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value as FactorStatus | "all")}
             style={styles.select}
           >
@@ -621,7 +637,8 @@ export const FactorWorkbenchTab: FC = () => {
             ))}
           </select>
           <select
-            value={filterSource}
+            disabled={busy || bulkProgress !== null}
+                    value={filterSource}
             onChange={(e) => setFilterSource(e.target.value as LineageCreatedBy | "all")}
             style={styles.select}
             title="按因子的产出来源筛选（用户 / Agent / Discovery promote）"
@@ -783,6 +800,7 @@ export const FactorWorkbenchTab: FC = () => {
               />
               <button
                 type="button"
+                disabled={busy || bulkProgress !== null}
                 onClick={() => setSelectedId(f.id)}
                 style={{
                   flex: 1,
@@ -863,11 +881,18 @@ export const FactorWorkbenchTab: FC = () => {
 
             <div className="qb-quant-op-panel" style={styles.opPanel}>
               <strong>操作</strong>
+              <FactorDataContext
+                key={`${selected.id}:${opStart}:${opEnd}:${opSymbols}:${opHorizon}`}
+                factorId={selected.id} symbols={symbolsList} startDate={opStart} endDate={opEnd}
+                horizon={opHorizon} snapshotId={datasetSnapshotId} onSnapshotChange={setDatasetSnapshotId}
+                busy={busy || bulkProgress !== null} onBusyChange={setBusy}
+              />
               <div style={styles.opRow}>
                 <label style={styles.formLabel}>
                   起
                   <input
                     type="date"
+                    disabled={busy || bulkProgress !== null}
                     value={opStart}
                     onChange={(e) => setOpStart(e.target.value)}
                     style={styles.input}
@@ -877,6 +902,7 @@ export const FactorWorkbenchTab: FC = () => {
                   止
                   <input
                     type="date"
+                    disabled={busy || bulkProgress !== null}
                     value={opEnd}
                     onChange={(e) => setOpEnd(e.target.value)}
                     style={styles.input}
@@ -886,6 +912,7 @@ export const FactorWorkbenchTab: FC = () => {
                   Symbols
                   <input
                     type="text"
+                    disabled={busy || bulkProgress !== null}
                     value={opSymbols}
                     onChange={(e) => setOpSymbols(e.target.value)}
                     placeholder="AAPL,MSFT,GOOG"
@@ -900,6 +927,7 @@ export const FactorWorkbenchTab: FC = () => {
                     type="number"
                     min={1}
                     max={60}
+                    disabled={busy || bulkProgress !== null}
                     value={opHorizon}
                     onChange={(e) => setOpHorizon(Number.parseInt(e.target.value, 10) || 5)}
                     style={styles.input}
@@ -911,6 +939,7 @@ export const FactorWorkbenchTab: FC = () => {
                     type="number"
                     min={2}
                     max={20}
+                    disabled={busy || bulkProgress !== null}
                     value={opGroups}
                     onChange={(e) => setOpGroups(Number.parseInt(e.target.value, 10) || 5)}
                     style={styles.input}
@@ -933,6 +962,7 @@ export const FactorWorkbenchTab: FC = () => {
             {lastEval ? (
               <div className="qb-quant-eval-panel" style={styles.evalPanel}>
                 <strong>最近一次评估</strong>
+                {lastEval.statisticalReport?.dataIntegrity ? <FactorDataIntegrityResult report={lastEval.statisticalReport.dataIntegrity} /> : <div style={{ color: "var(--qb-text-muted)", fontSize: 12 }}>未绑定可信数据检查证据，仅供研究。</div>}
                 <div className="qb-quant-eval-grid" style={styles.evalGrid}>
                   <MetricCell label="IC" value={lastEval.ic} signed />
                   <MetricCell label="RankIC" value={lastEval.rankIc} signed />
@@ -1048,6 +1078,9 @@ export const FactorWorkbenchTab: FC = () => {
                 <span>IR {(e.ir ?? 0).toFixed(4)}</span>
               </div>
               {e.error ? <div className="qb-quant-eval-err" style={styles.evalErr}>{e.error}</div> : null}
+              {e.statisticalReportJson?.dataIntegrity ? (
+                <FactorDataIntegrityResult report={e.statisticalReportJson.dataIntegrity} />
+              ) : <div style={styles.muted}>无数据检查证据 · 仅供研究</div>}
             </div>
           ))}
         </div>

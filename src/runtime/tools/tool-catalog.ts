@@ -557,6 +557,34 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     category: "audit",
   },
 
+  "research.protocol.get": {
+    description:
+      "读取当前工作流绑定项目的研究协议版本、共享预算和实验台账。无需参数；项目由服务端工作流确定。",
+    category: "research",
+  },
+  "research.protocol.create": {
+    description:
+      "创建不可覆盖的研究协议版本。参数 spec={hypothesis,benchmark,stoppingRule,development:{datasetSnapshotId,symbols,startDate,endDate},evaluation:{method:'factor_rank_ic_v1',horizonDays,groupCount,sealedDatasetId?},budget:{maxAttempts,maxEvaluations}}。修订不会清空研究历史或已用预算。",
+    category: "research",
+  },
+  "research.factor.run": {
+    description:
+      "按当前项目协议登记并调度因子实验。必填 factor_id、kind（factor_compute / factor_evaluate / sealed_factor）、idempotency_key（同一请求重试保持不变）。开发数据/日期/标的/评估方法继承协议；sealed_factor 仅请求独立评估服务，不返回封存原始数据。返回 attempt，使用 research.attempt.list 查看终态。",
+    category: "research",
+  },
+  "research.attempt.list": {
+    description: "读取当前工作流项目的实验记录，包含失败、取消、超时与协议版本。无需参数。",
+    category: "research",
+  },
+  "research.attempt.cancel": {
+    description:
+      "取消当前项目的实验，参数 attempt_id。保留实验记录与已消耗预算，迟到结果不能覆盖取消状态。",
+    category: "research",
+  },
+  "factor.get": {
+    description: "读取当前工作流项目内的一个因子定义，参数 factor_id；不读取行情或执行计算。",
+    category: "research",
+  },
   // M2：因子/规则/策略 三段式工具（详见 FACTOR_RULE_STRATEGY_DESIGN.md §6.1-6.3）
   "factor.register": {
     description:
@@ -778,7 +806,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   },
   "backtest.final_holdout": {
     description:
-      "执行一次性最终独立 Holdout。必填 `backtest_run_id`、`train_end`、`holdout_start`、`holdout_end`；`train_end` 必须等于源回测的结束日期，holdout 必须在训练之后并设置 purge/embargo（默认各 5 日）。系统只复用已冻结的策略、参数、成本和 dataset snapshot，不做选参；相同 source run 的窗口一经保留，不允许换窗口或重复查看。通过的 holdout 是 live 晋级的必需证据。",
+      "旧探索项目的本地 Holdout 检查（evaluationScope=exploratory_local，不是独立封存评估）。必填 `backtest_run_id`、`train_end`、`holdout_start`、`holdout_end`，复用冻结策略与数据并设置 purge/embargo。激活研究协议的项目禁止此入口；使用 research.factor.run(kind='sealed_factor') 请求独立评估服务。",
     category: "research",
   },
 

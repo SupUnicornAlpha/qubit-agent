@@ -48,6 +48,12 @@ pub const DEFAULT_BRIDGED_TOOLS: &[&str] = &[
     "strategy.sim_deploy",
     "factor.register",
     "factor.list",
+    "factor.get",
+    "research.protocol.get",
+    "research.protocol.create",
+    "research.factor.run",
+    "research.attempt.list",
+    "research.attempt.cancel",
     "factor.compute",
     "factor.autoEvaluate",
     "factor.mine.llm",
@@ -75,6 +81,8 @@ pub const DEFAULT_BRIDGED_TOOLS: &[&str] = &[
     "compute_macro_indicators",
     "order.create_intent",
     "evaluate_risk",
+    "update_plan",
+    "tool.report_gap",
 ];
 
 /// Whether a tool name is acceptable on the legacy bridge (static list + team dispatch).
