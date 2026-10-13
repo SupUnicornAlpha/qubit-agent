@@ -15,6 +15,9 @@ import {
   setResearchProgramStatus,
   submitResearchAttempt,
 } from "../../api/research-program";
+import { FactorComparisonPanel, isComparisonAttempt } from "./FactorComparisonPanel";
+import { ResearchEvidenceAction } from "./ResearchEvidenceAction";
+import { ResearchStrategyPanel } from "./ResearchStrategyPanel";
 import { useDefaultProject } from "./useDefaultProject";
 import "../../theme/research-program.css";
 
@@ -349,6 +352,7 @@ function ResearchProgramWorkspace({
                     : undefined
                 }
                 evaluator={evaluator}
+                factors={factors}
                 busy={busy || Boolean(loadError)}
                 onCancel={program ? () => setEditing(false) : undefined}
                 onSave={(spec) =>
@@ -447,6 +451,20 @@ function ResearchProgramWorkspace({
             </section>
           ) : null}
 
+          <FactorComparisonPanel
+            projectId={projectId}
+            protocol={protocol}
+            factors={factors}
+            attempts={attempts}
+            disabled={busy || !!loadError || program?.status !== "active" || attemptBudgetExhausted}
+            onSubmitted={() => setRefresh((value) => value + 1)}
+          />
+          <ResearchStrategyPanel
+            projectId={projectId}
+            attempts={attempts}
+            disabled={busy || !!loadError || program?.status !== "active" || attemptBudgetExhausted}
+            onSubmitted={() => setRefresh((value) => value + 1)}
+          />
           <section className="qb-research-section" aria-label="实验台账">
             <div className="qb-research-section-title">
               <h3>
@@ -488,7 +506,11 @@ function ResearchProgramWorkspace({
                                 : attempt.protocolId}
                             </small>
                           </td>
-                          <td data-label="阶段">{kindLabels[attempt.kind] ?? attempt.kind}</td>
+                          <td data-label="阶段">
+                            {isComparisonAttempt(attempt)
+                              ? "因子增量比较"
+                              : (kindLabels[attempt.kind] ?? attempt.kind)}
+                          </td>
                           <td data-label="状态">
                             <span className="qb-research-status" data-status={attempt.status}>
                               {statusLabels[attempt.status] ?? attempt.status}
@@ -511,6 +533,12 @@ function ResearchProgramWorkspace({
                             ) : null}
                           </td>
                           <td data-label="记录">
+                            {isComparisonAttempt(attempt) && !isActive(attempt) ? (
+                              <ResearchEvidenceAction
+                                projectId={projectId}
+                                attemptId={attempt.id}
+                              />
+                            ) : null}
                             <details>
                               <summary>查看请求与结果</summary>
                               {attempt.error ? (
@@ -625,11 +653,21 @@ function ProtocolEditor(props: {
   protocol?: ResearchProtocol;
   budget?: ResearchProtocolSpec["budget"];
   evaluator: ResearchEvaluatorInfo | null;
+  factors: FactorRecord[];
   busy: boolean;
   onSave: (spec: ResearchProtocolSpec) => void;
   onCancel?: () => void;
 }) {
   const source = props.protocol?.spec;
+  const [compareEnabled, setCompareEnabled] = useState(Boolean(source?.comparison));
+  const [references, setReferences] = useState(source?.comparison?.references ?? []);
+  const [candidateDirection, setCandidateDirection] = useState<1 | -1>(
+    source?.comparison?.candidateDirection ?? 1
+  );
+  const [candidateWeight, setCandidateWeight] = useState(
+    source?.comparison?.candidateWeight ?? 0.25
+  );
+  const [costBps, setCostBps] = useState(source?.comparison?.costBps ?? 10);
   const [hypothesis, setHypothesis] = useState(source?.hypothesis ?? "");
   const [benchmark, setBenchmark] = useState(source?.benchmark ?? "");
   const [stoppingRule, setStoppingRule] = useState(source?.stoppingRule ?? "");
@@ -696,6 +734,20 @@ function ProtocolEditor(props: {
       );
       return;
     }
+    if (
+      compareEnabled &&
+      (!references.length ||
+        references.length > 8 ||
+        parsedSymbols.length < 5 ||
+        !Number.isFinite(costBps) ||
+        costBps < 0 ||
+        costBps > 100 ||
+        candidateWeight < 0.05 ||
+        candidateWeight > 0.5)
+    ) {
+      setError("增量比较需要 1–8 个对照因子、至少5个标的、5%–50%的加入权重及0–100 bps成本。");
+      return;
+    }
     setError(null);
     props.onSave({
       hypothesis: hypothesis.trim(),
@@ -713,6 +765,17 @@ function ProtocolEditor(props: {
         groupCount: evaluationGroups,
         ...(sealedId ? { sealedDatasetId: sealedId } : {}),
       },
+      ...(compareEnabled
+        ? {
+            comparison: {
+              method: "rank_blend_v1" as const,
+              references: references.map(({ factorId, direction }) => ({ factorId, direction })),
+              candidateDirection,
+              candidateWeight,
+              costBps,
+            },
+          }
+        : {}),
       budget: props.budget ?? { maxAttempts, maxEvaluations },
     });
   };
@@ -842,6 +905,108 @@ function ProtocolEditor(props: {
             : "封存评估服务尚不可用，可以先登记开发研究协议。"}
         </small>
       </label>
+      <fieldset className="qb-comparison-setup qb-research-wide" disabled={props.busy}>
+        <legend>因子增量评估方法</legend>
+        <label className="qb-comparison-toggle">
+          <input
+            type="checkbox"
+            checked={compareEnabled}
+            onChange={(e) => setCompareEnabled(e.target.checked)}
+          />
+          启用固定基准比较
+        </label>
+        {compareEnabled ? (
+          <>
+            <p className="qb-research-muted">
+              选择1–8个已有内置表达式因子等权组成基准。方向、候选加入权重和成本随协议冻结；修改会产生新版本。
+            </p>
+            <div className="qb-comparison-reference-list">
+              {props.factors
+                .filter((f) => f.lang === "qlib_expr" && f.providerKey === "qlib_expr")
+                .map((f) => {
+                  const selected = references.find((r) => r.factorId === f.id);
+                  return (
+                    <div key={f.id}>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={!!selected}
+                          disabled={!selected && references.length >= 8}
+                          onChange={(e) =>
+                            setReferences((current) =>
+                              e.target.checked
+                                ? [...current, { factorId: f.id, direction: 1 as const }]
+                                : current.filter((r) => r.factorId !== f.id)
+                            )
+                          }
+                        />
+                        {f.name}
+                      </label>
+                      {selected ? (
+                        <select
+                          aria-label={`${f.name} 基准方向`}
+                          value={selected.direction}
+                          onChange={(e) =>
+                            setReferences((current) =>
+                              current.map((r) =>
+                                r.factorId === f.id
+                                  ? { ...r, direction: Number(e.target.value) as 1 | -1 }
+                                  : r
+                              )
+                            )
+                          }
+                        >
+                          <option value={1}>正向</option>
+                          <option value={-1}>反向</option>
+                        </select>
+                      ) : null}
+                    </div>
+                  );
+                })}
+            </div>
+            {!props.factors.length ? <p>请先在因子工坊注册对照因子。</p> : null}
+            <div className="qb-comparison-parameters">
+              <label className="qb-research-field">
+                <span>候选方向</span>
+                <select
+                  value={candidateDirection}
+                  onChange={(e) => setCandidateDirection(Number(e.target.value) as 1 | -1)}
+                >
+                  <option value={1}>越高越看多</option>
+                  <option value={-1}>越低越看多</option>
+                </select>
+              </label>
+              <label className="qb-research-field">
+                <span>候选加入权重（%）</span>
+                <input
+                  type="number"
+                  min={5}
+                  max={50}
+                  step={1}
+                  required
+                  value={candidateWeight * 100}
+                  onChange={(e) => setCandidateWeight(Number(e.target.value) / 100)}
+                />
+              </label>
+              <label className="qb-research-field">
+                <span>单边成本（bps）</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={1}
+                  required
+                  value={costBps}
+                  onChange={(e) => setCostBps(Number(e.target.value))}
+                />
+              </label>
+            </div>
+            <small>
+              至少60个有效日截面、20个不重叠组合期和80%覆盖，才给出增量判断。基准没有新增信息不代表没有配置价值。
+            </small>
+          </>
+        ) : null}
+      </fieldset>
       <label className="qb-research-field">
         <span>项目总尝试预算</span>
         <input

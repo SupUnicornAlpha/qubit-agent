@@ -1,5 +1,9 @@
 import { factorService } from "../factor/factor-service";
 import { researchProgramService } from "../research-program/service";
+import {
+  researchStrategyRunner,
+  strategyExecutionSchema,
+} from "../research-program/strategy-runner";
 import { researchProtocolSpecSchema } from "../research-program/types";
 import type { BuiltinToolContext, BuiltinToolHandler } from "./types";
 
@@ -15,12 +19,38 @@ function requiredText(params: Record<string, unknown>, key: string, alias?: stri
 }
 
 export const RESEARCH_PROGRAM_HANDLERS: Record<string, BuiltinToolHandler> = {
+  "research.strategy.export": async (ctx, params) =>
+    researchStrategyRunner.artifact(
+      projectId(ctx),
+      requiredText(params, "strategy_version_id", "strategyVersionId")
+    ),
+  "research.strategy.list": async (ctx) => researchStrategyRunner.list(projectId(ctx)),
+  "research.strategy.create": async (ctx, params) =>
+    researchStrategyRunner.create(
+      projectId(ctx),
+      requiredText(params, "source_attempt_id", "sourceAttemptId"),
+      strategyExecutionSchema.parse(params.execution)
+    ),
+  "research.strategy.run": async (ctx, params) =>
+    researchStrategyRunner.submit(
+      projectId(ctx),
+      requiredText(params, "strategy_version_id", "strategyVersionId"),
+      requiredText(params, "idempotency_key", "idempotencyKey")
+    ),
   "research.protocol.get": async (ctx) => researchProgramService.get(projectId(ctx)),
   "research.protocol.create": async (ctx, params) => {
     const { researchRunner } = await import("../research-program/runner");
     return researchRunner.createProtocol({
       projectId: projectId(ctx),
       spec: researchProtocolSpecSchema.parse(params.spec),
+    });
+  },
+  "research.factor.compare": async (ctx, params) => {
+    const { factorComparisonRunner } = await import("../research-program/factor-comparison-runner");
+    return factorComparisonRunner.submit({
+      projectId: projectId(ctx),
+      factorId: requiredText(params, "factor_id", "factorId"),
+      idempotencyKey: requiredText(params, "idempotency_key", "idempotencyKey"),
     });
   },
   "research.factor.run": async (ctx, params) => {
@@ -35,6 +65,10 @@ export const RESEARCH_PROGRAM_HANDLERS: Record<string, BuiltinToolHandler> = {
       kind,
       idempotencyKey: requiredText(params, "idempotency_key", "idempotencyKey"),
     });
+  },
+  "research.attempt.export": async (ctx, params) => {
+    const { exportResearchEvidence } = await import("../research-program/evidence");
+    return exportResearchEvidence(projectId(ctx), requiredText(params, "attempt_id", "attemptId"));
   },
   "research.attempt.list": async (ctx) =>
     (await researchProgramService.get(projectId(ctx))).attempts,

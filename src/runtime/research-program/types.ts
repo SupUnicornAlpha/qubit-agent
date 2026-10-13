@@ -4,6 +4,35 @@ import { isPointInTimeDate } from "../market/contracts/point-in-time-clock";
 const text = z.string().trim().min(1).max(10_000);
 const date = z.string().refine(isPointInTimeDate, "Use a real calendar date in YYYY-MM-DD format");
 
+export const factorComparisonSpecSchema = z
+  .object({
+    method: z.literal("rank_blend_v1"),
+    references: z
+      .array(
+        z
+          .object({
+            factorId: z.string().trim().min(1).max(200),
+            direction: z.union([z.literal(1), z.literal(-1)]),
+            fingerprint: z
+              .string()
+              .regex(/^sha256:[a-f0-9]{64}$/)
+              .optional(),
+          })
+          .strict()
+      )
+      .min(1)
+      .max(8)
+      .refine(
+        (items) => new Set(items.map((item) => item.factorId)).size === items.length,
+        "Duplicate reference factors"
+      ),
+    candidateDirection: z.union([z.literal(1), z.literal(-1)]),
+    candidateWeight: z.number().min(0.05).max(0.5),
+    costBps: z.number().min(0).max(100),
+  })
+  .strict();
+export type FactorComparisonSpec = z.infer<typeof factorComparisonSpecSchema>;
+
 export const researchProtocolSpecSchema = z
   .object({
     hypothesis: text,
@@ -42,6 +71,7 @@ export const researchProtocolSpecSchema = z
           .optional(),
       })
       .strict(),
+    comparison: factorComparisonSpecSchema.optional(),
     budget: z
       .object({
         maxAttempts: z.number().int().min(1).max(100_000),

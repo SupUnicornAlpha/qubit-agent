@@ -564,7 +564,36 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   },
   "research.protocol.create": {
     description:
-      "创建不可覆盖的研究协议版本。参数 spec={hypothesis,benchmark,stoppingRule,development:{datasetSnapshotId,symbols,startDate,endDate},evaluation:{method:'factor_rank_ic_v1',horizonDays,groupCount,sealedDatasetId?},budget:{maxAttempts,maxEvaluations}}。修订不会清空研究历史或已用预算。",
+      "创建不可覆盖的研究协议版本。参数 spec={hypothesis,benchmark,stoppingRule,development:{datasetSnapshotId,symbols,startDate,endDate},evaluation:{method:'factor_rank_ic_v1',horizonDays,groupCount,sealedDatasetId?},budget:{maxAttempts,maxEvaluations}}。可选 comparison={method:'rank_blend_v1',references:[{factorId,direction:1或-1}],candidateDirection:1或-1,candidateWeight:0.05到0.5,costBps:0到100} 登记增量比较方法，基准指纹由服务端绑定。修订不会清空研究历史或已用预算。",
+    category: "research",
+  },
+  "research.strategy.export": {
+    description:
+      "导出本项目冻结策略及历次回测结果、经济结果校验和；参数 strategy_version_id。仅开发研究，非交易许可。",
+    category: "research",
+  },
+  "research.strategy.list": {
+    description: "列出本项目冻结的 US 日频研究策略版本。",
+    category: "research",
+  },
+  "research.strategy.create": {
+    description:
+      "从本项目成功且建议进一步验证的比较创建冻结策略。source_attempt_id, execution={capital,topN,rebalance:daily|weekly|monthly,commissionBps,slippageBps,minCommission,maxVolumeParticipation}。只做多、次日开盘成交；相同内容去重，修改创建新版本；不晋级。",
+    category: "research",
+  },
+  "research.strategy.run": {
+    description:
+      "按冻结版本提交受控回测。strategy_version_id,idempotency_key；消耗总尝试额度。不能覆盖资金、成本或数据。",
+    category: "research",
+  },
+  "research.attempt.export": {
+    description:
+      "导出当前项目终态增量比较的冻结证据、搜索历史和当前源变化检查。参数 attempt_id；不代表独立验证或交易资格。",
+    category: "research",
+  },
+  "research.factor.compare": {
+    description:
+      "按协议冻结的基准因子、方向、加入权重和成本执行四层增量比较（表达式/日截面信号/收益/组合代理）。必填 factor_id、idempotency_key。消耗一次开发评估额度、保留全部证据，不是封存验证；使用 research.attempt.list 查看结果。",
     category: "research",
   },
   "research.factor.run": {

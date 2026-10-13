@@ -9,8 +9,14 @@ export const RESEARCH_PROGRAM_ENTRY_TOOLS = [
   "research.protocol.get",
   "research.protocol.create",
   "research.factor.run",
+  "research.factor.compare",
   "research.attempt.list",
   "research.attempt.cancel",
+  "research.attempt.export",
+  "research.strategy.list",
+  "research.strategy.create",
+  "research.strategy.run",
+  "research.strategy.export",
   "factor.get",
   "factor.list",
 ] as const;
@@ -55,7 +61,9 @@ export async function enforceResearchToolAccess(
     !controlled &&
     !toolName.startsWith("research.protocol.") &&
     !toolName.startsWith("research.attempt.") &&
-    toolName !== "research.factor.run"
+    !toolName.startsWith("research.strategy.") &&
+    toolName !== "research.factor.run" &&
+    toolName !== "research.factor.compare"
   ) {
     return { ctx, params, controlled: false };
   }

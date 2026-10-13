@@ -8,6 +8,7 @@ import {
   sealedEvaluatorClient,
 } from "./evaluator-client";
 import { executeResearchAttempt, runWithResearchContext } from "./execution";
+import { bindComparisonReferences } from "./factor-comparison-runner";
 import { researchProgramService } from "./service";
 import {
   type ResearchAttempt,
@@ -91,6 +92,8 @@ export class ResearchRunner {
     ) {
       throw new ResearchProgramError("research_development_overlaps_sealed_data", 400);
     }
+    if (spec.comparison)
+      spec.comparison = await bindComparisonReferences(input.projectId, spec.comparison);
     return researchProgramService.createProtocol({ projectId: input.projectId, spec });
   }
   async submitFactor(input: {
@@ -105,7 +108,11 @@ export class ResearchRunner {
     // Retries keep the old protocol, candidate and receipt even after a new version is active.
     const prior = overview.attempts.find((item) => item.idempotencyKey === input.idempotencyKey);
     if (prior) {
-      if (prior.candidateId !== input.factorId || prior.kind !== input.kind)
+      if (
+        prior.candidateId !== input.factorId ||
+        prior.kind !== input.kind ||
+        prior.requestJson.operation === "incremental_compare"
+      )
         throw new ResearchProgramError("research_idempotency_conflict", 409);
       return prior;
     }

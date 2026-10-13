@@ -105,3 +105,7 @@ out/
 # Prime Rust workspace
 /target/
 crates/**/target/
+
+# Local browser verification artifacts
+.playwright-cli/
+output/playwright/

@@ -1,3 +1,5 @@
+import { evidenceDigest } from "../research-program/evidence-checksum";
+import { recipeSchema, frozenStrategyRequest } from "../research-program/strategy-types";
 /**
  * BacktestJobService — 把 BacktestProvider 包装成持久化任务
  *
@@ -173,6 +175,8 @@ export class BacktestJobService {
         .select({
           projectId: strategyTable.projectId,
           specification: strategyVersionTable.paramSchemaJson,
+          fingerprint: strategyVersionTable.logicHash,
+          versionCreatedAt: strategyVersionTable.createdAt,
         })
         .from(strategyVersionTable)
         .innerJoin(strategyTable, eq(strategyTable.id, strategyVersionTable.strategyId))
@@ -212,6 +216,25 @@ export class BacktestJobService {
     if (existing) return this.get(existing.id);
     if (attempt.status !== "pending") throw new Error(`research_attempt_not_pending:${attempt.id}`);
     try {
+      if ((source.specification as { format?: string })?.format === "qubit-research-strategy-v1") {
+        const recipe = recipeSchema.parse(source.specification);
+        if (evidenceDigest(recipe) !== source.fingerprint)
+          throw new Error("research_strategy_modified");
+        if (input.compositionId || input.instruments || input.benchmark || input.scope)
+          throw new Error("research_strategy_override_forbidden");
+        const frozen = frozenStrategyRequest(
+          input.strategyVersionId,
+          recipe,
+          source.fingerprint,
+          source.versionCreatedAt
+        );
+        for (const [key, expected] of Object.entries(frozen)) {
+          const supplied = (input as unknown as Record<string, unknown>)[key];
+          if (supplied !== undefined && evidenceDigest(supplied) !== evidenceDigest(expected))
+            throw new Error(`research_strategy_override_forbidden:${key}`);
+        }
+        input = { ...input, ...frozen };
+      }
       const request = normalizeResearchRequest(protocol, "backtest", { ...input });
       if (
         (input.providerKey !== undefined && input.providerKey !== "event_driven") ||

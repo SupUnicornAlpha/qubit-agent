@@ -14,6 +14,13 @@ export type ResearchAttemptStatus =
   | "cancelled"
   | "timed_out";
 
+export interface FactorComparisonSpec {
+  method: "rank_blend_v1";
+  references: Array<{ factorId: string; direction: 1 | -1; fingerprint?: string }>;
+  candidateDirection: 1 | -1;
+  candidateWeight: number;
+  costBps: number;
+}
 export interface ResearchProtocolSpec {
   hypothesis: string;
   benchmark: string;
@@ -31,6 +38,7 @@ export interface ResearchProtocolSpec {
     sealedDatasetId?: string;
     sealedDatasetFingerprint?: string;
   };
+  comparison?: FactorComparisonSpec;
   budget: { maxAttempts: number; maxEvaluations: number };
 }
 
@@ -145,6 +153,121 @@ export async function cancelResearchAttempt(
     await httpPost<ApiResponse<unknown>>(
       `${projectPath(projectId)}/attempts/${encodeURIComponent(attemptId)}/cancel`,
       undefined,
+      { signal }
+    )
+  );
+}
+
+export async function submitFactorComparison(
+  projectId: string,
+  body: { factorId: string; idempotencyKey: string },
+  signal?: AbortSignal
+) {
+  return unwrap(
+    await httpPost<ApiResponse<ResearchAttempt>>(`${projectPath(projectId)}/comparisons`, body, {
+      signal,
+    })
+  );
+}
+
+export interface ResearchEvidenceBundle {
+  format: "qubit-research-evidence-v1";
+  checksum: string;
+  evidence: {
+    handoff: {
+      status: "requires_repair" | "ready_for_review" | "retain_for_research";
+      blockers: string[];
+      nextStep: string;
+      tradingEligible: false;
+    };
+    currentSources: {
+      snapshotStatus: string;
+      factors: Array<{ factorId: string; status: string }>;
+    };
+    searchHistory: { usedAttempts: number; usedEvaluations: number };
+  };
+}
+export async function getResearchEvidence(
+  projectId: string,
+  attemptId: string,
+  signal?: AbortSignal
+) {
+  return unwrap(
+    await httpGet<ApiResponse<ResearchEvidenceBundle>>(
+      `${projectPath(projectId)}/attempts/${encodeURIComponent(attemptId)}/evidence`,
+      { signal }
+    )
+  );
+}
+
+export interface ResearchStrategyExecution {
+  capital: number;
+  topN: number;
+  rebalance: "daily" | "weekly" | "monthly";
+  commissionBps: number;
+  slippageBps: number;
+  minCommission: number;
+  maxVolumeParticipation: number;
+}
+export interface ResearchStrategyVersion {
+  id: string;
+  createdAt: string;
+  fingerprint: string;
+  recipe: {
+    sourceAttemptId: string;
+    sourceProtocolId: string;
+    factor: { id: string; name: string; expr: string; direction: 1 | -1 };
+    development: ResearchProtocolSpec["development"];
+    execution: ResearchStrategyExecution;
+    allocation: string;
+    timing: string;
+    scope: "development_only";
+  };
+}
+export async function listResearchStrategies(projectId: string, signal?: AbortSignal) {
+  return unwrap(
+    await httpGet<ApiResponse<ResearchStrategyVersion[]>>(`${projectPath(projectId)}/strategies`, {
+      signal,
+    })
+  );
+}
+export async function createResearchStrategy(
+  projectId: string,
+  sourceAttemptId: string,
+  execution: ResearchStrategyExecution,
+  signal?: AbortSignal
+) {
+  return unwrap(
+    await httpPost<ApiResponse<ResearchStrategyVersion>>(
+      `${projectPath(projectId)}/strategies`,
+      { sourceAttemptId, execution },
+      { signal }
+    )
+  );
+}
+export async function runResearchStrategy(
+  projectId: string,
+  versionId: string,
+  idempotencyKey: string,
+  signal?: AbortSignal
+) {
+  return unwrap(
+    await httpPost<ApiResponse<{ attemptId: string; jobId: string }>>(
+      `${projectPath(projectId)}/strategies/${encodeURIComponent(versionId)}/backtests`,
+      { idempotencyKey },
+      { signal }
+    )
+  );
+}
+
+export async function getResearchStrategyArtifact(
+  projectId: string,
+  versionId: string,
+  signal?: AbortSignal
+) {
+  return unwrap(
+    await httpGet<ApiResponse<unknown>>(
+      `${projectPath(projectId)}/strategies/${encodeURIComponent(versionId)}/artifact`,
       { signal }
     )
   );

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { strategyExecutionSchema } from "./strategy-types";
 import { researchProtocolSpecSchema } from "./types";
 
 const object = (properties: Record<string, unknown>, required: string[] = []) => ({
@@ -9,6 +10,57 @@ const object = (properties: Record<string, unknown>, required: string[] = []) =>
 });
 const string = { type: "string" };
 const tools = [
+  {
+    name: "research_strategy_export",
+    description:
+      "Export the frozen strategy, run history and economic checksums. Development research only.",
+    inputSchema: object({ strategyVersionId: string }, ["strategyVersionId"]),
+  },
+  {
+    name: "research_strategy_list",
+    description: "List frozen research strategy versions in the bound project.",
+    inputSchema: object({}),
+  },
+  {
+    name: "research_strategy_create",
+    description:
+      "Freeze a US daily long-only Top-N research strategy from incremental evidence. Not trading approval.",
+    inputSchema: object(
+      {
+        sourceAttemptId: string,
+        execution: object(
+          {
+            capital: { type: "number", minimum: 1000, maximum: 1e9 },
+            topN: { type: "integer", minimum: 1, maximum: 100 },
+            rebalance: { enum: ["daily", "weekly", "monthly"] },
+            commissionBps: { type: "number", minimum: 0, maximum: 100 },
+            slippageBps: { type: "number", minimum: 0, maximum: 100 },
+            minCommission: { type: "number", minimum: 0, maximum: 1000 },
+            maxVolumeParticipation: { type: "number", minimum: 0.001, maximum: 0.1 },
+          },
+          [
+            "capital",
+            "topN",
+            "rebalance",
+            "commissionBps",
+            "slippageBps",
+            "minCommission",
+            "maxVolumeParticipation",
+          ]
+        ),
+      },
+      ["sourceAttemptId", "execution"]
+    ),
+  },
+  {
+    name: "research_strategy_run",
+    description:
+      "Submit a new budgeted backtest using only frozen settings; identical idempotency key does not rerun.",
+    inputSchema: object({ strategyVersionId: string, idempotencyKey: string }, [
+      "strategyVersionId",
+      "idempotencyKey",
+    ]),
+  },
   {
     name: "research_protocol_get",
     description:
@@ -44,6 +96,24 @@ const tools = [
                 sealedDatasetId: string,
               },
               ["method", "horizonDays", "groupCount"]
+            ),
+            comparison: object(
+              {
+                method: { const: "rank_blend_v1" },
+                references: {
+                  type: "array",
+                  minItems: 1,
+                  maxItems: 8,
+                  items: object({ factorId: string, direction: { enum: [1, -1] } }, [
+                    "factorId",
+                    "direction",
+                  ]),
+                },
+                candidateDirection: { enum: [1, -1] },
+                candidateWeight: { type: "number", minimum: 0.05, maximum: 0.5 },
+                costBps: { type: "number", minimum: 0, maximum: 100 },
+              },
+              ["method", "references", "candidateDirection", "candidateWeight", "costBps"]
             ),
             budget: object(
               {
@@ -99,6 +169,21 @@ const tools = [
       },
       ["factorId", "kind", "idempotencyKey"]
     ),
+  },
+  {
+    name: "research_factor_compare",
+    description:
+      "Compare a candidate with the protocol's frozen reference factor library, including signal, return and fixed-allocation increment. Consumes one development attempt; not sealed validation.",
+    inputSchema: object({ factorId: string, idempotencyKey: string }, [
+      "factorId",
+      "idempotencyKey",
+    ]),
+  },
+  {
+    name: "research_attempt_export",
+    description:
+      "Export terminal comparison evidence, search history and current source drift. Not a trading authorization or sealed validation.",
+    inputSchema: object({ attemptId: string }, ["attemptId"]),
   },
   {
     name: "research_attempt_cancel",
@@ -172,6 +257,54 @@ export function createResearchMcpHandler(config: {
         .parse(request.params);
       let data: unknown;
       switch (params.name) {
+        case "research_strategy_export": {
+          const { strategyVersionId } = z
+            .object({ strategyVersionId: z.string().min(1).max(200) })
+            .strict()
+            .parse(params.arguments);
+          data = await call(
+            `${projectPath}/strategies/${encodeURIComponent(strategyVersionId)}/artifact`
+          );
+          break;
+        }
+        case "research_strategy_list":
+          z.object({}).strict().parse(params.arguments);
+          data = await call(`${projectPath}/strategies`);
+          break;
+        case "research_strategy_create":
+          data = await call(
+            `${projectPath}/strategies`,
+            z
+              .object({
+                sourceAttemptId: z.string().min(1).max(200),
+                execution: strategyExecutionSchema,
+              })
+              .strict()
+              .parse(params.arguments)
+          );
+          break;
+        case "research_strategy_run": {
+          const args = z
+            .object({
+              strategyVersionId: z.string().min(1).max(200),
+              idempotencyKey: z.string().trim().min(1).max(200),
+            })
+            .strict()
+            .parse(params.arguments);
+          data = await call(
+            `${projectPath}/strategies/${encodeURIComponent(args.strategyVersionId)}/backtests`,
+            { idempotencyKey: args.idempotencyKey }
+          );
+          break;
+        }
+        case "research_attempt_export": {
+          const { attemptId } = z
+            .object({ attemptId: z.string().min(1).max(200) })
+            .strict()
+            .parse(params.arguments);
+          data = await call(`${projectPath}/attempts/${encodeURIComponent(attemptId)}/evidence`);
+          break;
+        }
         case "research_protocol_get":
           z.object({}).strict().parse(params.arguments);
           data = await call(projectPath);
@@ -217,6 +350,14 @@ export function createResearchMcpHandler(config: {
             .strict()
             .parse(params.arguments);
           data = await call(`${projectPath}/attempts`, args);
+          break;
+        }
+        case "research_factor_compare": {
+          const args = z
+            .object({ factorId: z.string().min(1), idempotencyKey: z.string().min(1).max(200) })
+            .strict()
+            .parse(params.arguments);
+          data = await call(`${projectPath}/comparisons`, args);
           break;
         }
         case "research_attempt_cancel": {

@@ -62,6 +62,22 @@ html[data-qb-theme="dark-purple"] {
   color: var(--qb-text-strong);
   font-feature-settings: "ss01", "cv01";
 }
+
+/* On narrow screens the header must scroll with the report, not consume its viewport. */
+@media (max-width: 760px) {
+  .qb-page-host:has(.qb-quant-shell) { padding: 8px !important; }
+  .qb-quant-shell { overflow: auto !important; }
+  .qb-quant-shell .qb-quant-header { padding: 14px; }
+  .qb-quant-shell .qb-quant-header-titles { min-width: 0; width: 100%; }
+  .qb-quant-shell .qb-quant-body { flex: 0 0 auto !important; overflow: visible !important; }
+  .qb-quant-shell .qb-quant-tabbar { max-width: 100%; overflow-x: auto; box-sizing: border-box; }
+  .qb-quant-shell .qb-quant-tab { flex: 0 0 auto; white-space: nowrap; }
+  .qb-quant-shell .qb-quant-kpi-row { flex-wrap: nowrap; overflow-x: auto; }
+  .qb-quant-shell .qb-quant-kpi { flex: 0 0 auto; white-space: nowrap; }
+  .qb-quant-shell .qb-quant-scope-select { min-width: 0 !important; max-width: 100%; }
+  body:has(.qb-quant-shell) .qb-pro-statusbar { overflow: hidden; white-space: nowrap; }
+  body:has(.qb-quant-shell) .qb-pro-statusbar__right { display: none; }
+}
 .qb-quant-shell .qb-quant-header {
   position: relative;
   background: var(--qb-bg-hero);
