@@ -42,7 +42,17 @@ export const researchStrategyRunner = {
           economicChecksum: job?.result ? economicResultDigest(job.result) : null,
         };
       });
+    const { strategyLifecycle } = await import("./strategy-lifecycle");
+    const lifecycle = await strategyLifecycle.detail(projectId, versionId);
     const evidence = {
+      lifecycle: {
+        status: lifecycle.status,
+        checklist: lifecycle.checklist,
+        events: lifecycle.events,
+        source: lifecycle.source,
+        protocol: lifecycle.protocol,
+        validationAndPaperAttempts: lifecycle.attempts.filter((a) => a.kind !== "backtest"),
+      },
       version,
       runs,
       usedAttempts: detail.program?.usedAttempts,

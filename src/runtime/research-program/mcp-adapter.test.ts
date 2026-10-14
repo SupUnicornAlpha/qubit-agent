@@ -4,6 +4,42 @@ import { createResearchMcpHandler } from "./mcp-adapter";
 type RpcResult = { result: { isError?: boolean; tools: Array<{ name: string }> } };
 
 describe("project-bound research MCP adapter", () => {
+  test("lifecycle commands reject forged promotion, project injection and excessive paper batches", async () => {
+    let calls = 0;
+    const handle = createResearchMcpHandler({
+      baseUrl: "http://localhost:3000",
+      projectId: "p",
+      fetch: (async () => {
+        calls++;
+        return Response.json({ ok: true, data: {} });
+      }) as typeof fetch,
+    });
+    const call = (command: unknown) =>
+      handle({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "research_strategy_manage",
+          arguments: { strategyVersionId: "v", command },
+        },
+      }) as Promise<RpcResult>;
+    for (const command of [
+      { action: "state", status: "validated", reason: "fake", expectedRevision: 0 },
+      { action: "inspect", projectId: "other" },
+      {
+        action: "paper_advance",
+        sessionId: "s",
+        expectedCursor: null,
+        bars: 1000,
+        idempotencyKey: "k",
+      },
+    ])
+      expect((await call(command)).result.isError).toBe(true);
+    expect(calls).toBe(0);
+    expect((await call({ action: "inspect" })).result.isError).toBeUndefined();
+    expect(calls).toBe(1);
+  });
   test("strategy tools cannot override frozen execution settings or switch projects", async () => {
     const calls: string[] = [];
     const handle = createResearchMcpHandler({
@@ -72,6 +108,7 @@ describe("project-bound research MCP adapter", () => {
     const handle = createResearchMcpHandler({ baseUrl: "http://localhost:3000", projectId: "p1" });
     const result = (await handle({ jsonrpc: "2.0", id: 1, method: "tools/list" })) as RpcResult;
     expect(result.result.tools.map((tool: { name: string }) => tool.name)).toEqual([
+      "research_strategy_manage",
       "research_strategy_export",
       "research_strategy_list",
       "research_strategy_create",

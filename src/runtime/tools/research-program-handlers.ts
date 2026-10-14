@@ -1,3 +1,4 @@
+import { manageResearchStrategy } from "../research-program/strategy-management";
 import { factorService } from "../factor/factor-service";
 import { researchProgramService } from "../research-program/service";
 import {
@@ -23,6 +24,12 @@ export const RESEARCH_PROGRAM_HANDLERS: Record<string, BuiltinToolHandler> = {
     researchStrategyRunner.artifact(
       projectId(ctx),
       requiredText(params, "strategy_version_id", "strategyVersionId")
+    ),
+  "research.strategy.manage": async (ctx, params) =>
+    manageResearchStrategy(
+      projectId(ctx),
+      requiredText(params, "strategy_version_id", "strategyVersionId"),
+      params.command
     ),
   "research.strategy.list": async (ctx) => researchStrategyRunner.list(projectId(ctx)),
   "research.strategy.create": async (ctx, params) =>

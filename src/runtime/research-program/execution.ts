@@ -1,3 +1,4 @@
+import { evidenceDigest } from "./evidence-checksum";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { researchProgramService } from "./service";
@@ -63,6 +64,18 @@ export function normalizeResearchRequest(
 export function summarizeResearchResult(result: unknown): Record<string, unknown> {
   if (!result || typeof result !== "object") return { value: result ?? null };
   const value = { ...(result as Record<string, unknown>) };
+  // Full execution traces remain in the backtest job; the shared ledger polls summaries.
+  if (value.result && typeof value.result === "object" && !Array.isArray(value.result)) {
+    const nested = { ...(value.result as Record<string, unknown>) };
+    if (Array.isArray(nested.executionTrace)) {
+      nested.executionTraceSummary = {
+        count: nested.executionTrace.length,
+        checksum: evidenceDigest(nested.executionTrace),
+      };
+      delete nested.executionTrace;
+      value.result = nested;
+    }
+  }
   if (Array.isArray(value.rows)) {
     value.rowCount = value.rows.length;
     value.rows = value.rows.slice(0, 20);

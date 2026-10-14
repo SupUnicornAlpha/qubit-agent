@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import {
+  strategyPolicySchema,
+  strategyValidationReceiptSchema,
+  strategyValidationRequestSchema,
+  type StrategyValidationRequest,
+} from "./strategy-validation-types";
+import { evidenceDigest } from "./evidence-checksum";
 import type { ResearchAttempt, ResearchProtocol } from "./types";
 
 export const sealedDatasetDescriptorSchema = z
@@ -11,6 +18,7 @@ export const sealedDatasetDescriptorSchema = z
     maxEvaluations: z.number().int().min(1).max(100_000),
     horizonDays: z.number().int().min(1),
     groupCount: z.number().int().min(2),
+    strategyPolicy: strategyPolicySchema.optional(),
     datasetFingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/),
   })
   .strict();
@@ -120,6 +128,25 @@ export class SealedEvaluatorClient {
   budgetKey(dataset: SealedDatasetDescriptor) {
     // Content identity, rather than display name or project identity, owns the quota.
     return `sealed:${dataset.datasetFingerprint}`;
+  }
+  async evaluateStrategy(input: StrategyValidationRequest) {
+    const body = strategyValidationRequestSchema.parse(input);
+    const receipt = strategyValidationReceiptSchema.parse(
+      await this.request("/v1/strategy-evaluations", body)
+    );
+    for (const key of [
+      "attemptId",
+      "protocolFingerprint",
+      "planFingerprint",
+      "strategyFingerprint",
+      "datasetFingerprint",
+      "policyFingerprint",
+    ] as const) {
+      if (receipt[key] !== body[key]) throw new Error("sealed_strategy_receipt_mismatch");
+    }
+    if (evidenceDigest(body.recipe) !== body.strategyFingerprint)
+      throw new Error("sealed_strategy_fingerprint_mismatch");
+    return receipt;
   }
   async evaluate(
     attempt: ResearchAttempt,

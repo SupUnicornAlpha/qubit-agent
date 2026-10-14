@@ -22,6 +22,8 @@ import { useDefaultProject } from "./useDefaultProject";
 import "../../theme/research-program.css";
 
 const kindLabels: Record<ResearchAttemptKind, string> = {
+  sealed_strategy: "策略封存验证",
+  paper_step: "逐日模拟",
   factor_compute: "开发数据 · 因子计算",
   factor_evaluate: "开发数据 · 因子评估",
   sealed_factor: "封存数据 · 正式评估",
@@ -399,7 +401,9 @@ function ResearchProgramWorkspace({
                     onChange={(event) => setKind(event.target.value as ResearchFactorAttemptKind)}
                   >
                     {Object.entries(kindLabels)
-                      .filter(([value]) => value !== "backtest")
+                      .filter(
+                        ([value]) => !["backtest", "sealed_strategy", "paper_step"].includes(value)
+                      )
                       .map(([value, label]) => (
                         <option
                           key={value}

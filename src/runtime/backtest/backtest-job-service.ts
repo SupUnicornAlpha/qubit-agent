@@ -53,6 +53,7 @@ import { DatasetSnapshotBindingError, bindBacktestDataset } from "./dataset-snap
 // ─── 类型 ───────────────────────────────────────────────────────────────────
 
 export interface BacktestJobSubmitInput {
+  captureTrace?: boolean;
   strategyVersionId: string;
   idempotencyKey?: string;
   /** 必须引用在运行前冻结的 market snapshot；不允许回测时临时取数。 */
@@ -358,6 +359,7 @@ export class BacktestJobService {
       startDate: input.startDate,
       endDate: input.endDate,
       capital: input.capital ?? 1_000_000,
+      ...(input.captureTrace !== undefined ? {captureTrace:input.captureTrace} : {}),
       costs: input.costs ?? DEFAULT_COSTS,
       ...(input.rebalance ? { rebalance: input.rebalance } : {}),
       ...(typeof input.topN === "number" && input.topN > 0 ? { topN: input.topN } : {}),

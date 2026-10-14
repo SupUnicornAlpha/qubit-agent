@@ -201,6 +201,7 @@ export class EventDrivenBacktestProvider implements BacktestProvider {
 
     // 3) 跑事件引擎
     const engineInput: EngineInput = {
+      ...(input.captureTrace !== undefined ? { captureTrace: input.captureTrace } : {}),
       dates,
       bars: barsByDate,
       signals,

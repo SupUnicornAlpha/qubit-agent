@@ -1,3 +1,5 @@
+import { strategyPolicySchema, strategyValidationRequestSchema } from "./strategy-validation-types";
+import { handleSealedStrategy, strategyReceipt } from "./sealed-strategy";
 import { Database } from "bun:sqlite";
 import { createHash, createPublicKey, timingSafeEqual, verify } from "node:crypto";
 import { z } from "zod";
@@ -99,6 +101,7 @@ export const signedSealedDatasetBundleSchema = z
     payload: z
       .object({
         version: z.literal("sealed-factor-dataset-v1"),
+        strategyPolicy: strategyPolicySchema.optional(),
         id: z.string().min(1).max(200),
         label: z.string().min(1).max(200),
         maxEvaluations: z.number().int().min(1).max(100_000),
@@ -248,6 +251,7 @@ export function createSealedEvaluator(options: {
         horizonDays: bundle.payload.horizonDays,
         groupCount: bundle.payload.groupCount,
         datasetFingerprint: sealedDatasetFingerprint(dataset),
+        ...(bundle.payload.strategyPolicy ? { strategyPolicy: bundle.payload.strategyPolicy } : {}),
       },
     });
   }
@@ -281,7 +285,20 @@ export function createSealedEvaluator(options: {
       for (const row of db
         .query<EvaluationRow, []>("SELECT * FROM sealed_evaluation WHERE status = 'running'")
         .all()) {
-        const original = sealedEvaluationRequestSchema.parse(JSON.parse(row.request_json));
+        const rawRequest = JSON.parse(row.request_json);
+        if (rawRequest.version === "sealed-strategy-request-v1") {
+          const interrupted = strategyReceipt(
+            strategyValidationRequestSchema.parse(rawRequest),
+            "insufficient_evidence",
+            ["evaluator_restarted_during_attempt"]
+          );
+          db.query("UPDATE sealed_evaluation SET status='failed',receipt_json=? WHERE id=?").run(
+            JSON.stringify(interrupted),
+            row.id
+          );
+          continue;
+        }
+        const original = sealedEvaluationRequestSchema.parse(rawRequest);
         const interrupted = receipt(original, row.dataset_fingerprint, "insufficient_evidence", [
           "evaluator_restarted_during_attempt",
         ]);
@@ -397,6 +414,12 @@ export function createSealedEvaluator(options: {
       const path = new URL(request.url).pathname;
       if (request.method === "GET" && path === "/v1/datasets") {
         return Response.json({ datasets: [...datasets.values()].map((entry) => entry.descriptor) });
+      }
+      if (request.method === "POST" && path === "/v1/strategy-evaluations") {
+        const body = await request.text();
+        if (body.length > 32000)
+          return Response.json({ error: "request_too_large" }, { status: 413 });
+        return handleSealedStrategy(body, db, datasets);
       }
       if (request.method !== "POST" || path !== "/v1/evaluations")
         return Response.json({ error: "not_found" }, { status: 404 });

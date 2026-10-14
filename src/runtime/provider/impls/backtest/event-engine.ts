@@ -1,3 +1,5 @@
+import { evidenceDigest } from "../../../research-program/evidence-checksum";
+import type { BacktestExecutionTrace } from "../../types";
 /**
  * 事件驱动回测引擎（纯计算，不依赖 IO）
  *
@@ -69,6 +71,7 @@ export interface BarPoint {
 }
 
 export interface EngineInput {
+  captureTrace?: boolean;
   /** 升序交易日 */
   dates: string[];
   /** date → symbol → BarPoint */
@@ -555,6 +558,7 @@ export function runEventEngine(input: EngineInput): BacktestResult {
     periodsPerYear,
   } = input;
 
+  const executionTrace: BacktestExecutionTrace[] = [];
   const equityCurve: BacktestEquityPoint[] = [];
   const trades: BacktestTrade[] = [];
   const assetLifecycleEvents: AssetLifecycleEvent[] = [];
@@ -577,6 +581,13 @@ export function runEventEngine(input: EngineInput): BacktestResult {
     const barsToday = bars.get(date);
     if (!barsToday) continue;
     const sessionDate = date.slice(0, 10);
+    const tradeStart = trades.length;
+    const orderTargets: Array<{
+      symbol: string;
+      targetNotional: number;
+      currentQty: number;
+      open: number | null;
+    }> = [];
 
     cash = rollFuturesAtOpen({
       date: sessionDate,
@@ -646,6 +657,19 @@ export function runEventEngine(input: EngineInput): BacktestResult {
       const shortCount = activeShorts.length;
       const totalSlots = longCount + shortCount;
       const perSlot = totalSlots > 0 ? equityAtOpen / totalSlots : 0;
+      if (input.captureTrace)
+        for (const symbol of [...new Set([...positions.keys(), ...allTargets])].sort()) {
+          orderTargets.push({
+            symbol,
+            targetNotional: activeLongs.includes(symbol)
+              ? perSlot
+              : activeShorts.includes(symbol)
+                ? -perSlot
+                : 0,
+            currentQty: positions.get(symbol)?.qty ?? 0,
+            open: barsToday.get(symbol)?.open ?? null,
+          });
+        }
 
       // 平仓非目标
       for (const [sym, pos] of positions) {
@@ -1125,6 +1149,20 @@ export function runEventEngine(input: EngineInput): BacktestResult {
       }
     }
     equityCurve.push(point);
+    if (input.captureTrace)
+      executionTrace.push({
+        date,
+        input: evidenceDigest(Object.fromEntries(barsToday)),
+        signal: evidenceDigest(Object.fromEntries(signals.get(date) ?? [])),
+        target: evidenceDigest(targets),
+        order: evidenceDigest(orderTargets),
+        fill: evidenceDigest(trades.slice(tradeStart)),
+        position: evidenceDigest({
+          cash,
+          positions: Object.fromEntries(positions),
+          equity: mtmEquity,
+        }),
+      });
   }
 
   const metrics = computeMetrics(equityCurve, trades, capital, periodsPerYear);
@@ -1132,6 +1170,7 @@ export function runEventEngine(input: EngineInput): BacktestResult {
     equityCurve,
     trades,
     metrics,
+    ...(input.captureTrace ? { executionTrace } : {}),
     meta: {
       latencyMs: Date.now() - t0,
       sampleSize: equityCurve.length,

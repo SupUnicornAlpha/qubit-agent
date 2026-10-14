@@ -4,6 +4,7 @@
  */
 
 const HEAVY_ARRAY_KEYS = new Set([
+  "executionTrace",
   "equityCurve",
   "equity_curve",
   "trades",
@@ -71,6 +72,9 @@ export function compactBacktestResult(result: unknown): unknown {
   const trades = r.trades;
   return {
     ...r,
+    ...(Array.isArray(r.executionTrace)
+      ? { executionTrace: { __compact: true, length: r.executionTrace.length } }
+      : {}),
     ...(Array.isArray(equity) ? { equityCurve: { __compact: true, length: equity.length } } : {}),
     ...(Array.isArray(trades) ? { trades: { __compact: true, length: trades.length } } : {}),
     metrics: r.metrics ?? null,

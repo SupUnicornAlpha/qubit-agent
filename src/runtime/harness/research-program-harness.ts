@@ -17,6 +17,7 @@ export const RESEARCH_PROGRAM_ENTRY_TOOLS = [
   "research.strategy.create",
   "research.strategy.run",
   "research.strategy.export",
+  "research.strategy.manage",
   "factor.get",
   "factor.list",
 ] as const;

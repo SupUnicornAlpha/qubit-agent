@@ -1,3 +1,4 @@
+import { strategyManagementSchema } from "./strategy-management-types";
 import { z } from "zod";
 import { strategyExecutionSchema } from "./strategy-types";
 import { researchProtocolSpecSchema } from "./types";
@@ -10,6 +11,47 @@ const object = (properties: Record<string, unknown>, required: string[] = []) =>
 });
 const string = { type: "string" };
 const tools = [
+  {
+    name: "research_strategy_manage",
+    description:
+      "Inspect lineage, compare versions, request review/archive, freeze a validation plan, submit sealed validation, or manage resumable daily paper replay. Inspect first for revision and evidence IDs. Never grants trading approval.",
+    inputSchema: object(
+      {
+        strategyVersionId: string,
+        command: object(
+          {
+            action: {
+              enum: [
+                "inspect",
+                "compare",
+                "state",
+                "plan",
+                "validate",
+                "paper_list",
+                "paper_create",
+                "paper_status",
+                "paper_advance",
+              ],
+            },
+            otherVersionId: string,
+            status: { enum: ["research", "review", "archived", "paused", "running"] },
+            reason: string,
+            automatic: { type: "boolean" },
+            expectedRevision: { type: "integer", minimum: 0 },
+            referenceAttemptId: string,
+            planId: string,
+            idempotencyKey: string,
+            sessionId: string,
+            expectedCursor: { type: ["string", "null"] },
+            bars: { type: "integer", minimum: 1, maximum: 20 },
+            snapshotId: string,
+          },
+          ["action"]
+        ),
+      },
+      ["strategyVersionId", "command"]
+    ),
+  },
   {
     name: "research_strategy_export",
     description:
@@ -257,6 +299,20 @@ export function createResearchMcpHandler(config: {
         .parse(request.params);
       let data: unknown;
       switch (params.name) {
+        case "research_strategy_manage": {
+          const args = z
+            .object({
+              strategyVersionId: z.string().min(1).max(200),
+              command: strategyManagementSchema,
+            })
+            .strict()
+            .parse(params.arguments);
+          data = await call(
+            `${projectPath}/strategies/${encodeURIComponent(args.strategyVersionId)}/manage`,
+            args.command
+          );
+          break;
+        }
         case "research_strategy_export": {
           const { strategyVersionId } = z
             .object({ strategyVersionId: z.string().min(1).max(200) })

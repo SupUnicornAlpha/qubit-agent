@@ -8,6 +8,7 @@ import {
   listResearchStrategies,
   runResearchStrategy,
 } from "../../api/research-program";
+import { ResearchStrategyLifecycle } from "./ResearchStrategyLifecycle";
 
 const defaults: ResearchStrategyExecution = {
   capital: 100000,
@@ -50,7 +51,9 @@ export function ResearchStrategyPanel({
   const [revision, setRevision] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
   const [notice, setNotice] = useState("");
+  const [managementStatus, setManagementStatus] = useState<string | null>(null);
   const control = useRef<AbortController | null>(null);
   const keys = useRef(new Map<string, string>());
   useEffect(() => () => control.current?.abort(), []);
@@ -59,13 +62,16 @@ export function ResearchStrategyPanel({
     const abort = new AbortController();
     void listResearchStrategies(projectId, abort.signal)
       .then((rows) => {
-        if (!abort.signal.aborted) setVersions(rows);
+        if (!abort.signal.aborted) {
+          setVersions(rows);
+          setLoadError("");
+        }
       })
       .catch((e) => {
-        if (!abort.signal.aborted) setError(String(e));
+        if (!abort.signal.aborted) setLoadError(String(e));
       });
     return () => abort.abort();
-  }, [projectId, revision]);
+  }, [projectId, revision, attempts]);
   const sources = attempts.filter(
     (a) =>
       a.status === "completed" &&
@@ -74,6 +80,8 @@ export function ResearchStrategyPanel({
       (a.candidateJson as { universe?: string })?.universe === "US"
   );
   const version = versions.find((v) => v.id === selected) ?? versions[0];
+  // biome-ignore lint/correctness/useExhaustiveDependencies: selecting another version invalidates its fetched lifecycle state.
+  useEffect(() => setManagementStatus(null), [version?.id]);
   const runs = attempts.filter((a) => a.kind === "backtest" && a.candidateId === version?.id);
   async function action(work: (signal: AbortSignal) => Promise<void>) {
     if (control.current) return;
@@ -180,9 +188,9 @@ export function ResearchStrategyPanel({
           </p>
         ) : null}
       </form>
-      {error ? (
+      {error || loadError ? (
         <p role="alert" className="qb-research-alert">
-          {error}
+          {error || loadError}
         </p>
       ) : null}
       {notice ? <output className="qb-research-note">{notice}</output> : null}
@@ -215,7 +223,7 @@ export function ResearchStrategyPanel({
           <button
             type="button"
             className="qb-quant-btn qb-quant-btn--primary"
-            disabled={busy || disabled}
+            disabled={busy || disabled || managementStatus === "archived"}
             onClick={() =>
               void action(async (signal) => {
                 const key = keys.current.get(version.id) ?? crypto.randomUUID();
@@ -287,6 +295,16 @@ export function ResearchStrategyPanel({
               </div>
             );
           })}
+          <ResearchStrategyLifecycle
+            key={version.id}
+            projectId={projectId}
+            version={version}
+            versions={versions}
+            onStatus={setManagementStatus}
+            attempts={attempts}
+            disabled={disabled}
+            onSubmitted={onSubmitted}
+          />
           <p className="qb-research-muted">
             成本与成交量限制为研究假设，未验证实际券商执行、盘口和容量；末日持仓按引擎规则估值，不承诺全部变现。
           </p>

@@ -1,3 +1,4 @@
+import { researchPaperWorker } from "./runtime/research-program/strategy-paper-worker";
 import { config } from "./config";
 import { formatStartupBanner } from "./routes/meta.routes";
 import { startAllAgents, stopAllAgents } from "./runtime/agent-pool";
@@ -54,6 +55,7 @@ async function main() {
   paperEvaluationWorker.start();
   recommendationOutcomeWorker.start();
   strategyRuntimeWorker.start();
+  researchPaperWorker.start();
   const { startSimEventReactor } = await import("./runtime/trading/sim-event-reactor");
   startSimEventReactor();
   // 监控聚合 + 告警扫描 worker（P2-4）：每 5min 跑一次 aggregateMetrics +
@@ -143,6 +145,7 @@ async function main() {
     paperEvaluationWorker.stop();
     recommendationOutcomeWorker.stop();
     strategyRuntimeWorker.stop();
+    researchPaperWorker.stop();
     const { stopSimEventReactor } = await import("./runtime/trading/sim-event-reactor");
     stopSimEventReactor();
     monitorAggregatorWorker.stop();

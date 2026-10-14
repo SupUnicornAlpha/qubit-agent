@@ -1,3 +1,12 @@
+import { buildMarketSnapshotRecord } from "../market/contracts/market-snapshot-service";
+import { ResearchPaperWorker } from "./strategy-paper-worker";
+import { SealedEvaluatorClient } from "./evaluator-client";
+import { ResearchRunner } from "./runner";
+import { evidenceDigest } from "./evidence-checksum";
+import { strategyValidationReceiptSchema } from "./strategy-validation-types";
+import { StrategyLifecycle, strategyLifecycle } from "./strategy-lifecycle";
+import { strategyPaper, reconcileTraces } from "./strategy-paper";
+import { manageResearchStrategy } from "./strategy-management";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -34,7 +43,7 @@ beforeAll(async () => {
     JSON.stringify(fixture.record)
   );
 });
-async function setup(candidateExpr = "volume", maxAttempts = 4) {
+async function setup(candidateExpr = "volume", maxAttempts = 4, maxEvaluations = 0) {
   const pid = randomUUID();
   (await getDb())
     .insert(project)
@@ -71,12 +80,285 @@ async function setup(candidateExpr = "volume", maxAttempts = 4) {
       candidateWeight: 0.25,
       costBps: 10,
     },
-    budget: { maxAttempts, maxEvaluations: 0 },
+    budget: { maxAttempts, maxEvaluations },
   };
   const protocol = await researchRunner.createProtocol({ projectId: pid, spec });
   return { pid, reference, candidate, spec, protocol };
 }
 describe("controlled incremental comparison", () => {
+  test("lifecycle keeps lineage, compares only like conditions, protects state and resumes causal paper execution", async () => {
+    const { pid, candidate } = await setup("volume", 30);
+    const comparison = await factorComparisonRunner.submit({
+      projectId: pid,
+      factorId: candidate.id,
+      idempotencyKey: randomUUID(),
+    });
+    await factorComparisonRunner.waitForAttempt(comparison.id);
+    const rules = {
+      capital: 10000,
+      topN: 3,
+      rebalance: "daily" as const,
+      commissionBps: 5,
+      slippageBps: 5,
+      minCommission: 1,
+      maxVolumeParticipation: 0.05,
+    };
+    const version = await researchStrategyRunner.create(pid, comparison.id, rules);
+    await expect(
+      strategyLifecycle.transition(pid, version.id, {
+        status: "review",
+        reason: "test",
+        expectedRevision: 0,
+      })
+    ).rejects.toThrow("evidence_required");
+    const run = await researchStrategyRunner.submit(pid, version.id, randomUUID());
+    await researchStrategyRunner.wait(run.jobId);
+    const job = await backtestJobService.get(run.jobId);
+    expect(job.result?.executionTrace).toHaveLength(220);
+    const changed = await researchStrategyRunner.create(pid, comparison.id, {
+      ...rules,
+      slippageBps: 10,
+    });
+    const diff = await strategyLifecycle.compare(pid, version.id, changed.id);
+    expect(diff.comparable).toBe(false);
+    expect(diff.performance).toBeNull();
+    expect(diff.diffs.some((d) => d.field === "execution.slippageBps")).toBe(true);
+    expect((await strategyLifecycle.compare(pid, version.id, version.id)).comparable).toBe(true);
+    let d = await strategyLifecycle.transition(pid, version.id, {
+      status: "review",
+      referenceAttemptId: run.attemptId!,
+      reason: "ready for independent review",
+      expectedRevision: 0,
+    });
+    expect(d.status).toBe("review");
+    expect(d.source?.id).toBe(comparison.id);
+    await expect(
+      strategyLifecycle.transition(pid, version.id, {
+        status: "archived",
+        reason: "stale",
+        expectedRevision: 0,
+      })
+    ).rejects.toThrow("刷新");
+    await expect(
+      manageResearchStrategy(pid, version.id, {
+        action: "state",
+        status: "validated",
+        reason: "self declared",
+        expectedRevision: d.revision,
+      })
+    ).rejects.toThrow();
+    await expect(strategyLifecycle.plan(pid, version.id, d.revision)).rejects.toThrow(
+      "not_configured"
+    );
+    await expect(strategyLifecycle.detail("other", version.id)).rejects.toThrow("not_found");
+    const session = await strategyPaper.create(pid, version.id, run.attemptId!, d.revision);
+    const input = { expectedCursor: null, idempotencyKey: randomUUID(), bars: 20 };
+    const [a, b] = await Promise.all([
+      strategyPaper.advance(pid, version.id, session.id, input),
+      strategyPaper.advance(pid, version.id, session.id, input),
+    ]);
+    expect(a.id).toBe(b.id);
+    const completed = await strategyPaper.wait(a.id);
+    expect(completed.status).toBe("completed");
+    const result = completed.resultJson as {
+      cursor: string;
+      differences: Array<{ status: string }>;
+    };
+    expect(result.differences).toHaveLength(20);
+    expect(result.differences.every((r) => r.status === "matched")).toBe(true);
+    // A new service reader restores cursor from SQLite rather than process-local sessions.
+    const restored = (await strategyPaper.list(pid, version.id))[0]!;
+    expect(restored.cursor).toBe(result.cursor);
+    await expect(
+      strategyPaper.advance(pid, version.id, session.id, { ...input, idempotencyKey: randomUUID() })
+    ).rejects.toThrow("cursor_conflict");
+    d = await strategyLifecycle.detail(pid, version.id);
+    await strategyPaper.setStatus(pid, version.id, session.id, "paused", d.revision);
+    await expect(
+      strategyPaper.advance(pid, version.id, session.id, {
+        expectedCursor: result.cursor,
+        idempotencyKey: randomUUID(),
+        bars: 20,
+      })
+    ).rejects.toThrow("not_running");
+    d = await strategyLifecycle.detail(pid, version.id);
+    await strategyPaper.setStatus(pid, version.id, session.id, "running", d.revision);
+    const next = await strategyPaper.advance(pid, version.id, session.id, {
+      expectedCursor: result.cursor,
+      idempotencyKey: randomUUID(),
+      bars: 20,
+    });
+    expect((await strategyPaper.wait(next.id)).status).toBe("completed");
+    d = await strategyLifecycle.detail(pid, version.id);
+    await strategyPaper.setStatus(pid, version.id, session.id, "running", d.revision, true);
+    await new ResearchPaperWorker().tick();
+    const automatic = (await strategyPaper.list(pid, version.id))[0]!.attempts[0]!;
+    expect((await strategyPaper.wait(automatic.id)).status).toBe("completed");
+    expect((await strategyPaper.list(pid, version.id))[0]?.cursor).not.toBe(result.cursor);
+    const extended = buildIncrementalPreviewSnapshot(221);
+    const raw = structuredClone(extended.record.barsByInstrument);
+    const firstBar = raw[`US:${fixture.symbols[0]}`]![0]!;
+    firstBar.volume += 1000;
+    const revised = buildMarketSnapshotRecord({
+      purpose: "research",
+      asOf: extended.record.snapshot.asOf,
+      instruments: fixture.symbols.map((symbol) => ({ symbol, venue: "US", assetClass: "equity" })),
+      window: { start: fixture.startDate, end: extended.endDate },
+      sources: [
+        {
+          provider: "synthetic-preview-only",
+          feed: "synthetic-preview-only",
+          upstreamFamily: "synthetic-preview-only",
+        },
+      ],
+      timeframe: "1d",
+      limit: 221,
+      barsByInstrument: raw,
+    });
+    await writeFile(
+      join(defaultDataDir(), "market-snapshots", `${revised.snapshot.snapshotId}.json`),
+      JSON.stringify(revised)
+    );
+    const cursor = (await strategyPaper.list(pid, version.id))[0]!.cursor;
+    const revisedStep = await strategyPaper.advance(pid, version.id, session.id, {
+      expectedCursor: cursor,
+      idempotencyKey: randomUUID(),
+      bars: 20,
+      snapshotId: revised.snapshot.snapshotId,
+    });
+    const rejected = await strategyPaper.wait(revisedStep.id);
+    expect(rejected.status).toBe("failed");
+    expect(rejected.error).toContain("paper_history_changed");
+    expect((await strategyPaper.list(pid, version.id))[0]!.cursor).toBe(cursor);
+    await new ResearchPaperWorker().tick();
+    expect((await strategyPaper.list(pid, version.id))[0]!.status).toBe("paused");
+    const trace = job.result!.executionTrace!;
+    const altered = structuredClone(trace.slice(0, 1));
+    altered[0]!.input = "changed";
+    altered[0]!.fill = "changed";
+    expect(reconcileTraces(trace, altered)[0]?.firstDifference).toBe("input");
+    d = await strategyLifecycle.detail(pid, version.id);
+    await strategyLifecycle.transition(pid, version.id, {
+      status: "archived",
+      reason: "archive with evidence retained",
+      expectedRevision: d.revision,
+    });
+    await expect(researchStrategyRunner.submit(pid, version.id, randomUUID())).rejects.toThrow(
+      "archived"
+    );
+    expect((await strategyLifecycle.detail(pid, version.id)).attempts.length).toBe(5);
+    expect((await researchProgramService.get(pid)).program?.usedAttempts).toBe(6);
+  });
+  test("frozen validation plan binds receipts and quotas, cancellation wins, and unknown development provenance cannot promote", async () => {
+    const { pid, candidate, spec } = await setup("volume", 12, 3);
+    const descriptor = {
+      id: "sealed-strategy-fixture",
+      label: "Synthetic independent-service mock",
+      startDate: "2026-01-01",
+      endDate: "2026-12-31",
+      maxEvaluations: 3,
+      horizonDays: 1,
+      groupCount: 3,
+      datasetFingerprint: evidenceDigest("fixture-data"),
+      strategyPolicy: {
+        method: "us_daily_top_n_v1",
+        benchmark: "equal_weight_daily",
+        minObservations: 60,
+        minTrades: 5,
+        minExcessReturn: 0,
+        maxDrawdown: 0.5,
+      },
+    };
+    let release: (() => void) | undefined;
+    let delay = false;
+    let mismatch = false;
+    const client = new SealedEvaluatorClient({
+      url: "http://localhost:8790",
+      token: "test-only-token",
+      fetch: (async (url: string, init?: RequestInit) => {
+        if (url.endsWith("/datasets")) return Response.json({ datasets: [descriptor] });
+        if (delay)
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        const request = JSON.parse(String(init?.body));
+        return Response.json(
+          strategyValidationReceiptSchema.parse({
+            version: "sealed-strategy-v1",
+            attemptId: request.attemptId,
+            protocolFingerprint: request.protocolFingerprint,
+            planFingerprint: request.planFingerprint,
+            strategyFingerprint: mismatch ? evidenceDigest("wrong") : request.strategyFingerprint,
+            datasetFingerprint: request.datasetFingerprint,
+            policyFingerprint: request.policyFingerprint,
+            status: "passed",
+            metrics: {
+              totalReturn: 0.2,
+              benchmarkReturn: 0.1,
+              maxDrawdown: 0.03,
+              observations: 100,
+              tradeCount: 50,
+            },
+            reasonCodes: ["synthetic_mock_for_boundary_test"],
+            evaluatedAt: new Date().toISOString(),
+          })
+        );
+      }) as typeof fetch,
+    });
+    await new ResearchRunner(client).createProtocol({
+      projectId: pid,
+      spec: { ...spec, evaluation: { ...spec.evaluation, sealedDatasetId: descriptor.id } },
+    });
+    const comparison = await factorComparisonRunner.submit({
+      projectId: pid,
+      factorId: candidate.id,
+      idempotencyKey: randomUUID(),
+    });
+    await factorComparisonRunner.waitForAttempt(comparison.id);
+    const version = await researchStrategyRunner.create(pid, comparison.id, {
+      capital: 10000,
+      topN: 3,
+      rebalance: "daily",
+      commissionBps: 5,
+      slippageBps: 5,
+      minCommission: 1,
+      maxVolumeParticipation: 0.05,
+    });
+    const run = await researchStrategyRunner.submit(pid, version.id, randomUUID());
+    await researchStrategyRunner.wait(run.jobId);
+    const lifecycle = new StrategyLifecycle(client);
+    const d = await lifecycle.transition(pid, version.id, {
+      status: "review",
+      referenceAttemptId: run.attemptId!,
+      reason: "frozen test evidence",
+      expectedRevision: 0,
+    });
+    const plan = await lifecycle.plan(pid, version.id, d.revision);
+    const key = randomUUID();
+    const attempt = await lifecycle.validate(pid, version.id, plan.id, key);
+    expect((await lifecycle.wait(attempt.id)).status).toBe("completed");
+    expect((await lifecycle.validate(pid, version.id, plan.id, key)).id).toBe(attempt.id);
+    expect((await lifecycle.detail(pid, version.id)).status).toBe("review");
+    expect(
+      (await lifecycle.detail(pid, version.id)).checklist.find((c) => c.code === "verified_data")
+        ?.passed
+    ).toBe(false);
+    expect((await researchProgramService.get(pid)).program?.usedEvaluations).toBe(1);
+    mismatch = true;
+    const bad = await lifecycle.validate(pid, version.id, plan.id, randomUUID());
+    expect((await lifecycle.wait(bad.id)).status).toBe("failed");
+    mismatch = false;
+    delay = true;
+    const cancelled = await lifecycle.validate(pid, version.id, plan.id, randomUUID());
+    await researchProgramService.cancel(cancelled.id);
+    while (!release) await new Promise((resolve) => setTimeout(resolve, 1));
+    release();
+    expect((await lifecycle.wait(cancelled.id)).status).toBe("cancelled");
+    await expect(lifecycle.validate(pid, version.id, plan.id, randomUUID())).rejects.toThrow(
+      "budget_exhausted"
+    );
+    expect((await researchProgramService.get(pid)).program?.usedEvaluations).toBe(3);
+  });
   test("frozen strategy versions run real execution, survive factor edits, and reproduce with a new charged attempt", async () => {
     const { pid, candidate } = await setup("volume", 8);
     const comparison = await factorComparisonRunner.submit({

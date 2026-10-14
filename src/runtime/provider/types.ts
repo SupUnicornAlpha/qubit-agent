@@ -444,6 +444,7 @@ export interface BacktestDataset {
 }
 
 export interface BacktestRequest {
+  captureTrace?: boolean;
   strategyVersionId?: string;
   /** Server-assigned experiment linkage; never accepted from a submitted configuration. */
   researchAttemptId?: string;
@@ -526,7 +527,17 @@ export interface BacktestMetrics {
   } | null;
 }
 
+export interface BacktestExecutionTrace {
+  date: string;
+  input: string;
+  signal: string;
+  target: string;
+  order: string;
+  fill: string;
+  position: string;
+}
 export interface BacktestResult {
+  executionTrace?: BacktestExecutionTrace[];
   equityCurve: BacktestEquityPoint[];
   trades: BacktestTrade[];
   metrics: BacktestMetrics;

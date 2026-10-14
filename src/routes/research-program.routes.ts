@@ -1,3 +1,4 @@
+import { manageResearchStrategy } from "../runtime/research-program/strategy-management";
 import { Hono } from "hono";
 import { z } from "zod";
 import { sealedEvaluatorClient } from "../runtime/research-program/evaluator-client";
@@ -146,3 +147,14 @@ researchProgramRouter.post("/:projectId/strategies/:id/backtests", async (c) => 
     202
   );
 });
+
+researchProgramRouter.post("/:projectId/strategies/:id/manage", async (c) =>
+  c.json({
+    ok: true,
+    data: await manageResearchStrategy(
+      c.req.param("projectId"),
+      c.req.param("id"),
+      await c.req.json()
+    ),
+  })
+);

@@ -456,3 +456,33 @@ html[data-qb-style="industrial"] .qb-research {
 .qb-research .qb-quant-btn:hover:not(:disabled) {
   background: color-mix(in srgb, var(--research-accent) 12%, var(--qb-bg-elevated, #282828));
 }
+
+.qb-research-checklist {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  color: var(--qb-text-muted);
+}
+.qb-research-checklist [data-passed="true"] {
+  color: var(--research-accent);
+}
+.qb-research-diff {
+  display: grid;
+  gap: 12px;
+  overflow-wrap: anywhere;
+}
+.qb-research-diff dt {
+  font-family: var(--qb-font-mono);
+  font-size: 12px;
+}
+.qb-research-diff dd {
+  margin: 4px 0;
+  color: var(--qb-text-muted);
+}
+@media (max-width: 760px) {
+  .qb-research-checklist {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

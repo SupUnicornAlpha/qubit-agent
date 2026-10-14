@@ -70,7 +70,7 @@ export const researchAttempt = sqliteTable("research_attempt", {
     .references(() => researchProgram.projectId, { onDelete: "restrict" }),
   protocolId: text("protocol_id").notNull()
     .references(() => researchProtocol.id, { onDelete: "restrict" }),
-  kind: text("kind", { enum: ["factor_compute", "factor_evaluate", "backtest", "sealed_factor"] }).notNull(),
+  kind: text("kind", { enum: ["factor_compute", "factor_evaluate", "backtest", "sealed_factor", "sealed_strategy", "paper_step"] }).notNull(),
   candidateId: text("candidate_id").notNull(),
   candidateJson: text("candidate_json", { mode: "json" }).notNull(),
   requestJson: text("request_json", { mode: "json" }).notNull(),
@@ -4023,3 +4023,13 @@ export const autoInstallerRun = sqliteTable(
   },
   (t) => [index("idx_auto_installer_run_project").on(t.projectId, t.startedAt)]
 );
+
+/** Append-only research lifecycle, validation plans and paper session definitions. */
+export const researchStrategyEvent = sqliteTable("research_strategy_event", {
+  id: id(), projectId: text("project_id").notNull().references(() => researchProgram.projectId),
+  versionId: text("version_id").notNull().references(() => strategyVersion.id),
+  sequence: integer("sequence").notNull(),
+  kind: text("kind", {enum:["state", "validation_plan", "paper_session", "paper_status"]}).notNull(),
+  payloadJson: text("payload_json", {mode:"json"}).$type<Record<string, unknown>>().notNull(),
+  createdAt: createdAt(),
+}, table => [uniqueIndex("idx_research_strategy_event_sequence").on(table.versionId, table.sequence)]);

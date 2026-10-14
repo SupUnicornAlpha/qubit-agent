@@ -60,6 +60,7 @@ pub const DEFAULT_BRIDGED_TOOLS: &[&str] = &[
     "research.strategy.create",
     "research.strategy.run",
     "research.strategy.export",
+    "research.strategy.manage",
     "factor.compute",
     "factor.autoEvaluate",
     "factor.mine.llm",

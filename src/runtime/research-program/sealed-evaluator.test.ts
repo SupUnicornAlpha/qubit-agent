@@ -1,3 +1,9 @@
+import { evidenceDigest } from "./evidence-checksum";
+import { recipeSchema } from "./strategy-types";
+import {
+  strategyValidationRequestSchema,
+  strategyValidationReceiptSchema,
+} from "./strategy-validation-types";
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { generateKeyPairSync, randomUUID, sign } from "node:crypto";
@@ -384,5 +390,135 @@ describe("isolated signed-data factor evaluator", () => {
     ).json()) as SealedEvaluationReceipt;
     expect(result.status).toBe("rejected");
     expect(result.reasonCodes).toContain("point_in_time_violated");
+  });
+});
+
+describe("isolated strategy validation", () => {
+  function strategyBundle(verified = true, maxEvaluations = 3) {
+    const base = signedBundle({ verified, maxEvaluations });
+    const payload = {
+      ...base.payload,
+      strategyPolicy: {
+        method: "us_daily_top_n_v1" as const,
+        benchmark: "equal_weight_daily" as const,
+        minObservations: 60,
+        minTrades: 1,
+        minExcessReturn: 0,
+        maxDrawdown: 0.5,
+      },
+    };
+    return {
+      ...base,
+      payload,
+      signature: sign(null, Buffer.from(canonicalSealedJson(payload)), privateKey).toString(
+        "base64"
+      ),
+    };
+  }
+  function input(bundle: ReturnType<typeof strategyBundle>) {
+    const recipe = recipeSchema.parse({
+      format: "qubit-research-strategy-v1",
+      sourceAttemptId: "source",
+      sourceProtocolId: "protocol",
+      factor: { id: "factor", name: "synthetic", expr: "close", universe: "US", direction: 1 },
+      development: {
+        datasetSnapshotId: "development",
+        symbols: Object.keys(bundle.payload.dataset.barsBySymbol),
+        startDate: "2025-01-01",
+        endDate: "2025-12-31",
+      },
+      execution: {
+        capital: 10000,
+        topN: 1,
+        rebalance: "daily",
+        commissionBps: 0,
+        slippageBps: 0,
+        minCommission: 0,
+        maxVolumeParticipation: 0.1,
+      },
+      scope: "development_only",
+      allocation: "long_only_top_n_equal",
+      timing: "close_signal_next_open",
+      engine: "event_driven",
+    });
+    return strategyValidationRequestSchema.parse({
+      version: "sealed-strategy-request-v1",
+      attemptId: randomUUID(),
+      protocolFingerprint: evidenceDigest("protocol"),
+      planFingerprint: evidenceDigest("plan"),
+      strategyFingerprint: evidenceDigest(recipe),
+      datasetId: bundle.payload.id,
+      datasetFingerprint: sealedDatasetFingerprint(bundle.payload.dataset as BacktestDataset),
+      policyFingerprint: evidenceDigest(bundle.payload.strategyPolicy),
+      recipe,
+    });
+  }
+  const request = (data: unknown) =>
+    new Request("http://localhost/v1/strategy-evaluations", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    });
+  test("runs real net strategy and fixed benchmark, emits aggregate-only receipt, shares quota and survives restart", async () => {
+    const bundle = strategyBundle(true, 1);
+    const service = await start([bundle]);
+    const req = input(bundle);
+    const response = await service.evaluator.fetch(request(req));
+    expect(response.status).toBe(200);
+    const receipt = strategyValidationReceiptSchema.parse(await response.json());
+    expect(receipt.status).toBe("passed");
+    expect(receipt.metrics.observations).toBe(100);
+    expect(receipt.metrics.tradeCount).toBeGreaterThan(0);
+    expect(JSON.stringify(receipt)).not.toMatch(/equityCurve|barsBySymbol|executionTrace|trades\"/);
+    expect(await (await service.evaluator.fetch(request(req))).json()).toEqual(receipt);
+    expect(
+      (
+        await service.evaluator.fetch(
+          post({ ...evaluation(), datasetFingerprint: req.datasetFingerprint })
+        )
+      ).status
+    ).toBe(409);
+    stop(service.evaluator);
+    const resumed = await start([bundle], service.filename);
+    expect(await (await resumed.evaluator.fetch(request(req))).json()).toEqual(receipt);
+    expect(
+      (await resumed.evaluator.fetch(request({ ...req, attemptId: randomUUID() }))).status
+    ).toBe(409);
+  });
+  test("rejects modified contracts before quota, fails future dependency, and cannot certify missing provenance", async () => {
+    const bundle = strategyBundle();
+    const service = await start([bundle]);
+    const req = input(bundle);
+    expect(
+      (
+        await service.evaluator.fetch(
+          request({ ...req, policyFingerprint: evidenceDigest("changed") })
+        )
+      ).status
+    ).toBe(409);
+    expect(
+      (
+        await service.evaluator.fetch(
+          request({
+            ...req,
+            recipe: { ...req.recipe, execution: { ...req.recipe.execution, capital: 9000 } },
+          })
+        )
+      ).status
+    ).toBe(409);
+    const future = { ...req.recipe, factor: { ...req.recipe.factor, expr: "Ref(close,-1)" } };
+    const result = await service.evaluator.fetch(
+      request({ ...req, recipe: future, strategyFingerprint: evidenceDigest(future) })
+    );
+    expect(((await result.json()) as { status: string }).status).toBe("rejected");
+    const unverified = strategyBundle(false);
+    const other = await start([unverified]);
+    expect(
+      (
+        (await (await other.evaluator.fetch(request(input(unverified)))).json()) as {
+          status: string;
+        }
+      ).status
+    ).toBe("insufficient_evidence");
   });
 });

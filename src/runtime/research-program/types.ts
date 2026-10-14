@@ -91,7 +91,9 @@ export type ResearchAttemptKind =
   | "factor_compute"
   | "factor_evaluate"
   | "backtest"
-  | "sealed_factor";
+  | "sealed_factor"
+  | "sealed_strategy"
+  | "paper_step";
 export type ResearchAttemptStatus =
   | "pending"
   | "running"

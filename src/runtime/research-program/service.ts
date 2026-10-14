@@ -7,6 +7,7 @@ import {
   researchEvaluationBudget,
   researchProgram,
   researchProtocol,
+  researchStrategyEvent,
 } from "../../db/sqlite/schema";
 import {
   type ResearchAttempt,
@@ -22,7 +23,14 @@ import {
 
 export const RESEARCH_ATTEMPT_TIMEOUT_MS = 120_000;
 const openStatuses = ["pending", "running"] as const;
-const kinds = new Set(["factor_compute", "factor_evaluate", "backtest", "sealed_factor"]);
+const kinds = new Set([
+  "factor_compute",
+  "factor_evaluate",
+  "backtest",
+  "sealed_factor",
+  "sealed_strategy",
+  "paper_step",
+]);
 type ReadDb = Pick<DbClient, "select">;
 
 function identifier(value: string, field: string): string {
@@ -267,7 +275,7 @@ export class ResearchProgramService {
     const requestJson = jsonObject(input.requestJson);
     if (!kinds.has(input.kind))
       throw new ResearchProgramError("research_attempt_kind_invalid", 400);
-    const sealed = input.kind === "sealed_factor";
+    const sealed = input.kind === "sealed_factor" || input.kind === "sealed_strategy";
     if (sealed !== Boolean(input.evaluationBudget)) {
       throw new ResearchProgramError("research_evaluation_budget_required", 400);
     }
@@ -314,6 +322,56 @@ export class ResearchProgramService {
           if (existing.requestFingerprint !== requestFingerprint)
             throw new ResearchProgramError("research_idempotency_conflict", 409);
           return toAttempt(existing);
+        }
+        const state = tx
+          .select()
+          .from(researchStrategyEvent)
+          .where(
+            and(
+              eq(researchStrategyEvent.versionId, candidateId),
+              eq(researchStrategyEvent.kind, "state")
+            )
+          )
+          .orderBy(desc(researchStrategyEvent.sequence))
+          .get();
+        if (state?.payloadJson.status === "archived")
+          throw new ResearchProgramError("strategy_archived", 409);
+        if (input.kind === "sealed_strategy" && state?.payloadJson.status !== "review")
+          throw new ResearchProgramError("strategy_review_required", 409);
+        if (input.kind === "paper_step") {
+          const statuses = tx
+            .select()
+            .from(researchStrategyEvent)
+            .where(
+              and(
+                eq(researchStrategyEvent.versionId, candidateId),
+                eq(researchStrategyEvent.kind, "paper_status")
+              )
+            )
+            .orderBy(desc(researchStrategyEvent.sequence))
+            .all();
+          if (
+            statuses.find((e) => e.payloadJson.sessionId === requestJson.sessionId)?.payloadJson
+              .status === "paused"
+          )
+            throw new ResearchProgramError("paper_session_not_running", 409);
+          const collision = tx
+            .select()
+            .from(researchAttempt)
+            .where(
+              and(
+                eq(researchAttempt.candidateId, candidateId),
+                eq(researchAttempt.kind, "paper_step"),
+                inArray(researchAttempt.status, ["pending", "running", "completed"])
+              )
+            )
+            .all()
+            .some(
+              (a) =>
+                (a.requestJson as Record<string, unknown>).sessionId === requestJson.sessionId &&
+                (a.requestJson as Record<string, unknown>).fromCursor === requestJson.fromCursor
+            );
+          if (collision) throw new ResearchProgramError("paper_cursor_already_reserved", 409);
         }
         if (program.status !== "active")
           throw new ResearchProgramError("research_program_paused", 409);

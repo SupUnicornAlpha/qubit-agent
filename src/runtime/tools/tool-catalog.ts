@@ -572,6 +572,11 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
       "导出本项目冻结策略及历次回测结果、经济结果校验和；参数 strategy_version_id。仅开发研究，非交易许可。",
     category: "research",
   },
+  "research.strategy.manage": {
+    description:
+      "策略管理：strategy_version_id, command。先 {action:'inspect'} 读取 revision、证据和实验；compare 加 otherVersionId；state 加 status(research/review/archived)、reason、expectedRevision，review 必须 referenceAttemptId；plan 加 expectedRevision；validate 加 planId、idempotencyKey。paper_list 查询模拟；paper_create 加 referenceAttemptId、expectedRevision；paper_status 加 sessionId、status(paused/running)、expectedRevision；paper_advance 加 sessionId、expectedCursor(首轮null)、idempotencyKey、bars(1..20)、可选追加 snapshotId。验证状态由服务端回执计算，禁止手动宣称通过。",
+    category: "research",
+  },
   "research.strategy.list": {
     description: "列出本项目冻结的 US 日频研究策略版本。",
     category: "research",

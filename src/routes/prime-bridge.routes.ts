@@ -110,6 +110,7 @@ export const BRIDGED_TOOLS = [
   "research.strategy.create",
   "research.strategy.run",
   "research.strategy.export",
+  "research.strategy.manage",
   "factor.compute",
   "factor.autoEvaluate",
   "factor.mine.llm",

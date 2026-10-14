@@ -52,6 +52,7 @@ export function frozenStrategyRequest(
   const x = recipe.execution;
   return {
     strategyVersionId: versionId,
+    captureTrace: true,
     ...recipe.development,
     timeframe: "1d",
     universe: "US",

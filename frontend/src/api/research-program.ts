@@ -4,8 +4,13 @@ export type ResearchAttemptKind =
   | "factor_compute"
   | "factor_evaluate"
   | "sealed_factor"
-  | "backtest";
-export type ResearchFactorAttemptKind = Exclude<ResearchAttemptKind, "backtest">;
+  | "backtest"
+  | "sealed_strategy"
+  | "paper_step";
+export type ResearchFactorAttemptKind = Exclude<
+  ResearchAttemptKind,
+  "backtest" | "sealed_strategy" | "paper_step"
+>;
 export type ResearchAttemptStatus =
   | "pending"
   | "running"
@@ -271,4 +276,25 @@ export async function getResearchStrategyArtifact(
       { signal }
     )
   );
+}
+
+export async function manageResearchStrategy<T>(
+  projectId: string,
+  versionId: string,
+  command: Record<string, unknown>,
+  signal?: AbortSignal
+): Promise<T> {
+  const response = await fetch(
+    `/api/v1/research-programs/${encodeURIComponent(projectId)}/strategies/${encodeURIComponent(versionId)}/manage`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(command),
+      signal,
+    }
+  );
+  const body = await response.json();
+  if (!response.ok || !body.ok)
+    throw new Error(body.error?.message ?? body.error ?? `HTTP ${response.status}`);
+  return body.data as T;
 }
