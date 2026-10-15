@@ -1,3 +1,4 @@
+import { ResearchDataPanel } from "./ResearchDataPanel";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { type FactorRecord, listFactors } from "../../api/backend";
 import {
@@ -97,6 +98,7 @@ function ResearchProgramWorkspace({
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [importedData, setImportedData] = useState<ResearchProtocolSpec["development"]>();
   const [factorId, setFactorId] = useState("");
   const [kind, setKind] = useState<ResearchFactorAttemptKind>("factor_compute");
   const [visibleAttempts, setVisibleAttempts] = useState(30);
@@ -285,6 +287,15 @@ function ResearchProgramWorkspace({
           ) : null}
         </div>
       </header>
+      <ResearchDataPanel
+        projectId={projectId}
+        evaluator={evaluator}
+        onUse={(data) => {
+          setImportedData(data);
+          setEditing(true);
+          setNotice("已填入协议草稿，请检查假设与预算后保存新版本。");
+        }}
+      />
       {loadError ? (
         <p className="qb-research-note qb-research-alert" role="alert">
           研究记录读取失败：{loadError}。请刷新重试。
@@ -346,7 +357,8 @@ function ResearchProgramWorkspace({
             </div>
             {editing || !program ? (
               <ProtocolEditor
-                key={protocol?.id ?? "new"}
+                importedData={importedData}
+                key={`${protocol?.id ?? "new"}:${importedData?.datasetSnapshotId ?? ""}`}
                 protocol={protocol}
                 budget={
                   program
@@ -356,12 +368,22 @@ function ResearchProgramWorkspace({
                 evaluator={evaluator}
                 factors={factors}
                 busy={busy || Boolean(loadError)}
-                onCancel={program ? () => setEditing(false) : undefined}
+                onCancel={
+                  program
+                    ? () => {
+                        setEditing(false);
+                        setImportedData(undefined);
+                      }
+                    : undefined
+                }
                 onSave={(spec) =>
                   void runAction(
                     (signal) => createResearchProtocol(projectId, spec, signal),
                     "研究协议已登记；历史协议与累计预算保持可追溯。",
-                    () => setEditing(false)
+                    () => {
+                      setEditing(false);
+                      setImportedData(undefined);
+                    }
                   )
                 }
               />
@@ -654,6 +676,7 @@ function ProtocolSummary({ protocol }: { protocol: ResearchProtocol }) {
 }
 
 function ProtocolEditor(props: {
+  importedData?: ResearchProtocolSpec["development"];
   protocol?: ResearchProtocol;
   budget?: ResearchProtocolSpec["budget"];
   evaluator: ResearchEvaluatorInfo | null;
@@ -662,6 +685,13 @@ function ProtocolEditor(props: {
   onSave: (spec: ResearchProtocolSpec) => void;
   onCancel?: () => void;
 }) {
+  const editorRef = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    if (props.importedData) {
+      editorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      editorRef.current?.querySelector("textarea")?.focus({ preventScroll: true });
+    }
+  }, [props.importedData]);
   const source = props.protocol?.spec;
   const [compareEnabled, setCompareEnabled] = useState(Boolean(source?.comparison));
   const [references, setReferences] = useState(source?.comparison?.references ?? []);
@@ -675,10 +705,18 @@ function ProtocolEditor(props: {
   const [hypothesis, setHypothesis] = useState(source?.hypothesis ?? "");
   const [benchmark, setBenchmark] = useState(source?.benchmark ?? "");
   const [stoppingRule, setStoppingRule] = useState(source?.stoppingRule ?? "");
-  const [snapshotId, setSnapshotId] = useState(source?.development.datasetSnapshotId ?? "");
-  const [symbols, setSymbols] = useState(source?.development.symbols.join(", ") ?? "");
-  const [startDate, setStartDate] = useState(source?.development.startDate ?? "");
-  const [endDate, setEndDate] = useState(source?.development.endDate ?? "");
+  const [snapshotId, setSnapshotId] = useState(
+    props.importedData?.datasetSnapshotId ?? source?.development.datasetSnapshotId ?? ""
+  );
+  const [symbols, setSymbols] = useState(
+    (props.importedData ?? source?.development)?.symbols.join(", ") ?? ""
+  );
+  const [startDate, setStartDate] = useState(
+    props.importedData?.startDate ?? source?.development.startDate ?? ""
+  );
+  const [endDate, setEndDate] = useState(
+    props.importedData?.endDate ?? source?.development.endDate ?? ""
+  );
   const [horizon, setHorizon] = useState(source?.evaluation.horizonDays ?? 5);
   const [groupCount, setGroupCount] = useState(source?.evaluation.groupCount ?? 5);
   const [sealedId, setSealedId] = useState(source?.evaluation.sealedDatasetId ?? "");
@@ -784,7 +822,7 @@ function ProtocolEditor(props: {
     });
   };
   return (
-    <form className="qb-research-form" onSubmit={save}>
+    <form ref={editorRef} className="qb-research-form" onSubmit={save}>
       <label className="qb-research-field qb-research-wide">
         <span>研究假设</span>
         <textarea

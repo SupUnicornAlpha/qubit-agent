@@ -409,3 +409,38 @@ describe("service entry points inherit and account for research", () => {
     expect(await backtestJobService.list({ strategyVersionId })).toHaveLength(before.length);
   });
 });
+
+test("public import accepts Harness-injected scope but cannot replace it or bypass sealed checks", async () => {
+  const { sealedEvaluatorClient } = await import("../research-program/evaluator-client");
+  const { RESEARCH_PROGRAM_HANDLERS } = await import("../tools/research-program-handlers");
+  const request = {
+    provider: "yahoo_chart",
+    symbols: ["AAA", "BBB", "CCC"],
+    startDate: "2020-01-01",
+    endDate: "2020-12-31",
+    idempotencyKey: randomUUID(),
+  };
+  await expect(
+    enforceResearchToolAccess("research.data.import", context(), {
+      ...request,
+      projectId: legacyProjectId,
+    })
+  ).rejects.toThrow("project_mismatch");
+  const guarded = await enforceResearchToolAccess("research.data.import", context(), request);
+  expect(guarded.controlled).toBe(true);
+  expect(guarded.params.projectId).toBe(projectId);
+  const catalog = spyOn(sealedEvaluatorClient, "catalog").mockResolvedValue({
+    configured: false,
+    datasets: [],
+    reason: "sealed_evaluator_unavailable",
+  });
+  try {
+    const handler = RESEARCH_PROGRAM_HANDLERS["research.data.import"];
+    if (!handler) throw new Error("missing_handler");
+    await expect(handler(guarded.ctx, guarded.params)).rejects.toThrow(
+      "sealed_evaluator_unavailable"
+    );
+  } finally {
+    catalog.mockRestore();
+  }
+});

@@ -102,6 +102,7 @@ export const signedSealedDatasetBundleSchema = z
       .object({
         version: z.literal("sealed-factor-dataset-v1"),
         strategyPolicy: strategyPolicySchema.optional(),
+        allowResearchDiagnostics: z.boolean().optional(),
         id: z.string().min(1).max(200),
         label: z.string().min(1).max(200),
         maxEvaluations: z.number().int().min(1).max(100_000),
@@ -169,6 +170,7 @@ type DatasetEntry = {
   descriptor: SealedDatasetDescriptor;
   dataset: BacktestDataset;
   hasPitEvidence: boolean;
+  allowResearchDiagnostics?: boolean;
 };
 type EvaluationRow = {
   id: string;
@@ -204,6 +206,7 @@ export function createSealedEvaluator(options: {
   token: string;
   trustedPublicKeys: Record<string, string>;
   bundles: unknown[];
+  deployment?: "local_process" | "operator_managed";
 }) {
   if (options.token.length < 16) throw new Error("sealed_evaluator_token_too_short");
   if (options.bundles.length > 100) throw new Error("sealed_dataset_catalog_too_large");
@@ -242,6 +245,7 @@ export function createSealedEvaluator(options: {
     datasets.set(bundle.payload.id, {
       dataset,
       hasPitEvidence: Boolean(bundle.payload.pointInTimeEvidence),
+      allowResearchDiagnostics: bundle.payload.allowResearchDiagnostics === true,
       descriptor: {
         id: bundle.payload.id,
         label: bundle.payload.label,
@@ -251,6 +255,11 @@ export function createSealedEvaluator(options: {
         horizonDays: bundle.payload.horizonDays,
         groupCount: bundle.payload.groupCount,
         datasetFingerprint: sealedDatasetFingerprint(dataset),
+        evidenceStatus:
+          bundle.payload.pointInTimeEvidence &&
+          dataset.qualification?.useClass === "strategy_validation"
+            ? "attested"
+            : "research_only",
         ...(bundle.payload.strategyPolicy ? { strategyPolicy: bundle.payload.strategyPolicy } : {}),
       },
     });
@@ -340,7 +349,8 @@ export function createSealedEvaluator(options: {
         ].slice(0, 20)
       );
     }
-    if (!entry.hasPitEvidence || integrity.status !== "passed") {
+    const provenanceVerified = entry.hasPitEvidence && integrity.status === "passed";
+    if (!provenanceVerified && !entry.allowResearchDiagnostics) {
       return receipt(request, datasetFingerprint, "insufficient_evidence", [
         ...(!entry.hasPitEvidence ? ["signed_pit_attestation_missing"] : []),
         ...(integrity.status !== "passed" ? ["data_integrity_not_verified"] : []),
@@ -397,8 +407,14 @@ export function createSealedEvaluator(options: {
     return receipt(
       request,
       datasetFingerprint,
-      passed ? "passed" : "rejected",
-      [passed ? "sealed_prediction_gate_passed" : "sealed_prediction_gate_not_met"],
+      !provenanceVerified ? "insufficient_evidence" : passed ? "passed" : "rejected",
+      [
+        !provenanceVerified
+          ? "research_only_diagnostics_not_validation"
+          : passed
+            ? "sealed_prediction_gate_passed"
+            : "sealed_prediction_gate_not_met",
+      ],
       { icMean: result.ic, rankIcMean: result.rankIc, observations: dailyObservations }
     );
   }
@@ -413,7 +429,10 @@ export function createSealedEvaluator(options: {
       if (closed) return Response.json({ error: "evaluator_closed" }, { status: 503 });
       const path = new URL(request.url).pathname;
       if (request.method === "GET" && path === "/v1/datasets") {
-        return Response.json({ datasets: [...datasets.values()].map((entry) => entry.descriptor) });
+        return Response.json({
+          datasets: [...datasets.values()].map((entry) => entry.descriptor),
+          deployment: options.deployment ?? "operator_managed",
+        });
       }
       if (request.method === "POST" && path === "/v1/strategy-evaluations") {
         const body = await request.text();

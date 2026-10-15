@@ -49,6 +49,8 @@ pub const DEFAULT_BRIDGED_TOOLS: &[&str] = &[
     "factor.register",
     "factor.list",
     "factor.get",
+    "research.data.list",
+    "research.data.import",
     "research.protocol.get",
     "research.protocol.create",
     "research.factor.run",

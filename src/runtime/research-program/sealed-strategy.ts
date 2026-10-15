@@ -43,7 +43,12 @@ export async function handleSealedStrategy(
   db: Database,
   datasets: Map<
     string,
-    { descriptor: SealedDatasetDescriptor; dataset: BacktestDataset; hasPitEvidence: boolean }
+    {
+      descriptor: SealedDatasetDescriptor;
+      dataset: BacktestDataset;
+      hasPitEvidence: boolean;
+      allowResearchDiagnostics?: boolean;
+    }
   >
 ) {
   let input: StrategyValidationRequest;
@@ -103,9 +108,10 @@ export async function handleSealedStrategy(
       startDate: entry.descriptor.startDate,
       endDate: entry.descriptor.endDate,
     });
+    const provenanceVerified = entry.hasPitEvidence && integrity.status === "passed";
     if (integrity.status === "failed")
       result = strategyReceipt(input, "rejected", ["data_integrity_failed"]);
-    else if (!entry.hasPitEvidence || integrity.status !== "passed")
+    else if (!provenanceVerified && !entry.allowResearchDiagnostics)
       result = strategyReceipt(input, "insufficient_evidence", ["verified_pit_evidence_required"]);
     else if (input.recipe.development.endDate >= entry.descriptor.startDate)
       result = strategyReceipt(input, "rejected", ["sealed_period_must_follow_development"]);
@@ -153,13 +159,19 @@ export async function handleSealedStrategy(
         m.maxDrawdown <= policy.maxDrawdown;
       result = strategyReceipt(
         input,
-        !sufficient ? "insufficient_evidence" : passed ? "passed" : "rejected",
+        !provenanceVerified || !sufficient
+          ? "insufficient_evidence"
+          : passed
+            ? "passed"
+            : "rejected",
         [
-          !sufficient
-            ? "insufficient_observations_or_trades"
-            : passed
-              ? "predeclared_strategy_gate_passed"
-              : "predeclared_strategy_gate_not_met",
+          !provenanceVerified
+            ? "research_only_diagnostics_not_validation"
+            : !sufficient
+              ? "insufficient_observations_or_trades"
+              : passed
+                ? "predeclared_strategy_gate_passed"
+                : "predeclared_strategy_gate_not_met",
         ],
         m
       );

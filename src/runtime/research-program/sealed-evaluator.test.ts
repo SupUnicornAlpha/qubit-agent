@@ -459,6 +459,34 @@ describe("isolated strategy validation", () => {
       headers: { Authorization: `Bearer ${token}` },
       body: JSON.stringify(data),
     });
+  test("signed public diagnostics compute real aggregate metrics but can never pass validation", async () => {
+    const base = strategyBundle(false, 2);
+    const payload = { ...base.payload, allowResearchDiagnostics: true };
+    const bundle = {
+      ...base,
+      payload,
+      signature: sign(null, Buffer.from(canonicalSealedJson(payload)), privateKey).toString(
+        "base64"
+      ),
+    };
+    const service = await start([bundle]);
+    const receipt = strategyValidationReceiptSchema.parse(
+      await (await service.evaluator.fetch(request(input(bundle)))).json()
+    );
+    expect(receipt.status).toBe("insufficient_evidence");
+    expect(receipt.metrics.observations).toBe(100);
+    expect(receipt.metrics.totalReturn).not.toBeNull();
+    expect(receipt.reasonCodes).toContain("research_only_diagnostics_not_validation");
+    const factor = sealedEvaluationReceiptSchema.parse(
+      await (await service.evaluator.fetch(post(evaluation()))).json()
+    );
+    expect(factor.status).toBe("insufficient_evidence");
+    expect(factor.metrics.observations).toBeGreaterThan(60);
+    expect(factor.metrics.rankIcMean).not.toBeNull();
+    expect(JSON.stringify({ receipt, factor })).not.toMatch(
+      /barsBySymbol|equityCurve|executionTrace/
+    );
+  });
   test("runs real net strategy and fixed benchmark, emits aggregate-only receipt, shares quota and survives restart", async () => {
     const bundle = strategyBundle(true, 1);
     const service = await start([bundle]);

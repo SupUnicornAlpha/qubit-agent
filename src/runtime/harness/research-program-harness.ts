@@ -6,6 +6,8 @@ import type { BuiltinToolContext } from "../tools/types";
 
 /** Advertise the same protocol entry points to quant-capable Core agent specs. */
 export const RESEARCH_PROGRAM_ENTRY_TOOLS = [
+  "research.data.list",
+  "research.data.import",
   "research.protocol.get",
   "research.protocol.create",
   "research.factor.run",
@@ -60,6 +62,7 @@ export async function enforceResearchToolAccess(
   const controlled = programs.some((detail) => detail.program !== null);
   if (
     !controlled &&
+    !toolName.startsWith("research.data.") &&
     !toolName.startsWith("research.protocol.") &&
     !toolName.startsWith("research.attempt.") &&
     !toolName.startsWith("research.strategy.") &&

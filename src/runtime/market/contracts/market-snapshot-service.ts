@@ -708,7 +708,7 @@ export function buildMarketSnapshotRecord(sourceInput: {
   return record;
 }
 
-async function persistRecord(
+export async function persistRecord(
   input: MarketSnapshotRecord,
   dataDir?: string
 ): Promise<MarketSnapshotRecord> {

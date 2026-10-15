@@ -85,6 +85,7 @@ export interface ResearchProgramSnapshot {
 }
 
 export interface ResearchEvaluatorInfo {
+  deployment?: "local_process" | "operator_managed";
   configured: boolean;
   datasets: Array<{
     id: string;
@@ -95,6 +96,7 @@ export interface ResearchEvaluatorInfo {
     horizonDays: number;
     groupCount: number;
     datasetFingerprint: string;
+    evidenceStatus?: "attested" | "research_only";
   }>;
   reason?: string;
 }
@@ -297,4 +299,42 @@ export async function manageResearchStrategy<T>(
   if (!response.ok || !body.ok)
     throw new Error(body.error?.message ?? body.error ?? `HTTP ${response.status}`);
   return body.data as T;
+}
+
+export interface ResearchDataImport {
+  id: string;
+  status: "running" | "completed" | "failed";
+  snapshotId?: string;
+  error?: string;
+  request: {
+    provider: "yahoo_chart";
+    symbols: string[];
+    startDate: string;
+    endDate: string;
+    idempotencyKey: string;
+  };
+  limitations: string[];
+  provenance: Array<{
+    symbol: string;
+    url: string;
+    retrievedAt: string;
+    sha256: string;
+    rows: number;
+  }>;
+}
+export async function getResearchDataImports(projectId: string, signal?: AbortSignal) {
+  return unwrap(
+    await httpGet<ApiResponse<ResearchDataImport[]>>(`${projectPath(projectId)}/data`, { signal })
+  );
+}
+export async function importResearchData(
+  projectId: string,
+  request: ResearchDataImport["request"],
+  signal?: AbortSignal
+) {
+  return unwrap(
+    await httpPost<ApiResponse<ResearchDataImport>>(`${projectPath(projectId)}/data`, request, {
+      signal,
+    })
+  );
 }

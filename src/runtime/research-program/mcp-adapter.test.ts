@@ -108,6 +108,8 @@ describe("project-bound research MCP adapter", () => {
     const handle = createResearchMcpHandler({ baseUrl: "http://localhost:3000", projectId: "p1" });
     const result = (await handle({ jsonrpc: "2.0", id: 1, method: "tools/list" })) as RpcResult;
     expect(result.result.tools.map((tool: { name: string }) => tool.name)).toEqual([
+      "research_data_list",
+      "research_data_import",
       "research_strategy_manage",
       "research_strategy_export",
       "research_strategy_list",
@@ -188,4 +190,35 @@ describe("project-bound research MCP adapter", () => {
     expect(posted.providerKey).toBe("qlib_expr");
     expect(posted.dryRun).toBe(false);
   });
+});
+
+test("public data MCP rejects arbitrary endpoints and authority injection", async () => {
+  const calls: string[] = [];
+  const handle = createResearchMcpHandler({
+    baseUrl: "http://localhost:3000",
+    projectId: "bound",
+    fetch: (async (url: any) => {
+      calls.push(String(url));
+      return Response.json({ ok: true, data: { status: "running" } });
+    }) as typeof fetch,
+  });
+  const input = {
+    provider: "yahoo_chart",
+    symbols: ["AAA", "BBB", "CCC"],
+    startDate: "2020-01-01",
+    endDate: "2020-12-31",
+    idempotencyKey: "key",
+  };
+  const call = (args: unknown) =>
+    handle({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "research_data_import", arguments: args },
+    }) as Promise<RpcResult>;
+  expect((await call({ ...input, projectId: "other" })).result.isError).toBe(true);
+  expect((await call({ ...input, url: "http://localhost/private" })).result.isError).toBe(true);
+  expect(calls).toHaveLength(0);
+  expect((await call(input)).result.isError).toBeUndefined();
+  expect(calls).toEqual(["http://localhost:3000/api/v1/research-programs/bound/data"]);
 });

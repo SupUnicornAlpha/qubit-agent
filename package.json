@@ -36,7 +36,10 @@
     "check": "biome check src",
     "test": "bun test",
     "research:mcp": "bun run scripts/research-mcp.ts",
-    "research:evaluator": "bun run scripts/serve-research-evaluator.ts"
+    "research:evaluator": "bun run scripts/serve-research-evaluator.ts",
+    "research:prepare-public": "bun run scripts/prepare-public-research.ts",
+    "research:run-public": "bun run scripts/run-public-research.ts",
+    "research:local": "bun run scripts/start-research-local.ts"
   },
   "dependencies": {
     "@duckdb/node-api": "^1.5.2-r.1",

@@ -1,3 +1,7 @@
+import {
+  listPublicDataImports,
+  submitPublicDataImport,
+} from "../research-program/public-market-data";
 import { manageResearchStrategy } from "../research-program/strategy-management";
 import { factorService } from "../factor/factor-service";
 import { researchProgramService } from "../research-program/service";
@@ -20,6 +24,14 @@ function requiredText(params: Record<string, unknown>, key: string, alias?: stri
 }
 
 export const RESEARCH_PROGRAM_HANDLERS: Record<string, BuiltinToolHandler> = {
+  "research.data.list": async (ctx) => listPublicDataImports(projectId(ctx)),
+  "research.data.import": async (ctx, params) => {
+    // The Harness attaches authoritative scope after checking model-supplied identities.
+    const { project_id: scopedId, projectId: scopedCamelId, ...request } = params;
+    if ([scopedId, scopedCamelId].some((id) => id !== undefined && id !== projectId(ctx)))
+      throw new Error("research_tool_argument_project_mismatch");
+    return submitPublicDataImport(projectId(ctx), request);
+  },
   "research.strategy.export": async (ctx, params) =>
     researchStrategyRunner.artifact(
       projectId(ctx),

@@ -557,6 +557,14 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     category: "audit",
   },
 
+  "research.data.list": {
+    description: "列出当前项目的公开行情导入任务、不可变快照、来源摘要与限制。不返回封存数据。",
+    category: "research",
+  },
+  "research.data.import": {
+    description: "导入公开 US 日线，固定 Yahoo 来源；参数 provider:'yahoo_chart',symbols(3到12个),startDate,endDate,idempotencyKey。仅已结束日期，最多5年。异步返回，data.list查结果；禁止封存区间重叠，始终research_only。",
+    category: "research",
+  },
   "research.protocol.get": {
     description:
       "读取当前工作流绑定项目的研究协议版本、共享预算和实验台账。无需参数；项目由服务端工作流确定。",

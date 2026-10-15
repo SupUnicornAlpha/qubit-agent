@@ -486,3 +486,23 @@ html[data-qb-style="industrial"] .qb-research {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+.qb-research-data-source {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 16px;
+  padding: 10px 0;
+  border-top: 1px solid var(--qb-border-subtle);
+}
+.qb-research-data-source code {
+  grid-column: 1 / -1;
+  overflow-wrap: anywhere;
+}
+.qb-research-data-source span {
+  color: var(--qb-text-muted);
+}
+@media (max-width: 600px) {
+  .qb-research-data-source {
+    grid-template-columns: 1fr;
+  }
+}

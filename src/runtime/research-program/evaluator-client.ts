@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
@@ -19,6 +20,7 @@ export const sealedDatasetDescriptorSchema = z
     horizonDays: z.number().int().min(1),
     groupCount: z.number().int().min(2),
     strategyPolicy: strategyPolicySchema.optional(),
+    evidenceStatus: z.enum(["attested", "research_only"]).optional(),
     datasetFingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/),
   })
   .strict();
@@ -67,7 +69,11 @@ export class SealedEvaluatorClient {
   ) {}
   private configuration() {
     const url = this.options.url ?? process.env.QUBIT_RESEARCH_EVALUATOR_URL;
-    const token = this.options.token ?? process.env.QUBIT_RESEARCH_EVALUATOR_TOKEN;
+    const token =
+      this.options.token ??
+      (process.env.QUBIT_RESEARCH_EVALUATOR_TOKEN_FILE
+        ? readFileSync(process.env.QUBIT_RESEARCH_EVALUATOR_TOKEN_FILE, "utf8").trim()
+        : process.env.QUBIT_RESEARCH_EVALUATOR_TOKEN);
     if (!url && !token) return null;
     if (!url || !token) throw new Error("sealed_evaluator_configuration_incomplete");
     const parsed = new URL(url);
@@ -105,15 +111,23 @@ export class SealedEvaluatorClient {
     configured: boolean;
     datasets: SealedDatasetDescriptor[];
     reason?: string;
+    deployment?: "local_process" | "operator_managed";
   }> {
     try {
       if (!this.configuration())
         return { configured: false, datasets: [], reason: "sealed_evaluator_not_configured" };
       const result = z
-        .object({ datasets: z.array(sealedDatasetDescriptorSchema).max(100) })
+        .object({
+          datasets: z.array(sealedDatasetDescriptorSchema).max(100),
+          deployment: z.enum(["local_process", "operator_managed"]).optional(),
+        })
         .strict()
         .parse(await this.request("/v1/datasets"));
-      return { configured: true, datasets: result.datasets };
+      return {
+        configured: true,
+        datasets: result.datasets,
+        ...(result.deployment ? { deployment: result.deployment } : {}),
+      };
     } catch {
       return { configured: false, datasets: [], reason: "sealed_evaluator_unavailable" };
     }

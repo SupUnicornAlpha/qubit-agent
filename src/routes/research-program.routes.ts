@@ -1,3 +1,7 @@
+import {
+  listPublicDataImports,
+  submitPublicDataImport,
+} from "../runtime/research-program/public-market-data";
 import { manageResearchStrategy } from "../runtime/research-program/strategy-management";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -29,6 +33,15 @@ researchProgramRouter.onError((error, c) =>
 );
 researchProgramRouter.get("/evaluator", async (c) =>
   c.json({ ok: true, data: await sealedEvaluatorClient.catalog() })
+);
+researchProgramRouter.get("/:projectId/data", async (c) =>
+  c.json({ ok: true, data: await listPublicDataImports(c.req.param("projectId")) })
+);
+researchProgramRouter.post("/:projectId/data", async (c) =>
+  c.json(
+    { ok: true, data: await submitPublicDataImport(c.req.param("projectId"), await c.req.json()) },
+    202
+  )
 );
 researchProgramRouter.get("/:projectId/attempts/:id/evidence", async (c) =>
   c.json({

@@ -53,6 +53,13 @@ const statusNames: Record<string, string> = {
   rejected: "未通过",
   insufficient_evidence: "证据不足",
 };
+const receiptReasons: Record<string, string> = {
+  research_only_diagnostics_not_validation: "已完成研究诊断；缺少时点证明，不能作为验证通过",
+  verified_pit_evidence_required: "缺少可核验的历史时点证明",
+  predeclared_strategy_gate_not_met: "未达到预先登记的策略门槛",
+  predeclared_strategy_gate_passed: "达到预先登记的策略门槛",
+  insufficient_observations_or_trades: "有效观测或交易数量不足",
+};
 const errors: Record<string, string> = {
   research_sealed_dataset_not_configured:
     "当前协议未绑定封存数据集。请先配置独立评估服务，再修订研究协议。",
@@ -355,7 +362,8 @@ export function ResearchStrategyLifecycle({
             )}
             {detail.receipts.map((r) => (
               <p className="qb-research-note" key={r.attemptId}>
-                {statusNames[r.receipt.status]} · {r.receipt.reasonCodes.join("、")}
+                {statusNames[r.receipt.status]} ·{" "}
+                {r.receipt.reasonCodes.map((code) => receiptReasons[code] ?? code).join("、")}
                 <br />
                 净收益{" "}
                 {r.receipt.metrics.totalReturn === null

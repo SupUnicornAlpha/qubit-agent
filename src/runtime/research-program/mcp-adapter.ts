@@ -1,3 +1,4 @@
+import { publicDataRequestSchema } from "./public-data-contract";
 import { strategyManagementSchema } from "./strategy-management-types";
 import { z } from "zod";
 import { strategyExecutionSchema } from "./strategy-types";
@@ -11,6 +12,27 @@ const object = (properties: Record<string, unknown>, required: string[] = []) =>
 });
 const string = { type: "string" };
 const tools = [
+  {
+    name: "research_data_list",
+    description:
+      "List public development imports, provenance and immutable snapshot IDs in the bound project.",
+    inputSchema: object({}),
+  },
+  {
+    name: "research_data_import",
+    description:
+      "Import public US daily data asynchronously. Never PIT verified. No sealed periods or arbitrary URLs. Poll research_data_list.",
+    inputSchema: object(
+      {
+        provider: { const: "yahoo_chart" },
+        symbols: { type: "array", items: string, minItems: 3, maxItems: 12 },
+        startDate: string,
+        endDate: string,
+        idempotencyKey: string,
+      },
+      ["provider", "symbols", "startDate", "endDate", "idempotencyKey"]
+    ),
+  },
   {
     name: "research_strategy_manage",
     description:
@@ -299,6 +321,13 @@ export function createResearchMcpHandler(config: {
         .parse(request.params);
       let data: unknown;
       switch (params.name) {
+        case "research_data_list":
+          z.object({}).strict().parse(params.arguments);
+          data = await call(`${projectPath}/data`);
+          break;
+        case "research_data_import":
+          data = await call(`${projectPath}/data`, publicDataRequestSchema.parse(params.arguments));
+          break;
         case "research_strategy_manage": {
           const args = z
             .object({
