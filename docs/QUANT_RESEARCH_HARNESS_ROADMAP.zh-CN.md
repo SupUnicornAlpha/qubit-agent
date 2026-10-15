@@ -417,7 +417,7 @@ bun run dev:frontend
 - 开发数据逐日重放推进 8 批、160 个交易日，停在 2020-08-19；输入、信号、目标、订单意图、成交、持仓六阶段全部与原回测匹配。会话已暂停，不下真实订单。
 - 使用 18/30 次研究尝试与 2/2 次封存评估；重启两进程后重跑相同请求仍是相同次数、相同回执。证据包内容校验通过。
 
-当前本机页面为 `http://127.0.0.1:3041/`。数据仍保存在前轮隔离预览目录 `/private/tmp/qubit-research-preview-20261013`；评估目录为 `/private/tmp/qubit-public-evaluator-20261015`。这些是临时目录，操作系统清理后不能保证保留；长期部署应在停止服务后迁移完整目录（包括 SQLite/WAL 状态），再用上述环境变量启动。原始行情、密钥、数据库和完整研究产物不进入代码仓库。
+当前本机页面为 `http://127.0.0.1:3041/`。已停止两进程并将完整运行状态迁至仓库内被 Git 忽略的持久目录：研究数据 `.qubit/local-research`，评估数据 `.qubit/local-evaluator`；随后重启并核对预算及幂等回执。原 `/private/tmp/qubit-research-preview-20261013` 与 `/private/tmp/qubit-public-evaluator-20261015` 只保留作迁移备份，当前服务不再使用它们。以后从本仓库启动可设置 `QUBIT_DATA_DIR="$PWD/.qubit/local-research" QUBIT_EVALUATOR_DIR="$PWD/.qubit/local-evaluator" bun run research:local`。原始行情、密钥、数据库和完整研究产物均被 `.qubit/` 忽略规则排除，不进入代码仓库；备份应另外保存，Git 推送不包含这些本机研究资产。
 
 参考来源：[Yahoo 历史数据](https://help.yahoo.com/kb/sln2311.html)、[Yahoo Adjusted Close 定义](https://in.help.yahoo.com/kb/adjusted-close-sln28256.html)、[Alpaca 市场数据 FAQ（历史/最新数据与调整差异）](https://docs.alpaca.markets/us/docs/market-data-faq)、[Docker 文件 secret 注入说明](https://docs.docker.com/compose/how-tos/use-secrets/)。Yahoo 的 Chart 地址是非正式稳定性承诺的接口，本轮可用不代表未来持续可用。
 
